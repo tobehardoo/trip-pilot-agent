@@ -2,11 +2,24 @@
 
 这是一个面向 Java 后端与 AI Agent 求职方向的简历项目。项目采用 Java 主业务后端、Python Agent 服务和 Vue 前端，目标不是生成泛化旅游攻略，而是生成满足时间、预算、地点和交通约束的可执行国内自由行行程。
 
-当前仓库处于设计冻结阶段。本文档集是后续实现、测试、部署和简历整理的设计依据。
+当前仓库处于 M1 实施阶段。本文档集是后续实现、测试、部署和简历整理的设计依据。
 
 ## 当前实现状态
 
-M1 正在实施。仓库已经包含 Spring Boot、FastAPI 和 Vue 的最小可运行骨架，以及 PostgreSQL/PostGIS/pgvector、Redis、RabbitMQ 的本地 Compose 配置。
+M1 正在实施。当前已经完成：
+
+- Spring Security 注册、登录、JWT Access Token 和 Refresh Token 轮换。
+- Access Token 过期自动刷新并重试一次，退出登录会在服务端撤销 Refresh Token。
+- PostgreSQL、Flyway、MyBatis 持久化，以及按用户隔离的旅行基础业务。
+- 旅行创建、列表、详情、结构化约束和乐观锁更新接口。
+- Vue 注册/登录、会话恢复、旅行列表、结构化旅行创建和可刷新深链的旅行详情工作台。
+- 旅行约束编辑会携带乐观锁版本、保留固定安排，并在并发冲突后支持重新加载最新数据。
+- Java 规划任务 API 会在同一事务写入 `PlanningTask + Outbox`，支持幂等重放和单旅行活动任务约束。
+- Outbox 通过 RabbitMQ publisher confirm 至少一次投递；每条确认使用独立事务，失败会记录原因并指数退避。
+- Python Demo Worker 使用严格的强类型消息契约消费创建命令，并发布确定性的结构化完成事件。
+- Java 46 个自动化测试、90.79% 行覆盖率，Python 18 个 Worker/API 测试，以及 Vue 25 个组件、API 边界、路由与仓库测试。
+
+下一条纵向切片是 Java 幂等消费 Python 完成事件、保存任务事件与行程版本，并通过 SSE 推送进度。
 
 本地准备：
 
@@ -18,6 +31,7 @@ mvn test
 Set-Location apps/agent-service
 uv sync --extra dev
 uv run pytest
+uv run trip-agent-worker
 
 Set-Location ../web
 pnpm install
@@ -39,6 +53,8 @@ pnpm dev
 8. [可靠性、安全与可观测性](docs/07-reliability-security-observability.md)
 9. [测试与 Agent 评测](docs/08-testing-and-evaluation.md)
 10. [开发路线图与 TODO](docs/09-roadmap-and-todos.md)
+11. [Phase 2 认证与旅行测试计划](docs/10-phase-2-test-plan.md)
+12. [Phase 3 异步规划命令测试计划](docs/11-phase-3-test-plan.md)
 
 ## 已确认的基础约束
 

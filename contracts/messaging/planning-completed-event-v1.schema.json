@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-completed-event-v1.schema.json",
+  "title": "Planning Completed Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType", "schemaVersion", "eventId", "traceId", "taskId",
+    "tripId", "runId", "occurredAt", "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_COMPLETED"},
+    "schemaVersion": {"const": 1},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "runId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "itinerary"],
+      "properties": {
+        "provider": {"const": "DEMO"},
+        "itinerary": {"$ref": "#/$defs/itinerary"}
+      }
+    }
+  },
+  "$defs": {
+    "itinerary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "days", "estimatedTotalCost"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "days": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/day"}
+        },
+        "estimatedTotalCost": {"type": "number", "minimum": 0}
+      }
+    },
+    "day": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "activities"],
+      "properties": {
+        "date": {"type": "string", "format": "date"},
+        "activities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/activity"}
+        }
+      }
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "startTime", "endTime", "estimatedCost", "source"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1},
+        "startTime": {"type": "string", "format": "date-time"},
+        "endTime": {"type": "string", "format": "date-time"},
+        "estimatedCost": {"type": "number", "minimum": 0},
+        "source": {"const": "DEMO"}
+      }
+    }
+  }
+}

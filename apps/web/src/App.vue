@@ -1,176 +1,442 @@
 <script setup lang="ts">
-const serviceStatus = [
-  { name: '业务服务', state: '待连接' },
-  { name: 'Agent 服务', state: '待连接' },
-]
+import { onMounted, onUnmounted, ref } from 'vue'
+
+import AuthView, { type AuthSubmission } from './components/AuthView.vue'
+import TripDashboard from './components/TripDashboard.vue'
+import TripDetail from './components/TripDetail.vue'
+import {
+  ApiError,
+  REFRESH_TOKEN_KEY,
+  createTrip,
+  getTrip,
+  listTrips,
+  login,
+  logoutSession,
+  refreshSession,
+  register,
+  updateTripConstraints,
+  type AuthSession,
+  type CreateTripInput,
+  type Trip,
+  type UpdateTripConstraintsInput,
+  type User,
+} from './lib/api'
+import { parseRoute, tripDetailPath, type AppRoute } from './lib/routes'
+
+type Phase = 'guest' | 'restoring' | 'authenticated'
+
+class SessionChangedError extends Error {}
+
+const savedRefreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY)
+const phase = ref<Phase>(savedRefreshToken ? 'restoring' : 'guest')
+const busy = ref(false)
+const error = ref<string | null>(null)
+const user = ref<User | null>(null)
+const accessToken = ref('')
+const trips = ref<Trip[]>([])
+const selectedTrip = ref<Trip | null>(null)
+const route = ref<AppRoute>(parseRoute(window.location.pathname))
+const detailBusy = ref(false)
+const detailError = ref<string | null>(null)
+let sessionGeneration = 0
+let detailRequestSequence = 0
+let listRequestSequence = 0
+let busyRequestSequence = 0
+let refreshInFlight: Promise<void> | null = null
+
+function errorMessage(cause: unknown) {
+  if (cause instanceof ApiError) return cause.message
+  return '无法连接业务服务，请稍后重试'
+}
+
+function applySession(session: AuthSession) {
+  user.value = session.user
+  accessToken.value = session.accessToken
+  sessionStorage.setItem(REFRESH_TOKEN_KEY, session.refreshToken)
+  phase.value = 'authenticated'
+}
+
+function beginBusy() {
+  busyRequestSequence += 1
+  busy.value = true
+  return busyRequestSequence
+}
+
+function endBusy(requestSequence: number) {
+  if (requestSequence === busyRequestSequence) busy.value = false
+}
+
+function isCurrentSession(generation: number) {
+  return generation === sessionGeneration && phase.value === 'authenticated'
+}
+
+function assertCurrentSession(generation: number) {
+  if (!isCurrentSession(generation)) throw new SessionChangedError('Session changed while request was in flight')
+}
+
+function clearLocalSession() {
+  sessionGeneration += 1
+  detailRequestSequence += 1
+  listRequestSequence += 1
+  busyRequestSequence += 1
+  refreshInFlight = null
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY)
+  phase.value = 'guest'
+  busy.value = false
+  user.value = null
+  accessToken.value = ''
+  trips.value = []
+  selectedTrip.value = null
+  detailBusy.value = false
+  detailError.value = null
+}
+
+function syncTripInList(loadedTrip: Trip) {
+  listRequestSequence += 1
+  trips.value = trips.value.map((trip) => trip.id === loadedTrip.id ? loadedTrip : trip)
+}
+
+async function loadTrips() {
+  const requestSequence = ++listRequestSequence
+  const loadedTrips = await withAccessToken((token) => listTrips(token))
+  if (requestSequence === listRequestSequence) trips.value = loadedTrips
+}
+
+async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<boolean> {
+  const requestSequence = ++detailRequestSequence
+  detailBusy.value = true
+  detailError.value = null
+  if (!preserveCurrentTrip) selectedTrip.value = null
+  try {
+    const loadedTrip = await withAccessToken((token) => getTrip(token, tripId))
+    if (!isCurrentDetailRequest(requestSequence, tripId)) return false
+    selectedTrip.value = loadedTrip
+    syncTripInList(loadedTrip)
+    return true
+  } catch (cause) {
+    if (!isCurrentDetailRequest(requestSequence, tripId)) return false
+    if (!preserveCurrentTrip) detailError.value = errorMessage(cause)
+    return false
+  } finally {
+    if (requestSequence === detailRequestSequence) detailBusy.value = false
+  }
+}
+
+function isCurrentDetailRequest(requestSequence: number, tripId: string) {
+  return requestSequence === detailRequestSequence
+    && route.value.name === 'trip-detail'
+    && route.value.tripId === tripId
+}
+
+async function loadCurrentRoute() {
+  if (route.value.name === 'trip-detail') {
+    await loadTrip(route.value.tripId)
+    return
+  }
+  await loadTrips()
+}
+
+async function rotateSession() {
+  if (refreshInFlight) return refreshInFlight
+  const refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY)
+  if (!refreshToken) throw new ApiError(401, 'INVALID_REFRESH_TOKEN', '登录状态已过期')
+  const generation = sessionGeneration
+  const refreshOperation = (async () => {
+    const session = await refreshSession(refreshToken)
+    if (generation !== sessionGeneration || phase.value !== 'authenticated') {
+      try {
+        await logoutSession(session.refreshToken)
+      } catch {
+        // A stale rotated token must never restore a locally ended session.
+      }
+      throw new ApiError(401, 'SESSION_CHANGED', '登录状态已变更')
+    }
+    applySession(session)
+  })()
+  refreshInFlight = refreshOperation
+  try {
+    await refreshOperation
+  } finally {
+    if (refreshInFlight === refreshOperation) refreshInFlight = null
+  }
+}
+
+async function withAccessToken<T>(operation: (token: string) => Promise<T>): Promise<T> {
+  const operationGeneration = sessionGeneration
+  const execute = async () => {
+    const result = await operation(accessToken.value)
+    assertCurrentSession(operationGeneration)
+    return result
+  }
+  try {
+    return await execute()
+  } catch (cause) {
+    if (!isCurrentSession(operationGeneration)) throw new SessionChangedError('Session changed while request was in flight')
+    if (!(cause instanceof ApiError) || cause.status !== 401) throw cause
+  }
+  try {
+    await rotateSession()
+  } catch (refreshCause) {
+    if (!isCurrentSession(operationGeneration)) throw new SessionChangedError('Session changed while request was in flight')
+    if (refreshCause instanceof ApiError && refreshCause.status === 401) clearLocalSession()
+    throw refreshCause
+  }
+  try {
+    return await execute()
+  } catch (retryCause) {
+    if (!isCurrentSession(operationGeneration)) throw new SessionChangedError('Session changed while request was in flight')
+    if (retryCause instanceof ApiError && retryCause.status === 401) {
+      clearLocalSession()
+    }
+    throw retryCause
+  }
+}
+
+async function authenticate(submission: AuthSubmission) {
+  const authenticationGeneration = sessionGeneration
+  const busySequence = beginBusy()
+  error.value = null
+  try {
+    const session = submission.mode === 'login'
+      ? await login(submission.email, submission.password)
+      : await register(submission.email, submission.password, submission.displayName)
+    if (authenticationGeneration !== sessionGeneration || phase.value !== 'guest') {
+      throw new SessionChangedError('Session changed while authentication was in flight')
+    }
+    applySession(session)
+    await loadCurrentRoute()
+  } catch (cause) {
+    if (!(cause instanceof SessionChangedError) && authenticationGeneration === sessionGeneration) {
+      error.value = errorMessage(cause)
+    }
+  } finally {
+    endBusy(busySequence)
+  }
+}
+
+async function restoreSession() {
+  if (!savedRefreshToken) return
+  const restoreGeneration = sessionGeneration
+  try {
+    const session = await refreshSession(savedRefreshToken)
+    if (restoreGeneration !== sessionGeneration || phase.value !== 'restoring') {
+      throw new SessionChangedError('Session changed while restoration was in flight')
+    }
+    applySession(session)
+  } catch (cause) {
+    if (!(cause instanceof SessionChangedError) && restoreGeneration === sessionGeneration) clearLocalSession()
+    return
+  }
+  try {
+    await loadCurrentRoute()
+  } catch (cause) {
+    if (!(cause instanceof SessionChangedError) && restoreGeneration === sessionGeneration) {
+      error.value = errorMessage(cause)
+    }
+  }
+}
+
+function navigate(path: string) {
+  window.history.pushState({}, '', path)
+  route.value = parseRoute(window.location.pathname)
+}
+
+async function openTrip(tripId: string) {
+  navigate(tripDetailPath(tripId))
+  await loadTrip(tripId)
+}
+
+async function backToTrips() {
+  navigate('/trips')
+  if (trips.value.length > 0) return
+  const generation = sessionGeneration
+  const busySequence = beginBusy()
+  error.value = null
+  try {
+    await loadTrips()
+  } catch (cause) {
+    if (!(cause instanceof SessionChangedError) && generation === sessionGeneration) error.value = errorMessage(cause)
+  } finally {
+    endBusy(busySequence)
+  }
+}
+
+async function handlePopState() {
+  route.value = parseRoute(window.location.pathname)
+  if (phase.value !== 'authenticated') return
+  const loadingList = route.value.name === 'trip-list'
+  const generation = sessionGeneration
+  let busySequence: number | null = null
+  if (loadingList) {
+    busySequence = beginBusy()
+    error.value = null
+  }
+  try {
+    await loadCurrentRoute()
+  } catch (cause) {
+    if (!(cause instanceof SessionChangedError) && generation === sessionGeneration) error.value = errorMessage(cause)
+  } finally {
+    if (busySequence !== null) endBusy(busySequence)
+  }
+}
+
+async function handleCreateTrip(input: CreateTripInput) {
+  error.value = null
+  try {
+    const created = await withAccessToken((token) => createTrip(token, input))
+    listRequestSequence += 1
+    trips.value = [created, ...trips.value]
+  } catch (cause) {
+    if (cause instanceof SessionChangedError) return
+    error.value = errorMessage(cause)
+    throw cause
+  }
+}
+
+async function handleUpdateConstraints(input: UpdateTripConstraintsInput) {
+  if (!selectedTrip.value) return
+  const tripId = selectedTrip.value.id
+  const updated = await withAccessToken((token) => updateTripConstraints(token, tripId, input))
+  syncTripInList(updated)
+  if (route.value.name === 'trip-detail' && route.value.tripId === updated.id) selectedTrip.value = updated
+}
+
+async function reloadSelectedTrip(): Promise<boolean> {
+  if (route.value.name !== 'trip-detail') return false
+  return loadTrip(route.value.tripId, true)
+}
+
+async function logout() {
+  const refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY)
+  clearLocalSession()
+  error.value = null
+  if (refreshToken) {
+    try {
+      await logoutSession(refreshToken)
+    } catch {
+      // Local logout must still complete when the server is unavailable.
+    }
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('popstate', handlePopState)
+  restoreSession()
+})
+
+onUnmounted(() => window.removeEventListener('popstate', handlePopState))
 </script>
 
 <template>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <h1>TripPilot</h1>
-        <p>智能旅行规划工作台</p>
-      </div>
-      <span class="mode">Demo mode</span>
-    </header>
-
-    <section class="workspace" aria-label="规划工作台预览">
-      <div class="map-panel">
-        <span>地图工作区</span>
-      </div>
-      <aside class="timeline-panel">
-        <h2>行程时间轴</h2>
-        <p>创建旅行后，规划结果将在这里展示。</p>
-      </aside>
-    </section>
-
-    <section class="status-bar" aria-label="服务状态">
-      <div v-for="service in serviceStatus" :key="service.name">
-        <span class="status-dot" aria-hidden="true"></span>
-        <strong>{{ service.name }}</strong>
-        <span>{{ service.state }}</span>
-      </div>
-    </section>
+  <main v-if="phase === 'restoring'" class="restoring" aria-label="正在恢复登录状态">
+    <div class="restore-mark">TP</div>
+    <span></span><span></span><span></span>
   </main>
+  <TripDashboard
+    v-else-if="phase === 'authenticated' && user && route.name === 'trip-list'"
+    :user="user"
+    :trips="trips"
+    :busy="busy"
+    :error="error"
+    :create-trip="handleCreateTrip"
+    @logout="logout"
+    @open-trip="openTrip"
+  />
+  <TripDetail
+    v-else-if="phase === 'authenticated' && user && route.name === 'trip-detail'"
+    :user="user"
+    :trip="selectedTrip"
+    :busy="detailBusy"
+    :error="detailError"
+    :update-constraints="handleUpdateConstraints"
+    :reload-trip="reloadSelectedTrip"
+    @back="backToTrips"
+    @logout="logout"
+  />
+  <section v-else-if="phase === 'authenticated' && user" class="not-found">
+    <h1>页面不存在</h1>
+    <button type="button" @click="backToTrips">返回旅行列表</button>
+  </section>
+  <AuthView v-else :busy="busy" :error="error" @submit="authenticate" />
 </template>
 
-<style scoped>
-:global(*) {
+<style>
+:root {
+  color-scheme: light;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
   box-sizing: border-box;
 }
 
-:global(body) {
-  margin: 0;
+body {
   min-width: 320px;
   min-height: 100vh;
-  color: #17201d;
-  background: #f4f6f5;
-  font-family:
-    Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
-}
-
-.shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-}
-
-.topbar {
-  min-height: 72px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 12px 24px;
-  color: #f9fbfa;
-  background: #183c33;
-  border-bottom: 3px solid #e6b44a;
-}
-
-h1,
-h2,
-p {
   margin: 0;
+}
+
+button,
+input,
+select {
   letter-spacing: 0;
 }
 
-h1 {
-  font-size: 24px;
-  line-height: 1.2;
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #26725f;
+  outline-offset: 2px;
 }
 
-.topbar p {
-  margin-top: 4px;
-  color: #c9d7d2;
-  font-size: 13px;
-}
-
-.mode {
-  color: #17201d;
-  background: #e6b44a;
-  padding: 5px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.workspace {
-  min-height: 560px;
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
-}
-
-.map-panel {
-  display: grid;
-  place-items: center;
-  color: #51635e;
-  background-color: #dce5e1;
-  background-image:
-    linear-gradient(#c9d5d0 1px, transparent 1px),
-    linear-gradient(90deg, #c9d5d0 1px, transparent 1px);
-  background-size: 32px 32px;
-}
-
-.timeline-panel {
-  padding: 24px;
-  background: #ffffff;
-  border-left: 1px solid #d5dcda;
-}
-
-.timeline-panel h2 {
-  font-size: 18px;
-}
-
-.timeline-panel p {
-  margin-top: 12px;
-  color: #64716d;
-  line-height: 1.6;
-}
-
-.status-bar {
-  display: flex;
-  gap: 24px;
-  padding: 12px 24px;
-  color: #47534f;
-  background: #ffffff;
-  border-top: 1px solid #d5dcda;
-  font-size: 13px;
-}
-
-.status-bar div {
+.restoring {
+  min-height: 100vh;
   display: flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  gap: 6px;
+  background: #173d33;
 }
 
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.not-found {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 18px;
+  color: #17201d;
+  background: #f2f5f4;
+}
+
+.not-found h1 { margin: 0; font-size: 25px; }
+.not-found button { min-height: 40px; padding: 0 16px; color: #fff; background: #236552; border: 0; border-radius: 5px; cursor: pointer; }
+
+.restore-mark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  margin-right: 8px;
+  color: #173d33;
   background: #e6b44a;
+  border-radius: 6px;
+  font-weight: 800;
 }
 
-@media (max-width: 760px) {
-  .topbar {
-    padding-inline: 16px;
-  }
+.restoring > span {
+  width: 7px;
+  height: 7px;
+  background: #d5e2de;
+  border-radius: 50%;
+  animation: restore-pulse 0.8s infinite alternate;
+}
 
-  .workspace {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(300px, 52vh) auto;
-  }
+.restoring > span:nth-of-type(2) { animation-delay: 0.2s; }
+.restoring > span:nth-of-type(3) { animation-delay: 0.4s; }
 
-  .timeline-panel {
-    min-height: 220px;
-    border-top: 1px solid #d5dcda;
-    border-left: 0;
-  }
-
-  .status-bar {
-    flex-wrap: wrap;
-    padding-inline: 16px;
-  }
+@keyframes restore-pulse {
+  to { opacity: 0.25; }
 }
 </style>

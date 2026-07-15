@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "TripPilot agent orchestration service"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+  "aio-pika==9.6.2",
   "fastapi==0.116.1",
   "pydantic-settings==2.10.1",
   "uvicorn[standard]==0.35.0",
@@ -15,6 +16,9 @@ dev = [
   "pytest==8.4.1",
   "ruff==0.12.7",
 ]
+
+[project.scripts]
+trip-agent-worker = "trip_agent.worker.amqp:main"
 
 [build-system]
 requires = ["hatchling"]

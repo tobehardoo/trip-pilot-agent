@@ -35,5 +35,6 @@ Thumbs.db
 # Runtime data
 .data/
 logs/
+output/*.log
 output/playwright/
 .playwright-cli/

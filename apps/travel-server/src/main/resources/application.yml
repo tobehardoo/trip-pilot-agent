@@ -1,6 +1,34 @@
 spring:
   application:
     name: travel-server
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:trip_pilot}
+    username: ${POSTGRES_USER:trip_pilot}
+    password: ${POSTGRES_PASSWORD:replace-with-local-password}
+  flyway:
+    locations: classpath:db/migration
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:trip_pilot}
+    password: ${RABBITMQ_PASSWORD:replace-with-local-password}
+    publisher-confirm-type: correlated
+    publisher-returns: true
+
+mybatis:
+  type-handlers-package: io.github.tobehardoo.trippilot.persistence
+  configuration:
+    map-underscore-to-camel-case: true
+    arg-name-based-constructor-auto-mapping: true
+
+app:
+  security:
+    jwt-secret: ${JWT_SECRET}
+    access-token-ttl: ${ACCESS_TOKEN_TTL:PT15M}
+    refresh-token-ttl: ${REFRESH_TOKEN_TTL:P30D}
+  messaging:
+    outbox-publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
+    outbox-publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:1000}
 
 server:
   port: ${TRAVEL_SERVER_PORT:8080}

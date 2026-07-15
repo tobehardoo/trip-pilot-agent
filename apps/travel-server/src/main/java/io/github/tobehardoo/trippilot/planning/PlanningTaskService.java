@@ -23,13 +23,18 @@ public class PlanningTaskService {
     private static final String ROUTING_KEY = "planning.create";
 
     private final PlanningTaskMapper planningTaskMapper;
+    private final PlanningTaskEventMapper planningTaskEventMapper;
     private final OutboxMapper outboxMapper;
     private final TripService tripService;
     private final ObjectMapper objectMapper;
 
-    public PlanningTaskService(PlanningTaskMapper planningTaskMapper, OutboxMapper outboxMapper,
-                               TripService tripService, ObjectMapper objectMapper) {
+    public PlanningTaskService(PlanningTaskMapper planningTaskMapper,
+                               PlanningTaskEventMapper planningTaskEventMapper,
+                               OutboxMapper outboxMapper,
+                               TripService tripService,
+                               ObjectMapper objectMapper) {
         this.planningTaskMapper = planningTaskMapper;
+        this.planningTaskEventMapper = planningTaskEventMapper;
         this.outboxMapper = outboxMapper;
         this.tripService = tripService;
         this.objectMapper = objectMapper;
@@ -44,9 +49,10 @@ public class PlanningTaskService {
         }
 
         Instant now = Instant.now();
+        String constraintSnapshotJson = writeJson(trip.constraints());
         PlanningTaskRecord task = new PlanningTaskRecord(
                 UUID.randomUUID(), tripId, idempotencyKey, TASK_TYPE, TASK_STATUS,
-                trip.version(), UUID.randomUUID(), 0, null, null, 0, now, now
+                trip.version(), constraintSnapshotJson, UUID.randomUUID(), 0, null, null, 0, now, now
         );
         if (planningTaskMapper.insert(task) == 0) {
             return planningTaskMapper.findOwnedByIdempotencyKey(tripId, idempotencyKey, ownerId)
@@ -56,6 +62,14 @@ public class PlanningTaskService {
                             "PLANNING_TASK_ACTIVE",
                             "This trip already has an active planning task"
                     ));
+        }
+
+        int insertedEventCount = planningTaskEventMapper.insert(new PlanningTaskEventRecord(
+                null, UUID.randomUUID(), task.id(), "PLANNING_QUEUED", 1,
+                writeJson(new TaskStatusPayload(TASK_STATUS)), now
+        ));
+        if (insertedEventCount != 1) {
+            throw new IllegalStateException("Could not persist planning queued event");
         }
 
         UUID eventId = UUID.randomUUID();
@@ -134,5 +148,8 @@ public class PlanningTaskService {
             int version,
             TripService.ConstraintResponse constraints
     ) {
+    }
+
+    private record TaskStatusPayload(String status) {
     }
 }

@@ -25,7 +25,7 @@
 
 截至 2026-07-15：上述核心验收已完成。Java 认证与旅行接口、Vue 注册/登录、旅行创建、详情深链和约束编辑流程已经通过自动化测试及真实浏览器联合验收；乐观锁冲突可保留表单并重新加载最新数据。
 
-同时已提前完成第 2 周第一条纵向切片：Java 在同一事务创建 `PlanningTask + Outbox`，通过 publisher confirm 投递 RabbitMQ，Python Demo Worker 消费后发布确定性的 `PLANNING_COMPLETED`。并发幂等、活动任务单活、事务回滚、行程快照一致性、单事件 Outbox 事务和严格消息契约均已覆盖回归测试。下一步是 Java 幂等消费结果、保存任务事件与行程版本，并接入 SSE。
+同时已提前完成第 2 周后端最小闭环：Java 在同一事务创建 `PlanningTask + Outbox`，通过 publisher confirm 投递 RabbitMQ，Python Demo Worker 发布确定性的 `PLANNING_COMPLETED`，Java 再幂等保存任务事件和不可变关系型行程版本。完成消费者具备契约拒绝与死信、过期基线保护、原子回滚和事件 ID 冲突保护；当前行程 API 与带历史补发的所有者隔离 SSE 已通过真实 RabbitMQ、PostgreSQL 和跨服务冒烟。下一步是 Vue 工作台接入任务创建、SSE 状态和 Demo 行程时间轴，完成网页验收。
 
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环
 

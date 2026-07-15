@@ -17,9 +17,11 @@ M1 正在实施。当前已经完成：
 - Java 规划任务 API 会在同一事务写入 `PlanningTask + Outbox`，支持幂等重放和单旅行活动任务约束。
 - Outbox 通过 RabbitMQ publisher confirm 至少一次投递；每条确认使用独立事务，失败会记录原因并指数退避。
 - Python Demo Worker 使用严格的强类型消息契约消费创建命令，并发布确定性的结构化完成事件。
-- Java 46 个自动化测试、90.79% 行覆盖率，Python 18 个 Worker/API 测试，以及 Vue 25 个组件、API 边界、路由与仓库测试。
+- Java 幂等消费完成事件，在单事务内更新任务、保存任务事件和不可变关系型行程版本；过期基线结果会失败且不污染当前行程。
+- 当前行程 API 按所有者隔离；任务 SSE 支持持久历史补发、`Last-Event-ID` 重连、实时终态通知与终态关闭。
+- Java 73 个自动化测试、90.78% 行覆盖率，Python 21 个 Worker/API 测试，以及 Vue 25 个组件、API 边界、路由与仓库测试。
 
-下一条纵向切片是 Java 幂等消费 Python 完成事件、保存任务事件与行程版本，并通过 SSE 推送进度。
+下一条纵向切片是把 Vue 工作台接入规划任务、SSE 和当前行程 API，无需脚本即可从页面看到 Demo 行程时间轴。
 
 本地准备：
 
@@ -55,6 +57,7 @@ pnpm dev
 10. [开发路线图与 TODO](docs/09-roadmap-and-todos.md)
 11. [Phase 2 认证与旅行测试计划](docs/10-phase-2-test-plan.md)
 12. [Phase 3 异步规划命令测试计划](docs/11-phase-3-test-plan.md)
+13. [Phase 4 完成事件、行程版本与 SSE 测试计划](docs/12-phase-4-completion-and-sse-test-plan.md)
 
 ## 已确认的基础约束
 

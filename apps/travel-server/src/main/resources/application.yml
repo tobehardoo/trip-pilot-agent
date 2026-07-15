@@ -29,6 +29,7 @@ app:
   messaging:
     outbox-publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
     outbox-publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:1000}
+    event-consumer-enabled: ${EVENT_CONSUMER_ENABLED:true}
 
 server:
   port: ${TRAVEL_SERVER_PORT:8080}

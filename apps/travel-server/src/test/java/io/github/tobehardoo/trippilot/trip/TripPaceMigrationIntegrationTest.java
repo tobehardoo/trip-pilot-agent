@@ -60,6 +60,41 @@ class TripPaceMigrationIntegrationTest {
         }
     }
 
+    @Test
+    void backfillsPlanningConstraintSnapshotsWhenUpgradingFromVersionFour() {
+        try (PostgreSQLContainer<?> postgres = postgres()) {
+            postgres.start();
+            migrateToVersion(postgres, "4");
+            JdbcTemplate jdbcTemplate = jdbcTemplate(postgres);
+            UUID ownerId = insertOwner(jdbcTemplate, "planning-snapshot@example.com");
+            UUID tripId = UUID.randomUUID();
+            UUID taskId = UUID.randomUUID();
+            insertTrip(jdbcTemplate, tripId, ownerId, "Snapshot migration");
+            insertConstraint(jdbcTemplate, tripId, "BALANCED");
+            insertPlanningTaskAndOutbox(jdbcTemplate, tripId, taskId);
+
+            migrateLatest(postgres);
+
+            assertThat(jdbcTemplate.queryForObject("""
+                    SELECT constraint_snapshot ->> 'travelerType'
+                    FROM business.planning_task
+                    WHERE id = ?
+                    """, String.class, taskId)).isEqualTo("FRIENDS");
+            assertThat(jdbcTemplate.queryForObject("""
+                    SELECT (constraint_snapshot ->> 'travelers')::integer
+                    FROM business.planning_task
+                    WHERE id = ?
+                    """, Integer.class, taskId)).isEqualTo(2);
+            assertThat(jdbcTemplate.queryForMap("""
+                    SELECT event_id, event_type, payload ->> 'status' AS status
+                    FROM business.planning_task_event
+                    WHERE task_id = ?
+                    """, taskId)).containsEntry("event_id", taskId)
+                    .containsEntry("event_type", "PLANNING_QUEUED")
+                    .containsEntry("status", "QUEUED");
+        }
+    }
+
     private PostgreSQLContainer<?> postgres() {
         return new PostgreSQLContainer<>("postgres:16-alpine")
                 .withDatabaseName("trip_pilot_migration")
@@ -110,5 +145,35 @@ class TripPaceMigrationIntegrationTest {
                 INSERT INTO business.trip_constraint(trip_id, travelers, traveler_type, pace)
                 VALUES (?, 1, 'SOLO', ?)
                 """, tripId, pace);
+    }
+
+    private void insertPlanningTaskAndOutbox(JdbcTemplate jdbcTemplate, UUID tripId, UUID taskId) {
+        UUID traceId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO business.planning_task(
+                    id, trip_id, idempotency_key, task_type, status,
+                    baseline_trip_version, trace_id
+                ) VALUES (?, ?, ?, 'CREATE', 'QUEUED', 0, ?)
+                """, taskId, tripId, UUID.randomUUID(), traceId);
+        jdbcTemplate.update("""
+                INSERT INTO business.outbox_event(
+                    id, aggregate_type, aggregate_id, event_type, routing_key, payload
+                ) VALUES (?, 'PLANNING_TASK', ?, 'PLANNING_CREATE_REQUESTED', 'planning.create', CAST(? AS jsonb))
+                """, UUID.randomUUID(), taskId, """
+                {
+                  "payload": {
+                    "trip": {
+                      "constraints": {
+                        "budgetAmount": 1000,
+                        "travelers": 2,
+                        "travelerType": "FRIENDS",
+                        "pace": "BALANCED",
+                        "preferences": ["food"],
+                        "fixedSchedules": []
+                      }
+                    }
+                  }
+                }
+                """);
     }
 }

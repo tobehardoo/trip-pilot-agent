@@ -185,3 +185,56 @@ def test_demo_provider_builds_one_explicitly_sourced_day_per_trip_date() -> None
     assert all(len(day.activities) == 1 for day in completed.payload.itinerary.days)
     assert all(day.activities[0].source == "DEMO" for day in completed.payload.itinerary.days)
     assert completed.payload.itinerary.estimated_total_cost == 0
+
+
+@pytest.mark.parametrize("invalid_cost", ["0.001", "10000000000.00"])
+def test_completed_event_models_reject_unpersistable_money(invalid_cost: str) -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+
+    with pytest.raises(ValidationError):
+        contracts.DemoItinerary.model_validate(
+            {
+                "title": "Demo itinerary",
+                "days": [
+                    {
+                        "date": "2026-08-01",
+                        "activities": [
+                            {
+                                "title": "Demo activity",
+                                "startTime": "2026-08-01T09:00:00+08:00",
+                                "endTime": "2026-08-01T10:00:00+08:00",
+                                "estimatedCost": invalid_cost,
+                                "source": "DEMO",
+                            }
+                        ],
+                    }
+                ],
+                "estimatedTotalCost": invalid_cost,
+            }
+        )
+
+
+def test_completed_event_models_reject_titles_over_two_hundred_characters() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+
+    with pytest.raises(ValidationError):
+        contracts.DemoItinerary.model_validate(
+            {
+                "title": "x" * 201,
+                "days": [
+                    {
+                        "date": "2026-08-01",
+                        "activities": [
+                            {
+                                "title": "Demo activity",
+                                "startTime": "2026-08-01T09:00:00+08:00",
+                                "endTime": "2026-08-01T10:00:00+08:00",
+                                "estimatedCost": 0,
+                                "source": "DEMO",
+                            }
+                        ],
+                    }
+                ],
+                "estimatedTotalCost": 0,
+            }
+        )

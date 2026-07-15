@@ -33,13 +33,18 @@
       "additionalProperties": false,
       "required": ["title", "days", "estimatedTotalCost"],
       "properties": {
-        "title": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
         "days": {
           "type": "array",
           "minItems": 1,
           "items": {"$ref": "#/$defs/day"}
         },
-        "estimatedTotalCost": {"type": "number", "minimum": 0}
+        "estimatedTotalCost": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9999999999.99,
+          "multipleOf": 0.01
+        }
       }
     },
     "day": {
@@ -60,10 +65,15 @@
       "additionalProperties": false,
       "required": ["title", "startTime", "endTime", "estimatedCost", "source"],
       "properties": {
-        "title": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
         "startTime": {"type": "string", "format": "date-time"},
         "endTime": {"type": "string", "format": "date-time"},
-        "estimatedCost": {"type": "number", "minimum": 0},
+        "estimatedCost": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9999999999.99,
+          "multipleOf": 0.01
+        },
         "source": {"const": "DEMO"}
       }
     }

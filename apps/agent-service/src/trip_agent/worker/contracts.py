@@ -18,6 +18,11 @@ from pydantic.alias_generators import to_camel
 
 type JsonDecimal = Annotated[
     Decimal,
+    Field(
+        ge=Decimal("0"),
+        le=Decimal("9999999999.99"),
+        multiple_of=Decimal("0.01"),
+    ),
     PlainSerializer(lambda value: float(value), return_type=float, when_used="json"),
 ]
 type ShortText = Annotated[
@@ -25,6 +30,9 @@ type ShortText = Annotated[
 ]
 type NameText = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)
+]
+type ItineraryText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
 ]
 
 
@@ -126,7 +134,7 @@ class PlanningCreateCommand(InboundMessageModel):
 
 
 class DemoActivity(MessageModel):
-    title: str
+    title: ItineraryText
     start_time: datetime
     end_time: datetime
     estimated_cost: JsonDecimal
@@ -139,7 +147,7 @@ class DemoItineraryDay(MessageModel):
 
 
 class DemoItinerary(MessageModel):
-    title: str
+    title: ItineraryText
     days: tuple[DemoItineraryDay, ...] = Field(min_length=1)
     estimated_total_cost: JsonDecimal
 

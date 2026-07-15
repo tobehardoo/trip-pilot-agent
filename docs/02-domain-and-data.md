@@ -65,6 +65,8 @@ User
 - `place_snapshot`：规划时 POI 的名称、坐标、地址、来源、外部 ID 和字段置信度。
 - `share_link`：Token 哈希、过期时间、撤销状态和访问权限。
 
+截至 2026-07-15，V5 已落地后端最小闭环所需的 `planning_task_event`、`itinerary`、`itinerary_version`、`itinerary_day` 和 `activity`。最终行程按日期、顺序、时间和费用保存为关系数据；规划任务与行程版本均保存创建任务时的约束快照。`transit_leg`、`place_snapshot`、分享以及更完整的活动字段仍按后续真实 Provider 和前端切片实现。
+
 ## 4. Python Agent 表
 
 - `agent_run`：对应 taskId、当前状态、workflow 版本和最终结果引用。

@@ -38,6 +38,7 @@ public abstract class PostgresIntegrationTest {
         registry.add("app.security.access-token-ttl", () -> "PT15M");
         registry.add("app.security.refresh-token-ttl", () -> "P30D");
         registry.add("app.messaging.outbox-publisher-enabled", () -> "false");
+        registry.add("app.messaging.event-consumer-enabled", () -> "false");
     }
 
     @BeforeEach

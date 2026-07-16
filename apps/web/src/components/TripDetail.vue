@@ -3,17 +3,23 @@ import {
   ArrowLeft,
   CalendarDays,
   CircleGauge,
+  Clock3,
   Compass,
+  Coins,
+  LoaderCircle,
   LogOut,
   MapPin,
   Pencil,
+  Play,
+  RefreshCw,
+  Route,
   Users,
   Wallet,
   X,
 } from 'lucide-vue-next'
 import { computed, reactive, ref } from 'vue'
 
-import { ApiError, type Trip, type UpdateTripConstraintsInput, type User } from '../lib/api'
+import { ApiError, type Itinerary, type Trip, type UpdateTripConstraintsInput, type User } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
 
 const props = defineProps<{
@@ -21,6 +27,12 @@ const props = defineProps<{
   trip: Trip | null
   busy: boolean
   error: string | null
+  itinerary: Itinerary | null
+  itineraryBusy: boolean
+  itineraryError: string | null
+  planningState: 'idle' | 'queued' | 'succeeded' | 'failed'
+  planningError: string | null
+  startPlanning: () => Promise<void>
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
   reloadTrip: () => Promise<boolean>
 }>()
@@ -31,6 +43,12 @@ const emit = defineEmits<{
 }>()
 
 const defaultPreferences = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
+const chinaTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+  timeZone: 'Asia/Shanghai',
+})
 const editing = ref(false)
 const dialogElement = ref<HTMLElement | null>(null)
 const submitting = ref(false)
@@ -134,6 +152,20 @@ function statusLabel(status: string) {
 function formatDate(date: string) {
   return date.replaceAll('-', '.')
 }
+
+function formatDay(date: string) {
+  const [, month, day] = date.split('-')
+  return `${Number(month)}月${Number(day)}日`
+}
+
+function formatTime(dateTime: string) {
+  const value = new Date(dateTime)
+  return Number.isNaN(value.getTime()) ? dateTime : chinaTimeFormatter.format(value)
+}
+
+function formatMoney(amount: number) {
+  return `¥${amount}`
+}
 </script>
 
 <template>
@@ -187,6 +219,86 @@ function formatDate(date: string) {
             <span>版本 {{ trip.version }}</span>
           </div>
         </header>
+
+        <section class="itinerary-workspace" aria-labelledby="itinerary-title">
+          <header class="itinerary-heading">
+            <div>
+              <p class="eyebrow">ITINERARY</p>
+              <h2 id="itinerary-title">行程时间轴</h2>
+            </div>
+            <button
+              class="planning-button"
+              type="button"
+              :disabled="planningState === 'queued'"
+              @click="startPlanning"
+            >
+              <LoaderCircle v-if="planningState === 'queued'" class="spinning" :size="16" aria-hidden="true" />
+              <RefreshCw v-else-if="itinerary" :size="16" aria-hidden="true" />
+              <Play v-else :size="16" aria-hidden="true" />
+              {{ planningState === 'queued' ? '规划中' : itinerary ? '重新规划' : '开始规划' }}
+            </button>
+          </header>
+
+          <p v-if="planningState === 'queued'" class="planning-status" role="status">
+            <LoaderCircle class="spinning" :size="16" aria-hidden="true" />
+            正在生成行程
+          </p>
+          <p v-else-if="planningError" class="planning-error" role="alert">{{ planningError }}</p>
+
+          <div v-if="itineraryBusy" class="itinerary-loading" aria-label="正在加载当前行程">
+            <span></span><span></span><span></span>
+          </div>
+          <div v-else-if="itineraryError" class="itinerary-error" role="alert">
+            <strong>当前行程加载失败</strong>
+            <span>{{ itineraryError }}</span>
+          </div>
+          <div v-else-if="!itinerary" class="itinerary-empty">
+            <Route :size="24" aria-hidden="true" />
+            <strong>尚未生成行程</strong>
+          </div>
+          <div v-else class="itinerary-content">
+            <header class="itinerary-summary">
+              <div>
+                <span class="provider-badge">{{ itinerary.provider === 'DEMO' ? 'Demo 数据' : itinerary.provider }}</span>
+                <h3>{{ itinerary.title }}</h3>
+              </div>
+              <dl>
+                <div>
+                  <dt>版本</dt>
+                  <dd>V{{ itinerary.versionNumber }}</dd>
+                </div>
+                <div>
+                  <dt>预计总费用</dt>
+                  <dd>{{ formatMoney(itinerary.estimatedTotalCost) }}</dd>
+                </div>
+              </dl>
+            </header>
+
+            <div class="itinerary-days">
+              <section v-for="(day, dayIndex) in itinerary.days" :key="day.date" class="itinerary-day">
+                <header>
+                  <span>DAY {{ dayIndex + 1 }}</span>
+                  <h3>{{ formatDay(day.date) }}</h3>
+                </header>
+                <ol>
+                  <li v-for="activity in day.activities" :key="activity.id">
+                    <time>{{ formatTime(activity.startTime) }} — {{ formatTime(activity.endTime) }}</time>
+                    <div class="timeline-marker"><span></span></div>
+                    <div class="activity-copy">
+                      <strong>{{ activity.title }}</strong>
+                      <span>
+                        <Coins :size="14" aria-hidden="true" />
+                        {{ formatMoney(activity.estimatedCost) }}
+                        <Clock3 :size="14" aria-hidden="true" />
+                        {{ activity.source === 'DEMO' ? 'Demo' : activity.source }}
+                      </span>
+                    </div>
+                  </li>
+                </ol>
+              </section>
+            </div>
+          </div>
+        </section>
 
         <section class="constraints" aria-labelledby="constraints-title">
           <header class="section-heading">
@@ -458,6 +570,147 @@ h3 { margin: 0 0 12px; font-size: 13px; }
   border-radius: 6px;
 }
 
+.itinerary-workspace {
+  margin-bottom: 26px;
+  background: #fff;
+  border: 1px solid #d4ddda;
+  border-top: 3px solid #e6b44a;
+  border-radius: 6px;
+}
+
+.itinerary-heading,
+.itinerary-summary,
+.itinerary-day > header,
+.planning-status,
+.activity-copy > span {
+  display: flex;
+  align-items: center;
+}
+
+.itinerary-heading {
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 24px;
+  border-bottom: 1px solid #e2e8e5;
+}
+
+.planning-button {
+  min-width: 116px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  color: #fff;
+  background: #236552;
+  border: 1px solid #236552;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.planning-button:disabled { cursor: wait; opacity: 0.72; }
+.spinning { animation: spin 0.9s linear infinite; }
+
+.planning-status,
+.planning-error {
+  gap: 8px;
+  margin: 0;
+  padding: 11px 24px;
+  font-size: 13px;
+}
+
+.planning-status { color: #315f52; background: #edf5f2; }
+.planning-error { color: #8a2929; background: #fff0ef; }
+
+.itinerary-loading,
+.itinerary-empty,
+.itinerary-error {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.itinerary-loading { gap: 6px; }
+.itinerary-loading span {
+  width: 8px;
+  height: 8px;
+  background: #2f705e;
+  border-radius: 50%;
+  animation: pulse 0.9s infinite alternate;
+}
+.itinerary-loading span:nth-child(2) { animation-delay: 0.2s; }
+.itinerary-loading span:nth-child(3) { animation-delay: 0.4s; }
+
+.itinerary-empty,
+.itinerary-error {
+  flex-direction: column;
+  gap: 8px;
+  color: #71817b;
+  font-size: 13px;
+}
+.itinerary-empty strong,
+.itinerary-error strong { color: #34443f; font-size: 14px; }
+.itinerary-error { color: #8a2929; }
+
+.itinerary-content { padding: 0 24px 24px; }
+.itinerary-summary {
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px 0;
+  border-bottom: 1px solid #e2e8e5;
+}
+.itinerary-summary h3 { margin: 7px 0 0; font-size: 18px; }
+.provider-badge {
+  display: inline-block;
+  padding: 4px 7px;
+  color: #72550d;
+  background: #fbf1d5;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+}
+.itinerary-summary dl { display: flex; gap: 30px; margin: 0; text-align: right; }
+.itinerary-summary dt { color: #71817b; font-size: 11px; }
+.itinerary-summary dd { margin: 4px 0 0; color: #17201d; font-size: 15px; font-weight: 800; }
+
+.itinerary-days { display: grid; }
+.itinerary-day {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  padding: 24px 0 4px;
+  border-bottom: 1px solid #e2e8e5;
+}
+.itinerary-day:last-child { border-bottom: 0; }
+.itinerary-day > header { align-items: flex-start; flex-direction: column; gap: 5px; }
+.itinerary-day > header span { color: #8a650f; font-size: 10px; font-weight: 850; }
+.itinerary-day > header h3 { margin: 0; font-size: 15px; }
+.itinerary-day ol { margin: 0; padding: 0; list-style: none; }
+.itinerary-day li { min-height: 72px; display: grid; grid-template-columns: 104px 22px minmax(0, 1fr); }
+.itinerary-day time { padding-top: 3px; color: #52625c; font-size: 12px; font-weight: 750; white-space: nowrap; }
+.timeline-marker { position: relative; display: flex; justify-content: center; }
+.timeline-marker::after { content: ''; position: absolute; top: 11px; bottom: 0; width: 1px; background: #cbd8d3; }
+.itinerary-day li:last-child .timeline-marker::after { display: none; }
+.timeline-marker span {
+  position: relative;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  background: #e6b44a;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #bd8e28;
+}
+.activity-copy { min-width: 0; padding: 0 0 22px 10px; }
+.activity-copy > strong { display: block; overflow-wrap: anywhere; font-size: 14px; }
+.activity-copy > span { flex-wrap: wrap; gap: 5px; margin-top: 7px; color: #71817b; font-size: 11px; }
+.activity-copy > span svg:nth-of-type(2) { margin-left: 7px; }
+
 .section-heading {
   justify-content: space-between;
   gap: 20px;
@@ -636,6 +889,7 @@ h3 { margin: 0 0 12px; font-size: 13px; }
 .error-state p { margin: 0; }
 
 @keyframes pulse { to { opacity: 0.25; transform: translateY(-4px); } }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 620px) {
   .topbar { height: 62px; padding: 0 16px; }
@@ -648,6 +902,12 @@ h3 { margin: 0 0 12px; font-size: 13px; }
   .constraint-grid,
   .constraint-details,
   .form-grid { grid-template-columns: 1fr; }
+  .itinerary-summary { align-items: flex-start; flex-direction: column; }
+  .itinerary-summary dl { width: 100%; justify-content: space-between; text-align: left; }
+  .itinerary-day { grid-template-columns: 1fr; gap: 16px; }
+  .itinerary-day > header { flex-direction: row; align-items: baseline; }
+  .itinerary-heading { align-items: flex-start; }
+  .itinerary-day li { grid-template-columns: 90px 20px minmax(0, 1fr); }
   .field-wide { grid-column: auto; }
   .dialog { padding: 19px; }
   .constraint-grid { gap: 18px; }

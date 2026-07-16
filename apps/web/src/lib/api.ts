@@ -53,6 +53,60 @@ export interface UpdateTripConstraintsInput extends Omit<TripConstraints, 'schem
   version: number
 }
 
+export interface PlanningTask {
+  taskId: string
+  tripId: string
+  taskType: string
+  status: string
+  baselineTripVersion: number
+  eventStreamUrl: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PlanningTaskEvent {
+  eventId: number
+  taskId: string
+  eventType: string
+  schemaVersion: number
+  payload: {
+    status?: string
+    errorCode?: string
+    errorMessage?: string
+    message?: string
+    [key: string]: unknown
+  }
+  createdAt: string
+}
+
+export interface ItineraryActivity {
+  id: string
+  title: string
+  startTime: string
+  endTime: string
+  estimatedCost: number
+  source: string
+}
+
+export interface Itinerary {
+  versionId: string
+  versionNumber: number
+  parentVersionId: string | null
+  title: string
+  estimatedTotalCost: number
+  provider: string
+  days: Array<{
+    date: string
+    activities: ItineraryActivity[]
+  }>
+  createdAt: string
+}
+
+export interface PlanningEventStreamOptions {
+  lastEventId?: number
+  signal?: AbortSignal
+}
+
 interface ApiErrorBody {
   code?: string
   message?: string
@@ -141,4 +195,83 @@ export function updateTripConstraints(
     method: 'PUT',
     body: JSON.stringify(input),
   }, accessToken)
+}
+
+export function createPlanningTask(
+  accessToken: string,
+  tripId: string,
+  idempotencyKey: string,
+): Promise<PlanningTask> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/planning-tasks`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+  }, accessToken)
+}
+
+export function getCurrentItinerary(accessToken: string, tripId: string): Promise<Itinerary> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary`, {}, accessToken)
+}
+
+export async function streamPlanningTaskEvents(
+  accessToken: string,
+  eventStreamUrl: string,
+  onEvent: (event: PlanningTaskEvent) => void,
+  options: PlanningEventStreamOptions = {},
+): Promise<number> {
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+    Authorization: `Bearer ${accessToken}`,
+  }
+  if (options.lastEventId !== undefined) headers['Last-Event-ID'] = options.lastEventId.toString()
+
+  const result = await fetch(eventStreamUrl, { headers, signal: options.signal })
+  if (!result.ok) {
+    let error: ApiErrorBody = {}
+    try {
+      error = await result.json() as ApiErrorBody
+    } catch {
+      // Authentication filters can return an empty response.
+    }
+    throw new ApiError(result.status, error.code ?? 'REQUEST_FAILED', error.message ?? '请求失败')
+  }
+  if (!result.body) {
+    throw new ApiError(502, 'EVENT_STREAM_UNAVAILABLE', '任务状态流不可用')
+  }
+
+  const reader = result.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let lastEventId = options.lastEventId ?? 0
+
+  const dispatchBlock = (block: string) => {
+    let id: number | undefined
+    const dataLines: string[] = []
+    for (const line of block.split(/\r?\n/)) {
+      if (line === '' || line.startsWith(':')) continue
+      const separator = line.indexOf(':')
+      const field = separator >= 0 ? line.slice(0, separator) : line
+      let value = separator >= 0 ? line.slice(separator + 1) : ''
+      if (value.startsWith(' ')) value = value.slice(1)
+      if (field === 'id' && /^\d+$/.test(value)) id = Number(value)
+      if (field === 'data') dataLines.push(value)
+    }
+    if (dataLines.length === 0) return
+    const event = JSON.parse(dataLines.join('\n')) as PlanningTaskEvent
+    onEvent(event)
+    lastEventId = id ?? event.eventId
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    let boundary = buffer.match(/\r?\n\r?\n/)
+    while (boundary?.index !== undefined) {
+      dispatchBlock(buffer.slice(0, boundary.index))
+      buffer = buffer.slice(boundary.index + boundary[0].length)
+      boundary = buffer.match(/\r?\n\r?\n/)
+    }
+    if (done) break
+  }
+  if (buffer.trim()) dispatchBlock(buffer)
+  return lastEventId
 }

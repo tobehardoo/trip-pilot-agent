@@ -7,16 +7,21 @@ import TripDetail from './components/TripDetail.vue'
 import {
   ApiError,
   REFRESH_TOKEN_KEY,
+  createPlanningTask,
   createTrip,
+  getCurrentItinerary,
   getTrip,
   listTrips,
   login,
   logoutSession,
   refreshSession,
   register,
+  streamPlanningTaskEvents,
   updateTripConstraints,
   type AuthSession,
   type CreateTripInput,
+  type Itinerary,
+  type PlanningTaskEvent,
   type Trip,
   type UpdateTripConstraintsInput,
   type User,
@@ -38,11 +43,19 @@ const selectedTrip = ref<Trip | null>(null)
 const route = ref<AppRoute>(parseRoute(window.location.pathname))
 const detailBusy = ref(false)
 const detailError = ref<string | null>(null)
+const itinerary = ref<Itinerary | null>(null)
+const itineraryBusy = ref(false)
+const itineraryError = ref<string | null>(null)
+const planningState = ref<'idle' | 'queued' | 'succeeded' | 'failed'>('idle')
+const planningError = ref<string | null>(null)
 let sessionGeneration = 0
 let detailRequestSequence = 0
+let itineraryRequestSequence = 0
 let listRequestSequence = 0
 let busyRequestSequence = 0
+let planningRequestSequence = 0
 let refreshInFlight: Promise<void> | null = null
+let planningStreamController: AbortController | null = null
 
 function errorMessage(cause: unknown) {
   if (cause instanceof ApiError) return cause.message
@@ -75,8 +88,10 @@ function assertCurrentSession(generation: number) {
 }
 
 function clearLocalSession() {
+  stopPlanningStream()
   sessionGeneration += 1
   detailRequestSequence += 1
+  itineraryRequestSequence += 1
   listRequestSequence += 1
   busyRequestSequence += 1
   refreshInFlight = null
@@ -89,6 +104,19 @@ function clearLocalSession() {
   selectedTrip.value = null
   detailBusy.value = false
   detailError.value = null
+  itinerary.value = null
+  itineraryBusy.value = false
+  itineraryError.value = null
+}
+
+function stopPlanningStream(resetState = true) {
+  planningRequestSequence += 1
+  planningStreamController?.abort()
+  planningStreamController = null
+  if (resetState) {
+    planningState.value = 'idle'
+    planningError.value = null
+  }
 }
 
 function syncTripInList(loadedTrip: Trip) {
@@ -106,12 +134,17 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
   const requestSequence = ++detailRequestSequence
   detailBusy.value = true
   detailError.value = null
-  if (!preserveCurrentTrip) selectedTrip.value = null
+  if (!preserveCurrentTrip) {
+    selectedTrip.value = null
+    itinerary.value = null
+    itineraryError.value = null
+  }
   try {
     const loadedTrip = await withAccessToken((token) => getTrip(token, tripId))
     if (!isCurrentDetailRequest(requestSequence, tripId)) return false
     selectedTrip.value = loadedTrip
     syncTripInList(loadedTrip)
+    await loadItinerary(tripId)
     return true
   } catch (cause) {
     if (!isCurrentDetailRequest(requestSequence, tripId)) return false
@@ -120,6 +153,34 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
   } finally {
     if (requestSequence === detailRequestSequence) detailBusy.value = false
   }
+}
+
+async function loadItinerary(tripId: string): Promise<boolean> {
+  const requestSequence = ++itineraryRequestSequence
+  itineraryBusy.value = true
+  itineraryError.value = null
+  try {
+    const loadedItinerary = await withAccessToken((token) => getCurrentItinerary(token, tripId))
+    if (!isCurrentItineraryRequest(requestSequence, tripId)) return false
+    itinerary.value = loadedItinerary
+    return true
+  } catch (cause) {
+    if (!isCurrentItineraryRequest(requestSequence, tripId)) return false
+    if (cause instanceof ApiError && cause.status === 404) {
+      itinerary.value = null
+      return true
+    }
+    itineraryError.value = errorMessage(cause)
+    return false
+  } finally {
+    if (requestSequence === itineraryRequestSequence) itineraryBusy.value = false
+  }
+}
+
+function isCurrentItineraryRequest(requestSequence: number, tripId: string) {
+  return requestSequence === itineraryRequestSequence
+    && route.value.name === 'trip-detail'
+    && route.value.tripId === tripId
 }
 
 function isCurrentDetailRequest(requestSequence: number, tripId: string) {
@@ -242,11 +303,13 @@ function navigate(path: string) {
 }
 
 async function openTrip(tripId: string) {
+  stopPlanningStream()
   navigate(tripDetailPath(tripId))
   await loadTrip(tripId)
 }
 
 async function backToTrips() {
+  stopPlanningStream()
   navigate('/trips')
   if (trips.value.length > 0) return
   const generation = sessionGeneration
@@ -262,6 +325,7 @@ async function backToTrips() {
 }
 
 async function handlePopState() {
+  stopPlanningStream()
   route.value = parseRoute(window.location.pathname)
   if (phase.value !== 'authenticated') return
   const loadingList = route.value.name === 'trip-list'
@@ -306,6 +370,72 @@ async function reloadSelectedTrip(): Promise<boolean> {
   return loadTrip(route.value.tripId, true)
 }
 
+function isCurrentPlanningRequest(requestSequence: number, generation: number, tripId: string) {
+  return requestSequence === planningRequestSequence
+    && isCurrentSession(generation)
+    && route.value.name === 'trip-detail'
+    && route.value.tripId === tripId
+}
+
+async function handleStartPlanning() {
+  if (!selectedTrip.value || planningState.value === 'queued') return
+  const tripId = selectedTrip.value.id
+  const generation = sessionGeneration
+  stopPlanningStream(false)
+  const requestSequence = planningRequestSequence
+  planningState.value = 'queued'
+  planningError.value = null
+
+  try {
+    const idempotencyKey = crypto.randomUUID()
+    const task = await withAccessToken((token) => createPlanningTask(token, tripId, idempotencyKey))
+    if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
+    const controller = new AbortController()
+    planningStreamController = controller
+    let lastEventId: number | undefined
+    let terminal = false
+    let itineraryReload: Promise<boolean> | null = null
+    const handleEvent = (event: PlanningTaskEvent) => {
+      if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
+      lastEventId = event.eventId
+      if (event.eventType === 'PLANNING_COMPLETED') {
+        terminal = true
+        planningState.value = 'succeeded'
+        itineraryReload = loadItinerary(tripId)
+      } else if (event.eventType === 'PLANNING_FAILED' || event.eventType === 'PLANNING_CANCELLED') {
+        terminal = true
+        planningState.value = 'failed'
+        planningError.value = event.payload.message ?? event.payload.errorMessage ?? '行程规划失败，请调整条件后重试'
+      }
+    }
+
+    for (let attempt = 0; attempt < 3 && !terminal; attempt += 1) {
+      try {
+        lastEventId = await withAccessToken((token) => streamPlanningTaskEvents(
+          token,
+          task.eventStreamUrl,
+          handleEvent,
+          { lastEventId, signal: controller.signal },
+        ))
+      } catch (cause) {
+        if (!(cause instanceof TypeError) || attempt === 2) throw cause
+      }
+    }
+    if (itineraryReload) await itineraryReload
+    if (!terminal && isCurrentPlanningRequest(requestSequence, generation, tripId)) {
+      planningState.value = 'failed'
+      planningError.value = '任务状态连接已中断，请稍后重试'
+    }
+  } catch (cause) {
+    if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
+    if (cause instanceof DOMException && cause.name === 'AbortError') return
+    planningState.value = 'failed'
+    planningError.value = errorMessage(cause)
+  } finally {
+    if (requestSequence === planningRequestSequence) planningStreamController = null
+  }
+}
+
 async function logout() {
   const refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY)
   clearLocalSession()
@@ -324,7 +454,10 @@ onMounted(() => {
   restoreSession()
 })
 
-onUnmounted(() => window.removeEventListener('popstate', handlePopState))
+onUnmounted(() => {
+  stopPlanningStream()
+  window.removeEventListener('popstate', handlePopState)
+})
 </script>
 
 <template>
@@ -348,6 +481,12 @@ onUnmounted(() => window.removeEventListener('popstate', handlePopState))
     :trip="selectedTrip"
     :busy="detailBusy"
     :error="detailError"
+    :itinerary="itinerary"
+    :itinerary-busy="itineraryBusy"
+    :itinerary-error="itineraryError"
+    :planning-state="planningState"
+    :planning-error="planningError"
+    :start-planning="handleStartPlanning"
     :update-constraints="handleUpdateConstraints"
     :reload-trip="reloadSelectedTrip"
     @back="backToTrips"

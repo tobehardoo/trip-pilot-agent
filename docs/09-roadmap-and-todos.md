@@ -27,7 +27,9 @@
 
 同时已提前完成第 2 周最小闭环：Java 在同一事务创建 `PlanningTask + Outbox`，通过 publisher confirm 投递 RabbitMQ，Python Demo Worker 发布确定性的 `PLANNING_COMPLETED`，Java 再幂等保存任务事件和不可变关系型行程版本。完成消费者具备契约拒绝与死信、过期基线保护、原子回滚和事件 ID 冲突保护；当前行程 API 与带历史补发的所有者隔离 SSE 已通过真实 RabbitMQ、PostgreSQL 和跨服务冒烟。
 
-截至 2026-07-16，Vue 工作台也已完成任务创建、带 Bearer Token 的流式 SSE、断线事件补发、规划状态和 Demo 行程时间轴。网页注册、创建广州 4 日游、点击开始规划并自动显示 4 天行程已通过真实 Java -> RabbitMQ -> Python Worker -> PostgreSQL -> SSE 跨服务验收；桌面与 390 px 移动视口无横向溢出或元素重叠。下一步进入第 3 周真实数据切片，优先完成高德 Provider 与 Redis 缓存，再接地图联动。
+截至 2026-07-16，Vue 工作台也已完成任务创建、带 Bearer Token 的流式 SSE、断线事件补发、规划状态和 Demo 行程时间轴。网页注册、创建广州 4 日游、点击开始规划并自动显示 4 天行程已通过真实 Java -> RabbitMQ -> Python Worker -> PostgreSQL -> SSE 跨服务验收；桌面与 390 px 移动视口无横向溢出或元素重叠。
+
+同日已提前开始第 3 周真实数据切片：Python 完成强类型 `MapProvider`、高德地点搜索 2.0 文本搜索、统一错误映射、Redis JSON 缓存与确定性 Demo 降级，且不读取真实 Key 做自动化测试。下一步升级 `PLANNING_COMPLETED` 跨服务契约，将真实广州 POI 接入候选地点和行程版本，再实现地理编码、路线与前端地图联动。
 
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环
 

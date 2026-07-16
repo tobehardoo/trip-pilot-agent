@@ -17,13 +17,14 @@ M1 正在实施。当前已经完成：
 - Java 规划任务 API 会在同一事务写入 `PlanningTask + Outbox`，支持幂等重放和单旅行活动任务约束。
 - Outbox 通过 RabbitMQ publisher confirm 至少一次投递；每条确认使用独立事务，失败会记录原因并指数退避。
 - Python Demo Worker 使用严格的强类型消息契约消费创建命令，并发布确定性的结构化完成事件。
+- Python 已提供与规划流程解耦的强类型 `MapProvider`、高德地点搜索 2.0 适配器、Redis JSON 缓存和确定性的 Demo Map Provider；缓存故障可降级，第三方错误已统一分类。
 - Java 幂等消费完成事件，在单事务内更新任务、保存任务事件和不可变关系型行程版本；过期基线结果会失败且不污染当前行程。
 - 当前行程 API 按所有者隔离；任务 SSE 支持持久历史补发、`Last-Event-ID` 重连、实时终态通知与终态关闭。
 - Vue 工作台可直接创建规划任务，使用带 Bearer Token 的流式 `fetch` 消费 SSE，并在断线后携带 `Last-Event-ID` 补发。
 - 任务完成后自动读取当前行程，以日期和活动时间轴展示 Demo Provider、版本与估算费用；UTC 活动时间统一按中国标准时间显示。
-- Java 73 个自动化测试、90.78% 行覆盖率，Python 21 个 Worker/API 测试，以及 Vue 33 个组件、API 边界、SSE、路由与仓库测试。
+- Java 73 个自动化测试、90.78% 行覆盖率，Python 57 个 Worker/API/Provider 测试，以及 Vue 33 个组件、API 边界、SSE、路由与仓库测试。
 
-下一条纵向切片是接入高德地理编码、POI 与路线 Provider，并增加 Redis 缓存；先用真实广州地点替换 Demo 活动，同时保留可复现的 Demo 降级路径。
+下一条纵向切片是升级跨服务完成事件契约，把高德 POI 接入候选地点生成并用真实广州地点替换 Demo 活动；随后增加地理编码、路线 Provider 和地图联动，同时保留可复现的 Demo 降级路径。
 
 本地准备：
 
@@ -61,6 +62,7 @@ pnpm dev
 12. [Phase 3 异步规划命令测试计划](docs/11-phase-3-test-plan.md)
 13. [Phase 4 完成事件、行程版本与 SSE 测试计划](docs/12-phase-4-completion-and-sse-test-plan.md)
 14. [Phase 5 网页规划闭环与 Demo 行程时间轴测试计划](docs/13-phase-5-web-planning-workbench-test-plan.md)
+15. [Phase 6 高德 POI Provider 与 Redis 缓存测试计划](docs/14-phase-6-amap-poi-provider-test-plan.md)
 
 ## 已确认的基础约束
 

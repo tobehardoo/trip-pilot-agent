@@ -39,6 +39,100 @@ class PlanningCompletedEventParserTest {
     }
 
     @Test
+    void parsesV2AmapActivityMetadataWhileKeepingV1Compatible() {
+        PlanningCompletedEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV2(
+                        UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
+                )
+        ));
+
+        PlanningCompletedEvent.Activity activity =
+                event.payload().itinerary().days().getFirst().activities().getFirst();
+        assertThat(event.schemaVersion()).isEqualTo(2);
+        assertThat(event.payload().provider()).isEqualTo("AMAP");
+        assertThat(activity.source()).isEqualTo("AMAP");
+        assertThat(activity.providerPoiId()).isEqualTo("B00140TWHT");
+        assertThat(activity.coordinates().longitude()).isEqualByComparingTo("113.319263");
+        assertThat(activity.coordinates().latitude()).isEqualByComparingTo("23.109078");
+        assertThat(activity.address()).isEqualTo("珠江东路2号");
+    }
+
+    @Test
+    void parsesV2DemoFallbackWithoutAmapMetadata() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(eventJson());
+        event.put("schemaVersion", 2);
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+
+        PlanningCompletedEvent.Activity activity =
+                parsed.payload().itinerary().days().getFirst().activities().getFirst();
+        assertThat(parsed.schemaVersion()).isEqualTo(2);
+        assertThat(parsed.payload().provider()).isEqualTo("DEMO");
+        assertThat(activity.source()).isEqualTo("DEMO");
+        assertThat(activity.providerPoiId()).isNull();
+        assertThat(activity.coordinates()).isNull();
+        assertThat(activity.address()).isNull();
+    }
+
+    @Test
+    void rejectsV2AmapActivityWithoutCoordinates() throws Exception {
+        ObjectNode event = amapV2Event();
+        ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");
+        activity.remove("coordinates");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("AMAP activity requires valid provider metadata");
+    }
+
+    @Test
+    void rejectsV2PayloadAndActivityProviderMismatch() throws Exception {
+        ObjectNode event = amapV2Event();
+        ((ObjectNode) event.path("payload")).put("provider", "DEMO");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("activity source must match payload provider");
+    }
+
+    @Test
+    void rejectsV2AmapCoordinatesOutsideValidBounds() throws Exception {
+        ObjectNode event = amapV2Event();
+        ObjectNode coordinates =
+                (ObjectNode) event.at("/payload/itinerary/days/0/activities/0/coordinates");
+        coordinates.put("longitude", new BigDecimal("181"));
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("AMAP activity requires valid provider metadata");
+    }
+
+    @Test
+    void rejectsV2AmapCoordinateStringCoercion() throws Exception {
+        ObjectNode event = amapV2Event();
+        ObjectNode coordinates =
+                (ObjectNode) event.at("/payload/itinerary/days/0/activities/0/coordinates");
+        coordinates.put("longitude", "113.319263");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("activity metadata types do not match the JSON Schema");
+    }
+
+    @Test
+    void rejectsV2DemoActivityThatClaimsAmapMetadata() throws Exception {
+        ObjectNode event = amapV2Event();
+        ObjectNode payload = (ObjectNode) event.path("payload");
+        ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");
+        payload.put("provider", "DEMO");
+        activity.put("source", "DEMO");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("DEMO activity must not contain provider metadata");
+    }
+
+    @Test
     void rejectsUnknownWireFields() throws Exception {
         ObjectNode event = (ObjectNode) objectMapper.readTree(eventJson());
         event.put("unexpected", true);
@@ -134,6 +228,12 @@ class PlanningCompletedEventParserTest {
         return PlanningCompletedEventFixture.completedEvent(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
         );
+    }
+
+    private ObjectNode amapV2Event() throws Exception {
+        return (ObjectNode) objectMapper.readTree(PlanningCompletedEventFixture.completedAmapEventV2(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
+        ));
     }
 
     private byte[] bytes(String value) {

@@ -132,9 +132,12 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         )), "itinerary day");
         for (int activityIndex = 0; activityIndex < day.activities().size(); activityIndex++) {
             PlanningCompletedEvent.Activity activity = day.activities().get(activityIndex);
+            PlanningCompletedEvent.Coordinates coordinates = activity.coordinates();
             requireOne(itineraryMapper.insertActivity(new ItineraryMapper.ActivityWrite(
                     UUID.randomUUID(), dayId, activityIndex, activity.title().strip(),
-                    activity.startTime(), activity.endTime(), activity.estimatedCost(), activity.source()
+                    activity.startTime(), activity.endTime(), activity.estimatedCost(), activity.source(),
+                    activity.providerPoiId(), coordinates == null ? null : coordinates.longitude(),
+                    coordinates == null ? null : coordinates.latitude(), activity.address()
             )), "itinerary activity");
         }
     }

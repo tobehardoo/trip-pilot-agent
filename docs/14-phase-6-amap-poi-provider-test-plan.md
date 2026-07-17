@@ -65,4 +65,4 @@
 - 专项测试 `36 passed`；Python 服务全量测试 `57 passed`；`ruff check src tests` 通过。
 - 自动化测试只使用 `httpx.MockTransport` 与内存 Redis 假客户端，未读取本地 `.env`、未调用真实高德接口、未消耗额度。
 
-保留到下一切片：升级 `PLANNING_COMPLETED` 契约并把 `AMAP` POI 接入规划结果。地理编码、路线矩阵和前端地图仍按原路线图后续实现。
+后续状态：Phase 7 已升级 `PLANNING_COMPLETED v2` 并把 AMAP POI 接入规划结果。地理编码、路线矩阵和前端地图仍按原路线图后续实现。

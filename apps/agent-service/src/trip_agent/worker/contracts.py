@@ -34,6 +34,22 @@ type NameText = Annotated[
 type ItineraryText = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
 ]
+type ProviderPoiId = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+]
+type AddressText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
+]
+type JsonLongitude = Annotated[
+    Decimal,
+    Field(ge=Decimal("-180"), le=Decimal("180")),
+    PlainSerializer(lambda value: float(value), return_type=float, when_used="json"),
+]
+type JsonLatitude = Annotated[
+    Decimal,
+    Field(ge=Decimal("-90"), le=Decimal("90")),
+    PlainSerializer(lambda value: float(value), return_type=float, when_used="json"),
+]
 
 
 class MessageModel(BaseModel):
@@ -133,33 +149,60 @@ class PlanningCreateCommand(InboundMessageModel):
         return self
 
 
-class DemoActivity(MessageModel):
+class ActivityCoordinates(MessageModel):
+    longitude: JsonLongitude
+    latitude: JsonLatitude
+
+
+class ItineraryActivity(MessageModel):
     title: ItineraryText
     start_time: datetime
     end_time: datetime
     estimated_cost: JsonDecimal
-    source: Literal["DEMO"]
+    source: Literal["AMAP", "DEMO"]
+    provider_poi_id: ProviderPoiId | None = None
+    coordinates: ActivityCoordinates | None = None
+    address: AddressText | None = None
+
+    @model_validator(mode="after")
+    def validate_source_metadata(self) -> Self:
+        metadata = (self.provider_poi_id, self.coordinates, self.address)
+        if self.source == "AMAP" and any(value is None for value in metadata):
+            raise ValueError("AMAP activity requires provider metadata")
+        if self.source == "DEMO" and any(value is not None for value in metadata):
+            raise ValueError("DEMO activity must not contain provider metadata")
+        return self
 
 
-class DemoItineraryDay(MessageModel):
+class ItineraryDay(MessageModel):
     date: date
-    activities: tuple[DemoActivity, ...] = Field(min_length=1)
+    activities: tuple[ItineraryActivity, ...] = Field(min_length=1)
 
 
-class DemoItinerary(MessageModel):
+class Itinerary(MessageModel):
     title: ItineraryText
-    days: tuple[DemoItineraryDay, ...] = Field(min_length=1)
+    days: tuple[ItineraryDay, ...] = Field(min_length=1)
     estimated_total_cost: JsonDecimal
 
 
 class PlanningCompletedPayload(MessageModel):
-    provider: Literal["DEMO"]
-    itinerary: DemoItinerary
+    provider: Literal["AMAP", "DEMO"]
+    itinerary: Itinerary
+
+    @model_validator(mode="after")
+    def validate_activity_sources(self) -> Self:
+        if any(
+            activity.source != self.provider
+            for day in self.itinerary.days
+            for activity in day.activities
+        ):
+            raise ValueError("activity source must match payload provider")
+        return self
 
 
 class PlanningCompletedEvent(MessageModel):
     event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     event_id: UUID
     trace_id: UUID
     task_id: UUID

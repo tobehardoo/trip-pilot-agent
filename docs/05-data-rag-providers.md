@@ -40,15 +40,17 @@ V1 使用高德作为主要地图数据源，能力包括：
 
 所有高德调用经过内部 `MapProvider`，Agent 节点不得散落直接 HTTP 请求。
 
-截至 2026-07-16，Python Agent 已完成第一段 Provider 基础设施：
+截至 2026-07-17，Python Agent 已完成 POI Provider 与规划链路：
 
 - `MapProvider` Protocol、不可变请求/POI/成功/失败模型和统一错误码。
 - 高德地点搜索 2.0 文本搜索适配器，支持严格城市、分页上限、坐标和行政区解析。
 - 高德鉴权、QPS、额度、参数、超时、网络、服务故障和 Schema 变化分类。
 - 可选 JSON 缓存边界；缓存键只含查询摘要，不含 Key 或原始查询文本。
 - 确定性的 Demo Map Provider，用于无网络测试和后续规划降级。
+- 异步 AMAP Planning Provider 按偏好有界查询、按 POI ID 去重，并为每天分配一个真实地点。
+- 已分类 Provider 失败和候选不足会降级 Demo；未知异常继续进入消息重试，不会被静默吞掉。
 
-这一实现目前与 Worker 的 `PLANNING_COMPLETED v1` 契约解耦。真实 POI 写入行程版本前，必须先升级跨服务契约及 Java 消费端，不能把 `AMAP` 值直接塞入当前仅接受 `DEMO` 的完成事件。
+`PLANNING_COMPLETED v2` 已携带 POI ID、坐标和地址。Java 继续接受 v1 Demo 事件，并通过 Flyway V6 把 AMAP 元数据保存到 `business.activity`；当前行程 API 可直接供后续地图消费。
 
 ## 3. 酒店与交通数据边界
 

@@ -2,18 +2,25 @@
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from functools import partial
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
+from urllib.parse import quote
 
 import aio_pika
+import httpx
 from aio_pika.abc import AbstractExchange, AbstractIncomingMessage
-from pydantic import ValidationError
+from pydantic import Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from trip_agent.providers.map import AmapMapProvider, JsonCache
+from trip_agent.providers.redis_cache import RedisJsonCache
 from trip_agent.worker.contracts import PlanningCreateCommand
 from trip_agent.worker.processor import (
+    AmapPlanningProvider,
     DemoPlanningProvider,
+    FallbackPlanningProvider,
     PlanningProvider,
     process_planning_create,
 )
@@ -51,13 +58,85 @@ class EventExchange(Protocol):
 
 
 class WorkerSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="", extra="ignore", frozen=True)
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        env_file=(".env", "../../.env"),
+        extra="ignore",
+        frozen=True,
+    )
 
     rabbitmq_host: str = "localhost"
     rabbitmq_port: int = 5672
     rabbitmq_user: str = "trip_pilot"
     rabbitmq_password: str = "replace-with-local-password"
     demo_mode: bool = True
+    amap_web_service_key: SecretStr | None = None
+    amap_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    poi_cache_ttl_seconds: int = Field(default=86_400, gt=0)
+    redis_host: str = "localhost"
+    redis_port: int = Field(default=6379, ge=1, le=65_535)
+    redis_password: SecretStr = SecretStr("replace-with-local-password")
+    redis_db: int = Field(default=0, ge=0)
+    redis_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
+
+    @model_validator(mode="after")
+    def require_real_provider_key(self) -> Self:
+        key = self.amap_web_service_key
+        if not self.demo_mode and (key is None or not key.get_secret_value().strip()):
+            raise ValueError("AMAP_WEB_SERVICE_KEY is required when DEMO_MODE=false")
+        return self
+
+    def redis_connection_url(self) -> str:
+        password = quote(self.redis_password.get_secret_value(), safe="")
+        return f"redis://:{password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+
+def build_planning_provider(
+    settings: WorkerSettings,
+    *,
+    http_client: httpx.AsyncClient | None = None,
+    cache: JsonCache | None = None,
+) -> PlanningProvider:
+    if settings.demo_mode:
+        return DemoPlanningProvider()
+    if http_client is None:
+        raise ValueError("HTTP client is required in real provider mode")
+    key = settings.amap_web_service_key
+    if key is None:
+        raise ValueError("AMap key is required in real provider mode")
+    amap = AmapMapProvider(
+        api_key=key.get_secret_value(),
+        http_client=http_client,
+        cache=cache,
+        cache_ttl_seconds=settings.poi_cache_ttl_seconds,
+    )
+    return FallbackPlanningProvider(
+        AmapPlanningProvider(amap),
+        DemoPlanningProvider(),
+    )
+
+
+@asynccontextmanager
+async def planning_provider_runtime(
+    settings: WorkerSettings,
+) -> AsyncIterator[PlanningProvider]:
+    if settings.demo_mode:
+        yield DemoPlanningProvider()
+        return
+    async with httpx.AsyncClient(timeout=settings.amap_timeout_seconds) as http_client:
+        cache = RedisJsonCache.from_url(
+            settings.redis_connection_url(),
+            socket_connect_timeout=settings.redis_timeout_seconds,
+            socket_timeout=settings.redis_timeout_seconds,
+        )
+        try:
+            yield build_planning_provider(
+                settings,
+                http_client=http_client,
+                cache=cache,
+            )
+        finally:
+            await cache.aclose()
 
 
 async def handle_delivery(
@@ -74,9 +153,9 @@ async def handle_delivery(
         return
 
     try:
-        completed = process_planning_create(command, provider or DemoPlanningProvider())
+        completed = await process_planning_create(command, provider or DemoPlanningProvider())
         outgoing = aio_pika.Message(
-            body=completed.model_dump_json(by_alias=True).encode(),
+            body=completed.model_dump_json(by_alias=True, exclude_none=True).encode(),
             content_type="application/json",
             content_encoding="utf-8",
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
@@ -104,9 +183,11 @@ async def handle_delivery(
 
 
 async def run_worker(settings: WorkerSettings) -> None:
-    if not settings.demo_mode:
-        raise ValueError("Only DEMO_MODE=true is supported by the current worker slice")
+    async with planning_provider_runtime(settings) as provider:
+        await _consume(settings, provider)
 
+
+async def _consume(settings: WorkerSettings, provider: PlanningProvider) -> None:
     connection = await aio_pika.connect_robust(
         host=settings.rabbitmq_host,
         port=settings.rabbitmq_port,
@@ -139,6 +220,7 @@ async def run_worker(settings: WorkerSettings) -> None:
         callback: Callable[[AbstractIncomingMessage], Awaitable[None]] = partial(
             _handle_incoming,
             event_exchange=event_exchange,
+            provider=provider,
         )
         await command_queue.consume(callback)
         logger.info("planning worker consuming queue=%s", CREATE_QUEUE)
@@ -149,8 +231,9 @@ async def _handle_incoming(
     message: AbstractIncomingMessage,
     *,
     event_exchange: AbstractExchange,
+    provider: PlanningProvider,
 ) -> None:
-    await handle_delivery(message, event_exchange)
+    await handle_delivery(message, event_exchange, provider)
 
 
 def main() -> None:

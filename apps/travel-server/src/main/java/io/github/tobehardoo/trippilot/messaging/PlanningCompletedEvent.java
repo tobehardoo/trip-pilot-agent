@@ -31,7 +31,13 @@ public record PlanningCompletedEvent(
             OffsetDateTime startTime,
             OffsetDateTime endTime,
             BigDecimal estimatedCost,
-            String source
+            String source,
+            String providerPoiId,
+            Coordinates coordinates,
+            String address
     ) {
+    }
+
+    public record Coordinates(BigDecimal longitude, BigDecimal latitude) {
     }
 }

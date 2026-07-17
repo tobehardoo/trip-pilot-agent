@@ -16,10 +16,24 @@ class RedisJsonCache:
         self._client = client
 
     @classmethod
-    def from_url(cls, url: str) -> Self:
+    def from_url(
+        cls,
+        url: str,
+        *,
+        socket_connect_timeout: float = 2.0,
+        socket_timeout: float = 2.0,
+    ) -> Self:
         from redis.asyncio import Redis
 
-        return cls(Redis.from_url(url))
+        if socket_connect_timeout <= 0 or socket_timeout <= 0:
+            raise ValueError("Redis socket timeouts must be positive")
+        return cls(
+            Redis.from_url(
+                url,
+                socket_connect_timeout=socket_connect_timeout,
+                socket_timeout=socket_timeout,
+            )
+        )
 
     async def get(self, key: str) -> str | None:
         value = await self._client.get(key)

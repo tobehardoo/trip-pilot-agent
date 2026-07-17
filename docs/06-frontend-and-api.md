@@ -73,6 +73,18 @@
 
 具体 URL 在 OpenAPI 设计阶段可以调整，但资源边界不变。
 
+当前行程 API 的活动来源字段：
+
+```text
+provider = AMAP | DEMO
+activity.source = AMAP | DEMO
+activity.providerPoiId = string | null
+activity.coordinates = { longitude, latitude } | null
+activity.address = string | null
+```
+
+AMAP 活动必须包含完整来源元数据；Demo 活动对应字段为 `null`。前端类型已同步，地图渲染在下一切片实现。
+
 ## 6. 异步任务 API
 
 创建任务：

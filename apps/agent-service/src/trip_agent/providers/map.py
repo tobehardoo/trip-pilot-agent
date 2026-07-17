@@ -76,6 +76,14 @@ type CityText = Annotated[
 type KeywordText = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
 ]
+type ProviderPoiId = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+]
+type PoiName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+]
+type PoiAddress = Annotated[str, StringConstraints(strip_whitespace=True, max_length=300)]
+
 
 class ProviderModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -87,15 +95,15 @@ class Coordinates(ProviderModel):
 
 
 class Poi(ProviderModel):
-    provider_id: NonEmptyText
-    name: NonEmptyText
+    provider_id: ProviderPoiId
+    name: PoiName
     coordinates: Coordinates
     type_name: str
     type_code: str
     province: str
     city: str
     district: str
-    address: str
+    address: PoiAddress
 
 
 class PoiSearchRequest(ProviderModel):

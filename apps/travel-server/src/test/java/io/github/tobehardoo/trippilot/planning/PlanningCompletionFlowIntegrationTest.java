@@ -1,5 +1,6 @@
 package io.github.tobehardoo.trippilot.planning;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
@@ -88,6 +89,53 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.title").value("广州 Demo 行程"))
                 .andExpect(jsonPath("$.days[0].date").value("2026-08-01"))
                 .andExpect(jsonPath("$.days[0].activities[0].source").value("DEMO"));
+    }
+
+    @Test
+    void persistsAndReturnsV2AmapActivityMetadata() throws Exception {
+        PlanningContext context = createPlanningContext("completion-amap@example.com");
+        PlanningCompletedEvent event = eventParser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV2(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        ));
+
+        completionService.handle(event);
+
+        Map<String, Object> activity = jdbcTemplate.queryForMap("""
+                SELECT itinerary_version.provider, activity.source, activity.provider_poi_id,
+                       activity.longitude, activity.latitude, activity.address
+                FROM business.itinerary
+                JOIN business.itinerary_version
+                  ON itinerary_version.id = itinerary.current_version_id
+                JOIN business.itinerary_day
+                  ON itinerary_day.itinerary_version_id = itinerary_version.id
+                JOIN business.activity ON activity.itinerary_day_id = itinerary_day.id
+                WHERE itinerary.trip_id = ?
+                """, context.tripId());
+
+        assertThat(activity).containsEntry("provider", "AMAP")
+                .containsEntry("source", "AMAP")
+                .containsEntry("provider_poi_id", "B00140TWHT")
+                .containsEntry("address", "珠江东路2号");
+        assertThat((BigDecimal) activity.get("longitude"))
+                .isEqualByComparingTo("113.3192630");
+        assertThat((BigDecimal) activity.get("latitude"))
+                .isEqualByComparingTo("23.1090780");
+
+        mockMvc.perform(get("/api/trips/{tripId}/itinerary", context.tripId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("AMAP"))
+                .andExpect(jsonPath("$.days[0].activities[0].source").value("AMAP"))
+                .andExpect(jsonPath("$.days[0].activities[0].providerPoiId")
+                        .value("B00140TWHT"))
+                .andExpect(jsonPath("$.days[0].activities[0].coordinates.longitude")
+                        .value(113.319263))
+                .andExpect(jsonPath("$.days[0].activities[0].coordinates.latitude")
+                        .value(23.109078))
+                .andExpect(jsonPath("$.days[0].activities[0].address")
+                        .value("珠江东路2号"));
     }
 
     @Test

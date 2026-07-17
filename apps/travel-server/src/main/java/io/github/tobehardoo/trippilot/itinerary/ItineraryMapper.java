@@ -56,10 +56,12 @@ public interface ItineraryMapper {
     @Insert("""
             INSERT INTO business.activity(
                 id, itinerary_day_id, activity_order, title,
-                start_time, end_time, estimated_cost, source
+                start_time, end_time, estimated_cost, source,
+                provider_poi_id, longitude, latitude, address
             ) VALUES (
                 #{id}, #{itineraryDayId}, #{activityOrder}, #{title},
-                #{startTime}, #{endTime}, #{estimatedCost}, #{source}
+                #{startTime}, #{endTime}, #{estimatedCost}, #{source},
+                #{providerPoiId}, #{longitude}, #{latitude}, #{address}
             )
             """)
     int insertActivity(ActivityWrite activity);
@@ -96,7 +98,8 @@ public interface ItineraryMapper {
     List<StoredDay> findDays(UUID versionId);
 
     @Select("""
-            SELECT id, activity_order, title, start_time, end_time, estimated_cost, source
+            SELECT id, activity_order, title, start_time, end_time, estimated_cost, source,
+                   provider_poi_id, longitude, latitude, address
             FROM business.activity
             WHERE itinerary_day_id = #{dayId}
             ORDER BY activity_order
@@ -136,7 +139,11 @@ public interface ItineraryMapper {
             OffsetDateTime startTime,
             OffsetDateTime endTime,
             BigDecimal estimatedCost,
-            String source
+            String source,
+            String providerPoiId,
+            BigDecimal longitude,
+            BigDecimal latitude,
+            String address
     ) {
     }
 
@@ -161,7 +168,11 @@ public interface ItineraryMapper {
             OffsetDateTime startTime,
             OffsetDateTime endTime,
             BigDecimal estimatedCost,
-            String source
+            String source,
+            String providerPoiId,
+            BigDecimal longitude,
+            BigDecimal latitude,
+            String address
     ) {
     }
 }

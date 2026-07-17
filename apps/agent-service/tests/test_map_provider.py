@@ -389,6 +389,46 @@ def test_amap_invalid_json_is_reported_as_a_schema_change() -> None:
     assert result.error_code == "PROVIDER_SCHEMA_CHANGED"
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", "x" * 101),
+        ("name", "x" * 201),
+        ("address", "x" * 301),
+    ],
+)
+def test_amap_poi_text_that_cannot_fit_completion_storage_is_a_schema_failure(
+    field: str,
+    value: str,
+) -> None:
+    provider = load_map_provider_module()
+    poi = make_amap_poi()
+    poi[field] = value
+
+    def handle(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "1",
+                "info": "OK",
+                "infocode": "10000",
+                "pois": [poi],
+            },
+        )
+
+    async def run_scenario() -> Any:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            amap = provider.AmapMapProvider(api_key="local-secret-key", http_client=client)
+            return await amap.search_pois(
+                provider.PoiSearchRequest(city="Guangzhou", keyword="museum")
+            )
+
+    result = asyncio.run(run_scenario())
+
+    assert isinstance(result, provider.ProviderFailure)
+    assert result.error_code == "PROVIDER_SCHEMA_CHANGED"
+
+
 def test_amap_httpx_info_log_redacts_the_api_key(caplog: pytest.LogCaptureFixture) -> None:
     provider = load_map_provider_module()
     secret = "should-never-appear-in-logs"

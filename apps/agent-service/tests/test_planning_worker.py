@@ -1,4 +1,7 @@
+import asyncio
 from copy import deepcopy
+from datetime import UTC, datetime
+from decimal import Decimal
 from importlib import import_module
 
 import pytest
@@ -151,10 +154,11 @@ def test_demo_processor_emits_a_deterministic_completed_event() -> None:
     assert process is not None
     command = command_type.model_validate(COMMAND)
 
-    first = process(command, provider_type())
-    repeated = process(command, provider_type())
+    first = asyncio.run(process(command, provider_type()))
+    repeated = asyncio.run(process(command, provider_type()))
 
     assert first.event_type == "PLANNING_COMPLETED"
+    assert first.schema_version == 2
     assert first.event_id == repeated.event_id
     assert first.run_id == repeated.run_id
     assert first.trace_id == command.trace_id
@@ -174,7 +178,7 @@ def test_demo_provider_builds_one_explicitly_sourced_day_per_trip_date() -> None
     assert process is not None
     command = command_type.model_validate(COMMAND)
 
-    completed = process(command, provider_type())
+    completed = asyncio.run(process(command, provider_type()))
 
     assert [str(day.date) for day in completed.payload.itinerary.days] == [
         "2026-08-01",
@@ -192,7 +196,7 @@ def test_completed_event_models_reject_unpersistable_money(invalid_cost: str) ->
     contracts = import_module("trip_agent.worker.contracts")
 
     with pytest.raises(ValidationError):
-        contracts.DemoItinerary.model_validate(
+        contracts.Itinerary.model_validate(
             {
                 "title": "Demo itinerary",
                 "days": [
@@ -218,7 +222,7 @@ def test_completed_event_models_reject_titles_over_two_hundred_characters() -> N
     contracts = import_module("trip_agent.worker.contracts")
 
     with pytest.raises(ValidationError):
-        contracts.DemoItinerary.model_validate(
+        contracts.Itinerary.model_validate(
             {
                 "title": "x" * 201,
                 "days": [
@@ -238,3 +242,301 @@ def test_completed_event_models_reject_titles_over_two_hundred_characters() -> N
                 "estimatedTotalCost": 0,
             }
         )
+
+
+def test_v2_activity_contract_requires_real_amap_metadata_and_numeric_coordinates() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    activity_type = getattr(contracts, "ItineraryActivity", None)
+    coordinates_type = getattr(contracts, "ActivityCoordinates", None)
+    assert activity_type is not None
+    assert coordinates_type is not None
+
+    activity = activity_type(
+        title="广东省博物馆",
+        start_time="2026-08-01T09:00:00+08:00",
+        end_time="2026-08-01T11:00:00+08:00",
+        estimated_cost=0,
+        source="AMAP",
+        provider_poi_id="B00140TWHT",
+        coordinates=coordinates_type(longitude="113.319263", latitude="23.109078"),
+        address="珠江东路2号",
+    )
+    wire = activity.model_dump(mode="json", by_alias=True)
+
+    assert wire["providerPoiId"] == "B00140TWHT"
+    assert wire["coordinates"] == {"longitude": 113.319263, "latitude": 23.109078}
+    with pytest.raises(ValidationError):
+        activity_type.model_validate({**wire, "coordinates": None})
+    with pytest.raises(ValidationError):
+        activity_type.model_validate(
+            {
+                **wire,
+                "source": "DEMO",
+                "providerPoiId": "pretend-amap-id",
+            }
+        )
+
+
+def test_amap_planner_builds_a_v2_sourced_activity_for_every_trip_day() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    processor = import_module("trip_agent.worker.processor")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+    pois = tuple(
+        map_contracts.Poi(
+            provider_id=f"poi-{index}",
+            name=f"真实地点 {index}",
+            coordinates=map_contracts.Coordinates(
+                longitude=113.31 + index / 100,
+                latitude=23.11 + index / 100,
+            ),
+            type_name="风景名胜",
+            type_code="110000",
+            province="广东省",
+            city="广州市",
+            district="天河区",
+            address=f"广州地址 {index}",
+        )
+        for index in range(1, 5)
+    )
+
+    class SuccessfulMapProvider:
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        async def search_pois(self, request: object):
+            self.requests.append(request)
+            return map_contracts.ProviderSuccess(
+                data=pois,
+                provider="AMAP",
+                latency_ms=8,
+                cached=False,
+                fetched_at=datetime(2026, 7, 16, tzinfo=UTC),
+                estimated=False,
+            )
+
+    map_provider = SuccessfulMapProvider()
+    planner_type = getattr(processor, "AmapPlanningProvider", None)
+    assert planner_type is not None
+
+    completed = asyncio.run(
+        processor.process_planning_create(command, planner_type(map_provider))
+    )
+
+    assert completed.schema_version == 2
+    assert completed.payload.provider == "AMAP"
+    assert [day.activities[0].title for day in completed.payload.itinerary.days] == [
+        "真实地点 1",
+        "真实地点 2",
+        "真实地点 3",
+        "真实地点 4",
+    ]
+    first = completed.payload.itinerary.days[0].activities[0]
+    assert first.source == "AMAP"
+    assert first.provider_poi_id == "poi-1"
+    assert first.coordinates.longitude == Decimal("113.32")
+    assert first.address == "广州地址 1"
+    assert len(map_provider.requests) == 1
+    request = map_provider.requests[0]
+    assert request.city == "广州"
+    assert request.keyword == "美食"
+    assert request.limit == 4
+
+
+def test_classified_amap_failure_falls_back_to_an_explicit_demo_v2_result() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    processor = import_module("trip_agent.worker.processor")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+
+    class FailedMapProvider:
+        async def search_pois(self, request: object):
+            del request
+            return map_contracts.ProviderFailure(
+                provider="AMAP",
+                error_code="PROVIDER_AUTH_FAILED",
+                error_message="AMap authentication failed",
+                retryable=False,
+                latency_ms=3,
+                fetched_at=datetime(2026, 7, 16, tzinfo=UTC),
+            )
+
+    fallback_type = getattr(processor, "FallbackPlanningProvider", None)
+    assert fallback_type is not None
+    planner = fallback_type(
+        processor.AmapPlanningProvider(FailedMapProvider()),
+        processor.DemoPlanningProvider(),
+    )
+
+    completed = asyncio.run(processor.process_planning_create(command, planner))
+
+    assert completed.schema_version == 2
+    assert completed.payload.provider == "DEMO"
+    assert all(
+        activity.source == "DEMO"
+        for day in completed.payload.itinerary.days
+        for activity in day.activities
+    )
+
+
+def test_unexpected_amap_exception_is_not_hidden_by_demo_fallback() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    processor = import_module("trip_agent.worker.processor")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+
+    class BrokenMapProvider:
+        async def search_pois(self, request: object):
+            del request
+            raise RuntimeError("unexpected planner defect")
+
+    fallback_type = getattr(processor, "FallbackPlanningProvider", None)
+    assert fallback_type is not None
+    planner = fallback_type(
+        processor.AmapPlanningProvider(BrokenMapProvider()),
+        processor.DemoPlanningProvider(),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected planner defect"):
+        asyncio.run(processor.process_planning_create(command, planner))
+
+
+def test_amap_planner_collects_unique_pois_across_preference_queries() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    processor = import_module("trip_agent.worker.processor")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+
+    def poi(index: int):
+        return map_contracts.Poi(
+            provider_id=f"poi-{index}",
+            name=f"真实地点 {index}",
+            coordinates=map_contracts.Coordinates(
+                longitude=113.30 + index / 100,
+                latitude=23.10 + index / 100,
+            ),
+            type_name="风景名胜",
+            type_code="110000",
+            province="广东省",
+            city="广州市",
+            district="越秀区",
+            address=f"广州地址 {index}",
+        )
+
+    responses = {
+        "美食": (poi(1), poi(2)),
+        "历史": (poi(2), poi(3), poi(4)),
+    }
+
+    class CollectingMapProvider:
+        def __init__(self) -> None:
+            self.keywords: list[str] = []
+
+        async def search_pois(self, request: object):
+            self.keywords.append(request.keyword)
+            return map_contracts.ProviderSuccess(
+                data=responses[request.keyword],
+                provider="AMAP",
+                latency_ms=4,
+                cached=False,
+                fetched_at=datetime(2026, 7, 16, tzinfo=UTC),
+                estimated=False,
+            )
+
+    map_provider = CollectingMapProvider()
+
+    result = asyncio.run(processor.AmapPlanningProvider(map_provider).plan(command))
+
+    assert result.provider == "AMAP"
+    assert map_provider.keywords == ["美食", "历史"]
+    assert [day.activities[0].provider_poi_id for day in result.itinerary.days] == [
+        "poi-1",
+        "poi-2",
+        "poi-3",
+        "poi-4",
+    ]
+
+
+def test_amap_planner_caps_not_found_queries_before_demo_fallback() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    processor = import_module("trip_agent.worker.processor")
+    payload = deepcopy(COMMAND)
+    payload["payload"]["trip"]["constraints"]["preferences"] = [
+        f"preference-{index}" for index in range(10)
+    ]
+    command = contracts.PlanningCreateCommand.model_validate(payload)
+
+    class MissingMapProvider:
+        def __init__(self) -> None:
+            self.keywords: list[str] = []
+
+        async def search_pois(self, request: object):
+            self.keywords.append(request.keyword)
+            return map_contracts.ProviderFailure(
+                provider="AMAP",
+                error_code="POI_NOT_FOUND",
+                error_message="No matching POIs were found",
+                retryable=False,
+                latency_ms=1,
+                fetched_at=datetime(2026, 7, 16, tzinfo=UTC),
+            )
+
+    map_provider = MissingMapProvider()
+    planner = processor.FallbackPlanningProvider(
+        processor.AmapPlanningProvider(map_provider),
+        processor.DemoPlanningProvider(),
+    )
+
+    result = asyncio.run(planner.plan(command))
+
+    assert result.provider == "DEMO"
+    assert map_provider.keywords == [f"preference-{index}" for index in range(6)]
+
+
+def test_amap_planner_falls_back_when_unique_candidates_are_insufficient() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    processor = import_module("trip_agent.worker.processor")
+    payload = deepcopy(COMMAND)
+    payload["payload"]["trip"]["constraints"]["preferences"] = [
+        f"preference-{index}" for index in range(6)
+    ]
+    command = contracts.PlanningCreateCommand.model_validate(payload)
+    repeated_poi = map_contracts.Poi(
+        provider_id="same-poi",
+        name="Repeated POI",
+        coordinates=map_contracts.Coordinates(longitude=113.3, latitude=23.1),
+        type_name="Scenic spot",
+        type_code="110000",
+        province="Guangdong",
+        city="Guangzhou",
+        district="Yuexiu",
+        address="Repeated address",
+    )
+
+    class RepeatingMapProvider:
+        def __init__(self) -> None:
+            self.query_count = 0
+
+        async def search_pois(self, request: object):
+            del request
+            self.query_count += 1
+            return map_contracts.ProviderSuccess(
+                data=(repeated_poi,),
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 7, 16, tzinfo=UTC),
+                estimated=False,
+            )
+
+    map_provider = RepeatingMapProvider()
+    planner = processor.FallbackPlanningProvider(
+        processor.AmapPlanningProvider(map_provider),
+        processor.DemoPlanningProvider(),
+    )
+
+    result = asyncio.run(planner.plan(command))
+
+    assert result.provider == "DEMO"
+    assert map_provider.query_count == processor.MAX_POI_QUERIES

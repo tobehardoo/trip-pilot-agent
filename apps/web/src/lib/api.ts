@@ -85,7 +85,13 @@ export interface ItineraryActivity {
   startTime: string
   endTime: string
   estimatedCost: number
-  source: string
+  source: 'AMAP' | 'DEMO'
+  providerPoiId: string | null
+  coordinates: {
+    longitude: number
+    latitude: number
+  } | null
+  address: string | null
 }
 
 export interface Itinerary {
@@ -94,7 +100,7 @@ export interface Itinerary {
   parentVersionId: string | null
   title: string
   estimatedTotalCost: number
-  provider: string
+  provider: 'AMAP' | 'DEMO'
   days: Array<{
     date: string
     activities: ItineraryActivity[]

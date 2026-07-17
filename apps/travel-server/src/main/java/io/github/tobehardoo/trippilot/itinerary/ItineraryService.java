@@ -44,7 +44,11 @@ public class ItineraryService {
     private ActivityResponse toActivityResponse(ItineraryMapper.StoredActivity activity) {
         return new ActivityResponse(
                 activity.id(), activity.title(), activity.startTime(), activity.endTime(),
-                activity.estimatedCost(), activity.source()
+                activity.estimatedCost(), activity.source(), activity.providerPoiId(),
+                activity.longitude() == null
+                        ? null
+                        : new CoordinatesResponse(activity.longitude(), activity.latitude()),
+                activity.address()
         );
     }
 
@@ -69,7 +73,13 @@ public class ItineraryService {
             OffsetDateTime startTime,
             OffsetDateTime endTime,
             BigDecimal estimatedCost,
-            String source
+            String source,
+            String providerPoiId,
+            CoordinatesResponse coordinates,
+            String address
     ) {
+    }
+
+    public record CoordinatesResponse(BigDecimal longitude, BigDecimal latitude) {
     }
 }

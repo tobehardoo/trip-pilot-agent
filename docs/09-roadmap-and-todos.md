@@ -31,7 +31,9 @@
 
 同日已提前开始第 3 周真实数据切片：Python 完成强类型 `MapProvider`、高德地点搜索 2.0 文本搜索、统一错误映射、Redis JSON 缓存与确定性 Demo 降级，且不读取真实 Key 做自动化测试。
 
-截至 2026-07-17，`PLANNING_COMPLETED v2`、Java v1/v2 兼容解析、Flyway V6 活动来源元数据、异步 AMAP 规划器和真实模式 Worker 已完成。真实 Java -> RabbitMQ -> Python -> 高德 -> Redis -> PostgreSQL 验收为广州行程生成“南越王博物院（王墓展区）”，保存 POI ID 与 `113.261015, 23.137823` 坐标并由当前行程 API 返回。下一步实现路线 Provider、路线缓存和前端地图联动。
+截至 2026-07-17，`PLANNING_COMPLETED v2`、Java v1/v2 兼容解析、Flyway V6 活动来源元数据、异步 AMAP 规划器和真实模式 Worker 已完成。真实 Java -> RabbitMQ -> Python -> 高德 -> Redis -> PostgreSQL 验收为广州行程生成“南越王博物院（王墓展区）”，保存 POI ID 与 `113.261015, 23.137823` 坐标并由当前行程 API 返回。
+
+同日继续完成独立 `RouteProvider`、高德 v5 步行路线适配器、确定性 Demo 路线和 Redis 路线缓存。真实高德验收在广州两个 POI 之间返回 8758 米、7006 秒、20 个分段和 258 个 polyline 点，第二次请求命中只含 SHA-256 键的 Redis 缓存。下一步把相邻活动路线接入完成事件、交通段持久化和当前行程 API，再实现前端地图联动。
 
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环
 

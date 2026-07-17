@@ -18,13 +18,14 @@ M1 正在实施。当前已经完成：
 - Outbox 通过 RabbitMQ publisher confirm 至少一次投递；每条确认使用独立事务，失败会记录原因并指数退避。
 - Python Worker 使用严格的强类型消息契约消费创建命令，支持真实高德 POI 规划和确定性的 Demo 降级。
 - Python 已提供与规划流程解耦的强类型 `MapProvider`、高德地点搜索 2.0 适配器、Redis JSON 缓存和确定性的 Demo Map Provider；缓存故障可降级，第三方错误已统一分类。
+- Python 已新增独立 `RouteProvider`、高德 v5 步行路线适配器和 Demo 路线估算，可返回距离、耗时、分段与地图 polyline；路线缓存按起终点、POI ID、方式和 UTC 出发小时生成 SHA-256 键。
 - `PLANNING_COMPLETED` v2 携带 POI ID、坐标与地址；Java 向后兼容 v1 Demo 事件，并幂等保存不可变关系型行程版本和来源元数据。
 - 当前行程 API 按所有者隔离；任务 SSE 支持持久历史补发、`Last-Event-ID` 重连、实时终态通知与终态关闭。
 - Vue 工作台可直接创建规划任务，使用带 Bearer Token 的流式 `fetch` 消费 SSE，并在断线后携带 `Last-Event-ID` 补发。
 - 任务完成后自动读取当前行程，以日期和活动时间轴展示 Provider、版本与估算费用；UTC 活动时间统一按中国标准时间显示。
-- Java 81 个自动化测试、90.92% 行覆盖率，Python 71 个 Worker/API/Provider 测试，以及 Vue 33 个组件、API 边界、SSE、路由与仓库测试。
+- Java 81 个自动化测试、90.92% 行覆盖率，Python 112 个 Worker/API/Provider 测试，以及 Vue 33 个组件、API 边界、SSE、路由与仓库测试；新增路线模块行覆盖率为 100%。
 
-下一条纵向切片是增加高德路线 Provider 和路线缓存，再让前端地图 Marker、活动地址与时间轴联动；随后进入广州知识资料和 RAG。
+下一条纵向切片是把相邻活动路线写入完成事件、关系型交通段和当前行程 API，再让前端地图 Marker、路线、活动地址与时间轴联动；随后进入广州知识资料和 RAG。
 
 本地准备：
 
@@ -64,6 +65,7 @@ pnpm dev
 14. [Phase 5 网页规划闭环与 Demo 行程时间轴测试计划](docs/13-phase-5-web-planning-workbench-test-plan.md)
 15. [Phase 6 高德 POI Provider 与 Redis 缓存测试计划](docs/14-phase-6-amap-poi-provider-test-plan.md)
 16. [Phase 7 真实 POI 完成事件与 Demo 降级测试计划](docs/15-phase-7-real-poi-completion-contract-test-plan.md)
+17. [Phase 8 高德步行路线 Provider 与 Redis 缓存测试计划](docs/16-phase-8-amap-route-provider-test-plan.md)
 
 ## 已确认的基础约束
 

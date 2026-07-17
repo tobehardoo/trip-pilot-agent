@@ -60,6 +60,7 @@ _install_httpx_credential_filter()
 type MapProviderName = Literal["AMAP", "DEMO"]
 type ProviderErrorCode = Literal[
     "POI_NOT_FOUND",
+    "ROUTE_NOT_FOUND",
     "PROVIDER_AUTH_FAILED",
     "PROVIDER_RATE_LIMITED",
     "PROVIDER_QUOTA_EXHAUSTED",

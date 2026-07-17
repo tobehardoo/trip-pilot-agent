@@ -36,11 +36,11 @@ V1 使用高德作为主要地图数据源，能力包括：
 官方参考：
 
 - [高德地点搜索 2.0](https://lbs.amap.com/api/webservice/guide/api-advanced/newpoisearch)
-- [高德路径规划](https://lbs.amap.com/api/webservice/guide/api/direction)
+- [高德路径规划 2.0](https://lbs.amap.com/api/webservice/guide/api/newroute)
 
-所有高德调用经过内部 `MapProvider`，Agent 节点不得散落直接 HTTP 请求。
+所有高德调用经过内部 Provider 能力边界，POI 与路线分别使用 `MapProvider` 和 `RouteProvider`，Agent 节点不得散落直接 HTTP 请求。
 
-截至 2026-07-17，Python Agent 已完成 POI Provider 与规划链路：
+截至 2026-07-17，Python Agent 已完成 POI、路线 Provider 与真实 POI 规划链路：
 
 - `MapProvider` Protocol、不可变请求/POI/成功/失败模型和统一错误码。
 - 高德地点搜索 2.0 文本搜索适配器，支持严格城市、分页上限、坐标和行政区解析。
@@ -49,6 +49,9 @@ V1 使用高德作为主要地图数据源，能力包括：
 - 确定性的 Demo Map Provider，用于无网络测试和后续规划降级。
 - 异步 AMAP Planning Provider 按偏好有界查询、按 POI ID 去重，并为每天分配一个真实地点。
 - 已分类 Provider 失败和候选不足会降级 Demo；未知异常继续进入消息重试，不会被静默吞掉。
+- `RouteProvider` 使用独立的不可变请求、路线、分段和结果模型，当前只开放 `WALKING`，并要求出发时间包含时区。
+- 高德路径规划 2.0 步行适配器返回距离、耗时、分段指令和 polyline；空路线、HTTP/业务错误与 Schema 变化使用统一失败类型。
+- 确定性 Demo Route Provider 使用球面距离和固定步速生成离线估算，不冒充高德结果。
 
 `PLANNING_COMPLETED v2` 已携带 POI ID、坐标和地址。Java 继续接受 v1 Demo 事件，并通过 Flyway V6 把 AMAP 元数据保存到 `business.activity`；当前行程 API 可直接供后续地图消费。
 
@@ -222,7 +225,8 @@ knowledge/
 - POI、路线、天气分别设置不同 TTL。
 - 当前 POI 适配器使用秒级 TTL 的 Redis JSON 缓存；Redis 读写异常和损坏缓存会降级到实时 Provider，不丢弃已经成功取得的数据。
 - POI 缓存键使用城市、关键字和数量的 SHA-256 摘要，禁止包含 API Key 和原始查询文本。
-- 路线缓存包含起终点、方式、时间段和 Provider。
+- 当前路线适配器默认使用 3600 秒 TTL；Redis 读写异常和损坏缓存同样降级到实时 Provider。
+- 路线缓存摘要包含六位小数起终点、POI ID、方式、UTC 出发小时、Provider 和数据版本；键中不暴露 Key 或原始坐标。
 - 对同一用户和任务限制模型调用与重规划次数。
 - 记录缓存命中、Provider 额度错误和估算费用。
 - 不缓存包含敏感信息的完整 Prompt 或用户 Token。

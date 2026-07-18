@@ -39,12 +39,16 @@ class FakeExchange:
 
 
 class NoopJsonCache:
+    def __init__(self) -> None:
+        self.ttl_seconds: list[int] = []
+
     async def get(self, key: str) -> str | None:
         del key
         return None
 
     async def set(self, key: str, value: str, *, ttl_seconds: int) -> None:
-        del key, value, ttl_seconds
+        del key, value
+        self.ttl_seconds.append(ttl_seconds)
 
 
 def test_valid_command_is_acked_only_after_completed_event_is_published() -> None:
@@ -68,7 +72,7 @@ def test_valid_command_is_acked_only_after_completed_event_is_published() -> Non
     assert published.message_id is not None
     body = json.loads(published.body)
     assert body["eventType"] == "PLANNING_COMPLETED"
-    assert body["schemaVersion"] == 2
+    assert body["schemaVersion"] == 3
     assert body["taskId"] == COMMAND["taskId"]
     assert body["payload"]["itinerary"]["estimatedTotalCost"] == 0
     assert isinstance(body["payload"]["itinerary"]["estimatedTotalCost"], int | float)
@@ -76,6 +80,7 @@ def test_valid_command_is_acked_only_after_completed_event_is_published() -> Non
     assert "providerPoiId" not in activity
     assert "coordinates" not in activity
     assert "address" not in activity
+    assert body["payload"]["itinerary"]["days"][0]["transitLegs"] == []
 
 
 def test_invalid_command_is_rejected_without_requeue() -> None:
@@ -146,7 +151,7 @@ def test_real_worker_settings_require_a_secret_amap_key_at_startup() -> None:
     assert "worker-local-secret" not in repr(settings)
 
 
-def test_real_worker_provider_factory_builds_amap_v2_with_demo_fallback() -> None:
+def test_real_worker_provider_factory_builds_amap_v3_with_routes_and_demo_fallback() -> None:
     amqp = import_module("trip_agent.worker.amqp")
     contracts = import_module("trip_agent.worker.contracts")
     processor = import_module("trip_agent.worker.processor")
@@ -156,7 +161,35 @@ def test_real_worker_provider_factory_builds_amap_v2_with_demo_fallback() -> Non
         amap_web_service_key="factory-test-key",
     )
 
-    def handle(_: httpx.Request) -> httpx.Response:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/v5/direction/walking"):
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "info": "OK",
+                    "infocode": "10000",
+                    "count": "1",
+                    "route": {
+                        "origin": "113.31,23.11",
+                        "destination": "113.32,23.12",
+                        "paths": [
+                            {
+                                "distance": "1200",
+                                "cost": {"duration": "900"},
+                                "steps": [
+                                    {
+                                        "instruction": "Walk to the next activity",
+                                        "step_distance": "1200",
+                                        "cost": {"duration": "900"},
+                                        "polyline": "113.31,23.11;113.32,23.12",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                },
+            )
         return httpx.Response(
             200,
             json={
@@ -175,26 +208,49 @@ def test_real_worker_provider_factory_builds_amap_v2_with_demo_fallback() -> Non
                         "adname": "天河区",
                         "address": f"广州地址 {index}",
                     }
-                    for index in range(1, 5)
+                    for index in range(1, 9)
                 ],
             },
         )
 
     async def run_scenario():
+        cache = NoopJsonCache()
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
             provider = amqp.build_planning_provider(
                 settings,
                 http_client=client,
-                cache=NoopJsonCache(),
+                cache=cache,
             )
             command = contracts.PlanningCreateCommand.model_validate(COMMAND)
-            return await processor.process_planning_create(command, provider)
+            completed = await processor.process_planning_create(command, provider)
+            return completed, cache.ttl_seconds
 
-    completed = asyncio.run(run_scenario())
+    completed, cache_ttls = asyncio.run(run_scenario())
 
-    assert completed.schema_version == 2
+    assert completed.schema_version == 3
     assert completed.payload.provider == "AMAP"
     assert completed.payload.itinerary.days[0].activities[0].provider_poi_id == "poi-1"
+    assert completed.payload.itinerary.days[0].activities[1].provider_poi_id == "poi-2"
+    leg = completed.payload.itinerary.days[0].transit_legs[0]
+    assert leg.provider == "AMAP"
+    assert leg.distance_meters == 1200
+    assert leg.estimated is False
+    assert settings.poi_cache_ttl_seconds in cache_ttls
+    assert settings.route_cache_ttl_seconds in cache_ttls
+
+
+def test_demo_worker_factory_and_runtime_do_not_allocate_external_resources() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    processor = import_module("trip_agent.worker.processor")
+    settings = amqp.WorkerSettings(_env_file=None, demo_mode=True)
+
+    assert isinstance(amqp.build_planning_provider(settings), processor.DemoPlanningProvider)
+
+    async def run_scenario() -> None:
+        async with amqp.planning_provider_runtime(settings) as provider:
+            assert isinstance(provider, processor.DemoPlanningProvider)
+
+    asyncio.run(run_scenario())
 
 
 def test_real_worker_runtime_owns_lazy_http_and_redis_resources() -> None:

@@ -94,6 +94,22 @@ export interface ItineraryActivity {
   address: string | null
 }
 
+export interface ItineraryTransitLeg {
+  id: string
+  legOrder: number
+  fromActivityId: string
+  toActivityId: string
+  mode: 'WALKING'
+  distanceMeters: number
+  durationSeconds: number
+  provider: 'AMAP' | 'DEMO'
+  estimated: boolean
+  polyline: Array<{
+    longitude: number
+    latitude: number
+  }>
+}
+
 export interface Itinerary {
   versionId: string
   versionNumber: number
@@ -104,6 +120,7 @@ export interface Itinerary {
   days: Array<{
     date: string
     activities: ItineraryActivity[]
+    transitLegs: ItineraryTransitLeg[]
   }>
   createdAt: string
 }

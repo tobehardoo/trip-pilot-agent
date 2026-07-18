@@ -33,7 +33,9 @@
 
 截至 2026-07-17，`PLANNING_COMPLETED v2`、Java v1/v2 兼容解析、Flyway V6 活动来源元数据、异步 AMAP 规划器和真实模式 Worker 已完成。真实 Java -> RabbitMQ -> Python -> 高德 -> Redis -> PostgreSQL 验收为广州行程生成“南越王博物院（王墓展区）”，保存 POI ID 与 `113.261015, 23.137823` 坐标并由当前行程 API 返回。
 
-同日继续完成独立 `RouteProvider`、高德 v5 步行路线适配器、确定性 Demo 路线和 Redis 路线缓存。真实高德验收在广州两个 POI 之间返回 8758 米、7006 秒、20 个分段和 258 个 polyline 点，第二次请求命中只含 SHA-256 键的 Redis 缓存。下一步把相邻活动路线接入完成事件、交通段持久化和当前行程 API，再实现前端地图联动。
+同日继续完成独立 `RouteProvider`、高德 v5 步行路线适配器、确定性 Demo 路线和 Redis 路线缓存。真实高德验收在广州两个 POI 之间返回 8758 米、7006 秒、20 个分段和 258 个 polyline 点，第二次请求命中只含 SHA-256 键的 Redis 缓存。
+
+随后完成 `PLANNING_COMPLETED v3`、相邻活动路线生成、Flyway V7 `transit_leg`、Java v1/v2/v3 兼容解析与当前行程 API。真实 Java -> RabbitMQ -> Python -> 高德 -> Redis -> PostgreSQL 广州验收在 3.1 秒内生成两个 AMAP 活动和一个 AMAP 步行段，路线为 1921 米、1537 秒、78 个 polyline 点。下一步实现前端地图 Marker、路线和时间轴联动。
 
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环
 

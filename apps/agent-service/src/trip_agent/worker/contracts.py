@@ -1,6 +1,6 @@
 """Typed message contracts for the planning worker."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 from uuid import UUID
@@ -153,6 +153,13 @@ class ActivityCoordinates(MessageModel):
     longitude: JsonLongitude
     latitude: JsonLatitude
 
+    @field_validator("longitude", "latitude", mode="before")
+    @classmethod
+    def reject_string_coordinates(cls, value: object) -> object:
+        if isinstance(value, str):
+            raise ValueError("coordinates must use JSON numbers")
+        return value
+
 
 class ItineraryActivity(MessageModel):
     title: ItineraryText
@@ -174,9 +181,44 @@ class ItineraryActivity(MessageModel):
         return self
 
 
+class TransitLeg(MessageModel):
+    from_activity_index: int = Field(strict=True, ge=0)
+    to_activity_index: int = Field(strict=True, ge=1)
+    mode: Literal["WALKING"]
+    distance_meters: int = Field(strict=True, ge=0, le=40_100_000)
+    duration_seconds: int = Field(strict=True, ge=0, le=31_536_000)
+    provider: Literal["AMAP", "DEMO"]
+    estimated: bool = Field(strict=True)
+    polyline: tuple[ActivityCoordinates, ...] = Field(min_length=1, max_length=5_000)
+
+    @model_validator(mode="after")
+    def validate_provider_estimate(self) -> Self:
+        if (self.provider == "AMAP" and self.estimated) or (
+            self.provider == "DEMO" and not self.estimated
+        ):
+            raise ValueError("transit leg provider and estimated flag must agree")
+        return self
+
+
 class ItineraryDay(MessageModel):
     date: date
     activities: tuple[ItineraryActivity, ...] = Field(min_length=1)
+    transit_legs: tuple[TransitLeg, ...]
+
+    @model_validator(mode="after")
+    def validate_transit_legs(self) -> Self:
+        expected_count = len(self.activities) - 1
+        if len(self.transit_legs) != expected_count:
+            raise ValueError("transit legs must connect each adjacent activity")
+        for index, leg in enumerate(self.transit_legs):
+            if leg.from_activity_index != index or leg.to_activity_index != index + 1:
+                raise ValueError("transit legs must connect adjacent activities in order")
+            earliest_arrival = self.activities[index].end_time + timedelta(
+                seconds=leg.duration_seconds
+            )
+            if earliest_arrival > self.activities[index + 1].start_time:
+                raise ValueError("transit leg travel time must fit between activities")
+        return self
 
 
 class Itinerary(MessageModel):
@@ -202,7 +244,7 @@ class PlanningCompletedPayload(MessageModel):
 
 class PlanningCompletedEvent(MessageModel):
     event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     event_id: UUID
     trace_id: UUID
     task_id: UUID

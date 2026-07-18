@@ -55,6 +55,64 @@ class PlanningCompletedEventParserTest {
         assertThat(activity.coordinates().longitude()).isEqualByComparingTo("113.319263");
         assertThat(activity.coordinates().latitude()).isEqualByComparingTo("23.109078");
         assertThat(activity.address()).isEqualTo("珠江东路2号");
+        assertThat(event.payload().itinerary().days().getFirst().transitLegs()).isEmpty();
+    }
+
+    @Test
+    void parsesV3TransitLegsWhileKeepingOlderContractsCompatible() {
+        PlanningCompletedEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV3(
+                        UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
+                )
+        ));
+
+        PlanningCompletedEvent.TransitLeg leg =
+                event.payload().itinerary().days().getFirst().transitLegs().getFirst();
+        assertThat(event.schemaVersion()).isEqualTo(3);
+        assertThat(leg.fromActivityIndex()).isZero();
+        assertThat(leg.toActivityIndex()).isOne();
+        assertThat(leg.mode()).isEqualTo("WALKING");
+        assertThat(leg.distanceMeters()).isEqualTo(1280);
+        assertThat(leg.durationSeconds()).isEqualTo(960);
+        assertThat(leg.provider()).isEqualTo("AMAP");
+        assertThat(leg.estimated()).isFalse();
+        assertThat(leg.polyline()).hasSize(2);
+    }
+
+    @Test
+    void rejectsV3TransitLegsThatDoNotConnectEveryAdjacentActivity() throws Exception {
+        ObjectNode wrongIndex = amapV3Event();
+        ((ObjectNode) wrongIndex.at(
+                "/payload/itinerary/days/0/transitLegs/0"
+        )).put("fromActivityIndex", 1);
+        ObjectNode missingLeg = amapV3Event();
+        ((ArrayNode) missingLeg.at("/payload/itinerary/days/0/transitLegs")).removeAll();
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(wrongIndex)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("connect adjacent activities in order");
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(missingLeg)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("connect every adjacent activity");
+    }
+
+    @Test
+    void rejectsV3TransitLegWithInvalidPolylineOrImpossibleTravelTime() throws Exception {
+        ObjectNode invalidPolyline = amapV3Event();
+        ((ObjectNode) invalidPolyline.at(
+                "/payload/itinerary/days/0/transitLegs/0/polyline/0"
+        )).put("longitude", 181);
+        ObjectNode impossibleTravelTime = amapV3Event();
+        ((ObjectNode) impossibleTravelTime.at(
+                "/payload/itinerary/days/0/transitLegs/0"
+        )).put("durationSeconds", 8000);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(invalidPolyline)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("transit leg fields are invalid");
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(impossibleTravelTime)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("travel time must fit between activities");
     }
 
     @Test
@@ -232,6 +290,12 @@ class PlanningCompletedEventParserTest {
 
     private ObjectNode amapV2Event() throws Exception {
         return (ObjectNode) objectMapper.readTree(PlanningCompletedEventFixture.completedAmapEventV2(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
+        ));
+    }
+
+    private ObjectNode amapV3Event() throws Exception {
+        return (ObjectNode) objectMapper.readTree(PlanningCompletedEventFixture.completedAmapEventV3(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
         ));
     }

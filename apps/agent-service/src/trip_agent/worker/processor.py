@@ -13,6 +13,7 @@ from trip_agent.providers.map import (
     PoiSearchRequest,
     ProviderFailure,
 )
+from trip_agent.providers.route import DemoRouteProvider, RouteProvider, RouteRequest
 from trip_agent.worker.contracts import (
     ActivityCoordinates,
     Itinerary,
@@ -21,6 +22,7 @@ from trip_agent.worker.contracts import (
     PlanningCompletedEvent,
     PlanningCompletedPayload,
     PlanningCreateCommand,
+    TransitLeg,
 )
 
 CHINA_TIME_ZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
@@ -71,28 +73,44 @@ class DemoPlanningProvider:
                     source="DEMO",
                 ),
             ),
+            transit_legs=(),
         )
 
 
 class AmapPlanningProvider:
-    def __init__(self, map_provider: MapProvider) -> None:
+    def __init__(
+        self,
+        map_provider: MapProvider,
+        route_provider: RouteProvider,
+        route_fallback: RouteProvider | None = None,
+    ) -> None:
         self._map_provider = map_provider
+        self._route_provider = route_provider
+        self._route_fallback = route_fallback or DemoRouteProvider()
 
     async def plan(self, command: PlanningCreateCommand) -> PlanningResult:
         trip = command.payload.trip
         day_count = (trip.end_date - trip.start_date).days + 1
-        pois = await self._collect_pois(command, day_count)
-        if len(pois) < day_count:
+        required_pois = day_count * 2
+        pois = await self._collect_pois(command, required_pois)
+        if len(pois) < required_pois:
             raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
-        days = tuple(
-            self._day(command, offset, poi)
-            for offset, poi in enumerate(pois[:day_count])
-        )
+        days = []
+        for offset in range(day_count):
+            first_index = offset * 2
+            days.append(
+                await self._day(
+                    command,
+                    offset,
+                    pois[first_index],
+                    pois[first_index + 1],
+                )
+            )
         return PlanningResult(
             provider="AMAP",
             itinerary=Itinerary(
                 title=f"{trip.destination} 真实地点行程",
-                days=days,
+                days=tuple(days),
                 estimated_total_cost=Decimal("0"),
             ),
         )
@@ -126,27 +144,74 @@ class AmapPlanningProvider:
                     return tuple(candidates)
         return tuple(candidates)
 
-    def _day(self, command: PlanningCreateCommand, offset: int, poi: Poi) -> ItineraryDay:
+    async def _day(
+        self,
+        command: PlanningCreateCommand,
+        offset: int,
+        first_poi: Poi,
+        second_poi: Poi,
+    ) -> ItineraryDay:
         trip_date = command.payload.trip.start_date + timedelta(days=offset)
-        start_time = datetime.combine(trip_date, time(hour=9), tzinfo=CHINA_TIME_ZONE)
+        first_start = datetime.combine(trip_date, time(hour=9), tzinfo=CHINA_TIME_ZONE)
+        first_end = first_start + timedelta(hours=2)
+        route = await self._route(
+            RouteRequest(
+                origin=first_poi.coordinates,
+                destination=second_poi.coordinates,
+                departure_at=first_end,
+                origin_poi_id=first_poi.provider_id,
+                destination_poi_id=second_poi.provider_id,
+            )
+        )
+        scheduled_second_start = datetime.combine(
+            trip_date, time(hour=13), tzinfo=CHINA_TIME_ZONE
+        )
+        second_start = max(
+            scheduled_second_start,
+            first_end + timedelta(seconds=route.data.duration_seconds),
+        )
+        second_end = second_start + timedelta(hours=2)
+        if second_end.date() != trip_date:
+            raise PlanningProviderError("ROUTE_EXCEEDS_ITINERARY_DAY")
         return ItineraryDay(
             date=trip_date,
             activities=(
-                ItineraryActivity(
-                    title=poi.name,
-                    start_time=start_time,
-                    end_time=start_time + timedelta(hours=2),
-                    estimated_cost=Decimal("0"),
-                    source="AMAP",
-                    provider_poi_id=poi.provider_id,
-                    coordinates=ActivityCoordinates(
-                        longitude=_coordinate_decimal(poi.coordinates.longitude),
-                        latitude=_coordinate_decimal(poi.coordinates.latitude),
+                _amap_activity(first_poi, first_start, first_end),
+                _amap_activity(second_poi, second_start, second_end),
+            ),
+            transit_legs=(
+                TransitLeg(
+                    from_activity_index=0,
+                    to_activity_index=1,
+                    mode=route.data.mode,
+                    distance_meters=route.data.distance_meters,
+                    duration_seconds=route.data.duration_seconds,
+                    provider=route.provider,
+                    estimated=route.estimated,
+                    polyline=tuple(
+                        ActivityCoordinates(
+                            longitude=_coordinate_decimal(point.longitude),
+                            latitude=_coordinate_decimal(point.latitude),
+                        )
+                        for point in route.data.polyline
                     ),
-                    address=poi.address,
                 ),
             ),
         )
+
+    async def _route(self, request: RouteRequest):
+        result = await self._route_provider.get_route(request)
+        if isinstance(result, ProviderFailure):
+            result = await self._route_fallback.get_route(request)
+        if isinstance(result, ProviderFailure):
+            raise PlanningProviderError(result.error_code)
+        if result.provider not in {"AMAP", "DEMO"}:
+            raise PlanningProviderError("UNEXPECTED_ROUTE_PROVIDER")
+        if (result.provider == "AMAP" and result.estimated) or (
+            result.provider == "DEMO" and not result.estimated
+        ):
+            raise RuntimeError("route provider returned inconsistent source metadata")
+        return result
 
 
 class FallbackPlanningProvider:
@@ -170,7 +235,7 @@ async def process_planning_create(
     result = await provider.plan(command)
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
-        schema_version=2,
+        schema_version=3,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -194,6 +259,22 @@ def _run_id(task_id: UUID) -> UUID:
 
 def _coordinate_decimal(value: float) -> Decimal:
     return Decimal(str(value)).quantize(COORDINATE_SCALE)
+
+
+def _amap_activity(poi: Poi, start_time: datetime, end_time: datetime) -> ItineraryActivity:
+    return ItineraryActivity(
+        title=poi.name,
+        start_time=start_time,
+        end_time=end_time,
+        estimated_cost=Decimal("0"),
+        source="AMAP",
+        provider_poi_id=poi.provider_id,
+        coordinates=ActivityCoordinates(
+            longitude=_coordinate_decimal(poi.coordinates.longitude),
+            latitude=_coordinate_decimal(poi.coordinates.latitude),
+        ),
+        address=poi.address,
+    )
 
 
 def _candidate_keywords(preferences: tuple[str, ...]) -> tuple[str, ...]:

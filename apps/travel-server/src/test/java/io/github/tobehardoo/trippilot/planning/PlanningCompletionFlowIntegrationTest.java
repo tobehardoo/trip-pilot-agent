@@ -139,6 +139,50 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void persistsAndReturnsV3TransitLegsLinkedToAdjacentActivities() throws Exception {
+        PlanningContext context = createPlanningContext("completion-route@example.com");
+        PlanningCompletedEvent event = eventParser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV3(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        ));
+
+        completionService.handle(event);
+
+        Map<String, Object> leg = jdbcTemplate.queryForMap("""
+                SELECT transit_leg.mode, transit_leg.distance_meters,
+                       transit_leg.duration_seconds, transit_leg.provider,
+                       transit_leg.estimated, transit_leg.polyline::text AS polyline,
+                       origin.title AS origin_title, destination.title AS destination_title
+                FROM business.transit_leg
+                JOIN business.activity AS origin ON origin.id = transit_leg.from_activity_id
+                JOIN business.activity AS destination ON destination.id = transit_leg.to_activity_id
+                """);
+        assertThat(leg).containsEntry("mode", "WALKING")
+                .containsEntry("distance_meters", 1280)
+                .containsEntry("duration_seconds", 960)
+                .containsEntry("provider", "AMAP")
+                .containsEntry("estimated", false)
+                .containsEntry("origin_title", "广东省博物馆")
+                .containsEntry("destination_title", "广州塔");
+        assertThat((String) leg.get("polyline")).contains("113.319263", "23.106414");
+
+        mockMvc.perform(get("/api/trips/{tripId}/itinerary", context.tripId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.days[0].activities.length()").value(2))
+                .andExpect(jsonPath("$.days[0].transitLegs.length()").value(1))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].fromActivityId").isNotEmpty())
+                .andExpect(jsonPath("$.days[0].transitLegs[0].toActivityId").isNotEmpty())
+                .andExpect(jsonPath("$.days[0].transitLegs[0].mode").value("WALKING"))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].distanceMeters").value(1280))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].durationSeconds").value(960))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].provider").value("AMAP"))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].estimated").value(false))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].polyline.length()").value(2));
+    }
+
+    @Test
     void handlesTheSameCompletedEventMoreThanOnceWithoutDuplicatingBusinessEffects() throws Exception {
         PlanningContext context = createPlanningContext("completion-repeat@example.com");
         PlanningCompletedEvent event = completedEvent(UUID.randomUUID(), context);
@@ -151,6 +195,66 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
         assertThat(count("business.itinerary_version")).isEqualTo(1);
         assertThat(count("business.itinerary_day")).isEqualTo(1);
         assertThat(count("business.activity")).isEqualTo(1);
+    }
+
+    @Test
+    void handlesTheSameV3EventWithoutDuplicatingTransitLegs() throws Exception {
+        PlanningContext context = createPlanningContext("completion-route-repeat@example.com");
+        PlanningCompletedEvent event = eventParser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV3(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        ));
+
+        completionService.handle(event);
+        completionService.handle(event);
+
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+        assertThat(count("business.activity")).isEqualTo(2);
+        assertThat(count("business.transit_leg")).isEqualTo(1);
+    }
+
+    @Test
+    void transitLegDatabaseConstraintRejectsActivitiesFromAnotherDay() throws Exception {
+        PlanningContext context = createPlanningContext("completion-route-fk@example.com");
+        completionService.handle(eventParser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV3(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        )));
+        UUID existingDayId = jdbcTemplate.queryForObject(
+                "SELECT id FROM business.itinerary_day LIMIT 1", UUID.class
+        );
+        UUID existingActivityId = jdbcTemplate.queryForObject(
+                "SELECT id FROM business.activity ORDER BY activity_order LIMIT 1", UUID.class
+        );
+        UUID foreignDayId = UUID.randomUUID();
+        UUID foreignActivityId = UUID.randomUUID();
+        UUID versionId = jdbcTemplate.queryForObject(
+                "SELECT id FROM business.itinerary_version LIMIT 1", UUID.class
+        );
+        jdbcTemplate.update("""
+                INSERT INTO business.itinerary_day(id, itinerary_version_id, day_date, day_index)
+                VALUES (?, ?, DATE '2026-08-02', 1)
+                """, foreignDayId, versionId);
+        jdbcTemplate.update("""
+                INSERT INTO business.activity(
+                    id, itinerary_day_id, activity_order, title,
+                    start_time, end_time, estimated_cost, source
+                ) VALUES (?, ?, 0, 'Foreign day activity',
+                          TIMESTAMPTZ '2026-08-02 09:00:00+08',
+                          TIMESTAMPTZ '2026-08-02 10:00:00+08', 0, 'DEMO')
+                """, foreignActivityId, foreignDayId);
+
+        assertThatThrownBy(() -> jdbcTemplate.update("""
+                INSERT INTO business.transit_leg(
+                    id, itinerary_day_id, leg_order, from_activity_id, to_activity_id,
+                    mode, distance_meters, duration_seconds, provider, estimated, polyline
+                ) VALUES (?, ?, 1, ?, ?, 'WALKING', 100, 60, 'DEMO', TRUE,
+                          '[{"longitude":113.3,"latitude":23.1}]'::jsonb)
+                """, UUID.randomUUID(), existingDayId, existingActivityId, foreignActivityId))
+                .rootCause()
+                .hasMessageContaining("fk_transit_leg_destination");
     }
 
     @Test
@@ -242,6 +346,45 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
         assertThat(count("business.itinerary_version")).isZero();
         assertThat(count("business.itinerary_day")).isZero();
         assertThat(count("business.activity")).isZero();
+    }
+
+    @Test
+    void rollsBackEveryCompletionWriteWhenATransitLegCannotBePersisted() throws Exception {
+        PlanningContext context = createPlanningContext("completion-route-rollback@example.com");
+        PlanningCompletedEvent event = eventParser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV3(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        ));
+        jdbcTemplate.execute("""
+                CREATE FUNCTION business.fail_transit_leg_insert() RETURNS trigger AS $$
+                BEGIN
+                    RAISE EXCEPTION 'forced transit leg failure';
+                END;
+                $$ LANGUAGE plpgsql
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER fail_transit_leg_insert
+                BEFORE INSERT ON business.transit_leg
+                FOR EACH ROW EXECUTE FUNCTION business.fail_transit_leg_insert()
+                """);
+
+        try {
+            assertThatThrownBy(() -> completionService.handle(event))
+                    .rootCause()
+                    .hasMessageContaining("forced transit leg failure");
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER fail_transit_leg_insert ON business.transit_leg");
+            jdbcTemplate.execute("DROP FUNCTION business.fail_transit_leg_insert()");
+        }
+
+        assertThat(taskStatus(context.taskId())).isEqualTo("QUEUED");
+        assertThat(count("business.planning_task_event")).isEqualTo(1);
+        assertThat(count("business.itinerary")).isZero();
+        assertThat(count("business.itinerary_version")).isZero();
+        assertThat(count("business.itinerary_day")).isZero();
+        assertThat(count("business.activity")).isZero();
+        assertThat(count("business.transit_leg")).isZero();
     }
 
     @Test

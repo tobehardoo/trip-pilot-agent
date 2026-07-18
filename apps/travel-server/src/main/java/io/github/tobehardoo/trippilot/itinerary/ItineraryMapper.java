@@ -66,6 +66,18 @@ public interface ItineraryMapper {
             """)
     int insertActivity(ActivityWrite activity);
 
+    @Insert("""
+            INSERT INTO business.transit_leg(
+                id, itinerary_day_id, leg_order, from_activity_id, to_activity_id,
+                mode, distance_meters, duration_seconds, provider, estimated, polyline
+            ) VALUES (
+                #{id}, #{itineraryDayId}, #{legOrder}, #{fromActivityId}, #{toActivityId},
+                #{mode}, #{distanceMeters}, #{durationSeconds}, #{provider}, #{estimated},
+                CAST(#{polylineJson} AS jsonb)
+            )
+            """)
+    int insertTransitLeg(TransitLegWrite transitLeg);
+
     @Update("""
             UPDATE business.itinerary
             SET current_version_id = #{versionId}, updated_at = CURRENT_TIMESTAMP
@@ -105,6 +117,16 @@ public interface ItineraryMapper {
             ORDER BY activity_order
             """)
     List<StoredActivity> findActivities(UUID dayId);
+
+    @Select("""
+            SELECT id, leg_order, from_activity_id, to_activity_id, mode,
+                   distance_meters, duration_seconds, provider, estimated,
+                   polyline::text AS polyline_json
+            FROM business.transit_leg
+            WHERE itinerary_day_id = #{dayId}
+            ORDER BY leg_order
+            """)
+    List<StoredTransitLeg> findTransitLegs(UUID dayId);
 
     record ItineraryState(
             UUID id,
@@ -147,6 +169,21 @@ public interface ItineraryMapper {
     ) {
     }
 
+    record TransitLegWrite(
+            UUID id,
+            UUID itineraryDayId,
+            int legOrder,
+            UUID fromActivityId,
+            UUID toActivityId,
+            String mode,
+            int distanceMeters,
+            int durationSeconds,
+            String provider,
+            boolean estimated,
+            String polylineJson
+    ) {
+    }
+
     record CurrentVersion(
             UUID id,
             int versionNumber,
@@ -173,6 +210,20 @@ public interface ItineraryMapper {
             BigDecimal longitude,
             BigDecimal latitude,
             String address
+    ) {
+    }
+
+    record StoredTransitLeg(
+            UUID id,
+            int legOrder,
+            UUID fromActivityId,
+            UUID toActivityId,
+            String mode,
+            int distanceMeters,
+            int durationSeconds,
+            String provider,
+            boolean estimated,
+            String polylineJson
     ) {
     }
 }

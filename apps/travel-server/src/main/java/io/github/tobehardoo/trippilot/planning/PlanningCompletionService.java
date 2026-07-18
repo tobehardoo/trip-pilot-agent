@@ -4,6 +4,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -130,15 +132,28 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         requireOne(itineraryMapper.insertDay(new ItineraryMapper.DayWrite(
                 dayId, versionId, day.date(), dayIndex
         )), "itinerary day");
+        List<UUID> activityIds = new ArrayList<>(day.activities().size());
         for (int activityIndex = 0; activityIndex < day.activities().size(); activityIndex++) {
             PlanningCompletedEvent.Activity activity = day.activities().get(activityIndex);
             PlanningCompletedEvent.Coordinates coordinates = activity.coordinates();
+            UUID activityId = UUID.randomUUID();
+            activityIds.add(activityId);
             requireOne(itineraryMapper.insertActivity(new ItineraryMapper.ActivityWrite(
-                    UUID.randomUUID(), dayId, activityIndex, activity.title().strip(),
+                    activityId, dayId, activityIndex, activity.title().strip(),
                     activity.startTime(), activity.endTime(), activity.estimatedCost(), activity.source(),
                     activity.providerPoiId(), coordinates == null ? null : coordinates.longitude(),
                     coordinates == null ? null : coordinates.latitude(), activity.address()
             )), "itinerary activity");
+        }
+        for (int legIndex = 0; legIndex < day.transitLegs().size(); legIndex++) {
+            PlanningCompletedEvent.TransitLeg leg = day.transitLegs().get(legIndex);
+            requireOne(itineraryMapper.insertTransitLeg(new ItineraryMapper.TransitLegWrite(
+                    UUID.randomUUID(), dayId, legIndex,
+                    activityIds.get(leg.fromActivityIndex()),
+                    activityIds.get(leg.toActivityIndex()),
+                    leg.mode(), leg.distanceMeters(), leg.durationSeconds(), leg.provider(),
+                    leg.estimated(), writeJson(leg.polyline())
+            )), "itinerary transit leg");
         }
     }
 

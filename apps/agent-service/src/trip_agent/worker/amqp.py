@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from trip_agent.providers.map import AmapMapProvider, JsonCache
 from trip_agent.providers.redis_cache import RedisJsonCache
+from trip_agent.providers.route import AmapRouteProvider
 from trip_agent.worker.contracts import PlanningCreateCommand
 from trip_agent.worker.processor import (
     AmapPlanningProvider,
@@ -73,6 +74,7 @@ class WorkerSettings(BaseSettings):
     amap_web_service_key: SecretStr | None = None
     amap_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     poi_cache_ttl_seconds: int = Field(default=86_400, gt=0)
+    route_cache_ttl_seconds: int = Field(default=3_600, gt=0)
     redis_host: str = "localhost"
     redis_port: int = Field(default=6379, ge=1, le=65_535)
     redis_password: SecretStr = SecretStr("replace-with-local-password")
@@ -104,14 +106,20 @@ def build_planning_provider(
     key = settings.amap_web_service_key
     if key is None:
         raise ValueError("AMap key is required in real provider mode")
-    amap = AmapMapProvider(
+    amap_map = AmapMapProvider(
         api_key=key.get_secret_value(),
         http_client=http_client,
         cache=cache,
         cache_ttl_seconds=settings.poi_cache_ttl_seconds,
     )
+    amap_route = AmapRouteProvider(
+        api_key=key.get_secret_value(),
+        http_client=http_client,
+        cache=cache,
+        cache_ttl_seconds=settings.route_cache_ttl_seconds,
+    )
     return FallbackPlanningProvider(
-        AmapPlanningProvider(amap),
+        AmapPlanningProvider(amap_map, amap_route),
         DemoPlanningProvider(),
     )
 

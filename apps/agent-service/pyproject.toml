@@ -25,6 +25,7 @@ dev = [
 [project.scripts]
 trip-agent-worker = "trip_agent.worker.amqp:main"
 trip-agent-knowledge = "trip_agent.retrieval.cli:main"
+trip-agent-acquisition = "trip_agent.acquisition.cli:main"
 
 [build-system]
 requires = ["hatchling"]

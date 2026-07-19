@@ -41,6 +41,10 @@
 
 截至 2026-07-19，广州知识资料切片已完成：3 份官方来源 Markdown、TOML 元数据校验、稳定标题感知切分、离线 Demo Embedding、独立 `agent` schema 的 pgvector 持久化和精确 cosine 检索均已通过真实隔离 PostgreSQL 验收。`trip-agent-knowledge` 支持迁移、递归导入和带来源/版本/片段 ID 的 JSON 检索输出；同版本重复导入幂等，内容变化会拒绝覆盖。真实语义 Embedding、Rerank、推荐理由引用和前端来源展示仍留在下一阶段。
 
+同日启动 Phase 12 知识采集基础：先建立官方来源注册表、固定 URL 发现、域名白名单和 SSRF 边界；后续再接 HTTP 条件请求、快照、正文抽取、审核发布和 freshness report。采集候选不能绕过审核直接写入 `knowledge_document`。
+
+Phase 12 第一小步已完成：新增 `knowledge/sources/guangzhou.toml`、`trip_agent.acquisition` 来源模型/注册表/固定 URL 发现和 `trip-agent-acquisition validate` CLI；158 项 Python 测试通过，总覆盖率 91.60%。
+
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环
 
 - Java 创建 PlanningTask 和 Outbox。

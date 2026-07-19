@@ -1,0 +1,14 @@
+[[sources]]
+source_id = "guangzhou-government-tourism"
+city = "广州"
+source_name = "广州市人民政府文旅资料"
+reliability_level = "OFFICIAL"
+allowed_domains = ["www.gz.gov.cn"]
+resource_urls = [
+  "https://www.gz.gov.cn/xw/jrgz/content/post_5680586.html",
+  "https://www.gz.gov.cn/zlgz/gzly/wzgz/wbcg/content/mpost_9587900.html",
+  "https://www.gz.gov.cn/zt/jrshts/2026n/nwzgz/nwgz/content/post_10686807.html",
+]
+fetch_interval_hours = 168
+request_timeout_seconds = 10
+max_response_bytes = 2_000_000

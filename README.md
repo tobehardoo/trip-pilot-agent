@@ -24,8 +24,9 @@ M1 正在实施。当前已经完成：
 - Vue 工作台可直接创建规划任务，使用带 Bearer Token 的流式 `fetch` 消费 SSE，并在断线后携带 `Last-Event-ID` 补发。
 - 任务完成后自动读取当前行程，以日期和活动时间轴展示 Provider、版本与估算费用；UTC 活动时间统一按中国标准时间显示。
 - Vue 工作台已显示活动地址、地图 Marker 和步行 polyline；地图与时间轴可双向选择，缺少浏览器专用高德凭据时安全降级为可交互路线概览。
-- Java 88 个自动化测试、91.08% 行覆盖率，Python 139 个 Worker/API/Provider/知识检索测试，以及 Vue 43 个组件、API 边界、SSE、地图、路由与仓库测试；Python 知识检索模块总行覆盖率为 92.72%，Vue 地图切片行覆盖率为 92.66%。
+- Java 88 个自动化测试、91.08% 行覆盖率，Python 158 个 Worker/API/Provider/知识检索/采集测试，以及 Vue 43 个组件、API 边界、SSE、地图、路由与仓库测试；Python 知识检索与采集模块总行覆盖率为 91.60%，Vue 地图切片行覆盖率为 92.66%。
 - Python 已新增知识导入链：广州官方 Markdown 资料、TOML 元数据与稳定切分、独立 `agent` schema 的 pgvector 持久化、版本不可变校验和 `trip-agent-knowledge` 迁移/导入/检索 CLI；演示哈希向量明确标记为离线实现，不替代生产语义模型。
+- Phase 12 已建立官方知识采集基础：来源 TOML 注册表、广州官方固定 URL、城市筛选、白名单域名、HTTPS/凭据/公网 IP 校验、固定 URL 发现和 `trip-agent-acquisition validate` CLI；采集候选尚未直接发布到 RAG。
 
 下一条纵向切片是把检索结果接入规划 Agent，评测真实 Embedding/Rerank，并在推荐理由和前端工作台展示可追溯来源。
 
@@ -73,6 +74,7 @@ pnpm dev
 18. [Phase 9 相邻活动路线、交通段持久化与行程 API 测试计划](docs/17-phase-9-transit-leg-contract-test-plan.md)
 19. [Phase 10 前端地图与时间轴联动测试计划](docs/18-phase-10-web-map-linkage-test-plan.md)
 20. [Phase 11 广州知识导入与 RAG 基础链路测试计划](docs/19-phase-11-guangzhou-knowledge-rag-test-plan.md)
+21. [Phase 12 官方知识采集基础测试计划](docs/20-phase-12-official-knowledge-acquisition-test-plan.md)
 
 ## 已确认的基础约束
 

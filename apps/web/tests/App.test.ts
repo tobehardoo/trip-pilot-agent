@@ -52,6 +52,9 @@ const itineraryResponse = {
       endTime: '2026-07-18T03:00:00Z',
       estimatedCost: 0,
       source: 'DEMO',
+      providerPoiId: null,
+      coordinates: { longitude: 113.2392, latitude: 23.1097 },
+      address: '广州市荔湾区沙面岛',
     }, {
       id: '77777777-7777-7777-7777-777777777777',
       title: '品尝西关早茶',
@@ -59,6 +62,24 @@ const itineraryResponse = {
       endTime: '2026-07-18T05:30:00Z',
       estimatedCost: 160,
       source: 'DEMO',
+      providerPoiId: null,
+      coordinates: { longitude: 113.2489, latitude: 23.1189 },
+      address: '广州市荔湾区',
+    }],
+    transitLegs: [{
+      id: '88888888-8888-8888-8888-888888888888',
+      legOrder: 0,
+      fromActivityId: '66666666-6666-6666-6666-666666666666',
+      toActivityId: '77777777-7777-7777-7777-777777777777',
+      mode: 'WALKING',
+      distanceMeters: 1380,
+      durationSeconds: 1100,
+      provider: 'DEMO',
+      estimated: true,
+      polyline: [
+        { longitude: 113.2392, latitude: 23.1097 },
+        { longitude: 113.2489, latitude: 23.1189 },
+      ],
     }],
   }],
   createdAt: '2026-07-16T01:00:01Z',
@@ -499,9 +520,16 @@ describe('TripPilot application shell', () => {
 
     expect(await screen.findByRole('heading', { name: '广州 Demo 行程' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: '行程时间轴' })).toBeTruthy()
-    expect(screen.getByText('漫步沙面岛')).toBeTruthy()
+    expect(screen.getAllByText('漫步沙面岛')).toHaveLength(2)
+    expect(screen.getByRole('region', { name: '行程地图' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '定位 品尝西关早茶' })).toBeTruthy()
     expect(screen.getByText('09:00 — 11:00')).toBeTruthy()
     expect(screen.getByText('¥860')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '定位 品尝西关早茶' }))
+    expect(screen.getByRole('button', { name: '选择活动 品尝西关早茶' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByText('广州市荔湾区沙面岛')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '选择活动 漫步沙面岛' }))
+    expect(screen.getByRole('button', { name: '定位 漫步沙面岛' }).getAttribute('aria-pressed')).toBe('true')
     const planningRequests = fetchMock.mock.calls.filter(([input]) => (
       urlOf(input).endsWith(`/api/trips/${tripResponse.id}/planning-tasks`)
     ))

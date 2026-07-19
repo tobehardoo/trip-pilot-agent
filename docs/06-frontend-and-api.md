@@ -91,7 +91,9 @@ day.transitLegs[] = {
 }
 ```
 
-AMAP 活动必须包含完整来源元数据；Demo 活动对应字段为 `null`。交通段使用活动 UUID 关联起终点，按 `legOrder` 返回。前端类型已同步，地图渲染在下一切片实现。
+AMAP 活动必须包含完整来源元数据；Demo 活动对应字段为 `null`。交通段使用活动 UUID 关联起终点，按 `legOrder` 返回。
+
+前端已使用这些字段生成 Marker、地址与 polyline，并以活动 UUID 维护地图和时间轴的共享选中状态。真实高德 JS API 只读取浏览器专用 `VITE_AMAP_WEB_JS_KEY` 和 `VITE_AMAP_SECURITY_CODE`；缺少凭据或 SDK 加载失败时显示可交互路线概览，不会把服务端 Web Service Key 下发到浏览器。
 
 ## 6. 异步任务 API
 

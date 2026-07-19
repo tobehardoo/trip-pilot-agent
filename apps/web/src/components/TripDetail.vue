@@ -17,10 +17,11 @@ import {
   Wallet,
   X,
 } from 'lucide-vue-next'
-import { computed, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 
 import { ApiError, type Itinerary, type Trip, type UpdateTripConstraintsInput, type User } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
+import TripMap from './TripMap.vue'
 
 const props = defineProps<{
   user: User
@@ -54,6 +55,7 @@ const dialogElement = ref<HTMLElement | null>(null)
 const submitting = ref(false)
 const formError = ref<string | null>(null)
 const versionConflict = ref(false)
+const selectedActivityId = ref<string | null>(null)
 const form = reactive({
   budgetAmount: '',
   travelers: 1,
@@ -166,6 +168,21 @@ function formatTime(dateTime: string) {
 function formatMoney(amount: number) {
   return `¥${amount}`
 }
+
+function selectActivity(activityId: string) {
+  selectedActivityId.value = activityId
+  void nextTick(() => {
+    const target = document.getElementById(`activity-${activityId}`)
+    target?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+  })
+}
+
+watch(() => props.itinerary, (nextItinerary) => {
+  const firstActivity = nextItinerary?.days.flatMap((day) => day.activities).find((activity) => activity.coordinates)
+  if (!firstActivity || !nextItinerary?.days.flatMap((day) => day.activities).some((activity) => activity.id === selectedActivityId.value)) {
+    selectedActivityId.value = firstActivity?.id ?? null
+  }
+}, { immediate: true })
 </script>
 
 <template>
@@ -274,28 +291,36 @@ function formatMoney(amount: number) {
               </dl>
             </header>
 
-            <div class="itinerary-days">
+            <div class="itinerary-layout">
+              <TripMap
+                :itinerary="itinerary"
+                :selected-activity-id="selectedActivityId"
+                @select-activity="selectActivity"
+              />
+              <div class="itinerary-days">
               <section v-for="(day, dayIndex) in itinerary.days" :key="day.date" class="itinerary-day">
                 <header>
                   <span>DAY {{ dayIndex + 1 }}</span>
                   <h3>{{ formatDay(day.date) }}</h3>
                 </header>
                 <ol>
-                  <li v-for="activity in day.activities" :key="activity.id">
+                  <li v-for="activity in day.activities" :id="`activity-${activity.id}`" :key="activity.id" :class="{ 'is-selected': activity.id === selectedActivityId }">
                     <time>{{ formatTime(activity.startTime) }} — {{ formatTime(activity.endTime) }}</time>
                     <div class="timeline-marker"><span></span></div>
-                    <div class="activity-copy">
+                    <button class="activity-copy" type="button" :aria-label="`选择活动 ${activity.title}`" :aria-pressed="activity.id === selectedActivityId" @click="selectActivity(activity.id)">
                       <strong>{{ activity.title }}</strong>
-                      <span>
+                      <span class="activity-meta">
                         <Coins :size="14" aria-hidden="true" />
                         {{ formatMoney(activity.estimatedCost) }}
                         <Clock3 :size="14" aria-hidden="true" />
                         {{ activity.source === 'DEMO' ? 'Demo' : activity.source }}
                       </span>
-                    </div>
+                      <small v-if="activity.address" class="activity-address"><MapPin :size="13" aria-hidden="true" />{{ activity.address }}</small>
+                    </button>
                   </li>
                 </ol>
               </section>
+              </div>
             </div>
           </div>
         </section>
@@ -581,8 +606,7 @@ h3 { margin: 0 0 12px; font-size: 13px; }
 .itinerary-heading,
 .itinerary-summary,
 .itinerary-day > header,
-.planning-status,
-.activity-copy > span {
+.planning-status {
   display: flex;
   align-items: center;
 }
@@ -678,6 +702,7 @@ h3 { margin: 0 0 12px; font-size: 13px; }
 .itinerary-summary dt { color: #71817b; font-size: 11px; }
 .itinerary-summary dd { margin: 4px 0 0; color: #17201d; font-size: 15px; font-weight: 800; }
 
+.itinerary-layout { display: grid; grid-template-columns: minmax(280px, .9fr) minmax(0, 1.1fr); gap: 24px; padding-top: 24px; }
 .itinerary-days { display: grid; }
 .itinerary-day {
   display: grid;
@@ -706,10 +731,14 @@ h3 { margin: 0 0 12px; font-size: 13px; }
   border-radius: 50%;
   box-shadow: 0 0 0 1px #bd8e28;
 }
-.activity-copy { min-width: 0; padding: 0 0 22px 10px; }
+.activity-copy { min-width: 0; width: 100%; padding: 0 0 22px 10px; color: inherit; background: transparent; border: 0; text-align: left; cursor: pointer; }
+.activity-copy:hover strong, .itinerary-day li.is-selected .activity-copy strong { color: #236552; }
+.itinerary-day li.is-selected .timeline-marker span { background: #2f705e; box-shadow: 0 0 0 3px rgba(47, 112, 94, .16); }
 .activity-copy > strong { display: block; overflow-wrap: anywhere; font-size: 14px; }
-.activity-copy > span { flex-wrap: wrap; gap: 5px; margin-top: 7px; color: #71817b; font-size: 11px; }
-.activity-copy > span svg:nth-of-type(2) { margin-left: 7px; }
+.activity-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 7px; color: #71817b; font-size: 11px; }
+.activity-meta svg:nth-of-type(2) { margin-left: 7px; }
+.activity-address { display: flex; align-items: flex-start; gap: 4px; margin-top: 7px; color: #60736b; font-size: 11px; line-height: 1.45; }
+.activity-address svg { flex: 0 0 auto; margin-top: 1px; }
 
 .section-heading {
   justify-content: space-between;
@@ -904,6 +933,7 @@ h3 { margin: 0 0 12px; font-size: 13px; }
   .form-grid { grid-template-columns: 1fr; }
   .itinerary-summary { align-items: flex-start; flex-direction: column; }
   .itinerary-summary dl { width: 100%; justify-content: space-between; text-align: left; }
+  .itinerary-layout { grid-template-columns: 1fr; gap: 18px; }
   .itinerary-day { grid-template-columns: 1fr; gap: 16px; }
   .itinerary-day > header { flex-direction: row; align-items: baseline; }
   .itinerary-heading { align-items: flex-start; }

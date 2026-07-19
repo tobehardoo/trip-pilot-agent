@@ -35,7 +35,9 @@
 
 同日继续完成独立 `RouteProvider`、高德 v5 步行路线适配器、确定性 Demo 路线和 Redis 路线缓存。真实高德验收在广州两个 POI 之间返回 8758 米、7006 秒、20 个分段和 258 个 polyline 点，第二次请求命中只含 SHA-256 键的 Redis 缓存。
 
-随后完成 `PLANNING_COMPLETED v3`、相邻活动路线生成、Flyway V7 `transit_leg`、Java v1/v2/v3 兼容解析与当前行程 API。真实 Java -> RabbitMQ -> Python -> 高德 -> Redis -> PostgreSQL 广州验收在 3.1 秒内生成两个 AMAP 活动和一个 AMAP 步行段，路线为 1921 米、1537 秒、78 个 polyline 点。下一步实现前端地图 Marker、路线和时间轴联动。
+随后完成 `PLANNING_COMPLETED v3`、相邻活动路线生成、Flyway V7 `transit_leg`、Java v1/v2/v3 兼容解析与当前行程 API。真实 Java -> RabbitMQ -> Python -> 高德 -> Redis -> PostgreSQL 广州验收在 3.1 秒内生成两个 AMAP 活动和一个 AMAP 步行段，路线为 1921 米、1537 秒、78 个 polyline 点。
+
+同日完成 Vue 地图切片：当前行程坐标、地址和 polyline 已渲染为 Marker、路线和活动地址，地图与时间轴支持双向选择；浏览器缺少专用高德 JS API 凭据时显示不泄露服务端 Key 的可交互路线概览。43 个 Vue 测试、92.66% 地图切片行覆盖率、类型检查和生产构建通过，1280 px 桌面与 390 px 移动浏览器验收无横向溢出、越界或控制台错误。下一步进入广州知识资料导入与 RAG。
 
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环
 

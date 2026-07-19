@@ -23,9 +23,10 @@ M1 正在实施。当前已经完成：
 - 当前行程 API 按所有者隔离；任务 SSE 支持持久历史补发、`Last-Event-ID` 重连、实时终态通知与终态关闭。
 - Vue 工作台可直接创建规划任务，使用带 Bearer Token 的流式 `fetch` 消费 SSE，并在断线后携带 `Last-Event-ID` 补发。
 - 任务完成后自动读取当前行程，以日期和活动时间轴展示 Provider、版本与估算费用；UTC 活动时间统一按中国标准时间显示。
-- Java 88 个自动化测试、91.08% 行覆盖率，Python 119 个 Worker/API/Provider 测试，以及 Vue 33 个组件、API 边界、SSE、路由与仓库测试；Python 受影响 Worker 模块行覆盖率为 91%。
+- Vue 工作台已显示活动地址、地图 Marker 和步行 polyline；地图与时间轴可双向选择，缺少浏览器专用高德凭据时安全降级为可交互路线概览。
+- Java 88 个自动化测试、91.08% 行覆盖率，Python 119 个 Worker/API/Provider 测试，以及 Vue 43 个组件、API 边界、SSE、地图、路由与仓库测试；Python 受影响 Worker 模块行覆盖率为 91%，Vue 地图切片行覆盖率为 92.66%。
 
-下一条纵向切片是让前端地图 Marker、路线、活动地址与时间轴联动；随后进入广州知识资料和 RAG。
+下一条纵向切片是广州知识资料、Markdown 导入、切分、Embedding、pgvector 检索和推荐理由引用。
 
 本地准备：
 
@@ -67,6 +68,7 @@ pnpm dev
 16. [Phase 7 真实 POI 完成事件与 Demo 降级测试计划](docs/15-phase-7-real-poi-completion-contract-test-plan.md)
 17. [Phase 8 高德步行路线 Provider 与 Redis 缓存测试计划](docs/16-phase-8-amap-route-provider-test-plan.md)
 18. [Phase 9 相邻活动路线、交通段持久化与行程 API 测试计划](docs/17-phase-9-transit-leg-contract-test-plan.md)
+19. [Phase 10 前端地图与时间轴联动测试计划](docs/18-phase-10-web-map-linkage-test-plan.md)
 
 ## 已确认的基础约束
 

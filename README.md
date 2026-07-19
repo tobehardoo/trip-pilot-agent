@@ -75,6 +75,7 @@ pnpm dev
 19. [Phase 10 前端地图与时间轴联动测试计划](docs/18-phase-10-web-map-linkage-test-plan.md)
 20. [Phase 11 广州知识导入与 RAG 基础链路测试计划](docs/19-phase-11-guangzhou-knowledge-rag-test-plan.md)
 21. [Phase 12 官方知识采集基础测试计划](docs/20-phase-12-official-knowledge-acquisition-test-plan.md)
+22. [全局架构审计与优化路线](docs/21-global-architecture-review-and-optimized-roadmap.md)
 
 ## 已确认的基础约束
 

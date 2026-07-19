@@ -50,6 +50,8 @@ jobs:
         with:
           version: "0.8.4"
       - run: uv sync --frozen --extra dev
+      - name: Validate official source registry
+        run: uv run trip-agent-acquisition validate ../../knowledge/sources
       - name: Initialize pgvector extension
         run: >-
           uv run python -c "import psycopg;
@@ -57,7 +59,7 @@ jobs:
           connection.execute('CREATE EXTENSION IF NOT EXISTS vector');
           connection.commit(); connection.close()"
       - run: uv run ruff check .
-      - run: uv run pytest --cov=trip_agent.retrieval --cov-report=term --cov-fail-under=80
+      - run: uv run pytest --cov=trip_agent.retrieval --cov=trip_agent.acquisition --cov-report=term --cov-fail-under=80
 
   web:
     runs-on: ubuntu-latest
@@ -75,7 +77,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test
+      - run: pnpm test:coverage
       - run: pnpm build
 
   infrastructure:

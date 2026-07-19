@@ -153,6 +153,7 @@ agent-service
 ├── worker          RabbitMQ 消费与任务生命周期
 ├── workflow        LangGraph 图、节点和状态
 ├── providers       LLM、地图、天气、知识库适配器
+├── acquisition     官方来源注册、受控采集、快照与审核
 ├── retrieval       文档导入、切分、召回、引用
 ├── ranking         POI 过滤与偏好评分
 ├── optimization    OR-Tools 建模和路线优化
@@ -160,6 +161,8 @@ agent-service
 ├── evaluation      数据集、Runner、指标
 └── infrastructure 数据库、消息、缓存、Trace
 ```
+
+当前 Python 已落地 `worker`、`providers`、`retrieval` 和 `acquisition` 的第一版边界；`workflow`、`ranking`、`optimization`、`validation`、`evaluation` 与统一 `infrastructure` 仍是目标结构，不应在路线图中误写成已完成能力。
 
 ## 7. 主要运行链路
 

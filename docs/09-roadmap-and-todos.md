@@ -45,6 +45,8 @@
 
 Phase 12 第一小步已完成：新增 `knowledge/sources/guangzhou.toml`、`trip_agent.acquisition` 来源模型/注册表/固定 URL 发现和 `trip-agent-acquisition validate` CLI；158 项 Python 测试通过，总覆盖率 91.60%。
 
+2026-07-20 完成 Phase 12 第二小步：新增强类型 `HttpResourceFetcher`，支持 ETag/Last-Modified、304 未变化结果、拒绝压缩编码的原始字节流上限、白名单内显式重定向、白名单外/畸形重定向阻断，以及超时、网络失败和 HTTP 状态分类。173 项 Python 测试通过，知识检索与采集总覆盖率 91.60%；DNS 解析固定、限速、退避重试执行和快照持久化仍待后续。
+
 截至 2026-07-19 完成全局架构审计：当前核心链路可演示，但真实 Agent 规划、RAG 到规划理由的接入、采集快照/审核、生产级可观测性和公开部署安全仍未完成。后续按 `docs/21-global-architecture-review-and-optimized-roadmap.md` 的 P0/P1 顺序推进，不再同时扩展新城市和新 UI 功能。
 
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环

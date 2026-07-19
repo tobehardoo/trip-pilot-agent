@@ -39,6 +39,8 @@
 
 同日完成 Vue 地图切片：当前行程坐标、地址和 polyline 已渲染为 Marker、路线和活动地址，地图与时间轴支持双向选择；浏览器缺少专用高德 JS API 凭据时显示不泄露服务端 Key 的可交互路线概览。43 个 Vue 测试、92.66% 地图切片行覆盖率、类型检查和生产构建通过，1280 px 桌面与 390 px 移动浏览器验收无横向溢出、越界或控制台错误。下一步进入广州知识资料导入与 RAG。
 
+截至 2026-07-19，广州知识资料切片已完成：3 份官方来源 Markdown、TOML 元数据校验、稳定标题感知切分、离线 Demo Embedding、独立 `agent` schema 的 pgvector 持久化和精确 cosine 检索均已通过真实隔离 PostgreSQL 验收。`trip-agent-knowledge` 支持迁移、递归导入和带来源/版本/片段 ID 的 JSON 检索输出；同版本重复导入幂等，内容变化会拒绝覆盖。真实语义 Embedding、Rerank、推荐理由引用和前端来源展示仍留在下一阶段。
+
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环
 
 - Java 创建 PlanningTask 和 Outbox。

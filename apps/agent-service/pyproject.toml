@@ -7,6 +7,8 @@ dependencies = [
   "aio-pika==9.6.2",
   "fastapi==0.116.1",
   "httpx==0.28.1",
+  "pgvector==0.5.0",
+  "psycopg[binary]==3.3.4",
   "pydantic-settings==2.10.1",
   "redis==7.4.1",
   "uvicorn[standard]==0.35.0",
@@ -15,12 +17,14 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest==8.4.1",
+  "pytest-cov==7.1.0",
   "jsonschema==4.25.1",
   "ruff==0.12.7",
 ]
 
 [project.scripts]
 trip-agent-worker = "trip_agent.worker.amqp:main"
+trip-agent-knowledge = "trip_agent.retrieval.cli:main"
 
 [build-system]
 requires = ["hatchling"]

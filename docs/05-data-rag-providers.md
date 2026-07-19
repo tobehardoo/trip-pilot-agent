@@ -185,6 +185,15 @@ metadata
 - 每个增强城市先维护约 30 个重点 POI，再扩展到 50 个。
 - 后续增加知识库后台上传、版本发布和定时更新。
 
+### Phase 11 已实现的第一版边界
+
+- 仓库内 Markdown 使用 TOML front matter（`+++`）描述城市、来源、版本、有效期和适用人群；解析、内容哈希和标题感知切分在 Python `trip_agent.retrieval` 中完成。
+- `agent.knowledge_document`、`agent.knowledge_chunk` 与 `agent.knowledge_chunk_embedding` 使用独立迁移和校验和记录；同一文档版本的正文和全部元数据使用完整指纹保持不可变，更新必须创建新版本。
+- 片段内容与向量分表保存；同一片段可按 `(embedding_model, embedding_dimensions)` 幂等增加多组向量，模型评测不需要篡改资料版本。检索先选择查询日期下的最新有效文档版本，再使用匹配模型和维度的向量，禁止混入仍在有效期内的旧版本。
+- 当前默认的 `demo-hash-v1` 只用于离线开发和契约测试，向量已归一化并记录模型名/维度；真实语义 Embedding 与 Rerank 必须经过固定评测集后再接入，不把 Demo 结果当作生产质量。
+- 提供 `trip-agent-knowledge migrate|import|search` 运维入口。第一批广州资料保存在 `knowledge/guangzhou/`，来源均回链到广州市政府页面。
+- 数据规模较小时使用精确 cosine 扫描；确认模型和维度后再引入固定维度 HNSW 索引，避免在模型尚未评测时锁死迁移。
+
 建议的仓库数据结构：
 
 ```text

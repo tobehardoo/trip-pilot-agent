@@ -51,6 +51,8 @@ Phase 12 第一小步已完成：新增 `knowledge/sources/guangzhou.toml`、`tr
 
 同日完成 Phase 12 第四小步：新增强类型 `AcquisitionScheduler`、`RetryPolicy` 和尝试/执行结果，所有首次抓取与重试共享每来源实际放行间隔；只重试明确标记为可重试的采集错误，并执行最大 10 次、拒绝非有限参数的有上限指数退避。限速器使用每来源独立锁，在事件循环晚唤醒、等待取消和并发请求下仍按实际启动时间保持间隔，其他来源可独立前进；尝试时间统一为 UTC。采集相关 70 项测试通过；本机 Docker 未运行时 Python 全量为 205 项通过、4 项 pgvector 集成测试跳过，知识检索与采集总覆盖率 85.50%。下一步实现 `knowledge_resource`、`knowledge_snapshot` 和 `knowledge_fetch_run` 持久化。
 
+同日完成 Phase 12 第五小步：新增 `AcquisitionExecutionRecorder`、`AcquisitionWorkflow`、并发安全的独立校验和迁移及 `PsycopgAcquisitionRepository`，生产工作流会读取“条件校验器 + 对应内容哈希”的版本化状态并强制组合调度与记录，以单个 PostgreSQL 事务持久化 `knowledge_resource`、不可变 `PENDING` `knowledge_snapshot` 和带完整尝试审计的 `knowledge_fetch_run`。原始内容按 SHA-256 与解析器版本幂等，解析器升级可产生新候选但不会误报页面变化，A→B→A 内容回退仍更新最近变化；304 不建快照且必须携带基线哈希，失败不更新最近核验，实际并发、乱序完成和 fetched-B/304-A 交错不会让内容哈希与 ETag 失配。采集相关 95 项测试、Python 全量 234 项测试在真实 pgvector PostgreSQL 上通过，知识检索与采集总覆盖率 93.29%。下一步实现官方 HTML 正文与发布时间抽取、质量检查和审核发布。
+
 截至 2026-07-19 完成全局架构审计：当前核心链路可演示，但真实 Agent 规划、RAG 到规划理由的接入、采集快照/审核、生产级可观测性和公开部署安全仍未完成。后续按 `docs/21-global-architecture-review-and-optimized-roadmap.md` 的 P0/P1 顺序推进，不再同时扩展新城市和新 UI 功能。
 
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环

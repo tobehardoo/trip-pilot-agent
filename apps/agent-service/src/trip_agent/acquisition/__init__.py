@@ -10,7 +10,18 @@ from trip_agent.acquisition.fetch_models import (
 )
 from trip_agent.acquisition.fetching import HttpResourceFetcher
 from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource
+from trip_agent.acquisition.recording import (
+    AcquisitionExecutionRecorder,
+    AcquisitionPersisted,
+    AcquisitionRecord,
+    AcquisitionRecordRepository,
+    CandidateSnapshot,
+    ConditionalResourceState,
+    FetchRunRecord,
+    KnowledgeResourceRecord,
+)
 from trip_agent.acquisition.registry import SourceCatalog
+from trip_agent.acquisition.repository import PsycopgAcquisitionRepository
 from trip_agent.acquisition.scheduling import (
     AcquisitionScheduler,
     FetchAttempt,
@@ -21,12 +32,27 @@ from trip_agent.acquisition.scheduling import (
     FetchExecutionSucceeded,
     RetryPolicy,
 )
+from trip_agent.acquisition.workflow import (
+    AcquisitionExecutionScheduler,
+    AcquisitionWorkflow,
+    AcquisitionWorkflowResult,
+)
 
 __all__ = [
     "AcquisitionFetchError",
+    "AcquisitionExecutionRecorder",
+    "AcquisitionExecutionScheduler",
+    "AcquisitionPersisted",
+    "AcquisitionRecord",
+    "AcquisitionRecordRepository",
     "AcquisitionScheduler",
+    "AcquisitionWorkflow",
+    "AcquisitionWorkflowResult",
+    "CandidateSnapshot",
+    "ConditionalResourceState",
     "DiscoveredResource",
     "FetchResult",
+    "FetchRunRecord",
     "FetchAttempt",
     "FetchAttemptFailed",
     "FetchAttemptSucceeded",
@@ -37,6 +63,8 @@ __all__ = [
     "HttpResourceFetcher",
     "HostResolver",
     "KnowledgeSource",
+    "KnowledgeResourceRecord",
+    "PsycopgAcquisitionRepository",
     "ResourceFetched",
     "ResourceNotModified",
     "RetryPolicy",

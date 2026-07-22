@@ -1,5 +1,6 @@
 """Immutable source and discovery models for knowledge acquisition."""
 
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Literal
@@ -36,10 +37,12 @@ class KnowledgeSource:
             "COMMUNITY",
         }:
             raise ValueError(f"unsupported reliability level: {self.reliability_level}")
-        if not isinstance(self.fetch_interval_hours, int) or isinstance(
-            self.fetch_interval_hours, bool
-        ) or self.fetch_interval_hours < 1:
-            raise ValueError("fetch_interval_hours must be positive")
+        if (
+            not isinstance(self.fetch_interval_hours, int)
+            or isinstance(self.fetch_interval_hours, bool)
+            or not 1 <= self.fetch_interval_hours <= 8760
+        ):
+            raise ValueError("fetch_interval_hours must be between 1 and 8760")
         if not isinstance(self.min_request_interval_seconds, int | float) or isinstance(
             self.min_request_interval_seconds, bool
         ) or not 0.1 <= self.min_request_interval_seconds <= 60:
@@ -86,6 +89,12 @@ class DiscoveredResource:
     source_id: str
     city: str
     url: str
+
+
+def resource_id_for(source_id: str, source_url: str) -> str:
+    """Return the stable identity shared by acquisition and operational reports."""
+
+    return hashlib.sha256(f"{source_id}\0{source_url}".encode()).hexdigest()
 
 
 def _require_text(value: object, field_name: str) -> str:

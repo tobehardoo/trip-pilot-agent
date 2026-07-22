@@ -118,6 +118,7 @@ def test_source_model_rejects_duplicate_resource_urls() -> None:
     ("field", "value", "message"),
     [
         ("fetch_interval_hours", 0, "fetch_interval_hours"),
+        ("fetch_interval_hours", 8761, "fetch_interval_hours"),
         ("min_request_interval_seconds", 0, "min_request_interval_seconds"),
         ("request_timeout_seconds", 0, "request_timeout_seconds"),
         ("max_response_bytes", 1024, "max_response_bytes"),

@@ -18,6 +18,7 @@ from trip_agent.acquisition.extraction_service import (
     SnapshotExtractionRecord,
 )
 from trip_agent.acquisition.fetch_models import FetchValidators
+from trip_agent.acquisition.freshness import ResourceFreshnessState
 from trip_agent.acquisition.recording import (
     AcquisitionPersisted,
     AcquisitionRecord,
@@ -76,6 +77,9 @@ class PsycopgAcquisitionRepository:
 
     async def save_review_action(self, action: ReviewAction) -> ReviewPersistence:
         return await asyncio.to_thread(self._save_review_action_sync, action)
+
+    async def list_resource_freshness(self) -> tuple[ResourceFreshnessState, ...]:
+        return await asyncio.to_thread(self._list_resource_freshness_sync)
 
     async def list_reviews_pending(
         self,
@@ -445,6 +449,28 @@ class PsycopgAcquisitionRepository:
             if action.action == "WITHDRAW":
                 return self._save_withdrawal(connection, action)
             return self._save_initial_review(connection, action)
+
+    def _list_resource_freshness_sync(self) -> tuple[ResourceFreshnessState, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT r.resource_id, r.source_id, r.source_url,
+                    r.last_attempted_at, r.last_verified_at, r.last_changed_at,
+                    latest.status AS latest_run_status,
+                    latest.error_code AS latest_error_code,
+                    latest.error_message AS latest_error_message
+                FROM agent.knowledge_resource r
+                LEFT JOIN LATERAL (
+                    SELECT run.status, run.error_code, run.error_message
+                    FROM agent.knowledge_fetch_run run
+                    WHERE run.resource_id = r.resource_id
+                    ORDER BY run.completed_at DESC, run.run_id DESC
+                    LIMIT 1
+                ) latest ON TRUE
+                ORDER BY r.source_id, r.source_url
+                """
+            ).fetchall()
+        return tuple(ResourceFreshnessState(**row) for row in rows)
 
     def _list_reviews_pending_sync(self, limit: int) -> tuple[PendingReviewCandidate, ...]:
         with self._connect() as connection:

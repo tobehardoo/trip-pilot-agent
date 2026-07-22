@@ -12,7 +12,12 @@ from trip_agent.acquisition.fetch_models import (
     FetchValidators,
     ResourceFetched,
 )
-from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource, ReliabilityLevel
+from trip_agent.acquisition.models import (
+    DiscoveredResource,
+    KnowledgeSource,
+    ReliabilityLevel,
+    resource_id_for,
+)
 from trip_agent.acquisition.scheduling import (
     FetchAttempt,
     FetchAttemptSucceeded,
@@ -289,8 +294,7 @@ def _validate_attempts(attempts: tuple[FetchAttempt, ...]) -> tuple[FetchAttempt
 
 
 def _resource_id(source_id: str, source_url: str) -> ResourceId:
-    digest = hashlib.sha256(f"{source_id}\0{source_url}".encode()).hexdigest()
-    return ResourceId(digest)
+    return ResourceId(resource_id_for(source_id, source_url))
 
 
 def _snapshot_id(

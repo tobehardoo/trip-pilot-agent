@@ -25,6 +25,14 @@ from trip_agent.acquisition.fetch_models import (
     ResourceNotModified,
 )
 from trip_agent.acquisition.fetching import HttpResourceFetcher
+from trip_agent.acquisition.freshness import (
+    FreshnessReport,
+    FreshnessReportService,
+    ResourceFreshness,
+    ResourceFreshnessState,
+    SourceFreshness,
+    render_freshness_report,
+)
 from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource
 from trip_agent.acquisition.recording import (
     AcquisitionExecutionRecorder,
@@ -97,6 +105,8 @@ __all__ = [
     "FetchExecutionFailed",
     "FetchExecutionSucceeded",
     "FetchValidators",
+    "FreshnessReport",
+    "FreshnessReportService",
     "HttpResourceFetcher",
     "HostResolver",
     "GuangzhouGovernmentArticleExtractor",
@@ -111,6 +121,8 @@ __all__ = [
     "PublicationNotAvailable",
     "PublishedKnowledge",
     "ResourceFetched",
+    "ResourceFreshness",
+    "ResourceFreshnessState",
     "ResourceNotModified",
     "RetryPolicy",
     "ReviewAction",
@@ -120,8 +132,10 @@ __all__ = [
     "ReviewStateConflict",
     "ReviewWithdrawalRequest",
     "SourceCatalog",
+    "SourceFreshness",
     "SnapshotExtractionProcessed",
     "SnapshotExtractionRecord",
     "SnapshotExtractionService",
     "SystemHostResolver",
+    "render_freshness_report",
 ]

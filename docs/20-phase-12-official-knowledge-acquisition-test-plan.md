@@ -2,9 +2,9 @@
 
 ## 1. 目标与范围
 
-本阶段把官方旅游资料获取拆成独立的采集边界。第一小步交付来源注册表、固定 URL 发现、域名白名单和基础 SSRF 防护；第二小步交付受控条件 HTTP 获取；第三小步交付 DNS 结果校验和单次抓取 IP 固定。当前仍不做开放式递归爬虫，不把候选内容直接发布到 RAG。
+本阶段把官方旅游资料获取拆成独立的采集边界。第一小步交付来源注册表、固定 URL 发现、域名白名单和基础 SSRF 防护；第二小步交付受控条件 HTTP 获取；第三小步交付 DNS 结果校验和单次抓取 IP 固定。系统不做开放式递归爬虫，也不允许候选内容绕过审核直接发布到 RAG。
 
-后续小步依次实现：限速与退避重试、采集快照、官方文章正文抽取、质量校验与审核队列、`KnowledgeImporter` 发布适配器和 freshness report。
+后续六个小步已依次实现限速与退避重试、采集快照、官方文章正文抽取、质量校验与审核队列、`KnowledgeImporter` 发布适配器和 freshness report。
 
 ## 2. 第一小步契约
 
@@ -57,7 +57,13 @@
 - `KnowledgeReviewPublisher` 是采集边界内唯一允许调用 `KnowledgeImporter.import_document` 的适配器。发布先按 PostgreSQL 时钟持久化抢占，再导入冻结的 `KnowledgeDocument`，最后回写结果；失败可重试，崩溃遗留的超时抢占可被重领，依靠 `KnowledgeImporter` 的文档版本事务锁与不可变幂等性收敛。任何发布尝试开始后都不得撤回，因为外部写入是否发生已不能由本地失败状态证明。
 - 动态事实警告随提取结果保留；本小步只发布审核确认的静态知识，不改变“价格、营业时间、预约和交通必须实时核验”的回答约束。
 
-## 9. 自动化测试
+## 9. 第九小步契约
+
+- `FreshnessReportService` 以来源注册表中的 `fetch_interval_hours` 为权威策略，按配置来源与固定 URL 生成完整报告；数据库只提供最近尝试、最近验证、最近内容变化和最新运行结果，不自行猜测刷新周期。
+- 每个资源必须按派生 `resource_id` 稳定区分 `FRESH` 与 `STALE`；过期原因固定为 `NEVER_ATTEMPTED`、`NEVER_VERIFIED`、`VERIFICATION_OVERDUE` 或 `IDENTITY_MISMATCH`，最新失败的错误码与消息独立暴露，不能把失败尝试时间误当成成功验证时间。
+- 报告按来源聚合资源、过期数与整体状态，使用带时区的 UTC 生成时间并稳定排序；`trip-agent-acquisition freshness` 通过环境数据库配置输出结构化 JSON，供值守、CI/nightly 与后续告警消费。
+
+## 10. 自动化测试
 
 - 有效广州官方来源配置可加载，并能按城市筛选。
 - 重复来源 ID、重复资源 URL、非 HTTPS URL 和不在白名单的主机被拒绝。
@@ -81,9 +87,11 @@
 
 第八小步结果：新增 24 项审核领域/真实 PostgreSQL 测试和 1 项知识仓储并发测试，覆盖待审核队列、算法拒绝隔离、审核输入校验、操作者/时间/备注审计、批准与拒绝、重复操作幂等、冲突并发、按资源单调文档版本、发布前撤回、数据库时钟抢占、超时重领、旧工作者成功收敛、失败重试、完成幂等、V2→V3 历史来源可信度失败关闭、10 路同版本导入、广州发布时间本地日期映射和冻结元数据到 `KnowledgeDocument` 的完整转换。采集相关共 148 项测试；真实 pgvector PostgreSQL 下 Python 全量 288 项通过，知识检索与采集总覆盖率 92.61%，通过 80% 门禁。
 
+第九小步结果：新增 9 项 freshness 领域、CLI 与真实 PostgreSQL 测试，覆盖未尝试/未验证/验证逾期/新鲜状态、最近失败详情、来源与资源稳定排序、派生资源 ID、错误 PK/孤儿行失败关闭、来源元数据漂移、UTC 归一化、刷新周期上限、最新运行选择、结构化 JSON、数据库错误脱敏和只读事务运行。采集相关共 157 项测试；真实 pgvector PostgreSQL 下 Python 全量 297 项通过，知识检索与采集总覆盖率 92.93%，通过 80% 门禁。
+
 当前安全边界已经覆盖 URL 字面 IP、协议、凭据、域名白名单、DNS 全结果公网单播校验、单次抓取 IP 固定和环境代理隔离，并在每次重定向前重复 URL 策略；新重定向主机还会重新执行 DNS 检查。
 
-## 10. 验收命令
+## 11. 验收命令
 
 ```powershell
 Set-Location apps/agent-service
@@ -91,9 +99,9 @@ uv sync --extra dev
 uv run pytest tests -q -k acquisition
 uv run ruff check src tests
 uv run trip-agent-acquisition validate ../../knowledge/sources
+uv run trip-agent-acquisition freshness ../../knowledge/sources
 ```
 
-## 11. 后续验收边界
+## 12. 后续验收边界
 
-- freshness report 必须区分最近尝试、最近验证和最近内容变化，并按来源暴露过期原因。
 - 价格、营业时间、预约和交通等动态事实不从静态采集内容直接承诺，回答时必须实时核验。

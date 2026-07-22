@@ -2,7 +2,7 @@
 
 import asyncio
 import hashlib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -10,6 +10,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from trip_agent.acquisition.extraction import ExtractionQualityIssue
 from trip_agent.acquisition.extraction_service import (
     ExtractionPersisted,
     ExtractionVersionConflict,
@@ -23,7 +24,17 @@ from trip_agent.acquisition.recording import (
     ConditionalResourceState,
     SnapshotId,
 )
+from trip_agent.acquisition.review import (
+    PendingReviewCandidate,
+    PublicationClaim,
+    PublicationClaimResult,
+    PublishedKnowledge,
+    ReviewAction,
+    ReviewPersistence,
+    ReviewStateConflict,
+)
 from trip_agent.acquisition.scheduling import FetchAttempt, FetchAttemptFailed
+from trip_agent.retrieval.service import KnowledgeImportResult
 
 
 class PsycopgAcquisitionRepository:
@@ -62,6 +73,60 @@ class PsycopgAcquisitionRepository:
 
     async def save_extraction(self, record: SnapshotExtractionRecord) -> ExtractionPersisted:
         return await asyncio.to_thread(self._save_extraction_sync, record)
+
+    async def save_review_action(self, action: ReviewAction) -> ReviewPersistence:
+        return await asyncio.to_thread(self._save_review_action_sync, action)
+
+    async def list_reviews_pending(
+        self,
+        *,
+        limit: int,
+    ) -> tuple[PendingReviewCandidate, ...]:
+        return await asyncio.to_thread(self._list_reviews_pending_sync, limit)
+
+    async def claim_publication(
+        self,
+        *,
+        review_action_id: str,
+        claim_timeout: timedelta,
+    ) -> PublicationClaimResult:
+        return await asyncio.to_thread(
+            self._claim_publication_sync,
+            review_action_id,
+            claim_timeout,
+        )
+
+    async def mark_publication_succeeded(
+        self,
+        *,
+        review_action_id: str,
+        claim_token: int,
+        result: KnowledgeImportResult,
+        published_at: datetime,
+    ) -> None:
+        await asyncio.to_thread(
+            self._mark_publication_succeeded_sync,
+            review_action_id,
+            claim_token,
+            result,
+            published_at,
+        )
+
+    async def mark_publication_failed(
+        self,
+        *,
+        review_action_id: str,
+        claim_token: int,
+        error: str,
+        failed_at: datetime,
+    ) -> None:
+        await asyncio.to_thread(
+            self._mark_publication_failed_sync,
+            review_action_id,
+            claim_token,
+            error,
+            failed_at,
+        )
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._database_url, row_factory=dict_row)
@@ -139,10 +204,12 @@ class PsycopgAcquisitionRepository:
         connection.execute(
             """
             INSERT INTO agent.knowledge_resource (
-                resource_id, source_id, city, source_url, final_url,
+                resource_id, source_id, source_name, reliability_level, city, source_url, final_url,
                 etag, last_modified, last_attempted_at, last_verified_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (resource_id) DO UPDATE SET
+                source_name = EXCLUDED.source_name,
+                reliability_level = EXCLUDED.reliability_level,
                 last_attempted_at = GREATEST(
                     agent.knowledge_resource.last_attempted_at,
                     EXCLUDED.last_attempted_at
@@ -152,6 +219,8 @@ class PsycopgAcquisitionRepository:
             (
                 resource.resource_id,
                 resource.source_id,
+                resource.source_name,
+                resource.reliability_level,
                 resource.city,
                 resource.source_url,
                 resource.final_url,
@@ -370,6 +439,461 @@ class PsycopgAcquisitionRepository:
             snapshot_id=record.snapshot_id,
             status=status,
         )
+
+    def _save_review_action_sync(self, action: ReviewAction) -> ReviewPersistence:
+        with self._connect() as connection:
+            if action.action == "WITHDRAW":
+                return self._save_withdrawal(connection, action)
+            return self._save_initial_review(connection, action)
+
+    def _list_reviews_pending_sync(self, limit: int) -> tuple[PendingReviewCandidate, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT e.extraction_id, e.snapshot_id, r.city,
+                    s.source_url, r.source_name, e.title, e.content,
+                    e.published_at, s.fetched_at, e.extracted_at, e.quality_issues
+                FROM agent.knowledge_extraction e
+                JOIN agent.knowledge_snapshot s ON s.snapshot_id = e.snapshot_id
+                JOIN agent.knowledge_resource r ON r.resource_id = s.resource_id
+                WHERE e.status = 'EXTRACTED'
+                  AND s.review_status = 'PENDING'
+                  AND r.source_name IS NOT NULL
+                  AND r.reliability_level IS NOT NULL
+                ORDER BY e.extracted_at, e.extraction_id
+                LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+        return tuple(
+            PendingReviewCandidate(
+                extraction_id=row["extraction_id"],
+                snapshot_id=row["snapshot_id"],
+                city=row["city"],
+                source_url=row["source_url"],
+                source_name=row["source_name"],
+                title=row["title"],
+                content=row["content"],
+                published_at=row["published_at"],
+                fetched_at=row["fetched_at"],
+                extracted_at=row["extracted_at"],
+                quality_issues=tuple(
+                    ExtractionQualityIssue(**issue) for issue in row["quality_issues"]
+                ),
+            )
+            for row in rows
+        )
+
+    @staticmethod
+    def _save_initial_review(
+        connection: psycopg.Connection,
+        action: ReviewAction,
+    ) -> ReviewPersistence:
+        candidate = connection.execute(
+            """
+            SELECT e.status AS extraction_status, e.snapshot_id,
+                s.review_status, s.resource_id,
+                r.city, r.source_name, r.reliability_level
+            FROM agent.knowledge_extraction e
+            JOIN agent.knowledge_snapshot s ON s.snapshot_id = e.snapshot_id
+            JOIN agent.knowledge_resource r ON r.resource_id = s.resource_id
+            WHERE e.extraction_id = %s
+            FOR UPDATE OF s, r
+            """,
+            (action.extraction_id,),
+        ).fetchone()
+        if candidate is None or candidate["extraction_status"] != "EXTRACTED":
+            raise ReviewStateConflict("extraction is not eligible for human review")
+        if candidate["source_name"] is None or candidate["reliability_level"] is None:
+            raise ReviewStateConflict("source metadata is incomplete; reacquire the resource")
+        if candidate["review_status"] == "WITHDRAWN":
+            raise ReviewStateConflict("candidate approval has been withdrawn")
+        if candidate["review_status"] != "PENDING":
+            return PsycopgAcquisitionRepository._existing_review_result(
+                connection,
+                snapshot_id=candidate["snapshot_id"],
+                action=action,
+            )
+
+        document_id: str | None = None
+        document_version: int | None = None
+        document_city: str | None = None
+        document_source_name: str | None = None
+        document_reliability_level: str | None = None
+        review_status: Literal["APPROVED", "REJECTED"]
+        if action.action == "APPROVE":
+            document_id = f"acquired-{candidate['resource_id']}"
+            document_version = connection.execute(
+                """
+                SELECT COALESCE(MAX(a.document_version), 0) + 1 AS next_version
+                FROM agent.knowledge_review_action a
+                JOIN agent.knowledge_snapshot reviewed
+                    ON reviewed.snapshot_id = a.snapshot_id
+                WHERE reviewed.resource_id = %s AND a.action = 'APPROVE'
+                """,
+                (candidate["resource_id"],),
+            ).fetchone()["next_version"]
+            document_city = candidate["city"]
+            document_source_name = candidate["source_name"]
+            document_reliability_level = candidate["reliability_level"]
+            review_status = "APPROVED"
+        else:
+            review_status = "REJECTED"
+
+        connection.execute(
+            """
+            INSERT INTO agent.knowledge_review_action (
+                action_id, snapshot_id, extraction_id, action, parent_action_id,
+                reviewer_id, note, reviewed_at, decision_fingerprint,
+                category, valid_from, valid_to, applicable_seasons, traveler_types,
+                document_id, document_version, document_city, document_source_name,
+                document_reliability_level
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                action.action_id,
+                candidate["snapshot_id"],
+                action.extraction_id,
+                action.action,
+                None,
+                action.reviewer_id,
+                action.note,
+                action.reviewed_at,
+                action.decision_fingerprint,
+                action.category,
+                action.valid_from,
+                action.valid_to,
+                list(action.applicable_seasons),
+                list(action.traveler_types),
+                document_id,
+                document_version,
+                document_city,
+                document_source_name,
+                document_reliability_level,
+            ),
+        )
+        updated = connection.execute(
+            """
+            UPDATE agent.knowledge_snapshot
+            SET review_status = %s
+            WHERE snapshot_id = %s AND review_status = 'PENDING'
+            """,
+            (review_status, candidate["snapshot_id"]),
+        )
+        if updated.rowcount != 1:
+            raise ReviewStateConflict("candidate review state changed concurrently")
+        if action.action == "APPROVE":
+            connection.execute(
+                """
+                INSERT INTO agent.knowledge_publication (review_action_id, status)
+                VALUES (%s, 'PENDING')
+                """,
+                (action.action_id,),
+            )
+        return ReviewPersistence(
+            action_id=action.action_id,
+            snapshot_id=candidate["snapshot_id"],
+            review_status=review_status,
+            persistence_status="created",
+            document_id=document_id,
+            document_version=document_version,
+        )
+
+    @staticmethod
+    def _existing_review_result(
+        connection: psycopg.Connection,
+        *,
+        snapshot_id: str,
+        action: ReviewAction,
+    ) -> ReviewPersistence:
+        existing = connection.execute(
+            """
+            SELECT action_id, action, decision_fingerprint, document_id, document_version
+            FROM agent.knowledge_review_action
+            WHERE snapshot_id = %s AND action IN ('APPROVE', 'REJECT')
+            """,
+            (snapshot_id,),
+        ).fetchone()
+        if (
+            existing is None
+            or existing["action"] != action.action
+            or existing["decision_fingerprint"] != action.decision_fingerprint
+        ):
+            raise ReviewStateConflict("candidate already has a different review decision")
+        review_status: Literal["APPROVED", "REJECTED"] = (
+            "APPROVED" if existing["action"] == "APPROVE" else "REJECTED"
+        )
+        return ReviewPersistence(
+            action_id=existing["action_id"],
+            snapshot_id=snapshot_id,
+            review_status=review_status,
+            persistence_status="unchanged",
+            document_id=existing["document_id"],
+            document_version=existing["document_version"],
+        )
+
+    @staticmethod
+    def _save_withdrawal(
+        connection: psycopg.Connection,
+        action: ReviewAction,
+    ) -> ReviewPersistence:
+        approval = connection.execute(
+            """
+            SELECT a.snapshot_id, a.document_id, a.document_version, s.review_status
+            FROM agent.knowledge_review_action a
+            JOIN agent.knowledge_snapshot s ON s.snapshot_id = a.snapshot_id
+            WHERE a.action_id = %s AND a.action = 'APPROVE'
+            FOR UPDATE OF s
+            """,
+            (action.parent_action_id,),
+        ).fetchone()
+        if approval is None:
+            raise ReviewStateConflict("approval action does not exist")
+        if approval["review_status"] == "WITHDRAWN":
+            existing = connection.execute(
+                """
+                SELECT action_id, decision_fingerprint
+                FROM agent.knowledge_review_action
+                WHERE parent_action_id = %s AND action = 'WITHDRAW'
+                """,
+                (action.parent_action_id,),
+            ).fetchone()
+            if existing and existing["decision_fingerprint"] == action.decision_fingerprint:
+                return ReviewPersistence(
+                    action_id=existing["action_id"],
+                    snapshot_id=approval["snapshot_id"],
+                    review_status="WITHDRAWN",
+                    persistence_status="unchanged",
+                )
+            raise ReviewStateConflict("approval already has a different withdrawal")
+        if approval["review_status"] != "APPROVED":
+            raise ReviewStateConflict("approval is not withdrawable")
+
+        publication = connection.execute(
+            """
+            SELECT status, attempt_count FROM agent.knowledge_publication
+            WHERE review_action_id = %s
+            FOR UPDATE
+            """,
+            (action.parent_action_id,),
+        ).fetchone()
+        if publication is None:
+            raise ReviewStateConflict("approval publication record is missing")
+        if publication["status"] == "PUBLISHING":
+            raise ReviewStateConflict("publication is in progress")
+        if publication["status"] == "PUBLISHED":
+            raise ReviewStateConflict("published knowledge cannot be withdrawn")
+        if publication["status"] == "CANCELLED":
+            raise ReviewStateConflict("approval publication is already cancelled")
+        if publication["status"] != "PENDING" or publication["attempt_count"] != 0:
+            raise ReviewStateConflict("publication was already attempted")
+
+        connection.execute(
+            """
+            INSERT INTO agent.knowledge_review_action (
+                action_id, snapshot_id, action, parent_action_id, reviewer_id,
+                note, reviewed_at, decision_fingerprint
+            ) VALUES (%s, %s, 'WITHDRAW', %s, %s, %s, %s, %s)
+            """,
+            (
+                action.action_id,
+                approval["snapshot_id"],
+                action.parent_action_id,
+                action.reviewer_id,
+                action.note,
+                action.reviewed_at,
+                action.decision_fingerprint,
+            ),
+        )
+        connection.execute(
+            """
+            UPDATE agent.knowledge_snapshot SET review_status = 'WITHDRAWN'
+            WHERE snapshot_id = %s
+            """,
+            (approval["snapshot_id"],),
+        )
+        connection.execute(
+            """
+            UPDATE agent.knowledge_publication
+            SET status = 'CANCELLED', claim_started_at = NULL,
+                published_at = NULL, failed_at = NULL, last_error = NULL,
+                chunk_count = NULL, importer_status = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE review_action_id = %s
+            """,
+            (action.parent_action_id,),
+        )
+        return ReviewPersistence(
+            action_id=action.action_id,
+            snapshot_id=approval["snapshot_id"],
+            review_status="WITHDRAWN",
+            persistence_status="created",
+        )
+
+    def _claim_publication_sync(
+        self,
+        review_action_id: str,
+        claim_timeout: timedelta,
+    ) -> PublicationClaimResult:
+        with self._connect() as connection:
+            approval = connection.execute(
+                """
+                SELECT a.snapshot_id, a.document_id, a.document_version,
+                    a.document_city, a.document_source_name,
+                    a.document_reliability_level, a.category,
+                    a.valid_from, a.valid_to, a.applicable_seasons, a.traveler_types,
+                    s.review_status, s.source_url, s.fetched_at,
+                    e.title, e.content, e.content_hash, e.published_at
+                FROM agent.knowledge_review_action a
+                JOIN agent.knowledge_snapshot s ON s.snapshot_id = a.snapshot_id
+                JOIN agent.knowledge_extraction e ON e.extraction_id = a.extraction_id
+                WHERE a.action_id = %s AND a.action = 'APPROVE'
+                FOR UPDATE OF s
+                """,
+                (review_action_id,),
+            ).fetchone()
+            if approval is None:
+                return None
+            publication = connection.execute(
+                """
+                SELECT status, attempt_count, claim_started_at,
+                    chunk_count, importer_status
+                FROM agent.knowledge_publication
+                WHERE review_action_id = %s
+                FOR UPDATE
+                """,
+                (review_action_id,),
+            ).fetchone()
+            if publication is None:
+                return None
+            if publication["status"] == "PUBLISHED":
+                return PublishedKnowledge(
+                    review_action_id=review_action_id,
+                    document_id=approval["document_id"],
+                    document_version=approval["document_version"],
+                    chunk_count=publication["chunk_count"],
+                    importer_status=publication["importer_status"],
+                )
+            if approval["review_status"] != "APPROVED":
+                return None
+            if publication["status"] not in {"PENDING", "FAILED", "PUBLISHING"}:
+                return None
+
+            claimed = connection.execute(
+                """
+                UPDATE agent.knowledge_publication
+                SET status = 'PUBLISHING',
+                    attempt_count = attempt_count + 1,
+                    claim_started_at = CURRENT_TIMESTAMP,
+                    failed_at = NULL,
+                    last_error = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE review_action_id = %s
+                  AND (
+                    status IN ('PENDING', 'FAILED')
+                    OR (status = 'PUBLISHING'
+                        AND claim_started_at <= CURRENT_TIMESTAMP - %s)
+                  )
+                RETURNING attempt_count
+                """,
+                (review_action_id, claim_timeout),
+            ).fetchone()
+            if claimed is None:
+                return None
+            return PublicationClaim(
+                review_action_id=review_action_id,
+                claim_token=claimed["attempt_count"],
+                document_id=approval["document_id"],
+                document_version=approval["document_version"],
+                city=approval["document_city"],
+                category=approval["category"],
+                title=approval["title"],
+                content=approval["content"],
+                content_hash=approval["content_hash"],
+                source_url=approval["source_url"],
+                source_name=approval["document_source_name"],
+                reliability_level=approval["document_reliability_level"],
+                published_at=approval["published_at"],
+                collected_at=approval["fetched_at"],
+                valid_from=approval["valid_from"],
+                valid_to=approval["valid_to"],
+                applicable_seasons=tuple(approval["applicable_seasons"]),
+                traveler_types=tuple(approval["traveler_types"]),
+            )
+
+    def _mark_publication_succeeded_sync(
+        self,
+        review_action_id: str,
+        claim_token: int,
+        result: KnowledgeImportResult,
+        published_at: datetime,
+    ) -> None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT p.status, p.attempt_count, a.document_id, a.document_version
+                FROM agent.knowledge_publication p
+                JOIN agent.knowledge_review_action a
+                    ON a.action_id = p.review_action_id
+                WHERE p.review_action_id = %s
+                FOR UPDATE OF p
+                """,
+                (review_action_id,),
+            ).fetchone()
+            if row is None:
+                raise ReviewStateConflict("publication record does not exist")
+            if (
+                row["document_id"] != result.document_id
+                or row["document_version"] != result.version
+            ):
+                raise ReviewStateConflict("import result does not match approved document")
+            if row["status"] == "PUBLISHED":
+                return
+            if (
+                row["status"] not in {"PUBLISHING", "FAILED"}
+                or not 1 <= claim_token <= row["attempt_count"]
+            ):
+                raise ReviewStateConflict("publication claim is no longer active")
+            connection.execute(
+                """
+                UPDATE agent.knowledge_publication
+                SET status = 'PUBLISHED', claim_started_at = NULL,
+                    published_at = %s, failed_at = NULL, last_error = NULL,
+                    chunk_count = %s, importer_status = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE review_action_id = %s
+                """,
+                (
+                    published_at,
+                    result.chunk_count,
+                    result.status,
+                    review_action_id,
+                ),
+            )
+
+    def _mark_publication_failed_sync(
+        self,
+        review_action_id: str,
+        claim_token: int,
+        error: str,
+        failed_at: datetime,
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE agent.knowledge_publication
+                SET status = 'FAILED', claim_started_at = NULL,
+                    failed_at = %s, last_error = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE review_action_id = %s
+                  AND status = 'PUBLISHING'
+                  AND attempt_count = %s
+                """,
+                (failed_at, error, review_action_id, claim_token),
+            )
 
     @staticmethod
     def _save_run(

@@ -12,7 +12,7 @@ from trip_agent.acquisition.fetch_models import (
     FetchValidators,
     ResourceFetched,
 )
-from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource
+from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource, ReliabilityLevel
 from trip_agent.acquisition.scheduling import (
     FetchAttempt,
     FetchAttemptSucceeded,
@@ -32,6 +32,8 @@ type ReviewStatus = Literal["PENDING"]
 class KnowledgeResourceRecord:
     resource_id: ResourceId
     source_id: str
+    source_name: str
+    reliability_level: ReliabilityLevel
     city: str
     source_url: str
     final_url: str
@@ -213,6 +215,8 @@ class AcquisitionExecutionRecorder:
         resource_record = KnowledgeResourceRecord(
             resource_id=resource_id,
             source_id=source.source_id,
+            source_name=source.source_name,
+            reliability_level=source.reliability_level,
             city=source.city,
             source_url=resource.url,
             final_url=final_url,

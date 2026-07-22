@@ -141,6 +141,10 @@ class PsycopgKnowledgeRepository:
         self._validate_chunks(document, chunks)
         version_fingerprint = document_version_fingerprint(document)
         with self._connect() as connection:
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 742011))",
+                (f"{document.document_id}:{document.version}",),
+            )
             existing = connection.execute(
                 """
                 SELECT version_fingerprint FROM agent.knowledge_document

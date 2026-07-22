@@ -79,6 +79,25 @@ def test_repository_is_idempotent_and_rejects_same_version_changes() -> None:
         asyncio.run(importer.import_document(changed_metadata))
 
 
+def test_concurrent_same_version_imports_are_idempotent() -> None:
+    async def import_concurrently():
+        importers = tuple(
+            KnowledgeImporter(
+                repository=PsycopgKnowledgeRepository(database_url()),
+                embedding_provider=HashEmbeddingProvider(dimensions=32),
+            )
+            for _ in range(10)
+        )
+        return await asyncio.gather(
+            *(importer.import_markdown(MARKDOWN) for importer in importers)
+        )
+
+    results = asyncio.run(import_concurrently())
+
+    assert [result.status for result in results].count("created") == 1
+    assert [result.status for result in results].count("unchanged") == 9
+
+
 def test_repository_adds_embeddings_without_replacing_source_version() -> None:
     repository = PsycopgKnowledgeRepository(database_url())
     first_importer = KnowledgeImporter(

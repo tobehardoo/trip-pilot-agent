@@ -137,7 +137,10 @@ def test_fetched_content_is_idempotent_but_each_execution_has_a_run() -> None:
 
     with psycopg.connect(database_url()) as connection:
         resource_row = connection.execute(
-            "SELECT source_id, last_verified_at, etag FROM agent.knowledge_resource"
+            """
+            SELECT source_id, source_name, reliability_level, last_verified_at, etag
+            FROM agent.knowledge_resource
+            """
         ).fetchone()
         snapshot_row = connection.execute(
             """
@@ -156,7 +159,13 @@ def test_fetched_content_is_idempotent_but_each_execution_has_a_run() -> None:
     assert first.snapshot_created is True
     assert second.snapshot_created is False
     assert second.snapshot_id == first.snapshot_id
-    assert resource_row == (source.source_id, fetched_at, '"revision-1"')
+    assert resource_row == (
+        source.source_id,
+        source.source_name,
+        source.reliability_level,
+        fetched_at,
+        '"revision-1"',
+    )
     assert snapshot_row[0:3] == ("PENDING", "raw-http-v1", b"official candidate")
     assert len(snapshot_row[3]) == 64
     assert counts == (1, 2)
@@ -724,7 +733,8 @@ def test_concurrent_migration_is_serialized() -> None:
     with psycopg.connect(database_url()) as connection:
         connection.execute(
             """
-            DROP TABLE agent.knowledge_extraction, agent.knowledge_fetch_run,
+            DROP TABLE agent.knowledge_publication, agent.knowledge_review_action,
+                agent.knowledge_extraction, agent.knowledge_fetch_run,
                 agent.knowledge_snapshot, agent.knowledge_resource,
                 agent.acquisition_schema_migration
             """
@@ -743,7 +753,7 @@ def test_concurrent_migration_is_serialized() -> None:
             "SELECT version FROM agent.acquisition_schema_migration"
         ).fetchall()
 
-    assert versions == [("V1",), ("V2",)]
+    assert versions == [("V1",), ("V2",), ("V3",)]
 
 
 def test_extraction_service_persists_result_and_removes_snapshot_from_pending() -> None:

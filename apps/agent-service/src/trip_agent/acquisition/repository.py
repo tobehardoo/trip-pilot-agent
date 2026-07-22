@@ -90,6 +90,10 @@ class PsycopgAcquisitionRepository:
     def _record_sync(self, record: AcquisitionRecord) -> AcquisitionPersisted:
         resource = record.resource
         with self._connect() as connection:
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 742019))",
+                (resource.resource_id,),
+            )
             self._upsert_resource_attempt(connection, record)
             snapshot_id, snapshot_created = self._save_snapshot(
                 connection,

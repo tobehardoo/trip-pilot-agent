@@ -53,6 +53,8 @@ Phase 12 第一小步已完成：新增 `knowledge/sources/guangzhou.toml`、`tr
 
 同日完成 Phase 12 第五小步：新增 `AcquisitionExecutionRecorder`、`AcquisitionWorkflow`、并发安全的独立校验和迁移及 `PsycopgAcquisitionRepository`，生产工作流会读取“条件校验器 + 对应内容哈希”的版本化状态并强制组合调度与记录，以单个 PostgreSQL 事务持久化 `knowledge_resource`、不可变 `PENDING` `knowledge_snapshot` 和带完整尝试审计的 `knowledge_fetch_run`。原始内容按 SHA-256 与解析器版本幂等，解析器升级可产生新候选但不会误报页面变化，A→B→A 内容回退仍更新最近变化；304 不建快照且必须携带基线哈希，失败不更新最近核验，实际并发、乱序完成和 fetched-B/304-A 交错不会让内容哈希与 ETag 失配。采集相关 95 项测试、Python 全量 234 项测试在真实 pgvector PostgreSQL 上通过，知识检索与采集总覆盖率 93.29%。下一步实现官方 HTML 正文与发布时间抽取、质量检查和审核发布。
 
+同日完成 Phase 12 第六小步：固定 Beautiful Soup 4.15.0 并新增强类型 `GuangzhouGovernmentArticleExtractor`，从广州政府页的官方元数据和 `#zoomcon`/`.content_article` 容器提取标题、来源、发布时间与稳定段落，HTTP `charset` 优先于冲突 meta，未知编码拒绝，脚本、分享、导航页脚和独立附件尾部噪声被过滤，正文句子中的同名词语不会误截断。发布时间缺失不伪造，未来时间、缺失标题/正文和短正文结构化拒绝；开闭馆、票价、免费入场、预约、公交地铁与交通方式保留但标记实时核验警告。3 个注册表真实页面均返回 200 并成功解析，正文长度为 1421、850、7409 字符，沙面与 Citywalk 页正确标记动态事实。采集相关 114 项测试、Python 全量 253 项测试通过，知识检索与采集总覆盖率 92.60%。全量门禁还复现并修复同一资源首次并发插入的双唯一索引死锁，同资源事务锁连续 20 轮通过。下一步持久化解析/质量结果并建立审核状态。
+
 截至 2026-07-19 完成全局架构审计：当前核心链路可演示，但真实 Agent 规划、RAG 到规划理由的接入、采集快照/审核、生产级可观测性和公开部署安全仍未完成。后续按 `docs/21-global-architecture-review-and-optimized-roadmap.md` 的 P0/P1 顺序推进，不再同时扩展新城市和新 UI 功能。
 
 ### 第 2 周：7.20 至 7.26，Agent 最小闭环

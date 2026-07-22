@@ -201,6 +201,7 @@ metadata
 - `agent.knowledge_fetch_run` 为每次调度执行保留起止时间、全部尝试的 JSON 审计、最终状态、错误分类和候选引用。`AcquisitionWorkflow` 负责读取校验器及其对应的基线内容哈希并强制组合调度与记录，304 必须携带这份版本化基线；资源、候选和运行记录由 `PsycopgAcquisitionRepository` 在单个事务中提交，迁移使用事务级 advisory lock 串行化并发启动。
 - 304 只更新最近核验与校验器，失败只更新最近尝试；两者都不创建候选。当前边界不会调用 `KnowledgeImporter`，正文抽取、质量检查和人工审核仍是发布前置条件。
 - `GuangzhouGovernmentArticleExtractor` 使用 Beautiful Soup 4.15.0 解析广州政府页面的 `ArticleTitle`、`PubDate`、`ContentSource` 和正文容器，HTTP `charset` 优先于页面 meta 并拒绝未知编码，过滤脚本、分享、导航页脚与附件尾部；无时区发布时间按中国标准时间解释。缺失时间保留为空并告警，动态营业/开闭馆时间、预约、票价和公交地铁信息标记为必须实时核验。
+- `agent.knowledge_extraction` 按快照与解析器版本保存不可变 `EXTRACTED`/`REJECTED` 结果、稳定指纹和结构化质量问题；`SnapshotExtractionService` 有界读取缺失目标解析器版本的 `PENDING` 快照并在线程中解析，重复结果幂等，结果漂移拒绝覆盖，解析器升级可重新处理同一原始快照。
 
 建议的仓库数据结构：
 

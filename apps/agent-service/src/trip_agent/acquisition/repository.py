@@ -4,11 +4,18 @@ import asyncio
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from trip_agent.acquisition.extraction_service import (
+    ExtractionPersisted,
+    ExtractionVersionConflict,
+    PendingSnapshot,
+    SnapshotExtractionRecord,
+)
 from trip_agent.acquisition.fetch_models import FetchValidators
 from trip_agent.acquisition.recording import (
     AcquisitionPersisted,
@@ -40,6 +47,21 @@ class PsycopgAcquisitionRepository:
         resource_id: str,
     ) -> ConditionalResourceState | None:
         return await asyncio.to_thread(self._get_conditional_state_sync, resource_id)
+
+    async def list_snapshots_pending_extraction(
+        self,
+        *,
+        parser_version: str,
+        limit: int,
+    ) -> tuple[PendingSnapshot, ...]:
+        return await asyncio.to_thread(
+            self._list_snapshots_pending_extraction_sync,
+            parser_version,
+            limit,
+        )
+
+    async def save_extraction(self, record: SnapshotExtractionRecord) -> ExtractionPersisted:
+        return await asyncio.to_thread(self._save_extraction_sync, record)
 
     def _connect(self) -> psycopg.Connection:
         return psycopg.connect(self._database_url, row_factory=dict_row)
@@ -264,6 +286,89 @@ class PsycopgAcquisitionRepository:
         return ConditionalResourceState(
             validators=FetchValidators(etag=row["etag"], last_modified=row["last_modified"]),
             content_hash=row["current_content_hash"],
+        )
+
+    def _list_snapshots_pending_extraction_sync(
+        self,
+        parser_version: str,
+        limit: int,
+    ) -> tuple[PendingSnapshot, ...]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT s.snapshot_id, s.raw_content, s.content_type, s.fetched_at
+                FROM agent.knowledge_snapshot s
+                WHERE s.review_status = 'PENDING'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM agent.knowledge_extraction e
+                    WHERE e.snapshot_id = s.snapshot_id AND e.parser_version = %s
+                  )
+                ORDER BY s.fetched_at, s.snapshot_id
+                LIMIT %s
+                """,
+                (parser_version, limit),
+            ).fetchall()
+        return tuple(PendingSnapshot(**row) for row in rows)
+
+    def _save_extraction_sync(
+        self,
+        record: SnapshotExtractionRecord,
+    ) -> ExtractionPersisted:
+        issues = [
+            {"code": issue.code, "severity": issue.severity, "message": issue.message}
+            for issue in record.issues
+        ]
+        with self._connect() as connection:
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 742020))",
+                (record.extraction_id,),
+            )
+            inserted = connection.execute(
+                """
+                INSERT INTO agent.knowledge_extraction (
+                    extraction_id, snapshot_id, parser_version, status, title, content,
+                    content_hash, published_at, content_source, quality_issues,
+                    result_fingerprint, extracted_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (snapshot_id, parser_version) DO NOTHING
+                RETURNING extraction_id
+                """,
+                (
+                    record.extraction_id,
+                    record.snapshot_id,
+                    record.parser_version,
+                    record.status,
+                    record.title,
+                    record.content,
+                    record.content_hash,
+                    record.published_at,
+                    record.content_source,
+                    Jsonb(issues),
+                    record.result_fingerprint,
+                    record.extracted_at,
+                ),
+            ).fetchone()
+            status: Literal["created", "unchanged"] = "created"
+            extraction_id = record.extraction_id
+            if inserted is None:
+                existing = connection.execute(
+                    """
+                    SELECT extraction_id, result_fingerprint
+                    FROM agent.knowledge_extraction
+                    WHERE snapshot_id = %s AND parser_version = %s
+                    """,
+                    (record.snapshot_id, record.parser_version),
+                ).fetchone()
+                if existing is None or existing["result_fingerprint"] != record.result_fingerprint:
+                    raise ExtractionVersionConflict(
+                        f"snapshot {record.snapshot_id} parser {record.parser_version} is immutable"
+                    )
+                status = "unchanged"
+                extraction_id = existing["extraction_id"]
+        return ExtractionPersisted(
+            extraction_id=extraction_id,
+            snapshot_id=record.snapshot_id,
+            status=status,
         )
 
     @staticmethod

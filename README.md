@@ -24,11 +24,11 @@ M1 正在实施。当前已经完成：
 - Vue 工作台可直接创建规划任务，使用带 Bearer Token 的流式 `fetch` 消费 SSE，并在断线后携带 `Last-Event-ID` 补发。
 - 任务完成后自动读取当前行程，以日期和活动时间轴展示 Provider、版本与估算费用；UTC 活动时间统一按中国标准时间显示。
 - Vue 工作台已显示活动地址、地图 Marker 和步行 polyline；地图与时间轴可双向选择，缺少浏览器专用高德凭据时安全降级为可交互路线概览。
-- Java 88 个自动化测试、91.08% 行覆盖率，Python 当前 253 个 Worker/API/Provider/知识检索/采集测试在真实 pgvector PostgreSQL 上全部通过，以及 Vue 43 个组件、API 边界、SSE、地图、路由与仓库测试；知识检索与采集总行覆盖率为 92.60%，通过 80% 门禁，Vue 地图切片行覆盖率为 92.66%。
+- Java 88 个自动化测试、91.08% 行覆盖率，Python 当前 263 个 Worker/API/Provider/知识检索/采集测试在真实 pgvector PostgreSQL 上全部通过，以及 Vue 43 个组件、API 边界、SSE、地图、路由与仓库测试；知识检索与采集总行覆盖率为 92.81%，通过 80% 门禁，Vue 地图切片行覆盖率为 92.66%。
 - Python 已新增知识导入链：广州官方 Markdown 资料、TOML 元数据与稳定切分、独立 `agent` schema 的 pgvector 持久化、版本不可变校验和 `trip-agent-knowledge` 迁移/导入/检索 CLI；演示哈希向量明确标记为离线实现，不替代生产语义模型。
-- Phase 12 已建立官方知识采集基础：来源 TOML 注册表、广州官方固定 URL、城市筛选、白名单域名、HTTPS/凭据/公网 IP 校验、固定 URL 发现和 `trip-agent-acquisition validate` CLI；`HttpResourceFetcher` 已支持 ETag/Last-Modified 条件请求、304 强类型结果、流式响应上限、显式重定向复核、DNS 全结果公网单播校验、单次抓取 IP 固定、环境代理隔离和可重试错误分类，`AcquisitionScheduler` 已执行每来源限速、并发安全的实际放行间隔、有上限指数退避和强类型尝试记录。生产入口 `AcquisitionWorkflow` 会读取“校验器 + 对应内容哈希”的版本化条件状态，再强制执行并持久化调度结果；`knowledge_resource`、`knowledge_snapshot` 与 `knowledge_fetch_run` 通过并发安全的独立校验和迁移和单事务仓储保存当前内容状态、不可变 `PENDING` 候选及完整尝试审计。`GuangzhouGovernmentArticleExtractor` 已从 3 个真实官方页面提取正文、标题、来源和发布时间，过滤页面噪声并标记动态事实；解析结果尚未持久化、审核或发布到 RAG。
+- Phase 12 已建立官方知识采集基础：来源 TOML 注册表、广州官方固定 URL、城市筛选、白名单域名、HTTPS/凭据/公网 IP 校验、固定 URL 发现和 `trip-agent-acquisition validate` CLI；`HttpResourceFetcher` 已支持 ETag/Last-Modified 条件请求、304 强类型结果、流式响应上限、显式重定向复核、DNS 全结果公网单播校验、单次抓取 IP 固定、环境代理隔离和可重试错误分类，`AcquisitionScheduler` 已执行每来源限速、并发安全的实际放行间隔、有上限指数退避和强类型尝试记录。生产入口 `AcquisitionWorkflow` 会读取“校验器 + 对应内容哈希”的版本化条件状态，再强制执行并持久化调度结果；`knowledge_resource`、`knowledge_snapshot` 与 `knowledge_fetch_run` 通过并发安全的独立校验和迁移和单事务仓储保存当前内容状态、不可变 `PENDING` 候选及完整尝试审计。`GuangzhouGovernmentArticleExtractor` 已从 3 个真实官方页面提取正文、标题、来源和发布时间，`knowledge_extraction` 按快照与解析器版本不可变保存通过/拒绝结果和质量问题；人工审核与 RAG 发布仍未接通。
 
-下一条纵向切片继续完成 P0-1：持久化解析/质量结果，建立人工审核状态与审核发布适配器；完成采集闭环后再把检索结果接入规划 Agent。
+下一条纵向切片继续完成 P0-1：建立人工审核状态、审核操作与审核发布适配器；完成采集闭环后再把检索结果接入规划 Agent。
 
 本地准备：
 

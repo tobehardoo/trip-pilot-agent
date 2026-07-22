@@ -9,6 +9,14 @@ from trip_agent.acquisition.extraction import (
     ExtractionQualityIssue,
     GuangzhouGovernmentArticleExtractor,
 )
+from trip_agent.acquisition.extraction_service import (
+    ExtractionPersisted,
+    ExtractionVersionConflict,
+    PendingSnapshot,
+    SnapshotExtractionProcessed,
+    SnapshotExtractionRecord,
+    SnapshotExtractionService,
+)
 from trip_agent.acquisition.fetch_models import (
     AcquisitionFetchError,
     FetchResult,
@@ -64,6 +72,8 @@ __all__ = [
     "DiscoveredResource",
     "ExtractedArticle",
     "ExtractionQualityIssue",
+    "ExtractionPersisted",
+    "ExtractionVersionConflict",
     "FetchResult",
     "FetchRunRecord",
     "FetchAttempt",
@@ -79,9 +89,13 @@ __all__ = [
     "KnowledgeSource",
     "KnowledgeResourceRecord",
     "PsycopgAcquisitionRepository",
+    "PendingSnapshot",
     "ResourceFetched",
     "ResourceNotModified",
     "RetryPolicy",
     "SourceCatalog",
+    "SnapshotExtractionProcessed",
+    "SnapshotExtractionRecord",
+    "SnapshotExtractionService",
     "SystemHostResolver",
 ]

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import psycopg
@@ -9,14 +10,17 @@ import pytest
 
 from trip_agent.acquisition import (
     AcquisitionExecutionRecorder,
+    ExtractionVersionConflict,
     FetchAttemptFailed,
     FetchAttemptSucceeded,
     FetchExecutionFailed,
     FetchExecutionSucceeded,
     FetchValidators,
+    GuangzhouGovernmentArticleExtractor,
     PsycopgAcquisitionRepository,
     ResourceFetched,
     ResourceNotModified,
+    SnapshotExtractionService,
 )
 from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource
 
@@ -720,8 +724,9 @@ def test_concurrent_migration_is_serialized() -> None:
     with psycopg.connect(database_url()) as connection:
         connection.execute(
             """
-            DROP TABLE agent.knowledge_fetch_run, agent.knowledge_snapshot,
-                agent.knowledge_resource, agent.acquisition_schema_migration
+            DROP TABLE agent.knowledge_extraction, agent.knowledge_fetch_run,
+                agent.knowledge_snapshot, agent.knowledge_resource,
+                agent.acquisition_schema_migration
             """
         )
 
@@ -738,4 +743,102 @@ def test_concurrent_migration_is_serialized() -> None:
             "SELECT version FROM agent.acquisition_schema_migration"
         ).fetchall()
 
-    assert versions == [("V1",)]
+    assert versions == [("V1",), ("V2",)]
+
+
+def test_extraction_service_persists_result_and_removes_snapshot_from_pending() -> None:
+    source = _source()
+    resource = _resource()
+    at = datetime(2026, 7, 22, 1, tzinfo=UTC)
+    html = (
+        '<html><head><meta name="ArticleTitle" content="广州文化">'
+        '<meta name="PubDate" content="2026-07-20"></head>'
+        "<body><main><p>广州历史街区连接传统工艺与城市生活，资料介绍保护范围、"
+        "文化价值和步行观察方式，为主题行程提供稳定的背景信息。沿途建筑、园林与"
+        "街巷共同呈现城市历史脉络，也适合用于文化主题的行程说明。</p></main></body></html>"
+    ).encode()
+    recorder = _recorder(iter(("run-extraction",)))
+    persisted = asyncio.run(
+        recorder.record(
+            source=source,
+            resource=resource,
+            execution=FetchExecutionSucceeded(
+                status="SUCCEEDED",
+                result=ResourceFetched(
+                    status="FETCHED",
+                    requested_url=resource.url,
+                    final_url=resource.url,
+                    fetched_at=at,
+                    content=html,
+                    content_type="text/html; charset=utf-8",
+                    validators=FetchValidators(etag='"extract"'),
+                ),
+                attempts=(_success(at),),
+            ),
+            parser_version="raw-http-v1",
+        )
+    )
+    repository = PsycopgAcquisitionRepository(database_url())
+    service = SnapshotExtractionService(
+        repository=repository,
+        clock=lambda: datetime(2026, 7, 22, 2, tzinfo=UTC),
+    )
+
+    pending = asyncio.run(
+        repository.list_snapshots_pending_extraction(
+            parser_version=service.parser_version,
+            limit=10,
+        )
+    )
+    processed = asyncio.run(service.process_pending(limit=10))
+    repeated = asyncio.run(service.process_pending(limit=10))
+
+    with psycopg.connect(database_url()) as connection:
+        row = connection.execute(
+            """
+            SELECT snapshot_id, parser_version, status, title, content_hash,
+                result_fingerprint, quality_issues
+            FROM agent.knowledge_extraction
+            """
+        ).fetchone()
+
+    assert [item.snapshot_id for item in pending] == [persisted.snapshot_id]
+    assert len(processed) == 1
+    assert processed[0].extraction_status == "EXTRACTED"
+    assert repeated == ()
+    assert row[0:4] == (
+        persisted.snapshot_id,
+        service.parser_version,
+        "EXTRACTED",
+        "广州文化",
+    )
+    assert len(row[4]) == len(row[5]) == 64
+    assert row[6] == []
+
+    extraction_result = GuangzhouGovernmentArticleExtractor().extract(
+        content=pending[0].raw_content,
+        content_type=pending[0].content_type,
+        fetched_at=pending[0].fetched_at,
+    )
+    record = service.build_record(snapshot=pending[0], result=extraction_result)
+    unchanged = asyncio.run(repository.save_extraction(record))
+    assert extraction_result.status == "EXTRACTED"
+    changed_result = replace(
+        extraction_result,
+        article=replace(
+            extraction_result.article,
+            content=extraction_result.article.content + "变更",
+        ),
+    )
+    conflicting_record = service.build_record(snapshot=pending[0], result=changed_result)
+    with pytest.raises(ExtractionVersionConflict):
+        asyncio.run(repository.save_extraction(conflicting_record))
+    next_parser_pending = asyncio.run(
+        repository.list_snapshots_pending_extraction(
+            parser_version="gz-government-bs4-v2",
+            limit=10,
+        )
+    )
+
+    assert unchanged.status == "unchanged"
+    assert [item.snapshot_id for item in next_parser_pending] == [persisted.snapshot_id]

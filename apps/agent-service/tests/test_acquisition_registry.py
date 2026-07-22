@@ -21,6 +21,8 @@ def test_source_catalog_loads_official_guangzhou_sources() -> None:
     assert sources[0].source_id == "guangzhou-government-tourism"
     assert len(sources[0].resource_urls) == 3
     assert sources[0].allowed_domains == ("www.gz.gov.cn",)
+    assert sources[0].min_request_interval_seconds == 1.0
+    assert isinstance(sources[0].min_request_interval_seconds, float)
 
 
 def test_static_discoverer_emits_typed_resources() -> None:
@@ -116,6 +118,7 @@ def test_source_model_rejects_duplicate_resource_urls() -> None:
     ("field", "value", "message"),
     [
         ("fetch_interval_hours", 0, "fetch_interval_hours"),
+        ("min_request_interval_seconds", 0, "min_request_interval_seconds"),
         ("request_timeout_seconds", 0, "request_timeout_seconds"),
         ("max_response_bytes", 1024, "max_response_bytes"),
     ],

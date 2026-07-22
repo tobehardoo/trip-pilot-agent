@@ -10,5 +10,6 @@ resource_urls = [
   "https://www.gz.gov.cn/zt/jrshts/2026n/nwzgz/nwgz/content/post_10686807.html",
 ]
 fetch_interval_hours = 168
+min_request_interval_seconds = 1
 request_timeout_seconds = 10
 max_response_bytes = 2_000_000

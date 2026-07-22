@@ -22,7 +22,14 @@
 - HTTPX 禁止自动重定向；每一跳使用来源白名单重新校验，白名单外跳转在第二次请求前阻断。
 - 超时、连接失败、429/5xx 和普通 4xx 统一映射为 `AcquisitionFetchError`，供后续调度器判断是否重试；本小步尚不执行重试。
 
-## 4. 自动化测试
+## 4. 第四小步契约
+
+- `KnowledgeSource` 显式配置每来源最小请求间隔，所有首次请求和重试都必须先取得该来源的时间槽；不同来源互不阻塞。
+- `RetryPolicy` 限定最大尝试次数、初始退避和退避上限；只重试 `retryable=true` 的 `AcquisitionFetchError`，退避按上限封顶的指数序列执行。
+- 调度器返回强类型成功或失败结果，并保留每次尝试的开始/结束时间、错误码、HTTP 状态和可重试标记；达到上限或遇到不可重试错误时，最终失败记录必须可供后续持久化。
+- 单调时钟、UTC 时钟和异步休眠通过端口注入，自动化测试不得真实等待；本小步不创建采集数据库表。
+
+## 5. 自动化测试
 
 - 有效广州官方来源配置可加载，并能按城市筛选。
 - 重复来源 ID、重复资源 URL、非 HTTPS URL 和不在白名单的主机被拒绝。
@@ -36,21 +43,22 @@
 
 第三小步结果：新增 15 项 DNS 固定测试，覆盖公网 IP 请求固定、原始 Host/TLS SNI 保留、同主机固定结果复用、新重定向主机复核、IPv4/IPv6 组播与混合公网/私网结果阻断、空结果、解析失败分类、环境代理隔离、跨跳 Cookie 清理和可复用抓取器的独立 transport 生命周期。采集模块共 49 项测试；本机 Docker 未运行时 Python 全量为 184 项通过、4 项 pgvector 集成测试跳过，知识检索与采集总覆盖率 83.94%，通过 80% 门禁。
 
+第四小步结果：新增 21 项来源限速、重试和调度集成测试，覆盖指数退避封顶、尝试上限、不可重试终止、条件校验器传递、UTC 尝试记录、同来源间隔、跨来源独立、晚唤醒重检和取消恢复；NaN/Infinity 退避参数被拒绝。采集相关共 70 项测试；本机 Docker 未运行时 Python 全量为 205 项通过、4 项 pgvector 集成测试跳过，知识检索与采集总覆盖率 85.50%，通过 80% 门禁。
+
 当前安全边界已经覆盖 URL 字面 IP、协议、凭据、域名白名单、DNS 全结果公网单播校验、单次抓取 IP 固定和环境代理隔离，并在每次重定向前重复 URL 策略；新重定向主机还会重新执行 DNS 检查。
 
-## 5. 验收命令
+## 6. 验收命令
 
 ```powershell
 Set-Location apps/agent-service
 uv sync --extra dev
-uv run pytest tests/test_acquisition_registry.py tests/test_acquisition_fetcher.py -q
+uv run pytest tests -q -k acquisition
 uv run ruff check src tests
 uv run trip-agent-acquisition validate ../../knowledge/sources
 ```
 
-## 6. 后续验收边界
+## 7. 后续验收边界
 
-- 调度器执行每来源限速和有上限的指数退避重试，并记录最终尝试结果。
 - 304 不生成新快照，只更新采集运行与最近核验时间。
 - 页面变化只生成候选快照，必须经过质量检查和审核才能调用 `KnowledgeImporter`。
 - 每条候选保留来源 URL、发布时间、抓取时间、内容哈希和解析器版本。

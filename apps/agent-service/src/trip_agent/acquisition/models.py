@@ -20,6 +20,7 @@ class KnowledgeSource:
     allowed_domains: tuple[str, ...]
     resource_urls: tuple[str, ...]
     fetch_interval_hours: int = 168
+    min_request_interval_seconds: float = 1.0
     request_timeout_seconds: float = 10.0
     max_response_bytes: int = 2_000_000
 
@@ -39,6 +40,10 @@ class KnowledgeSource:
             self.fetch_interval_hours, bool
         ) or self.fetch_interval_hours < 1:
             raise ValueError("fetch_interval_hours must be positive")
+        if not isinstance(self.min_request_interval_seconds, int | float) or isinstance(
+            self.min_request_interval_seconds, bool
+        ) or not 0.1 <= self.min_request_interval_seconds <= 60:
+            raise ValueError("min_request_interval_seconds must be between 0.1 and 60")
         if not isinstance(self.request_timeout_seconds, int | float) or isinstance(
             self.request_timeout_seconds, bool
         ) or not 0 < self.request_timeout_seconds <= 60:
@@ -69,6 +74,11 @@ class KnowledgeSource:
         object.__setattr__(self, "source_name", source_name)
         object.__setattr__(self, "allowed_domains", domains)
         object.__setattr__(self, "resource_urls", urls)
+        object.__setattr__(
+            self,
+            "min_request_interval_seconds",
+            float(self.min_request_interval_seconds),
+        )
 
 
 @dataclass(frozen=True, slots=True)

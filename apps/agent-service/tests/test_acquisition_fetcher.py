@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import httpx
@@ -39,6 +40,28 @@ class _BytesStream(httpx.AsyncByteStream):
         yield self._content
 
 
+class _StaticHostResolver:
+    def __init__(self, addresses_by_host: dict[str, tuple[str, ...]]) -> None:
+        self._addresses_by_host = addresses_by_host
+        self.calls: list[tuple[str, int]] = []
+
+    async def resolve(self, hostname: str, port: int) -> tuple[str, ...]:
+        self.calls.append((hostname, port))
+        return self._addresses_by_host[hostname]
+
+
+def _fetcher(
+    http_transport: httpx.AsyncBaseTransport,
+    *,
+    clock: Callable[[], datetime] | None = None,
+) -> HttpResourceFetcher:
+    return HttpResourceFetcher(
+        http_transport_factory=lambda: http_transport,
+        host_resolver=_StaticHostResolver({"example.com": ("93.184.216.34",)}),
+        clock=clock,
+    )
+
+
 def test_conditional_fetch_returns_not_modified_without_reading_content() -> None:
     source = _source()
     resource = DiscoveredResource(
@@ -61,16 +84,15 @@ def test_conditional_fetch_returns_not_modified_without_reading_content() -> Non
         )
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            fetcher = HttpResourceFetcher(http_client=client, clock=lambda: fetched_at)
-            return await fetcher.fetch(
-                source=source,
-                resource=resource,
-                validators=FetchValidators(
-                    etag='"revision-1"',
-                    last_modified="Sun, 19 Jul 2026 00:00:00 GMT",
-                ),
-            )
+        fetcher = _fetcher(httpx.MockTransport(handle), clock=lambda: fetched_at)
+        return await fetcher.fetch(
+            source=source,
+            resource=resource,
+            validators=FetchValidators(
+                etag='"revision-1"',
+                last_modified="Sun, 19 Jul 2026 00:00:00 GMT",
+            ),
+        )
 
     result = asyncio.run(fetch())
 
@@ -94,8 +116,7 @@ def test_fetch_rejects_unconditional_not_modified_response() -> None:
         return httpx.Response(304, request=request)
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -134,12 +155,8 @@ def test_successful_fetch_returns_bounded_content_and_response_metadata() -> Non
         )
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            fetcher = HttpResourceFetcher(
-                http_client=client,
-                clock=lambda: fetched_at,
-            )
-            return await fetcher.fetch(source=source, resource=resource)
+        fetcher = _fetcher(httpx.MockTransport(handle), clock=lambda: fetched_at)
+        return await fetcher.fetch(source=source, resource=resource)
 
     result = asyncio.run(fetch())
 
@@ -166,8 +183,7 @@ def test_modified_response_clears_previous_validators_when_server_omits_them() -
         return httpx.Response(200, stream=_BytesStream(b"changed"), request=request)
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
                 validators=FetchValidators(etag='"stale"'),
@@ -196,8 +212,7 @@ def test_fetch_rejects_declared_oversized_response_before_reading_content() -> N
         )
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -221,8 +236,7 @@ def test_fetch_rejects_streamed_response_when_accumulated_bytes_exceed_limit() -
         return httpx.Response(200, stream=_ChunkedStream(), request=request)
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -253,8 +267,7 @@ def test_fetch_rejects_encoded_response_before_decoding_content() -> None:
         )
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -284,8 +297,7 @@ def test_fetch_rejects_redirect_outside_source_allowlist_before_following() -> N
         )
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -295,7 +307,7 @@ def test_fetch_rejects_redirect_outside_source_allowlist_before_following() -> N
 
     assert raised.value.code == "UNSAFE_REDIRECT"
     assert raised.value.retryable is False
-    assert requested_urls == [resource.url]
+    assert requested_urls == ["https://93.184.216.34/article"]
 
 
 def test_fetch_classifies_malformed_redirect_as_unsafe_before_following() -> None:
@@ -316,8 +328,7 @@ def test_fetch_classifies_malformed_redirect_as_unsafe_before_following() -> Non
         )
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -327,7 +338,7 @@ def test_fetch_classifies_malformed_redirect_as_unsafe_before_following() -> Non
 
     assert raised.value.code == "UNSAFE_REDIRECT"
     assert raised.value.retryable is False
-    assert requested_urls == [resource.url]
+    assert requested_urls == ["https://93.184.216.34/article"]
 
 
 def test_fetch_follows_validated_relative_redirect_and_records_final_url() -> None:
@@ -351,8 +362,7 @@ def test_fetch_follows_validated_relative_redirect_and_records_final_url() -> No
         )
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -363,7 +373,10 @@ def test_fetch_follows_validated_relative_redirect_and_records_final_url() -> No
     assert result.requested_url == resource.url
     assert result.final_url == "https://example.com/updated"
     assert result.content == b"<html>updated</html>"
-    assert requested_urls == [resource.url, "https://example.com/updated"]
+    assert requested_urls == [
+        "https://93.184.216.34/article",
+        "https://93.184.216.34/updated",
+    ]
 
 
 def test_fetch_maps_http_timeout_to_retryable_acquisition_error() -> None:
@@ -381,8 +394,7 @@ def test_fetch_maps_http_timeout_to_retryable_acquisition_error() -> None:
         raise httpx.ReadTimeout("timed out", request=request)
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -413,8 +425,7 @@ def test_fetch_classifies_unsuccessful_http_statuses(
         return httpx.Response(status_code, request=request)
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )
@@ -439,8 +450,7 @@ def test_fetch_maps_transport_failure_to_retryable_acquisition_error() -> None:
         raise httpx.ConnectError("connection failed", request=request)
 
     async def fetch() -> object:
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            return await HttpResourceFetcher(http_client=client).fetch(
+        return await _fetcher(httpx.MockTransport(handle)).fetch(
                 source=source,
                 resource=resource,
             )

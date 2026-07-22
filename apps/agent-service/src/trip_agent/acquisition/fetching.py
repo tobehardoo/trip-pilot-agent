@@ -1,81 +1,32 @@
-"""Bounded HTTP acquisition with explicit conditional-request outcomes."""
+"""Bounded HTTP acquisition with DNS-pinned conditional requests."""
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal
 from urllib.parse import urljoin
 
 import httpx
 
+from trip_agent.acquisition.dns import (
+    HostResolutionError,
+    HostResolver,
+    PinnedRequestTarget,
+    PublicHostResolution,
+    SystemHostResolver,
+    UnsafeHostResolutionError,
+    resolve_request_target,
+)
+from trip_agent.acquisition.fetch_models import (
+    AcquisitionFetchError,
+    FetchResult,
+    FetchValidators,
+    ResourceFetched,
+    ResourceNotModified,
+)
 from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource
 from trip_agent.acquisition.security import SourceSecurityError, validate_source_url
 
-type FetchErrorCode = Literal[
-    "HTTP_STATUS_ERROR",
-    "RESPONSE_TOO_LARGE",
-    "REQUEST_TIMEOUT",
-    "REQUEST_FAILED",
-    "TOO_MANY_REDIRECTS",
-    "UNEXPECTED_NOT_MODIFIED",
-    "UNSUPPORTED_CONTENT_ENCODING",
-    "UNSAFE_REDIRECT",
-]
-
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
-
-
-class AcquisitionFetchError(RuntimeError):
-    def __init__(
-        self,
-        code: FetchErrorCode,
-        message: str,
-        *,
-        retryable: bool,
-        status_code: int | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.retryable = retryable
-        self.status_code = status_code
-
-
-@dataclass(frozen=True, slots=True)
-class FetchValidators:
-    etag: str | None = None
-    last_modified: str | None = None
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "etag", _normalize_header_value(self.etag, "etag"))
-        object.__setattr__(
-            self,
-            "last_modified",
-            _normalize_header_value(self.last_modified, "last_modified"),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ResourceNotModified:
-    status: Literal["NOT_MODIFIED"]
-    requested_url: str
-    final_url: str
-    fetched_at: datetime
-    validators: FetchValidators
-
-
-@dataclass(frozen=True, slots=True)
-class ResourceFetched:
-    status: Literal["FETCHED"]
-    requested_url: str
-    final_url: str
-    fetched_at: datetime
-    content: bytes
-    content_type: str | None
-    validators: FetchValidators
-
-
-type FetchResult = ResourceFetched | ResourceNotModified
 
 
 class HttpResourceFetcher:
@@ -84,13 +35,15 @@ class HttpResourceFetcher:
     def __init__(
         self,
         *,
-        http_client: httpx.AsyncClient,
+        http_transport_factory: Callable[[], httpx.AsyncBaseTransport] | None = None,
+        host_resolver: HostResolver | None = None,
         clock: Callable[[], datetime] | None = None,
         max_redirects: int = 3,
     ) -> None:
         if max_redirects < 0:
             raise ValueError("max_redirects cannot be negative")
-        self._http_client = http_client
+        self._http_transport_factory = http_transport_factory
+        self._host_resolver = host_resolver or SystemHostResolver()
         self._clock = clock or _utc_now
         self._max_redirects = max_redirects
 
@@ -100,6 +53,30 @@ class HttpResourceFetcher:
         source: KnowledgeSource,
         resource: DiscoveredResource,
         validators: FetchValidators | None = None,
+    ) -> FetchResult:
+        transport = (
+            self._http_transport_factory() if self._http_transport_factory is not None else None
+        )
+        async with httpx.AsyncClient(
+            transport=transport,
+            trust_env=False,
+            http1=True,
+            http2=False,
+        ) as http_client:
+            return await self._fetch_with_client(
+                http_client=http_client,
+                source=source,
+                resource=resource,
+                validators=validators,
+            )
+
+    async def _fetch_with_client(
+        self,
+        *,
+        http_client: httpx.AsyncClient,
+        source: KnowledgeSource,
+        resource: DiscoveredResource,
+        validators: FetchValidators | None,
     ) -> FetchResult:
         _validate_resource_owner(source, resource)
         url = validate_source_url(resource.url, allowed_domains=source.allowed_domains)
@@ -115,10 +92,30 @@ class HttpResourceFetcher:
             headers["If-Modified-Since"] = previous.last_modified
 
         current_url = url
+        pinned_hosts: dict[str, PublicHostResolution] = {}
         for redirect_count in range(self._max_redirects + 1):
+            try:
+                target = await resolve_request_target(
+                    logical_url=current_url,
+                    resolver=self._host_resolver,
+                    pinned_hosts=pinned_hosts,
+                    timeout=source.request_timeout_seconds,
+                )
+            except UnsafeHostResolutionError as error:
+                raise AcquisitionFetchError(
+                    "UNSAFE_RESOLVED_ADDRESS",
+                    f"resource host failed DNS safety policy: {error}",
+                    retryable=False,
+                ) from error
+            except (TimeoutError, OSError, HostResolutionError) as error:
+                raise AcquisitionFetchError(
+                    "DNS_RESOLUTION_FAILED",
+                    f"resource host could not be resolved: {httpx.URL(current_url).host}",
+                    retryable=True,
+                ) from error
             async with _request_stream(
-                http_client=self._http_client,
-                url=current_url,
+                http_client=http_client,
+                target=target,
                 headers=headers,
                 timeout=source.request_timeout_seconds,
             ) as response:
@@ -133,7 +130,7 @@ class HttpResourceFetcher:
                     return ResourceNotModified(
                         status="NOT_MODIFIED",
                         requested_url=resource.url,
-                        final_url=str(response.url),
+                        final_url=current_url,
                         fetched_at=_require_aware_datetime(self._clock()),
                         validators=FetchValidators(
                             etag=response.headers.get("ETag") or previous.etag,
@@ -151,7 +148,7 @@ class HttpResourceFetcher:
                             retryable=False,
                         )
                     redirect_url = urljoin(
-                        str(response.url),
+                        current_url,
                         response.headers.get("Location", ""),
                     )
                     try:
@@ -176,7 +173,7 @@ class HttpResourceFetcher:
                 return ResourceFetched(
                     status="FETCHED",
                     requested_url=resource.url,
-                    final_url=str(response.url),
+                    final_url=current_url,
                     fetched_at=_require_aware_datetime(self._clock()),
                     content=await _read_bounded_content(response, source.max_response_bytes),
                     content_type=response.headers.get("Content-Type"),
@@ -192,17 +189,25 @@ class HttpResourceFetcher:
 async def _request_stream(
     *,
     http_client: httpx.AsyncClient,
-    url: str,
+    target: PinnedRequestTarget,
     headers: dict[str, str],
     timeout: float,
 ) -> AsyncIterator[httpx.Response]:
+    # IP-based origins must not share a pooled TLS connection across logical hosts.
+    http_client.cookies.clear()
+    request_headers = {
+        **headers,
+        "Connection": "close",
+        "Host": target.hostname,
+    }
     try:
         async with http_client.stream(
             "GET",
-            url,
-            headers=headers,
+            target.network_url,
+            headers=request_headers,
             timeout=timeout,
             follow_redirects=False,
+            extensions={"sni_hostname": target.hostname},
         ) as response:
             yield response
     except httpx.InvalidURL as error:
@@ -240,17 +245,6 @@ async def _request_stream(
 def _validate_resource_owner(source: KnowledgeSource, resource: DiscoveredResource) -> None:
     if resource.source_id != source.source_id or resource.city != source.city:
         raise ValueError("discovered resource does not belong to the source")
-
-
-def _normalize_header_value(value: str | None, field_name: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"{field_name} must be a string or None")
-    normalized = value.strip()
-    if not normalized or "\r" in normalized or "\n" in normalized:
-        raise ValueError(f"{field_name} must be a safe non-empty HTTP header value")
-    return normalized
 
 
 def _require_aware_datetime(value: datetime) -> datetime:

@@ -24,11 +24,11 @@ M1 正在实施。当前已经完成：
 - Vue 工作台可直接创建规划任务，使用带 Bearer Token 的流式 `fetch` 消费 SSE，并在断线后携带 `Last-Event-ID` 补发。
 - 任务完成后自动读取当前行程，以日期和活动时间轴展示 Provider、版本与估算费用；UTC 活动时间统一按中国标准时间显示。
 - Vue 工作台已显示活动地址、地图 Marker 和步行 polyline；地图与时间轴可双向选择，缺少浏览器专用高德凭据时安全降级为可交互路线概览。
-- Java 88 个自动化测试、91.08% 行覆盖率，Python 173 个 Worker/API/Provider/知识检索/采集测试，以及 Vue 43 个组件、API 边界、SSE、地图、路由与仓库测试；Python 知识检索与采集模块总行覆盖率为 91.60%，Vue 地图切片行覆盖率为 92.66%。
+- Java 88 个自动化测试、91.08% 行覆盖率，Python 当前收集 188 个 Worker/API/Provider/知识检索/采集测试，以及 Vue 43 个组件、API 边界、SSE、地图、路由与仓库测试；本机 Docker 未运行时 Python 为 184 项通过、4 项 pgvector 集成测试跳过，知识检索与采集总行覆盖率为 83.94%，仍通过 80% 门禁，Vue 地图切片行覆盖率为 92.66%。
 - Python 已新增知识导入链：广州官方 Markdown 资料、TOML 元数据与稳定切分、独立 `agent` schema 的 pgvector 持久化、版本不可变校验和 `trip-agent-knowledge` 迁移/导入/检索 CLI；演示哈希向量明确标记为离线实现，不替代生产语义模型。
-- Phase 12 已建立官方知识采集基础：来源 TOML 注册表、广州官方固定 URL、城市筛选、白名单域名、HTTPS/凭据/公网 IP 校验、固定 URL 发现和 `trip-agent-acquisition validate` CLI；`HttpResourceFetcher` 已支持 ETag/Last-Modified 条件请求、304 强类型结果、流式响应上限、显式重定向复核和可重试错误分类，采集候选尚未持久化或发布到 RAG。
+- Phase 12 已建立官方知识采集基础：来源 TOML 注册表、广州官方固定 URL、城市筛选、白名单域名、HTTPS/凭据/公网 IP 校验、固定 URL 发现和 `trip-agent-acquisition validate` CLI；`HttpResourceFetcher` 已支持 ETag/Last-Modified 条件请求、304 强类型结果、流式响应上限、显式重定向复核、DNS 全结果公网单播校验、单次抓取 IP 固定、环境代理隔离和可重试错误分类，采集候选尚未持久化或发布到 RAG。
 
-下一条纵向切片继续完成 P0-1：DNS 解析固定与私网阻断、限速和退避重试执行、采集运行/资源/候选快照持久化；完成采集闭环后再把检索结果接入规划 Agent。
+下一条纵向切片继续完成 P0-1：每来源限速和有上限的指数退避重试执行；随后实现采集运行/资源/候选快照持久化，完成采集闭环后再把检索结果接入规划 Agent。
 
 本地准备：
 

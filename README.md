@@ -212,6 +212,7 @@ pnpm build
 - [可靠性、安全与可观测性](docs/07-reliability-security-observability.md)
 - [测试与评测](docs/08-testing-and-evaluation.md)
 - [产品路线图](docs/09-roadmap-and-todos.md)
+- [产品完整度与需求基线](docs/27-product-completeness-and-requirements-baseline.md)
 - [生产发布与恢复手册](docs/25-production-release-runbook.md)
 
 ## 已知边界

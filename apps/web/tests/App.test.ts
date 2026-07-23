@@ -158,6 +158,9 @@ async function signIn(fetchMock: ReturnType<typeof vi.fn>) {
       restoreAttempted = true
       return response({ code: 'INVALID_REFRESH_TOKEN', message: 'Refresh cookie is missing' }, 401)
     }
+    if (urlOf(input).endsWith('/guide-imports') && init?.method !== 'POST') {
+      return response([])
+    }
     try {
       return await fetchMock(input, init)
     } catch (cause) {
@@ -811,6 +814,56 @@ describe('TripPilot application shell', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(itineraryLoads).toBe(1)
     expect(screen.queryByRole('heading', { name: itineraryResponse.title })).toBeNull()
+  })
+
+  test('ignores a late guide import after leaving and reopening the trip', async () => {
+    let resolveImport!: (result: Response) => void
+    const pendingImport = new Promise<Response>((resolve) => {
+      resolveImport = resolve
+    })
+    const importedGuide = {
+      id: '99999999-9999-9999-9999-999999999999',
+      sourceUrl: 'https://example.com/guide',
+      finalUrl: 'https://example.com/guide',
+      sourceHost: 'example.com',
+      title: 'Late guide result',
+      excerpt: 'Late data must not cross route boundaries.',
+      contentHash: 'a'.repeat(64),
+      fetchedAt: '2026-07-23T08:00:00Z',
+      facts: [],
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/guide-imports`) && init?.method === 'POST') {
+        return pendingImport
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: 'Itinerary was not found' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await openPlanningWorkspace(fetchMock)
+    await fireEvent.update(screen.getByLabelText('公开攻略链接'), importedGuide.sourceUrl)
+    await fireEvent.click(screen.getByRole('button', { name: '导入攻略' }))
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input, init]) => (
+        urlOf(input).endsWith(`/api/trips/${tripResponse.id}/guide-imports`)
+        && init?.method === 'POST'
+      ))).toBe(true)
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: '返回旅行列表' }))
+    await fireEvent.click(await screen.findByRole('button', { name: `打开 ${tripResponse.title}` }))
+    await screen.findByRole('heading', { name: '攻略情报' })
+    resolveImport(response(importedGuide, 201))
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(screen.queryByText(importedGuide.title)).toBeNull()
+    expect(screen.getByText('还没有导入攻略')).toBeTruthy()
   })
 
   test('lets the owner cancel an active planning task', async () => {

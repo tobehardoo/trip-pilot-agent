@@ -3,8 +3,10 @@ import { afterEach, expect, test, vi } from 'vitest'
 import {
   ApiError,
   cancelPlanningTask,
+  createGuideImport,
   createPlanningTask,
   createTrip,
+  listGuideImports,
   logoutSession,
   refreshSession,
   streamPlanningTaskEvents,
@@ -113,6 +115,39 @@ test('cancels a planning task with bearer authentication', async () => {
     '/api/planning-tasks/33333333-3333-3333-3333-333333333333',
     expect.objectContaining({
       method: 'DELETE',
+      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+    }),
+  )
+})
+
+test('creates and lists trip-scoped guide imports with bearer authentication', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ([]),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+
+  await createGuideImport(
+    'access-token',
+    '22222222-2222-2222-2222-222222222222',
+    'https://example.com/guide',
+  )
+  await listGuideImports('access-token', '22222222-2222-2222-2222-222222222222')
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    '/api/trips/22222222-2222-2222-2222-222222222222/guide-imports',
+    expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+      body: JSON.stringify({ sourceUrl: 'https://example.com/guide' }),
+    }),
+  )
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    '/api/trips/22222222-2222-2222-2222-222222222222/guide-imports',
+    expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
     }),
   )

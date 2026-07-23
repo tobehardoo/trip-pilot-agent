@@ -31,6 +31,9 @@ app:
     outbox-publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
     outbox-publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:1000}
     event-consumer-enabled: ${EVENT_CONSUMER_ENABLED:true}
+  agent:
+    base-url: ${AGENT_SERVICE_BASE_URL:http://localhost:8090}
+    internal-token: ${AGENT_INTERNAL_TOKEN:local-development-only}
 
 server:
   port: ${TRAVEL_SERVER_PORT:8080}

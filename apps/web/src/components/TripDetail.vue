@@ -21,11 +21,19 @@ import {
 } from 'lucide-vue-next'
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 
-import { ApiError, type Itinerary, type Trip, type UpdateTripConstraintsInput, type User } from '../lib/api'
+import {
+  ApiError,
+  type GuideImport,
+  type Itinerary,
+  type Trip,
+  type UpdateTripConstraintsInput,
+  type User,
+} from '../lib/api'
 import { useModalFocus } from '../lib/modal'
+import GuideIntelligencePanel from './GuideIntelligencePanel.vue'
 import TripMap from './TripMap.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   user: User
   trip: Trip | null
   busy: boolean
@@ -35,11 +43,20 @@ const props = defineProps<{
   itineraryError: string | null
   planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'
   planningError: string | null
+  guideImports?: GuideImport[]
+  guideBusy?: boolean
+  guideError?: string | null
+  importGuide?: (sourceUrl: string) => Promise<void>
   startPlanning: () => Promise<void>
   cancelPlanning: () => Promise<void>
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
   reloadTrip: () => Promise<boolean>
-}>()
+}>(), {
+  guideImports: () => [],
+  guideBusy: false,
+  guideError: null,
+  importGuide: async () => {},
+})
 
 const emit = defineEmits<{
   back: []
@@ -390,6 +407,13 @@ watch(() => props.itinerary, (nextItinerary) => {
             </div>
           </div>
         </section>
+
+        <GuideIntelligencePanel
+          :guide-imports="guideImports"
+          :busy="guideBusy"
+          :error="guideError"
+          :import-guide="importGuide"
+        />
 
         <section class="constraints" aria-labelledby="constraints-title">
           <header class="section-heading">

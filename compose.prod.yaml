@@ -66,10 +66,14 @@ services:
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE:-true}
+      AGENT_SERVICE_BASE_URL: http://agent-api:8090
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-${JWT_SECRET:?JWT_SECRET is required}}
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      agent-api:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/actuator/health | grep UP"]
@@ -115,6 +119,30 @@ services:
         condition: service_healthy
       knowledge-init:
         condition: service_completed_successfully
+
+  agent-api:
+    image: trip-pilot-agent-service:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    command:
+      - /app/.venv/bin/uvicorn
+      - trip_agent.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+    environment:
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-${JWT_SECRET:?JWT_SECRET is required}}
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3).read()
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   knowledge-init:
     image: trip-pilot-agent-service:${IMAGE_TAG:-local}

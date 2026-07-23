@@ -7,11 +7,13 @@ import TripDetail from './components/TripDetail.vue'
 import {
   ApiError,
   cancelPlanningTask,
+  createGuideImport,
   createPlanningTask,
   createTrip,
   getCurrentItinerary,
   getTrip,
   listTrips,
+  listGuideImports,
   login,
   logoutSession,
   refreshSession,
@@ -20,6 +22,7 @@ import {
   updateTripConstraints,
   type AuthSession,
   type CreateTripInput,
+  type GuideImport,
   type Itinerary,
   type PlanningTaskEvent,
   type Trip,
@@ -47,6 +50,9 @@ const itineraryBusy = ref(false)
 const itineraryError = ref<string | null>(null)
 const planningState = ref<'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'>('idle')
 const planningError = ref<string | null>(null)
+const guideImports = ref<GuideImport[]>([])
+const guideBusy = ref(false)
+const guideError = ref<string | null>(null)
 const activePlanningTaskId = ref<string | null>(null)
 let sessionGeneration = 0
 let detailRequestSequence = 0
@@ -54,6 +60,7 @@ let itineraryRequestSequence = 0
 let listRequestSequence = 0
 let busyRequestSequence = 0
 let planningRequestSequence = 0
+let guideRequestSequence = 0
 let refreshInFlight: Promise<void> | null = null
 let planningStreamController: AbortController | null = null
 
@@ -105,6 +112,10 @@ function clearLocalSession() {
   itinerary.value = null
   itineraryBusy.value = false
   itineraryError.value = null
+  guideImports.value = []
+  guideBusy.value = false
+  guideError.value = null
+  guideRequestSequence += 1
 }
 
 function stopPlanningStream(resetState = true) {
@@ -137,13 +148,15 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
     selectedTrip.value = null
     itinerary.value = null
     itineraryError.value = null
+    guideImports.value = []
+    guideError.value = null
   }
   try {
     const loadedTrip = await withAccessToken((token) => getTrip(token, tripId))
     if (!isCurrentDetailRequest(requestSequence, tripId)) return false
     selectedTrip.value = loadedTrip
     syncTripInList(loadedTrip)
-    await loadItinerary(tripId)
+    await Promise.all([loadItinerary(tripId), loadGuideImportsForTrip(tripId)])
     return true
   } catch (cause) {
     if (!isCurrentDetailRequest(requestSequence, tripId)) return false
@@ -151,6 +164,25 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
     return false
   } finally {
     if (requestSequence === detailRequestSequence) detailBusy.value = false
+  }
+}
+
+async function loadGuideImportsForTrip(tripId: string): Promise<boolean> {
+  const requestSequence = ++guideRequestSequence
+  guideBusy.value = true
+  guideError.value = null
+  try {
+    const loaded = await withAccessToken((token) => listGuideImports(token, tripId))
+    if (requestSequence !== guideRequestSequence
+      || route.value.name !== 'trip-detail'
+      || route.value.tripId !== tripId) return false
+    guideImports.value = loaded
+    return true
+  } catch (cause) {
+    if (requestSequence === guideRequestSequence) guideError.value = errorMessage(cause)
+    return false
+  } finally {
+    if (requestSequence === guideRequestSequence) guideBusy.value = false
   }
 }
 
@@ -361,6 +393,38 @@ async function handleUpdateConstraints(input: UpdateTripConstraintsInput) {
   if (route.value.name === 'trip-detail' && route.value.tripId === updated.id) selectedTrip.value = updated
 }
 
+async function handleImportGuide(sourceUrl: string) {
+  if (!selectedTrip.value) return
+  const tripId = selectedTrip.value.id
+  const generation = sessionGeneration
+  const requestSequence = ++guideRequestSequence
+  guideBusy.value = true
+  guideError.value = null
+  try {
+    const imported = await withAccessToken((token) => (
+      createGuideImport(token, tripId, sourceUrl)
+    ))
+    if (!isCurrentGuideRequest(requestSequence, generation, tripId)) return
+    guideImports.value = [
+      imported,
+      ...guideImports.value.filter((guide) => guide.id !== imported.id),
+    ]
+  } catch (cause) {
+    if (!isCurrentGuideRequest(requestSequence, generation, tripId)) return
+    guideError.value = errorMessage(cause)
+    throw cause
+  } finally {
+    if (isCurrentGuideRequest(requestSequence, generation, tripId)) guideBusy.value = false
+  }
+}
+
+function isCurrentGuideRequest(requestSequence: number, generation: number, tripId: string) {
+  return requestSequence === guideRequestSequence
+    && isCurrentSession(generation)
+    && route.value.name === 'trip-detail'
+    && route.value.tripId === tripId
+}
+
 async function reloadSelectedTrip(): Promise<boolean> {
   if (route.value.name !== 'trip-detail') return false
   return loadTrip(route.value.tripId, true)
@@ -517,6 +581,10 @@ onUnmounted(() => {
     :itinerary-error="itineraryError"
     :planning-state="planningState"
     :planning-error="planningError"
+    :guide-imports="guideImports"
+    :guide-busy="guideBusy"
+    :guide-error="guideError"
+    :import-guide="handleImportGuide"
     :start-planning="handleStartPlanning"
     :cancel-planning="handleCancelPlanning"
     :update-constraints="handleUpdateConstraints"

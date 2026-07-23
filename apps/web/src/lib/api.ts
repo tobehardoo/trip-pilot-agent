@@ -85,6 +85,28 @@ export interface PlanningTaskEvent {
   createdAt: string
 }
 
+export interface GuideFact {
+  id: string
+  category: 'ATTRACTION' | 'DINING' | 'TRANSPORT' | 'TIMING' | 'COST' | 'QUEUE' | 'RESERVATION' | 'TIP'
+  statement: string
+  evidence: string
+  confidence: number
+  observedAt: string
+  expiresAt: string
+}
+
+export interface GuideImport {
+  id: string
+  sourceUrl: string
+  finalUrl: string
+  sourceHost: string
+  title: string
+  excerpt: string
+  contentHash: string
+  fetchedAt: string
+  facts: GuideFact[]
+}
+
 export interface ItineraryActivity {
   id: string
   title: string
@@ -251,6 +273,25 @@ export function updateTripConstraints(
   return request(`/api/trips/${encodeURIComponent(tripId)}/constraints`, {
     method: 'PUT',
     body: JSON.stringify(input),
+  }, accessToken)
+}
+
+export function listGuideImports(accessToken: string, tripId: string): Promise<GuideImport[]> {
+  return request(
+    `/api/trips/${encodeURIComponent(tripId)}/guide-imports`,
+    {},
+    accessToken,
+  )
+}
+
+export function createGuideImport(
+  accessToken: string,
+  tripId: string,
+  sourceUrl: string,
+): Promise<GuideImport> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/guide-imports`, {
+    method: 'POST',
+    body: JSON.stringify({ sourceUrl }),
   }, accessToken)
 }
 

@@ -8,7 +8,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record SecurityProperties(
         String jwtSecret,
         Duration accessTokenTtl,
-        Duration refreshTokenTtl
+        Duration refreshTokenTtl,
+        boolean refreshCookieSecure
 ) {
     public SecurityProperties {
         if (jwtSecret == null || jwtSecret.length() < 32) {

@@ -1,5 +1,3 @@
-export const REFRESH_TOKEN_KEY = 'trip-pilot.refresh-token'
-
 export interface User {
   id: string
   email: string
@@ -9,7 +7,6 @@ export interface User {
 export interface AuthSession {
   user: User
   accessToken: string
-  refreshToken: string
   tokenType: string
   expiresIn: number
 }
@@ -74,6 +71,15 @@ export interface PlanningTaskEvent {
     errorCode?: string
     errorMessage?: string
     message?: string
+    conflicts?: Array<{
+      code: string
+      message: string
+      affected: string[]
+    }>
+    relaxationSuggestions?: Array<{
+      code: string
+      message: string
+    }>
     [key: string]: unknown
   }
   createdAt: string
@@ -110,6 +116,31 @@ export interface ItineraryTransitLeg {
   }>
 }
 
+export interface ItineraryKnowledgeCitation {
+  documentId: string
+  documentVersion: number
+  chunkId: string
+  chunkIndex: number
+  title: string
+  sourceUrl: string
+  sourceName: string
+  collectedAt: string
+  reliabilityLevel: string
+  similarity: number
+}
+
+export interface ItineraryKnowledge {
+  status: 'REAL' | 'DEMO' | 'UNAVAILABLE'
+  query: string
+  citations: ItineraryKnowledgeCitation[]
+  freshness: {
+    status: 'FRESH' | 'STALE' | 'UNAVAILABLE'
+    checkedAt: string | null
+    staleReason: string | null
+  }
+  message: string | null
+}
+
 export interface Itinerary {
   versionId: string
   versionNumber: number
@@ -122,6 +153,7 @@ export interface Itinerary {
     activities: ItineraryActivity[]
     transitLegs: ItineraryTransitLeg[]
   }>
+  knowledge: ItineraryKnowledge
   createdAt: string
 }
 
@@ -169,6 +201,7 @@ async function request<T>(path: string, options: RequestInit = {}, accessToken?:
 export function login(email: string, password: string): Promise<AuthSession> {
   return request('/api/auth/login', {
     method: 'POST',
+    credentials: 'same-origin',
     body: JSON.stringify({ email, password }),
   })
 }
@@ -176,21 +209,22 @@ export function login(email: string, password: string): Promise<AuthSession> {
 export function register(email: string, password: string, displayName: string): Promise<AuthSession> {
   return request('/api/auth/register', {
     method: 'POST',
+    credentials: 'same-origin',
     body: JSON.stringify({ email, password, displayName }),
   })
 }
 
-export function refreshSession(refreshToken: string): Promise<AuthSession> {
+export function refreshSession(): Promise<AuthSession> {
   return request('/api/auth/refresh', {
     method: 'POST',
-    body: JSON.stringify({ refreshToken }),
+    credentials: 'same-origin',
   })
 }
 
-export function logoutSession(refreshToken: string): Promise<void> {
+export function logoutSession(): Promise<void> {
   return request('/api/auth/logout', {
     method: 'POST',
-    body: JSON.stringify({ refreshToken }),
+    credentials: 'same-origin',
   })
 }
 
@@ -228,6 +262,12 @@ export function createPlanningTask(
   return request(`/api/trips/${encodeURIComponent(tripId)}/planning-tasks`, {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },
+  }, accessToken)
+}
+
+export function cancelPlanningTask(accessToken: string, taskId: string): Promise<PlanningTask> {
+  return request(`/api/planning-tasks/${encodeURIComponent(taskId)}`, {
+    method: 'DELETE',
   }, accessToken)
 }
 

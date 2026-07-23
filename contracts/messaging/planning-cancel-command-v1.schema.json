@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trip-pilot.local/contracts/planning-cancel-command-v1.schema.json",
+  "title": "Planning cancel command v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType",
+    "schemaVersion",
+    "eventId",
+    "traceId",
+    "taskId",
+    "tripId",
+    "occurredAt"
+  ],
+  "properties": {
+    "eventType": { "const": "PLANNING_CANCEL_REQUESTED" },
+    "schemaVersion": { "const": 1 },
+    "eventId": { "type": "string", "format": "uuid" },
+    "traceId": { "type": "string", "format": "uuid" },
+    "taskId": { "type": "string", "format": "uuid" },
+    "tripId": { "type": "string", "format": "uuid" },
+    "occurredAt": { "type": "string", "format": "date-time" }
+  }
+}

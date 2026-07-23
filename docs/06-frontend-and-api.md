@@ -62,7 +62,6 @@
 /api/planning-tasks/{taskId}
 /api/planning-tasks/{taskId}/events
 /api/planning-tasks/{taskId}/clarifications
-/api/planning-tasks/{taskId}/cancel
 /api/trips/{tripId}/itinerary
 /api/trips/{tripId}/versions
 /api/trips/{tripId}/commands
@@ -118,6 +117,12 @@ eventStreamUrl
 ```text
 GET /api/planning-tasks/{taskId}/events
 Accept: text/event-stream
+```
+
+取消仍在排队或执行中的任务使用幂等的资源删除语义：
+
+```text
+DELETE /api/planning-tasks/{taskId}
 ```
 
 ## 7. SSE 事件

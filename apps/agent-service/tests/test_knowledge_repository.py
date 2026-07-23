@@ -1,6 +1,7 @@
 import asyncio
 import os
 from collections.abc import Iterator
+from datetime import date
 from textwrap import dedent
 
 import psycopg
@@ -120,6 +121,42 @@ def test_repository_adds_embeddings_without_replacing_source_version() -> None:
     )
     assert results
     assert all(result.document_version == 1 for result in results)
+
+
+def test_distinct_document_search_applies_limit_after_chunk_deduplication() -> None:
+    repository = PsycopgKnowledgeRepository(database_url())
+    provider = HashEmbeddingProvider(dimensions=32)
+    importer = KnowledgeImporter(
+        repository=repository,
+        embedding_provider=provider,
+        max_characters=20,
+        overlap_characters=0,
+    )
+    second = MARKDOWN.replace(
+        'document_id = "guangzhou-shamian-rag"',
+        'document_id = "guangzhou-second-rag"',
+    ).replace("沙面岛与岭南文化", "广州第二份文化资料")
+    asyncio.run(importer.import_markdown(MARKDOWN))
+    asyncio.run(importer.import_markdown(second))
+    query_vector = asyncio.run(provider.embed_texts(("广州 文化",)))[0]
+
+    results = asyncio.run(
+        repository.search_distinct_documents(
+            KnowledgeSearchRequest(
+                city="广州",
+                embedding=query_vector,
+                limit=2,
+                min_similarity=-1,
+                as_of=date(2026, 7, 23),
+            )
+        )
+    )
+
+    assert len(results) == 2
+    assert {result.document_id for result in results} == {
+        "guangzhou-shamian-rag",
+        "guangzhou-second-rag",
+    }
 
 
 def test_repository_search_applies_city_and_similarity_filters() -> None:

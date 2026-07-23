@@ -6,6 +6,7 @@ from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     ConfigDict,
     Field,
@@ -38,6 +39,12 @@ type ProviderPoiId = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
 ]
 type AddressText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
+]
+type KnowledgeIdentifier = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+]
+type KnowledgeMessage = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
 ]
 type JsonLongitude = Annotated[
@@ -142,6 +149,16 @@ class PlanningCreateCommand(InboundMessageModel):
     occurred_at: datetime
     payload: PlanningCreatePayload
 
+
+class PlanningCancelCommand(InboundMessageModel):
+    event_type: Literal["PLANNING_CANCEL_REQUESTED"]
+    schema_version: Literal[1]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    occurred_at: datetime
+
     @model_validator(mode="after")
     def validate_occurred_at(self) -> Self:
         if self.occurred_at.utcoffset() is None:
@@ -227,9 +244,74 @@ class Itinerary(MessageModel):
     estimated_total_cost: JsonDecimal
 
 
+class KnowledgeCitationSnapshot(MessageModel):
+    document_id: KnowledgeIdentifier
+    document_version: int = Field(strict=True, ge=1)
+    chunk_id: KnowledgeIdentifier
+    chunk_index: int = Field(strict=True, ge=0)
+    title: ItineraryText
+    source_url: AnyHttpUrl
+    source_name: NameText
+    collected_at: datetime
+    reliability_level: ShortText
+    similarity: float = Field(ge=-1, le=1)
+
+    @field_validator("collected_at")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError("citation collectedAt must include a timezone")
+        return value
+
+
+class KnowledgeFreshness(MessageModel):
+    status: Literal["FRESH", "STALE", "UNAVAILABLE"]
+    checked_at: datetime | None = None
+    stale_reason: ShortText | None = None
+
+    @model_validator(mode="after")
+    def validate_status(self) -> Self:
+        if self.checked_at is not None and self.checked_at.utcoffset() is None:
+            raise ValueError("knowledge freshness checkedAt must include a timezone")
+        if self.status == "UNAVAILABLE" and (
+            self.checked_at is not None or self.stale_reason is not None
+        ):
+            raise ValueError("unavailable freshness must not contain verification details")
+        if self.status == "FRESH" and self.stale_reason is not None:
+            raise ValueError("fresh knowledge must not contain staleReason")
+        if self.status != "UNAVAILABLE" and self.checked_at is None:
+            raise ValueError("available freshness requires checkedAt")
+        return self
+
+
+class KnowledgeEvidence(MessageModel):
+    status: Literal["REAL", "DEMO", "UNAVAILABLE"]
+    query: ItineraryText
+    citations: tuple[KnowledgeCitationSnapshot, ...] = Field(max_length=20)
+    freshness: KnowledgeFreshness
+    message: KnowledgeMessage | None = None
+
+    @model_validator(mode="after")
+    def validate_evidence(self) -> Self:
+        if self.status == "REAL":
+            if not self.citations:
+                raise ValueError("real knowledge evidence requires citations")
+            if self.freshness.status == "UNAVAILABLE":
+                raise ValueError("real knowledge evidence requires freshness")
+            if self.message is not None:
+                raise ValueError("real knowledge evidence must not contain a fallback message")
+            return self
+        if self.citations:
+            raise ValueError("non-real knowledge evidence must not contain citations")
+        if self.freshness.status != "UNAVAILABLE" or self.message is None:
+            raise ValueError("non-real knowledge evidence requires an unavailable reason")
+        return self
+
+
 class PlanningCompletedPayload(MessageModel):
     provider: Literal["AMAP", "DEMO"]
     itinerary: Itinerary
+    knowledge: KnowledgeEvidence
 
     @model_validator(mode="after")
     def validate_activity_sources(self) -> Self:
@@ -244,7 +326,7 @@ class PlanningCompletedPayload(MessageModel):
 
 class PlanningCompletedEvent(MessageModel):
     event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[3]
+    schema_version: Literal[4]
     event_id: UUID
     trace_id: UUID
     task_id: UUID
@@ -252,3 +334,34 @@ class PlanningCompletedEvent(MessageModel):
     run_id: UUID
     occurred_at: datetime
     payload: PlanningCompletedPayload
+
+
+class PlanningConflict(MessageModel):
+    code: ShortText
+    message: KnowledgeMessage
+    affected: tuple[NameText, ...] = Field(min_length=1, max_length=30)
+
+
+class PlanningRelaxation(MessageModel):
+    code: ShortText
+    message: KnowledgeMessage
+
+
+class PlanningFailedPayload(MessageModel):
+    status: Literal["FAILED"]
+    error_code: Literal["NO_FEASIBLE_ITINERARY"]
+    message: KnowledgeMessage
+    conflicts: tuple[PlanningConflict, ...] = Field(min_length=1, max_length=20)
+    relaxation_suggestions: tuple[PlanningRelaxation, ...] = Field(max_length=20)
+
+
+class PlanningFailedEvent(MessageModel):
+    event_type: Literal["PLANNING_FAILED"]
+    schema_version: Literal[1]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    run_id: UUID
+    occurred_at: datetime
+    payload: PlanningFailedPayload

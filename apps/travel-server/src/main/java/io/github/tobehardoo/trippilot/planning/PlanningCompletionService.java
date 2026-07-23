@@ -112,6 +112,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                 result.title().strip(), result.estimatedTotalCost(), event.payload().provider(),
                 task.constraintSnapshotJson(), now
         )), "itinerary version");
+        persistKnowledge(versionId, event.payload().knowledge());
         for (int dayIndex = 0; dayIndex < result.days().size(); dayIndex++) {
             persistDay(versionId, dayIndex, result.days().get(dayIndex));
         }
@@ -125,6 +126,29 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         SUCCEEDED, event.runId(), versionId, versionNumber, event.payload().provider()
                 )), now
         )));
+    }
+
+    private void persistKnowledge(UUID versionId,
+                                  PlanningCompletedEvent.KnowledgeEvidence knowledge) {
+        if (knowledge == null) {
+            return;
+        }
+        PlanningCompletedEvent.KnowledgeFreshness freshness = knowledge.freshness();
+        requireOne(itineraryMapper.insertKnowledge(new ItineraryMapper.KnowledgeWrite(
+                versionId, knowledge.status(), knowledge.query().strip(), freshness.status(),
+                freshness.checkedAt(), freshness.staleReason(), knowledge.message()
+        )), "itinerary knowledge evidence");
+        for (int index = 0; index < knowledge.citations().size(); index++) {
+            PlanningCompletedEvent.KnowledgeCitation citation = knowledge.citations().get(index);
+            requireOne(itineraryMapper.insertKnowledgeCitation(
+                    new ItineraryMapper.KnowledgeCitationWrite(
+                            UUID.randomUUID(), versionId, index, citation.documentId(),
+                            citation.documentVersion(), citation.chunkId(), citation.chunkIndex(),
+                            citation.title().strip(), citation.sourceUrl(), citation.sourceName().strip(),
+                            citation.collectedAt(), citation.reliabilityLevel(), citation.similarity()
+                    )
+            ), "itinerary knowledge citation");
+        }
     }
 
     private void persistDay(UUID versionId, int dayIndex, PlanningCompletedEvent.Day day) {

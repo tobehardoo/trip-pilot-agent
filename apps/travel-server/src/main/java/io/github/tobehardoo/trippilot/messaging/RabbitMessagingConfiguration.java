@@ -20,6 +20,7 @@ public class RabbitMessagingConfiguration {
     static final String EVENT_EXCHANGE = "trip.event.exchange";
     static final String DEAD_LETTER_EXCHANGE = "trip.dead-letter.exchange";
     static final String CREATE_QUEUE = "planning.create.queue";
+    static final String CANCEL_QUEUE = "planning.cancel.queue";
     static final String PROGRESS_QUEUE = "planning.progress.queue";
     static final String COMPLETED_QUEUE = "planning.completed.queue";
     static final String FAILED_QUEUE = "planning.failed.queue";
@@ -46,6 +47,11 @@ public class RabbitMessagingConfiguration {
     }
 
     @Bean
+    Queue planningCancelQueue() {
+        return durableQueue(CANCEL_QUEUE, "planning.cancel.dead");
+    }
+
+    @Bean
     Queue planningProgressQueue() {
         return durableQueue(PROGRESS_QUEUE, "planning.progress.dead");
     }
@@ -68,6 +74,11 @@ public class RabbitMessagingConfiguration {
     @Bean
     Binding planningCreateBinding(Queue planningCreateQueue, DirectExchange planningCommandExchange) {
         return BindingBuilder.bind(planningCreateQueue).to(planningCommandExchange).with("planning.create");
+    }
+
+    @Bean
+    Binding planningCancelBinding(Queue planningCancelQueue, DirectExchange planningCommandExchange) {
+        return BindingBuilder.bind(planningCancelQueue).to(planningCommandExchange).with("planning.cancel");
     }
 
     @Bean

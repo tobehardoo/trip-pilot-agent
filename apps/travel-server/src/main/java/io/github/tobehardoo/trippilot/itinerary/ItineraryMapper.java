@@ -78,6 +78,30 @@ public interface ItineraryMapper {
             """)
     int insertTransitLeg(TransitLegWrite transitLeg);
 
+    @Insert("""
+            INSERT INTO business.itinerary_version_knowledge(
+                itinerary_version_id, status, query, freshness_status,
+                freshness_checked_at, stale_reason, message
+            ) VALUES (
+                #{itineraryVersionId}, #{status}, #{query}, #{freshnessStatus},
+                #{freshnessCheckedAt}, #{staleReason}, #{message}
+            )
+            """)
+    int insertKnowledge(KnowledgeWrite knowledge);
+
+    @Insert("""
+            INSERT INTO business.itinerary_knowledge_citation(
+                id, itinerary_version_id, citation_order, document_id, document_version,
+                chunk_id, chunk_index, title, source_url, source_name, collected_at,
+                reliability_level, similarity
+            ) VALUES (
+                #{id}, #{itineraryVersionId}, #{citationOrder}, #{documentId}, #{documentVersion},
+                #{chunkId}, #{chunkIndex}, #{title}, #{sourceUrl}, #{sourceName}, #{collectedAt},
+                #{reliabilityLevel}, #{similarity}
+            )
+            """)
+    int insertKnowledgeCitation(KnowledgeCitationWrite citation);
+
     @Update("""
             UPDATE business.itinerary
             SET current_version_id = #{versionId}, updated_at = CURRENT_TIMESTAMP
@@ -127,6 +151,23 @@ public interface ItineraryMapper {
             ORDER BY leg_order
             """)
     List<StoredTransitLeg> findTransitLegs(UUID dayId);
+
+    @Select("""
+            SELECT itinerary_version_id, status, query, freshness_status,
+                   freshness_checked_at, stale_reason, message
+            FROM business.itinerary_version_knowledge
+            WHERE itinerary_version_id = #{versionId}
+            """)
+    Optional<StoredKnowledge> findKnowledge(UUID versionId);
+
+    @Select("""
+            SELECT document_id, document_version, chunk_id, chunk_index, title,
+                   source_url, source_name, collected_at, reliability_level, similarity
+            FROM business.itinerary_knowledge_citation
+            WHERE itinerary_version_id = #{versionId}
+            ORDER BY citation_order
+            """)
+    List<StoredKnowledgeCitation> findKnowledgeCitations(UUID versionId);
 
     record ItineraryState(
             UUID id,
@@ -184,6 +225,34 @@ public interface ItineraryMapper {
     ) {
     }
 
+    record KnowledgeWrite(
+            UUID itineraryVersionId,
+            String status,
+            String query,
+            String freshnessStatus,
+            OffsetDateTime freshnessCheckedAt,
+            String staleReason,
+            String message
+    ) {
+    }
+
+    record KnowledgeCitationWrite(
+            UUID id,
+            UUID itineraryVersionId,
+            int citationOrder,
+            String documentId,
+            int documentVersion,
+            String chunkId,
+            int chunkIndex,
+            String title,
+            String sourceUrl,
+            String sourceName,
+            OffsetDateTime collectedAt,
+            String reliabilityLevel,
+            double similarity
+    ) {
+    }
+
     record CurrentVersion(
             UUID id,
             int versionNumber,
@@ -224,6 +293,31 @@ public interface ItineraryMapper {
             String provider,
             boolean estimated,
             String polylineJson
+    ) {
+    }
+
+    record StoredKnowledge(
+            UUID itineraryVersionId,
+            String status,
+            String query,
+            String freshnessStatus,
+            OffsetDateTime freshnessCheckedAt,
+            String staleReason,
+            String message
+    ) {
+    }
+
+    record StoredKnowledgeCitation(
+            String documentId,
+            int documentVersion,
+            String chunkId,
+            int chunkIndex,
+            String title,
+            String sourceUrl,
+            String sourceName,
+            OffsetDateTime collectedAt,
+            String reliabilityLevel,
+            double similarity
     ) {
     }
 }

@@ -161,13 +161,96 @@ def test_demo_processor_emits_a_deterministic_completed_event() -> None:
     repeated = asyncio.run(process(command, provider_type()))
 
     assert first.event_type == "PLANNING_COMPLETED"
-    assert first.schema_version == 3
+    assert first.schema_version == 4
     assert first.event_id == repeated.event_id
     assert first.run_id == repeated.run_id
     assert first.trace_id == command.trace_id
     assert first.task_id == command.task_id
     assert first.trip_id == command.trip_id
     assert first.payload.provider == "DEMO"
+    assert first.payload.knowledge.status == "DEMO"
+    assert first.payload.knowledge.query == "广州 美食 历史 FRIENDS"
+    assert first.payload.knowledge.citations == ()
+    assert first.payload.knowledge.freshness.status == "UNAVAILABLE"
+
+
+def test_v4_processor_serializes_real_knowledge_citations_and_freshness() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    processor = import_module("trip_agent.worker.processor")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+
+    class EvidenceProvider:
+        async def get_evidence(self, received_command: object):
+            assert received_command is command
+            return contracts.KnowledgeEvidence(
+                status="REAL",
+                query="广州 历史",
+                citations=(
+                    contracts.KnowledgeCitationSnapshot(
+                        document_id="guangzhou-history-001",
+                        document_version=2,
+                        chunk_id="guangzhou-history-001-v2-c0",
+                        chunk_index=0,
+                        title="广州历史文化资料",
+                        source_url="https://www.gz.gov.cn/history",
+                        source_name="广州市人民政府",
+                        collected_at="2026-07-22T02:00:00Z",
+                        reliability_level="official",
+                        similarity=0.87,
+                    ),
+                ),
+                freshness=contracts.KnowledgeFreshness(
+                    status="FRESH",
+                    checked_at="2026-07-23T01:00:00Z",
+                ),
+            )
+
+    completed = asyncio.run(
+        processor.process_planning_create(
+            command,
+            processor.DemoPlanningProvider(),
+            knowledge_provider=EvidenceProvider(),
+            occurred_at=datetime(2026, 7, 23, 1, 5, tzinfo=UTC),
+        )
+    )
+    wire = completed.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    assert wire["schemaVersion"] == 4
+    assert wire["payload"]["knowledge"] == {
+        "status": "REAL",
+        "query": "广州 历史",
+        "citations": [
+            {
+                "documentId": "guangzhou-history-001",
+                "documentVersion": 2,
+                "chunkId": "guangzhou-history-001-v2-c0",
+                "chunkIndex": 0,
+                "title": "广州历史文化资料",
+                "sourceUrl": "https://www.gz.gov.cn/history",
+                "sourceName": "广州市人民政府",
+                "collectedAt": "2026-07-22T02:00:00Z",
+                "reliabilityLevel": "official",
+                "similarity": 0.87,
+            }
+        ],
+        "freshness": {
+            "status": "FRESH",
+            "checkedAt": "2026-07-23T01:00:00Z",
+        },
+    }
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3]
+         / "contracts/messaging/planning-completed-event-v4.schema.json").read_text(
+             encoding="utf-8"
+         )
+    )
+    validator = Draft202012Validator(schema)
+    validator.validate(wire)
+    invalid_url = deepcopy(wire)
+    invalid_url["payload"]["knowledge"]["citations"][0]["sourceUrl"] = (
+        "ftp://example.com/source"
+    )
+    assert list(validator.iter_errors(invalid_url))
 
 
 def test_demo_provider_builds_one_explicitly_sourced_day_per_trip_date() -> None:
@@ -407,7 +490,7 @@ def test_v3_day_contract_requires_one_ordered_leg_between_each_adjacent_activity
         )
 
 
-def test_amap_planner_builds_v3_activities_and_routes_for_every_trip_day() -> None:
+def test_amap_planner_builds_v4_activities_and_routes_for_every_trip_day() -> None:
     contracts = import_module("trip_agent.worker.contracts")
     map_contracts = import_module("trip_agent.providers.map")
     processor = import_module("trip_agent.worker.processor")
@@ -486,7 +569,7 @@ def test_amap_planner_builds_v3_activities_and_routes_for_every_trip_day() -> No
         )
     )
 
-    assert completed.schema_version == 3
+    assert completed.schema_version == 4
     assert completed.payload.provider == "AMAP"
     daily_titles = [
         [activity.title for activity in day.activities]
@@ -503,11 +586,13 @@ def test_amap_planner_builds_v3_activities_and_routes_for_every_trip_day() -> No
     assert first.provider_poi_id == "poi-1"
     assert first.coordinates.longitude == Decimal("113.32")
     assert first.address == "广州地址 1"
-    assert len(map_provider.requests) == 1
+    assert len(map_provider.requests) == 2
     request = map_provider.requests[0]
     assert request.city == "广州"
     assert request.keyword == "美食"
-    assert request.limit == 8
+    assert request.limit == 24
+    assert completed.payload.itinerary.estimated_total_cost == Decimal("800.00")
+    assert first.estimated_cost == Decimal("100.00")
     assert len(route_provider.requests) == 4
     first_leg = completed.payload.itinerary.days[0].transit_legs[0]
     assert first_leg.from_activity_index == 0
@@ -538,7 +623,7 @@ def test_amap_planner_only_falls_back_for_classified_route_failures(
             type_name="Scenic spot",
             type_code="110000",
             province="Guangdong",
-            city="Guangzhou",
+            city=command.payload.trip.destination,
             district="Tianhe",
             address=f"Address {index}",
         )
@@ -605,7 +690,7 @@ def test_amap_planner_rejects_inconsistent_successful_route_metadata() -> None:
             type_name="Scenic spot",
             type_code="110000",
             province="Guangdong",
-            city="Guangzhou",
+            city=command.payload.trip.destination,
             district="Tianhe",
             address=f"Address {index}",
         )
@@ -655,7 +740,7 @@ def test_amap_planner_rejects_inconsistent_successful_route_metadata() -> None:
         asyncio.run(planner.plan(command))
 
 
-def test_classified_amap_failure_falls_back_to_an_explicit_demo_v3_result() -> None:
+def test_classified_amap_failure_falls_back_to_an_explicit_demo_v4_result() -> None:
     contracts = import_module("trip_agent.worker.contracts")
     map_contracts = import_module("trip_agent.providers.map")
     processor = import_module("trip_agent.worker.processor")
@@ -683,7 +768,7 @@ def test_classified_amap_failure_falls_back_to_an_explicit_demo_v3_result() -> N
 
     completed = asyncio.run(processor.process_planning_create(command, planner))
 
-    assert completed.schema_version == 3
+    assert completed.schema_version == 4
     assert completed.payload.provider == "DEMO"
     assert all(
         activity.source == "DEMO"
@@ -828,7 +913,7 @@ def test_amap_planner_falls_back_when_unique_candidates_are_insufficient() -> No
         type_name="Scenic spot",
         type_code="110000",
         province="Guangdong",
-        city="Guangzhou",
+        city=command.payload.trip.destination,
         district="Yuexiu",
         address="Repeated address",
     )
@@ -860,3 +945,138 @@ def test_amap_planner_falls_back_when_unique_candidates_are_insufficient() -> No
 
     assert result.provider == "DEMO"
     assert map_provider.query_count == processor.MAX_POI_QUERIES
+
+
+def test_amap_planner_uses_ranked_candidates_and_avoids_fixed_schedules() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    route_contracts = import_module("trip_agent.providers.route")
+    processor = import_module("trip_agent.worker.processor")
+    payload = deepcopy(COMMAND)
+    payload["payload"]["trip"]["endDate"] = "2026-08-01"
+    payload["payload"]["trip"]["constraints"]["preferences"] = ["博物馆"]
+    payload["payload"]["trip"]["constraints"]["fixedSchedules"] = [{
+        "placeName": "已预约午餐",
+        "startTime": "2026-08-01T12:00:00+08:00",
+        "endTime": "2026-08-01T13:00:00+08:00",
+    }]
+    command = contracts.PlanningCreateCommand.model_validate(payload)
+    pois = (
+        map_contracts.Poi(
+            provider_id="tower",
+            name="广州塔",
+            coordinates=map_contracts.Coordinates(longitude=113.32, latitude=23.11),
+            type_name="风景名胜",
+            type_code="110000",
+            province="广东省",
+            city=command.payload.trip.destination,
+            district="海珠区",
+            address="广州塔地址",
+        ),
+        map_contracts.Poi(
+            provider_id="museum",
+            name="广州博物馆",
+            coordinates=map_contracts.Coordinates(longitude=113.27, latitude=23.14),
+            type_name="博物馆",
+            type_code="140100",
+            province="广东省",
+            city=command.payload.trip.destination,
+            district="越秀区",
+            address="广州博物馆地址",
+        ),
+    )
+
+    class MapProvider:
+        async def search_pois(self, request: object):
+            del request
+            return map_contracts.ProviderSuccess(
+                data=pois,
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 7, 17, tzinfo=UTC),
+                estimated=False,
+            )
+
+    class RouteProvider:
+        async def get_route(self, request: object):
+            return map_contracts.ProviderSuccess(
+                data=route_contracts.RoutePlan(
+                    mode="WALKING",
+                    distance_meters=1_000,
+                    duration_seconds=1_800,
+                    steps=(route_contracts.RouteStep(
+                        instruction="步行前往下一地点",
+                        distance_meters=1_000,
+                        duration_seconds=1_800,
+                        polyline=(request.origin, request.destination),
+                    ),),
+                    polyline=(request.origin, request.destination),
+                ),
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 7, 17, tzinfo=UTC),
+                estimated=False,
+            )
+
+    result = asyncio.run(
+        processor.AmapPlanningProvider(MapProvider(), RouteProvider()).plan(command)
+    )
+
+    activities = result.itinerary.days[0].activities
+    assert [item.provider_poi_id for item in activities] == ["museum", "tower"]
+    assert activities[0].start_time.isoformat() == "2026-08-01T09:00:00+08:00"
+    assert activities[1].start_time.isoformat() == "2026-08-01T13:00:00+08:00"
+
+
+def test_infeasible_hard_constraints_are_not_hidden_by_demo_fallback() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    processor = import_module("trip_agent.worker.processor")
+    payload = deepcopy(COMMAND)
+    payload["payload"]["trip"]["endDate"] = "2026-08-01"
+    payload["payload"]["trip"]["constraints"]["fixedSchedules"] = [{
+        "placeName": "不可移动安排",
+        "startTime": "2026-08-01T09:00:00+08:00",
+        "endTime": "2026-08-01T18:00:00+08:00",
+    }]
+    command = contracts.PlanningCreateCommand.model_validate(payload)
+    pois = tuple(
+        map_contracts.Poi(
+            provider_id=f"poi-{index}",
+            name=f"POI {index}",
+            coordinates=map_contracts.Coordinates(longitude=113.3 + index / 100, latitude=23.1),
+            type_name="风景名胜",
+            type_code="110000",
+            province="广东省",
+            city=command.payload.trip.destination,
+            district="越秀区",
+            address=f"地址 {index}",
+        )
+        for index in range(2)
+    )
+
+    class MapProvider:
+        async def search_pois(self, request: object):
+            del request
+            return map_contracts.ProviderSuccess(
+                data=pois,
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 7, 17, tzinfo=UTC),
+                estimated=False,
+            )
+
+    planner = processor.FallbackPlanningProvider(
+        processor.AmapPlanningProvider(
+            MapProvider(), import_module("trip_agent.providers.route").DemoRouteProvider()
+        ),
+        processor.DemoPlanningProvider(),
+    )
+
+    with pytest.raises(processor.PlanningInfeasibleError) as failure:
+        asyncio.run(planner.plan(command))
+
+    assert failure.value.conflicts[0].code == "INSUFFICIENT_DAY_CAPACITY"

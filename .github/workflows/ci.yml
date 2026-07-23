@@ -85,6 +85,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose --env-file .env.example config --quiet
+      - name: Validate production Compose
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          REDIS_PASSWORD: ci-redis-password
+          RABBITMQ_PASSWORD: ci-rabbitmq-password
+          JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
+        run: docker compose -f compose.prod.yaml config --quiet
+      - name: Build production images
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          REDIS_PASSWORD: ci-redis-password
+          RABBITMQ_PASSWORD: ci-rabbitmq-password
+          JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
+        run: docker compose -f compose.prod.yaml build postgres travel-server agent-service web
 
   repository-safety:
     runs-on: ubuntu-latest

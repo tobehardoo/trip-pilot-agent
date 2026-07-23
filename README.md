@@ -8,8 +8,8 @@
 
 M1 正在实施。当前已经完成：
 
-- Spring Security 注册、登录、JWT Access Token 和 Refresh Token 轮换。
-- Access Token 过期自动刷新并重试一次，退出登录会在服务端撤销 Refresh Token。
+- Spring Security 注册、登录、短时 JWT Access Token 和 HttpOnly Refresh Token Cookie 轮换。
+- Access Token 过期自动刷新并重试一次，Refresh Token 不进入 JSON/JavaScript，退出登录会在服务端撤销并清除 Cookie。
 - PostgreSQL、Flyway、MyBatis 持久化，以及按用户隔离的旅行基础业务。
 - 旅行创建、列表、详情、结构化约束和乐观锁更新接口。
 - Vue 注册/登录、会话恢复、旅行列表、结构化旅行创建和可刷新深链的旅行详情工作台。
@@ -19,16 +19,17 @@ M1 正在实施。当前已经完成：
 - Python Worker 使用严格的强类型消息契约消费创建命令，支持真实高德 POI 规划和确定性的 Demo 降级。
 - Python 已提供与规划流程解耦的强类型 `MapProvider`、高德地点搜索 2.0 适配器、Redis JSON 缓存和确定性的 Demo Map Provider；缓存故障可降级，第三方错误已统一分类。
 - Python 已新增独立 `RouteProvider`、高德 v5 步行路线适配器和 Demo 路线估算，可返回距离、耗时、分段与地图 polyline；路线缓存按起终点、POI ID、方式和 UTC 出发小时生成 SHA-256 键。
-- `PLANNING_COMPLETED` v3 携带 POI 元数据和相邻活动步行段；Java 向后兼容 v1/v2，并幂等保存不可变行程版本、活动与关系型交通段。
+- `PLANNING_COMPLETED` v4 携带 POI 元数据、相邻活动步行段和版本化知识引用；Java 向后兼容 v1-v3，并幂等保存不可变行程版本、活动、关系型交通段与引用快照。
 - 当前行程 API 按所有者隔离；任务 SSE 支持持久历史补发、`Last-Event-ID` 重连、实时终态通知与终态关闭。
 - Vue 工作台可直接创建规划任务，使用带 Bearer Token 的流式 `fetch` 消费 SSE，并在断线后携带 `Last-Event-ID` 补发。
 - 任务完成后自动读取当前行程，以日期和活动时间轴展示 Provider、版本与估算费用；UTC 活动时间统一按中国标准时间显示。
 - Vue 工作台已显示活动地址、地图 Marker 和步行 polyline；地图与时间轴可双向选择，缺少浏览器专用高德凭据时安全降级为可交互路线概览。
-- Java 88 个自动化测试、91.08% 行覆盖率，Python 当前 297 个 Worker/API/Provider/知识检索/采集测试在真实 pgvector PostgreSQL 上全部通过，以及 Vue 43 个组件、API 边界、SSE、地图、路由与仓库测试；知识检索与采集总行覆盖率为 92.93%，通过 80% 门禁，Vue 地图切片行覆盖率为 92.66%。
+- Java 95 个自动化测试并通过 JaCoCo 80% 门禁，Python 当前 332 个 Worker/API/Provider/规划优化/知识检索/采集测试在真实 pgvector PostgreSQL 上全部通过，以及 Vue 50 个组件、API 边界、SSE、地图、路由与仓库测试；知识检索与采集通过 80% 覆盖率门禁，Vue 总行覆盖率通过 80% 门禁。
 - Python 已新增知识导入链：广州官方 Markdown 资料、TOML 元数据与稳定切分、独立 `agent` schema 的 pgvector 持久化、版本不可变校验和 `trip-agent-knowledge` 迁移/导入/检索 CLI；演示哈希向量明确标记为离线实现，不替代生产语义模型。
 - Phase 12 已建立官方知识采集闭环：来源 TOML 注册表、广州官方固定 URL、城市筛选、白名单域名、HTTPS/凭据/公网 IP 校验、固定 URL 发现和 `trip-agent-acquisition validate` CLI；`HttpResourceFetcher` 已支持 ETag/Last-Modified 条件请求、304 强类型结果、流式响应上限、显式重定向复核、DNS 全结果公网单播校验、单次抓取 IP 固定、环境代理隔离和可重试错误分类，`AcquisitionScheduler` 已执行每来源限速、并发安全的实际放行间隔、有上限指数退避和强类型尝试记录。生产入口 `AcquisitionWorkflow` 会读取“校验器 + 对应内容哈希”的版本化条件状态，再强制执行并持久化调度结果；`knowledge_resource`、`knowledge_snapshot` 与 `knowledge_fetch_run` 通过并发安全的独立校验和迁移和单事务仓储保存当前内容状态、不可变候选及完整尝试审计。`GuangzhouGovernmentArticleExtractor` 已从 3 个真实官方页面提取正文、标题、来源和发布时间，`knowledge_extraction` 按快照与解析器版本不可变保存通过/拒绝结果和质量问题；人工审核队列、追加式操作审计、批准版本分配、发布前撤回和唯一 `KnowledgeImporter` 发布适配器已通过真实 PostgreSQL 验收。只读 `trip-agent-acquisition freshness` 会按来源周期区分最近尝试、验证、内容变化和稳定过期原因，数据库错误返回脱敏 JSON。
+- Phase 13 已建立版本化广州检索评测基线：`trip-agent-knowledge evaluate` 按固定日期和文档版本计算文档级 Recall@K/MRR，真实 PostgreSQL 在文档去重后执行 Top-K；严格 TOML、语料元数据一致性、模型/数据库错误脱敏和非零质量退出码已覆盖。`demo-hash-v1` 永远只报告 `DEMO_ONLY`，不能成为真实质量结论。
 
-P0-1 知识采集闭环已完成。下一条纵向切片进入 P0-2：先把检索引用与 freshness 接入规划 Agent 输出，再持久化到 Java 行程版本并展示在 Vue 推荐理由中。
+P0-1 知识采集闭环、P0-2 规划证据纵向切片和 P0-3 的确定性 V1 已完成：真实 POI 经过城市/元数据过滤、近似地点去重、偏好评分和稳定排序，OR-Tools CP-SAT 把活动、交通与固定安排放入同一硬约束时间轴；预算使用明确的 V1 活动费用估算执行硬上限，不可行结果发布结构化冲突与最小放宽建议。公开部署入口使用 HttpOnly Cookie、CSP、可信代理限流、跨服务协作取消、Prometheus 抓取、三服务生产镜像、自动知识初始化和备份恢复手册。V1 运行时不依赖 LLM；真实票价、营业时间、天气及模型生成/修复循环必须在供应商凭据与固定评测门禁通过后另行启用。
 
 本地准备：
 
@@ -76,6 +77,10 @@ pnpm dev
 20. [Phase 11 广州知识导入与 RAG 基础链路测试计划](docs/19-phase-11-guangzhou-knowledge-rag-test-plan.md)
 21. [Phase 12 官方知识采集测试计划](docs/20-phase-12-official-knowledge-acquisition-test-plan.md)
 22. [全局架构审计与优化路线](docs/21-global-architecture-review-and-optimized-roadmap.md)
+23. [Phase 13 规划知识证据测试计划](docs/22-phase-13-planning-knowledge-evidence-test-plan.md)
+24. [Phase 14 Refresh Token Cookie 安全测试计划](docs/23-phase-14-refresh-cookie-test-plan.md)
+25. [Phase 15 候选评分与约束优化测试计划](docs/24-phase-15-candidate-ranking-and-constraint-optimization-test-plan.md)
+26. [V1 生产发布与恢复手册](docs/25-production-release-runbook.md)
 
 ## 已确认的基础约束
 

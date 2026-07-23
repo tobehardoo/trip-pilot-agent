@@ -17,7 +17,7 @@ public record PlanningCompletedEvent(
         OffsetDateTime occurredAt,
         Payload payload
 ) {
-    public record Payload(String provider, Itinerary itinerary) {
+    public record Payload(String provider, Itinerary itinerary, KnowledgeEvidence knowledge) {
     }
 
     public record Itinerary(String title, List<Day> days, BigDecimal estimatedTotalCost) {
@@ -57,5 +57,38 @@ public record PlanningCompletedEvent(
         public TransitLeg {
             polyline = polyline == null ? List.of() : List.copyOf(polyline);
         }
+    }
+
+    public record KnowledgeEvidence(
+            String status,
+            String query,
+            List<KnowledgeCitation> citations,
+            KnowledgeFreshness freshness,
+            String message
+    ) {
+        public KnowledgeEvidence {
+            citations = citations == null ? List.of() : List.copyOf(citations);
+        }
+    }
+
+    public record KnowledgeCitation(
+            String documentId,
+            int documentVersion,
+            String chunkId,
+            int chunkIndex,
+            String title,
+            String sourceUrl,
+            String sourceName,
+            OffsetDateTime collectedAt,
+            String reliabilityLevel,
+            double similarity
+    ) {
+    }
+
+    public record KnowledgeFreshness(
+            String status,
+            OffsetDateTime checkedAt,
+            String staleReason
+    ) {
     }
 }

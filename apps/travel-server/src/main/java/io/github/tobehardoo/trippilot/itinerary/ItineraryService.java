@@ -45,8 +45,34 @@ public class ItineraryService {
                 .toList();
         return new ItineraryResponse(
                 version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
-                version.estimatedTotalCost(), version.provider(), days, version.createdAt()
+                version.estimatedTotalCost(), version.provider(), days,
+                toKnowledgeResponse(version.id()), version.createdAt()
         );
+    }
+
+    private KnowledgeResponse toKnowledgeResponse(UUID versionId) {
+        return itineraryMapper.findKnowledge(versionId)
+                .map(knowledge -> new KnowledgeResponse(
+                        knowledge.status(), knowledge.query(),
+                        itineraryMapper.findKnowledgeCitations(versionId).stream()
+                                .map(citation -> new KnowledgeCitationResponse(
+                                        citation.documentId(), citation.documentVersion(),
+                                        citation.chunkId(), citation.chunkIndex(), citation.title(),
+                                        citation.sourceUrl(), citation.sourceName(), citation.collectedAt(),
+                                        citation.reliabilityLevel(), citation.similarity()
+                                ))
+                                .toList(),
+                        new KnowledgeFreshnessResponse(
+                                knowledge.freshnessStatus(), knowledge.freshnessCheckedAt(),
+                                knowledge.staleReason()
+                        ),
+                        knowledge.message()
+                ))
+                .orElseGet(() -> new KnowledgeResponse(
+                        "UNAVAILABLE", "未记录", List.of(),
+                        new KnowledgeFreshnessResponse("UNAVAILABLE", null, null),
+                        "该行程版本未包含知识引用"
+                ));
     }
 
     private ActivityResponse toActivityResponse(ItineraryMapper.StoredActivity activity) {
@@ -85,6 +111,7 @@ public class ItineraryService {
             BigDecimal estimatedTotalCost,
             String provider,
             List<DayResponse> days,
+            KnowledgeResponse knowledge,
             Instant createdAt
     ) {
     }
@@ -123,6 +150,36 @@ public class ItineraryService {
             String provider,
             boolean estimated,
             List<CoordinatesResponse> polyline
+    ) {
+    }
+
+    public record KnowledgeResponse(
+            String status,
+            String query,
+            List<KnowledgeCitationResponse> citations,
+            KnowledgeFreshnessResponse freshness,
+            String message
+    ) {
+    }
+
+    public record KnowledgeCitationResponse(
+            String documentId,
+            int documentVersion,
+            String chunkId,
+            int chunkIndex,
+            String title,
+            String sourceUrl,
+            String sourceName,
+            OffsetDateTime collectedAt,
+            String reliabilityLevel,
+            double similarity
+    ) {
+    }
+
+    public record KnowledgeFreshnessResponse(
+            String status,
+            OffsetDateTime checkedAt,
+            String staleReason
     ) {
     }
 }

@@ -11,6 +11,7 @@ import io.github.tobehardoo.trippilot.messaging.OutboxEventRecord;
 import io.github.tobehardoo.trippilot.messaging.OutboxMapper;
 import io.github.tobehardoo.trippilot.trip.TripService;
 import org.springframework.http.HttpStatus;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,23 +22,28 @@ public class PlanningTaskService {
     private static final String TASK_STATUS = "QUEUED";
     private static final String COMMAND_TYPE = "PLANNING_CREATE_REQUESTED";
     private static final String ROUTING_KEY = "planning.create";
+    private static final String CANCEL_COMMAND_TYPE = "PLANNING_CANCEL_REQUESTED";
+    private static final String CANCEL_ROUTING_KEY = "planning.cancel";
 
     private final PlanningTaskMapper planningTaskMapper;
     private final PlanningTaskEventMapper planningTaskEventMapper;
     private final OutboxMapper outboxMapper;
     private final TripService tripService;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public PlanningTaskService(PlanningTaskMapper planningTaskMapper,
                                PlanningTaskEventMapper planningTaskEventMapper,
                                OutboxMapper outboxMapper,
                                TripService tripService,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               ApplicationEventPublisher eventPublisher) {
         this.planningTaskMapper = planningTaskMapper;
         this.planningTaskEventMapper = planningTaskEventMapper;
         this.outboxMapper = outboxMapper;
         this.tripService = tripService;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -92,6 +98,48 @@ public class PlanningTaskService {
         return toResponse(task);
     }
 
+    @Transactional
+    public PlanningTaskResponse cancel(UUID ownerId, UUID taskId) {
+        PlanningTaskRecord existing = planningTaskMapper.findOwnedById(taskId, ownerId)
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.NOT_FOUND, "PLANNING_TASK_NOT_FOUND", "Planning task was not found"
+                ));
+        if ("CANCELLED".equals(existing.status())) {
+            return toResponse(existing);
+        }
+        if (planningTaskMapper.cancelOwned(taskId, ownerId) != 1) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "PLANNING_TASK_TERMINAL",
+                    "Completed or failed planning tasks cannot be cancelled"
+            );
+        }
+        Instant now = Instant.now();
+        PlanningTaskEventRecord event = new PlanningTaskEventRecord(
+                null, UUID.randomUUID(), taskId, "PLANNING_CANCELLED", 1,
+                writeJson(new TaskStatusPayload("CANCELLED")), now
+        );
+        if (planningTaskEventMapper.insert(event) != 1) {
+            throw new IllegalStateException("Could not persist planning cancelled event");
+        }
+        UUID cancelEventId = UUID.randomUUID();
+        PlanningCancelCommand cancelCommand = new PlanningCancelCommand(
+                CANCEL_COMMAND_TYPE, 1, cancelEventId, existing.traceId(), taskId,
+                existing.tripId(), now
+        );
+        outboxMapper.insert(new OutboxEventRecord(
+                cancelEventId, "PLANNING_TASK", taskId, CANCEL_COMMAND_TYPE,
+                CANCEL_ROUTING_KEY, writeJson(cancelCommand), "PENDING", 0,
+                now, null, now, null
+        ));
+        PlanningTaskEventRecord stored = planningTaskEventMapper.findByEventId(event.eventId())
+                .orElseThrow(() -> new IllegalStateException("Cancelled event could not be read"));
+        eventPublisher.publishEvent(new PlanningTaskEventCreated(stored));
+        return planningTaskMapper.findOwnedById(taskId, ownerId)
+                .map(this::toResponse)
+                .orElseThrow(() -> new IllegalStateException("Cancelled task could not be read"));
+    }
+
     private PlanningTaskResponse toResponse(PlanningTaskRecord task) {
         return new PlanningTaskResponse(
                 task.id(), task.tripId(), task.taskType(), task.status(), task.baselineTripVersion(),
@@ -136,6 +184,17 @@ public class PlanningTaskService {
             int baselineTripVersion,
             UUID idempotencyKey,
             TripSnapshot trip
+    ) {
+    }
+
+    private record PlanningCancelCommand(
+            String eventType,
+            int schemaVersion,
+            UUID eventId,
+            UUID traceId,
+            UUID taskId,
+            UUID tripId,
+            Instant occurredAt
     ) {
     }
 

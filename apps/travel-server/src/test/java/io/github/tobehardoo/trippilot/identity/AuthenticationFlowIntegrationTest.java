@@ -3,16 +3,20 @@ package io.github.tobehardoo.trippilot.identity;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class AuthenticationFlowIntegrationTest extends PostgresIntegrationTest {
 
@@ -23,7 +27,7 @@ class AuthenticationFlowIntegrationTest extends PostgresIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Test
-    void registersUserAndReturnsTokens() throws Exception {
+    void registersUserWithAnHttpOnlyRefreshCookieAndNoJsonRefreshToken() throws Exception {
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(registerBody("traveler@example.com")))
@@ -31,7 +35,16 @@ class AuthenticationFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.user.email").value("traveler@example.com"))
                 .andExpect(jsonPath("$.user.displayName").value("Traveler"))
                 .andExpect(jsonPath("$.accessToken").isNotEmpty())
-                .andExpect(jsonPath("$.refreshToken").isNotEmpty());
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
+                .andExpect(header().string(HttpHeaders.SET_COOKIE,
+                        org.hamcrest.Matchers.allOf(
+                                org.hamcrest.Matchers.containsString("trip_pilot_refresh="),
+                                org.hamcrest.Matchers.containsString("Path=/api/auth"),
+                                org.hamcrest.Matchers.containsString("Max-Age=2592000"),
+                                org.hamcrest.Matchers.containsString("Secure"),
+                                org.hamcrest.Matchers.containsString("HttpOnly"),
+                                org.hamcrest.Matchers.containsString("SameSite=Strict")
+                        )));
     }
 
     @Test
@@ -70,33 +83,37 @@ class AuthenticationFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void rotatesRefreshTokenAndRejectsReuse() throws Exception {
-        JsonNode registered = register("refresh@example.com");
-        String originalRefreshToken = registered.get("refreshToken").asText();
+        Cookie originalRefreshCookie = register("refresh@example.com").cookie();
 
         MvcResult refreshResult = mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + originalRefreshToken + "\"}"))
+                        .cookie(originalRefreshCookie))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.refreshToken").isNotEmpty())
+                .andExpect(jsonPath("$.refreshToken").doesNotExist())
                 .andReturn();
 
-        String rotatedToken = json(refreshResult).get("refreshToken").asText();
-        org.assertj.core.api.Assertions.assertThat(rotatedToken).isNotEqualTo(originalRefreshToken);
+        Cookie rotatedCookie = refreshCookie(refreshResult);
+        assertThat(rotatedCookie.getValue()).isNotEqualTo(originalRefreshCookie.getValue());
 
         mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + originalRefreshToken + "\"}"))
+                        .cookie(originalRefreshCookie))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("INVALID_REFRESH_TOKEN"));
     }
 
-    private JsonNode register(String email) throws Exception {
+    private Registration register(String email) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(registerBody(email)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return json(result);
+        return new Registration(json(result), refreshCookie(result));
+    }
+
+    private Cookie refreshCookie(MvcResult result) {
+        String header = result.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        assertThat(header).isNotBlank();
+        String pair = header.split(";", 2)[0];
+        return new Cookie("trip_pilot_refresh", pair.substring(pair.indexOf('=') + 1));
     }
 
     private JsonNode json(MvcResult result) throws Exception {
@@ -111,5 +128,8 @@ class AuthenticationFlowIntegrationTest extends PostgresIntegrationTest {
                   "displayName": "Traveler"
                 }
                 """.formatted(email);
+    }
+
+    private record Registration(JsonNode body, Cookie cookie) {
     }
 }

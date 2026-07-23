@@ -86,4 +86,17 @@ public interface PlanningTaskMapper {
                              @Param("status") String status,
                              @Param("errorCode") String errorCode,
                              @Param("errorMessage") String errorMessage);
+
+    @Update("""
+            UPDATE business.planning_task
+            SET status = 'CANCELLED', error_code = NULL,
+                error_message = NULL, version = planning_task.version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            FROM business.trip
+            WHERE planning_task.id = #{taskId}
+              AND business.trip.id = planning_task.trip_id
+              AND business.trip.owner_id = #{ownerId}
+              AND planning_task.status IN ('QUEUED', 'RUNNING', 'CANCELLING')
+            """)
+    int cancelOwned(@Param("taskId") UUID taskId, @Param("ownerId") UUID ownerId);
 }

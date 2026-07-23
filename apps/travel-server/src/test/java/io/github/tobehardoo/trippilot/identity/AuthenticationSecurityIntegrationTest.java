@@ -7,11 +7,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
+import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -25,9 +26,6 @@ class AuthenticationSecurityIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
-
-    @Autowired
-    private ObjectMapper objectMapper;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -78,65 +76,62 @@ class AuthenticationSecurityIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.violations.length()").value(3));
 
         mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"unknown-token\"}"))
+                        .cookie(new Cookie("trip_pilot_refresh", "unknown-token")))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("INVALID_REFRESH_TOKEN"));
     }
 
     @Test
     void rejectsExpiredRefreshToken() throws Exception {
-        String refreshToken = register("expired@example.com").get("refreshToken").asText();
+        Cookie refreshCookie = register("expired@example.com");
         jdbcTemplate.update("UPDATE business.refresh_token SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'");
 
         mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
+                        .cookie(refreshCookie))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("INVALID_REFRESH_TOKEN"));
     }
 
     @Test
     void logoutRevokesRefreshToken() throws Exception {
-        String refreshToken = register("logout@example.com").get("refreshToken").asText();
+        Cookie refreshCookie = register("logout@example.com");
 
         mockMvc.perform(post("/api/auth/logout")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
-                .andExpect(status().isNoContent());
+                        .cookie(refreshCookie))
+                .andExpect(status().isNoContent())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string(HttpHeaders.SET_COOKIE, org.hamcrest.Matchers.containsString("Max-Age=0")));
 
         mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
+                        .cookie(refreshCookie))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("INVALID_REFRESH_TOKEN"));
     }
 
     @Test
     void allowsOnlyOneConcurrentRefreshForTheSameToken() throws Exception {
-        String refreshToken = register("concurrent@example.com").get("refreshToken").asText();
+        Cookie refreshCookie = register("concurrent@example.com");
         CountDownLatch start = new CountDownLatch(1);
 
         try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-            Future<Integer> first = executor.submit(() -> refreshStatusAfter(start, refreshToken));
-            Future<Integer> second = executor.submit(() -> refreshStatusAfter(start, refreshToken));
+            Future<Integer> first = executor.submit(() -> refreshStatusAfter(start, refreshCookie));
+            Future<Integer> second = executor.submit(() -> refreshStatusAfter(start, refreshCookie));
             start.countDown();
 
             assertThat(List.of(first.get(), second.get())).containsExactlyInAnyOrder(200, 401);
         }
     }
 
-    private int refreshStatusAfter(CountDownLatch start, String refreshToken) throws Exception {
+    private int refreshStatusAfter(CountDownLatch start, Cookie refreshCookie) throws Exception {
         start.await();
         return mockMvc.perform(post("/api/auth/refresh")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
+                        .cookie(refreshCookie))
                 .andReturn()
                 .getResponse()
                 .getStatus();
     }
 
-    private JsonNode register(String email) throws Exception {
+    private Cookie register(String email) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -148,6 +143,9 @@ class AuthenticationSecurityIntegrationTest extends PostgresIntegrationTest {
                                 """.formatted(email)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsByteArray());
+        String header = result.getResponse().getHeader(HttpHeaders.SET_COOKIE);
+        assertThat(header).isNotBlank();
+        String pair = header.split(";", 2)[0];
+        return new Cookie("trip_pilot_refresh", pair.substring(pair.indexOf('=') + 1));
     }
 }

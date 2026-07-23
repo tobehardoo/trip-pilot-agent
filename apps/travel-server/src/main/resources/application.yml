@@ -26,6 +26,7 @@ app:
     jwt-secret: ${JWT_SECRET}
     access-token-ttl: ${ACCESS_TOKEN_TTL:PT15M}
     refresh-token-ttl: ${REFRESH_TOKEN_TTL:P30D}
+    refresh-cookie-secure: ${REFRESH_COOKIE_SECURE:true}
   messaging:
     outbox-publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
     outbox-publisher-delay-ms: ${OUTBOX_PUBLISHER_DELAY_MS:1000}
@@ -38,4 +39,4 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus

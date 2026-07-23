@@ -82,7 +82,13 @@ class PsycopgKnowledgeRepository:
         return await asyncio.to_thread(self._save_document_sync, document, chunks)
 
     async def search(self, request: KnowledgeSearchRequest) -> tuple[KnowledgeCitation, ...]:
-        return await asyncio.to_thread(self._search_sync, request)
+        return await asyncio.to_thread(self._search_sync, request, False)
+
+    async def search_distinct_documents(
+        self,
+        request: KnowledgeSearchRequest,
+    ) -> tuple[KnowledgeCitation, ...]:
+        return await asyncio.to_thread(self._search_sync, request, True)
 
     def _connect(self, *, register_types: bool = True) -> psycopg.Connection:
         connection = psycopg.connect(self._database_url, row_factory=dict_row)
@@ -267,7 +273,11 @@ class PsycopgKnowledgeRepository:
             inserted += row is not None
         return inserted
 
-    def _search_sync(self, request: KnowledgeSearchRequest) -> tuple[KnowledgeCitation, ...]:
+    def _search_sync(
+        self,
+        request: KnowledgeSearchRequest,
+        distinct_documents: bool,
+    ) -> tuple[KnowledgeCitation, ...]:
         category_values = [request.category] if request.category else None
         vector = Vector(list(request.embedding.values))
         with self._connect() as connection:
@@ -283,6 +293,7 @@ class PsycopgKnowledgeRepository:
                     FROM agent.knowledge_document d
                     WHERE (d.valid_from IS NULL OR d.valid_from <= %s)
                       AND (d.valid_to IS NULL OR d.valid_to >= %s)
+                      AND d.collected_at < (%s::date + INTERVAL '1 day')
                 ),
                 current_documents AS (
                     SELECT *
@@ -316,13 +327,26 @@ class PsycopgKnowledgeRepository:
                       ON e.chunk_id = c.chunk_id
                     WHERE e.embedding_model = %s
                       AND e.embedding_dimensions = %s
+                ),
+                document_ranked AS (
+                    SELECT ranked.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY document_id
+                            ORDER BY similarity DESC, chunk_index ASC
+                        ) AS document_chunk_rank
+                    FROM ranked
                 )
-                SELECT * FROM ranked
+                SELECT chunk_id, document_id, document_version, chunk_index,
+                    city, category, title, content, source_url, source_name,
+                    reliability_level, collected_at, similarity
+                FROM document_ranked
                 WHERE similarity >= %s
+                  AND (%s::boolean = FALSE OR document_chunk_rank = 1)
                 ORDER BY similarity DESC, document_id ASC, document_version DESC, chunk_index ASC
                 LIMIT %s
                 """,
                 (
+                    request.as_of,
                     request.as_of,
                     request.as_of,
                     request.city,
@@ -336,6 +360,7 @@ class PsycopgKnowledgeRepository:
                     request.embedding.model_name,
                     len(request.embedding.values),
                     request.min_similarity,
+                    distinct_documents,
                     request.limit,
                 ),
             ).fetchall()

@@ -6,6 +6,14 @@ from decimal import Decimal
 from typing import Protocol
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from trip_agent.planning.candidates import CandidateRanker
+from trip_agent.planning.optimization import (
+    DailyOptimizationRequest,
+    DailyOptimizer,
+    OptimizationConflict,
+    RelaxationSuggestion,
+    TimeBlock,
+)
 from trip_agent.providers.map import (
     MapProvider,
     MapProviderName,
@@ -19,20 +27,32 @@ from trip_agent.worker.contracts import (
     Itinerary,
     ItineraryActivity,
     ItineraryDay,
+    KnowledgeEvidence,
+    KnowledgeFreshness,
     PlanningCompletedEvent,
     PlanningCompletedPayload,
+    PlanningConflict,
     PlanningCreateCommand,
+    PlanningFailedEvent,
+    PlanningFailedPayload,
+    PlanningRelaxation,
     TransitLeg,
 )
+from trip_agent.worker.knowledge import build_knowledge_query
 
 CHINA_TIME_ZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 COORDINATE_SCALE = Decimal("0.0000001")
 DEFAULT_POI_KEYWORDS = ("景点", "博物馆", "公园", "美食")
 MAX_POI_QUERIES = 6
+AMAP_ACTIVITY_ESTIMATED_COST = Decimal("100.00")
 
 
 class PlanningProvider(Protocol):
     async def plan(self, command: PlanningCreateCommand) -> "PlanningResult": ...
+
+
+class KnowledgeEvidenceProvider(Protocol):
+    async def get_evidence(self, command: PlanningCreateCommand) -> KnowledgeEvidence: ...
 
 
 @dataclass(frozen=True)
@@ -43,6 +63,19 @@ class PlanningResult:
 
 class PlanningProviderError(Exception):
     """An expected provider failure that may use the configured fallback."""
+
+
+class PlanningInfeasibleError(Exception):
+    """Hard constraints cannot be satisfied and must be shown to the user."""
+
+    def __init__(
+        self,
+        conflicts: tuple[OptimizationConflict, ...],
+        relaxations: tuple[RelaxationSuggestion, ...],
+    ) -> None:
+        super().__init__(conflicts[0].message if conflicts else "No feasible itinerary")
+        self.conflicts = conflicts
+        self.relaxations = relaxations
 
 
 class DemoPlanningProvider:
@@ -77,24 +110,61 @@ class DemoPlanningProvider:
         )
 
 
+class DemoKnowledgeEvidenceProvider:
+    async def get_evidence(self, command: PlanningCreateCommand) -> KnowledgeEvidence:
+        return KnowledgeEvidence(
+            status="DEMO",
+            query=build_knowledge_query(command),
+            citations=(),
+            freshness=KnowledgeFreshness(status="UNAVAILABLE"),
+            message="演示模式未使用生产知识检索",
+        )
+
+
 class AmapPlanningProvider:
     def __init__(
         self,
         map_provider: MapProvider,
         route_provider: RouteProvider,
         route_fallback: RouteProvider | None = None,
+        candidate_ranker: CandidateRanker | None = None,
+        optimizer: DailyOptimizer | None = None,
     ) -> None:
         self._map_provider = map_provider
         self._route_provider = route_provider
         self._route_fallback = route_fallback or DemoRouteProvider()
+        self._candidate_ranker = candidate_ranker or CandidateRanker()
+        self._optimizer = optimizer or DailyOptimizer()
 
     async def plan(self, command: PlanningCreateCommand) -> PlanningResult:
         trip = command.payload.trip
         day_count = (trip.end_date - trip.start_date).days + 1
         required_pois = day_count * 2
-        pois = await self._collect_pois(command, required_pois)
+        raw_pois = await self._collect_pois(command, required_pois)
+        ranking = self._candidate_ranker.rank(
+            raw_pois,
+            destination=trip.destination,
+            preferences=trip.constraints.preferences,
+            traveler_type=trip.constraints.traveler_type,
+            limit=required_pois,
+        )
+        pois = tuple(item.poi for item in ranking.selected)
         if len(pois) < required_pois:
             raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
+        estimated_total_cost = AMAP_ACTIVITY_ESTIMATED_COST * required_pois
+        budget = trip.constraints.budget_amount
+        if budget is not None and estimated_total_cost > budget:
+            raise PlanningInfeasibleError(
+                conflicts=(OptimizationConflict(
+                    "BUDGET_EXCEEDED",
+                    f"预计活动费用 {estimated_total_cost:.2f} 超出预算 {budget:.2f}",
+                    ("budgetAmount",),
+                ),),
+                relaxations=(
+                    RelaxationSuggestion("INCREASE_BUDGET", "提高预算上限"),
+                    RelaxationSuggestion("REDUCE_OPTIONAL_ACTIVITIES", "减少可选活动"),
+                ),
+            )
         days = []
         for offset in range(day_count):
             first_index = offset * 2
@@ -111,7 +181,7 @@ class AmapPlanningProvider:
             itinerary=Itinerary(
                 title=f"{trip.destination} 真实地点行程",
                 days=tuple(days),
-                estimated_total_cost=Decimal("0"),
+                estimated_total_cost=estimated_total_cost,
             ),
         )
 
@@ -120,13 +190,22 @@ class AmapPlanningProvider:
     ) -> tuple[Poi, ...]:
         trip = command.payload.trip
         candidates: list[Poi] = []
-        seen_ids: set[str] = set()
-        for keyword in _candidate_keywords(trip.constraints.preferences):
+        keywords = _candidate_keywords(trip.constraints.preferences)
+        required_preference_queries = max(
+            1,
+            min(
+                len(tuple(dict.fromkeys(
+                    item.strip() for item in trip.constraints.preferences if item.strip()
+                ))),
+                len(keywords),
+            ),
+        )
+        for query_index, keyword in enumerate(keywords, start=1):
             search = await self._map_provider.search_pois(
                 PoiSearchRequest(
                     city=trip.destination,
                     keyword=keyword,
-                    limit=min(required_count, 25),
+                    limit=min(required_count * 3, 25),
                 )
             )
             if isinstance(search, ProviderFailure):
@@ -135,13 +214,18 @@ class AmapPlanningProvider:
                 raise PlanningProviderError(search.error_code)
             if search.provider != "AMAP":
                 raise PlanningProviderError("UNEXPECTED_MAP_PROVIDER")
-            for poi in search.data:
-                if poi.provider_id in seen_ids or not poi.address.strip():
-                    continue
-                candidates.append(poi)
-                seen_ids.add(poi.provider_id)
-                if len(candidates) == required_count:
-                    return tuple(candidates)
+            candidates.extend(search.data)
+            if query_index < required_preference_queries:
+                continue
+            ranking = self._candidate_ranker.rank(
+                tuple(candidates),
+                destination=trip.destination,
+                preferences=trip.constraints.preferences,
+                traveler_type=trip.constraints.traveler_type,
+                limit=required_count,
+            )
+            if len(ranking.selected) >= required_count:
+                return tuple(candidates)
         return tuple(candidates)
 
     async def _day(
@@ -152,27 +236,48 @@ class AmapPlanningProvider:
         second_poi: Poi,
     ) -> ItineraryDay:
         trip_date = command.payload.trip.start_date + timedelta(days=offset)
-        first_start = datetime.combine(trip_date, time(hour=9), tzinfo=CHINA_TIME_ZONE)
-        first_end = first_start + timedelta(hours=2)
+        provisional_first_end = datetime.combine(
+            trip_date, time(hour=11), tzinfo=CHINA_TIME_ZONE
+        )
         route = await self._route(
             RouteRequest(
                 origin=first_poi.coordinates,
                 destination=second_poi.coordinates,
-                departure_at=first_end,
+                departure_at=provisional_first_end,
                 origin_poi_id=first_poi.provider_id,
                 destination_poi_id=second_poi.provider_id,
             )
         )
-        scheduled_second_start = datetime.combine(
-            trip_date, time(hour=13), tzinfo=CHINA_TIME_ZONE
+        optimization = self._optimizer.optimize(
+            DailyOptimizationRequest(
+                date=trip_date,
+                route_duration_seconds=route.data.duration_seconds,
+                fixed_schedules=tuple(
+                    TimeBlock(schedule.place_name, schedule.start_time, schedule.end_time)
+                    for schedule in command.payload.trip.constraints.fixed_schedules
+                ),
+            )
         )
-        second_start = max(
-            scheduled_second_start,
-            first_end + timedelta(seconds=route.data.duration_seconds),
-        )
-        second_end = second_start + timedelta(hours=2)
-        if second_end.date() != trip_date:
-            raise PlanningProviderError("ROUTE_EXCEEDS_ITINERARY_DAY")
+        if optimization.status == "INFEASIBLE":
+            raise PlanningInfeasibleError(optimization.conflicts, optimization.relaxations)
+        if any(
+            value is None
+            for value in (
+                optimization.first_start,
+                optimization.first_end,
+                optimization.second_start,
+                optimization.second_end,
+            )
+        ):
+            raise RuntimeError("feasible optimizer result omitted schedule timestamps")
+        first_start = optimization.first_start
+        first_end = optimization.first_end
+        second_start = optimization.second_start
+        second_end = optimization.second_end
+        assert first_start is not None
+        assert first_end is not None
+        assert second_start is not None
+        assert second_end is not None
         return ItineraryDay(
             date=trip_date,
             activities=(
@@ -230,12 +335,14 @@ async def process_planning_create(
     command: PlanningCreateCommand,
     provider: PlanningProvider,
     *,
+    knowledge_provider: KnowledgeEvidenceProvider | None = None,
     occurred_at: datetime | None = None,
 ) -> PlanningCompletedEvent:
     result = await provider.plan(command)
+    knowledge = await (knowledge_provider or DemoKnowledgeEvidenceProvider()).get_evidence(command)
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
-        schema_version=3,
+        schema_version=4,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -245,12 +352,52 @@ async def process_planning_create(
         payload=PlanningCompletedPayload(
             provider=result.provider,
             itinerary=result.itinerary,
+            knowledge=knowledge,
+        ),
+    )
+
+
+def planning_failed_event(
+    command: PlanningCreateCommand,
+    failure: PlanningInfeasibleError,
+    *,
+    occurred_at: datetime | None = None,
+) -> PlanningFailedEvent:
+    return PlanningFailedEvent(
+        event_type="PLANNING_FAILED",
+        schema_version=1,
+        event_id=_failed_event_id(command.event_id),
+        trace_id=command.trace_id,
+        task_id=command.task_id,
+        trip_id=command.trip_id,
+        run_id=_run_id(command.task_id),
+        occurred_at=occurred_at or datetime.now(UTC),
+        payload=PlanningFailedPayload(
+            status="FAILED",
+            error_code="NO_FEASIBLE_ITINERARY",
+            message=str(failure),
+            conflicts=tuple(
+                PlanningConflict(
+                    code=item.code,
+                    message=item.message,
+                    affected=item.affected,
+                )
+                for item in failure.conflicts
+            ),
+            relaxation_suggestions=tuple(
+                PlanningRelaxation(code=item.code, message=item.message)
+                for item in failure.relaxations
+            ),
         ),
     )
 
 
 def _completed_event_id(command_event_id: UUID) -> UUID:
     return uuid5(NAMESPACE_URL, f"trip-pilot/planning-completed/{command_event_id}")
+
+
+def _failed_event_id(command_event_id: UUID) -> UUID:
+    return uuid5(NAMESPACE_URL, f"trip-pilot/planning-failed/{command_event_id}")
 
 
 def _run_id(task_id: UUID) -> UUID:
@@ -266,7 +413,7 @@ def _amap_activity(poi: Poi, start_time: datetime, end_time: datetime) -> Itiner
         title=poi.name,
         start_time=start_time,
         end_time=end_time,
-        estimated_cost=Decimal("0"),
+        estimated_cost=AMAP_ACTIVITY_ESTIMATED_COST,
         source="AMAP",
         provider_poi_id=poi.provider_id,
         coordinates=ActivityCoordinates(

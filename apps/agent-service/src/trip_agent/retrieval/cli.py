@@ -8,10 +8,21 @@ from pathlib import Path
 from typing import Literal, Protocol
 from urllib.parse import quote
 
+import psycopg
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from trip_agent.retrieval.embeddings import EmbeddingProvider, HashEmbeddingProvider
+from trip_agent.retrieval.embeddings import (
+    DashScopeEmbeddingProvider,
+    EmbeddingProvider,
+    EmbeddingProviderError,
+    HashEmbeddingProvider,
+)
+from trip_agent.retrieval.evaluation import (
+    KnowledgeRetrievalEvaluator,
+    RetrievalEvaluationSuite,
+    render_evaluation_report,
+)
 from trip_agent.retrieval.repository import (
     KnowledgeCitation,
     KnowledgeSearchRequest,
@@ -31,8 +42,14 @@ class KnowledgeSettings(BaseSettings):
     )
 
     knowledge_database_url: SecretStr | None = None
-    knowledge_embedding_provider: Literal["demo"] = "demo"
+    knowledge_embedding_provider: Literal["demo", "dashscope"] = "demo"
     knowledge_embedding_dimensions: int = Field(default=1024, ge=1, le=4096)
+    knowledge_embedding_model: str = "text-embedding-v4"
+    dashscope_api_key: SecretStr | None = None
+    dashscope_embedding_base_url: str = (
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    )
+    dashscope_embedding_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     knowledge_chunk_size: int = Field(default=1000, ge=128, le=4000)
     knowledge_chunk_overlap: int = Field(default=100, ge=0, le=1000)
     postgres_host: str = "localhost"
@@ -75,6 +92,17 @@ def collect_markdown_files(path: Path) -> tuple[Path, ...]:
 def build_embedding_provider(settings: KnowledgeSettings) -> EmbeddingProvider:
     if settings.knowledge_embedding_provider == "demo":
         return HashEmbeddingProvider(dimensions=settings.knowledge_embedding_dimensions)
+    if settings.knowledge_embedding_provider == "dashscope":
+        key = settings.dashscope_api_key
+        if key is None or not key.get_secret_value().strip():
+            raise ValueError("DASHSCOPE_API_KEY is required for DashScope embeddings")
+        return DashScopeEmbeddingProvider(
+            api_key=key.get_secret_value(),
+            base_url=settings.dashscope_embedding_base_url,
+            model_name=settings.knowledge_embedding_model,
+            dimensions=settings.knowledge_embedding_dimensions,
+            timeout_seconds=settings.dashscope_embedding_timeout_seconds,
+        )
     raise ValueError(
         f"unsupported knowledge embedding provider: {settings.knowledge_embedding_provider}"
     )
@@ -122,6 +150,12 @@ def build_parser() -> argparse.ArgumentParser:
     search_command.add_argument("--category")
     search_command.add_argument("--applicable-season")
     search_command.add_argument("--traveler-type")
+
+    evaluate_command = commands.add_parser("evaluate", help="evaluate retrieval quality")
+    evaluate_command.add_argument("suite", type=Path)
+    evaluate_command.add_argument("--top-k", type=int, default=5)
+    evaluate_command.add_argument("--minimum-recall", type=float, default=0.8)
+    evaluate_command.add_argument("--minimum-mrr", type=float, default=0.7)
     return parser
 
 
@@ -155,13 +189,50 @@ async def run_command(args: argparse.Namespace, settings: KnowledgeSettings | No
             traveler_type=args.traveler_type,
         )
         return render_search_results(await repository.search(request))
+    if args.command == "evaluate":
+        suite = RetrievalEvaluationSuite.load(args.suite)
+        evaluator = KnowledgeRetrievalEvaluator(
+            embedding_provider=provider,
+            repository=repository,
+        )
+        report = await evaluator.evaluate(
+            suite,
+            top_k=args.top_k,
+            minimum_recall=args.minimum_recall,
+            minimum_mrr=args.minimum_mrr,
+        )
+        return render_evaluation_report(report)
     raise ValueError(f"unsupported knowledge command: {args.command}")
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-    print(asyncio.run(run_command(args)))
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        output = asyncio.run(run_command(args))
+    except ValueError as error:
+        print(json.dumps({"message": str(error), "status": "error"}, ensure_ascii=False))
+        return 2
+    except psycopg.Error:
+        print(
+            json.dumps(
+                {"message": "knowledge database operation failed", "status": "error"},
+                ensure_ascii=False,
+            )
+        )
+        return 2
+    except EmbeddingProviderError:
+        print(
+            json.dumps(
+                {"message": "embedding provider operation failed", "status": "error"},
+                ensure_ascii=False,
+            )
+        )
+        return 2
+    print(output)
+    if args.command == "evaluate" and json.loads(output)["status"] != "PASSED":
+        return 3
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

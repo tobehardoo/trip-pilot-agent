@@ -2,14 +2,40 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   ApiError,
+  cancelPlanningTask,
   createPlanningTask,
   createTrip,
+  logoutSession,
+  refreshSession,
   streamPlanningTaskEvents,
   type CreateTripInput,
 } from '../src/lib/api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+test('refreshes and logs out with the HttpOnly cookie and no token request body', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({}),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+
+  await refreshSession()
+  await logoutSession()
+
+  expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/auth/refresh', expect.objectContaining({
+    method: 'POST',
+    credentials: 'same-origin',
+  }))
+  expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined()
+  expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/auth/logout', expect.objectContaining({
+    method: 'POST',
+    credentials: 'same-origin',
+  }))
+  expect(fetchMock.mock.calls[1]?.[1]?.body).toBeUndefined()
 })
 
 test('turns an empty unauthorized response into a structured API error', async () => {
@@ -69,6 +95,25 @@ test('creates a planning task with bearer authentication and an idempotency key'
         Authorization: 'Bearer access-token',
         'Idempotency-Key': '44444444-4444-4444-8444-444444444444',
       }),
+    }),
+  )
+})
+
+test('cancels a planning task with bearer authentication', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ status: 'CANCELLED' }),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+
+  await cancelPlanningTask('access-token', '33333333-3333-3333-3333-333333333333')
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    '/api/planning-tasks/33333333-3333-3333-3333-333333333333',
+    expect.objectContaining({
+      method: 'DELETE',
+      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
     }),
   )
 })

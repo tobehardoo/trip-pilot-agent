@@ -2,6 +2,7 @@ package io.github.tobehardoo.trippilot.messaging;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.net.URI;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -65,6 +66,7 @@ public class PlanningCompletedEventParser {
                 || !itinerary.path("estimatedTotalCost").isNumber() || !days.isArray()) {
             throw invalid("payload field types do not match the JSON Schema");
         }
+        validateKnowledgeTypes(payload, schemaVersion);
         for (JsonNode day : days) {
             JsonNode activities = day.path("activities");
             if (!day.isObject() || !day.path("date").isTextual() || !activities.isArray()) {
@@ -81,6 +83,46 @@ public class PlanningCompletedEventParser {
                 validateActivityMetadataTypes(activity);
             }
             validateTransitLegTypes(day, schemaVersion);
+        }
+    }
+
+    private void validateKnowledgeTypes(JsonNode payload, int schemaVersion) {
+        if (schemaVersion < 4) {
+            if (payload.has("knowledge")) {
+                throw invalid("knowledge evidence is only supported in schema v4");
+            }
+            return;
+        }
+        JsonNode knowledge = payload.path("knowledge");
+        JsonNode citations = knowledge.path("citations");
+        JsonNode freshness = knowledge.path("freshness");
+        if (!knowledge.isObject() || !knowledge.path("status").isTextual()
+                || !knowledge.path("query").isTextual() || !citations.isArray()
+                || !freshness.isObject() || !freshness.path("status").isTextual()) {
+            throw invalid("knowledge evidence field types do not match the JSON Schema");
+        }
+        if (knowledge.has("message") && !knowledge.path("message").isTextual()) {
+            throw invalid("knowledge message must be text");
+        }
+        if (freshness.has("checkedAt") && !freshness.path("checkedAt").isTextual()) {
+            throw invalid("knowledge checkedAt must be text");
+        }
+        if (freshness.has("staleReason") && !freshness.path("staleReason").isTextual()) {
+            throw invalid("knowledge staleReason must be text");
+        }
+        for (JsonNode citation : citations) {
+            if (!citation.isObject() || !citation.path("documentId").isTextual()
+                    || !citation.path("documentVersion").isIntegralNumber()
+                    || !citation.path("chunkId").isTextual()
+                    || !citation.path("chunkIndex").isIntegralNumber()
+                    || !citation.path("title").isTextual()
+                    || !citation.path("sourceUrl").isTextual()
+                    || !citation.path("sourceName").isTextual()
+                    || !citation.path("collectedAt").isTextual()
+                    || !citation.path("reliabilityLevel").isTextual()
+                    || !citation.path("similarity").isNumber()) {
+                throw invalid("knowledge citation field types do not match the JSON Schema");
+            }
         }
     }
 
@@ -136,7 +178,8 @@ public class PlanningCompletedEventParser {
         if (!"PLANNING_COMPLETED".equals(event.eventType())
                 || (event.schemaVersion() != 1
                 && event.schemaVersion() != 2
-                && event.schemaVersion() != 3)) {
+                && event.schemaVersion() != 3
+                && event.schemaVersion() != 4)) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (event.eventId() == null || event.traceId() == null || event.taskId() == null
@@ -162,6 +205,85 @@ public class PlanningCompletedEventParser {
         }
         for (PlanningCompletedEvent.Day day : itinerary.days()) {
             validateDay(day, event.schemaVersion(), event.payload().provider());
+        }
+        validateKnowledge(event.schemaVersion(), event.payload().knowledge());
+    }
+
+    private void validateKnowledge(int schemaVersion,
+                                   PlanningCompletedEvent.KnowledgeEvidence knowledge) {
+        if (schemaVersion < 4) {
+            if (knowledge != null) {
+                throw invalid("older schemas must not contain knowledge evidence");
+            }
+            return;
+        }
+        if (knowledge == null || !validText(knowledge.query(), 200)
+                || knowledge.freshness() == null || knowledge.citations().size() > 20) {
+            throw invalid("v4 knowledge evidence is invalid");
+        }
+        boolean real = "REAL".equals(knowledge.status());
+        if (real) {
+            if (knowledge.citations().isEmpty() || knowledge.message() != null
+                    || "UNAVAILABLE".equals(knowledge.freshness().status())) {
+                throw invalid("real knowledge evidence requires citations and freshness");
+            }
+        } else if (!("DEMO".equals(knowledge.status())
+                || "UNAVAILABLE".equals(knowledge.status()))
+                || !knowledge.citations().isEmpty()
+                || !validText(knowledge.message(), 300)
+                || !"UNAVAILABLE".equals(knowledge.freshness().status())) {
+            throw invalid("non-real knowledge evidence must be explicitly unavailable");
+        }
+        validateFreshness(knowledge.freshness());
+        for (PlanningCompletedEvent.KnowledgeCitation citation : knowledge.citations()) {
+            if (!validCitation(citation)) {
+                throw invalid("knowledge citation is invalid");
+            }
+        }
+    }
+
+    private void validateFreshness(PlanningCompletedEvent.KnowledgeFreshness freshness) {
+        if ("UNAVAILABLE".equals(freshness.status())) {
+            if (freshness.checkedAt() != null || freshness.staleReason() != null) {
+                throw invalid("unavailable freshness cannot contain verification details");
+            }
+            return;
+        }
+        if (!("FRESH".equals(freshness.status()) || "STALE".equals(freshness.status()))
+                || freshness.checkedAt() == null
+                || ("FRESH".equals(freshness.status()) && freshness.staleReason() != null)
+                || (freshness.staleReason() != null && !validText(freshness.staleReason(), 60))) {
+            throw invalid("knowledge freshness is invalid");
+        }
+    }
+
+    private boolean validCitation(PlanningCompletedEvent.KnowledgeCitation citation) {
+        return citation != null
+                && validText(citation.documentId(), 200)
+                && citation.documentVersion() >= 1
+                && validText(citation.chunkId(), 200)
+                && citation.chunkIndex() >= 0
+                && validText(citation.title(), 200)
+                && validHttpUrl(citation.sourceUrl())
+                && validText(citation.sourceName(), 120)
+                && citation.collectedAt() != null
+                && validText(citation.reliabilityLevel(), 60)
+                && Double.isFinite(citation.similarity())
+                && citation.similarity() >= -1
+                && citation.similarity() <= 1;
+    }
+
+    private boolean validHttpUrl(String value) {
+        if (!validText(value, 2_048)) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(value);
+            return ("https".equalsIgnoreCase(uri.getScheme())
+                    || "http".equalsIgnoreCase(uri.getScheme()))
+                    && uri.getHost() != null;
+        } catch (IllegalArgumentException exception) {
+            return false;
         }
     }
 

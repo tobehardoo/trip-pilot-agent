@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -43,6 +44,38 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private PlatformTransactionManager transactionManager;
+
+    @Test
+    void cancelsAnOwnedTaskIdempotentlyAndReleasesTheActiveTaskConstraint() throws Exception {
+        String accessToken = registerAndGetAccessToken("planning-cancel@example.com");
+        String tripId = createTrip(accessToken);
+        UUID taskId = UUID.fromString(json(createPlanningTask(
+                accessToken, tripId, UUID.randomUUID()
+        ).andExpect(status().isAccepted()).andReturn()).get("taskId").asText());
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(delete("/api/planning-tasks/{taskId}", taskId)
+                            .header("Authorization", bearer(accessToken)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("CANCELLED"));
+        }
+        createPlanningTask(accessToken, tripId, UUID.randomUUID())
+                .andExpect(status().isAccepted());
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM business.planning_task_event "
+                        + "WHERE task_id = ? AND event_type = 'PLANNING_CANCELLED'",
+                Integer.class, taskId
+        )).isEqualTo(1);
+        Map<String, Object> cancelOutbox = jdbcTemplate.queryForMap("""
+                SELECT event_type, routing_key, payload ->> 'taskId' AS task_id
+                FROM business.outbox_event
+                WHERE aggregate_id = ? AND event_type = 'PLANNING_CANCEL_REQUESTED'
+                """, taskId);
+        assertThat(cancelOutbox).containsEntry("event_type", "PLANNING_CANCEL_REQUESTED")
+                .containsEntry("routing_key", "planning.cancel")
+                .containsEntry("task_id", taskId.toString());
+    }
 
     @Test
     void createsQueuedTaskAndOutboxEventInOneRequest() throws Exception {

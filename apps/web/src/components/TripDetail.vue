@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import {
   ArrowLeft,
+  BookOpen,
   CalendarDays,
   CircleGauge,
   Clock3,
   Compass,
   Coins,
+  ExternalLink,
   LoaderCircle,
   LogOut,
   MapPin,
@@ -31,9 +33,10 @@ const props = defineProps<{
   itinerary: Itinerary | null
   itineraryBusy: boolean
   itineraryError: string | null
-  planningState: 'idle' | 'queued' | 'succeeded' | 'failed'
+  planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'
   planningError: string | null
   startPlanning: () => Promise<void>
+  cancelPlanning: () => Promise<void>
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
   reloadTrip: () => Promise<boolean>
 }>()
@@ -45,6 +48,15 @@ const emit = defineEmits<{
 
 const defaultPreferences = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
 const chinaTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+  timeZone: 'Asia/Shanghai',
+})
+const chinaDateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
   hour: '2-digit',
   minute: '2-digit',
   hourCycle: 'h23',
@@ -155,6 +167,18 @@ function formatDate(date: string) {
   return date.replaceAll('-', '.')
 }
 
+function formatCollectedAt(value: string) {
+  return chinaDateTimeFormatter.format(new Date(value))
+}
+
+function freshnessLabel(status: Itinerary['knowledge']['freshness']['status']) {
+  return { FRESH: '来源新鲜', STALE: '来源可能过期', UNAVAILABLE: '新鲜度不可用' }[status]
+}
+
+function evidenceStatusLabel(status: Itinerary['knowledge']['status']) {
+  return { REAL: '真实知识', DEMO: '演示知识', UNAVAILABLE: '知识不可用' }[status]
+}
+
 function formatDay(date: string) {
   const [, month, day] = date.split('-')
   return `${Number(month)}月${Number(day)}日`
@@ -243,23 +267,34 @@ watch(() => props.itinerary, (nextItinerary) => {
               <p class="eyebrow">ITINERARY</p>
               <h2 id="itinerary-title">行程时间轴</h2>
             </div>
-            <button
-              class="planning-button"
-              type="button"
-              :disabled="planningState === 'queued'"
-              @click="startPlanning"
-            >
-              <LoaderCircle v-if="planningState === 'queued'" class="spinning" :size="16" aria-hidden="true" />
-              <RefreshCw v-else-if="itinerary" :size="16" aria-hidden="true" />
-              <Play v-else :size="16" aria-hidden="true" />
-              {{ planningState === 'queued' ? '规划中' : itinerary ? '重新规划' : '开始规划' }}
-            </button>
+            <div class="planning-actions">
+              <button
+                class="planning-button"
+                type="button"
+                :disabled="planningState === 'queued'"
+                @click="startPlanning"
+              >
+                <LoaderCircle v-if="planningState === 'queued'" class="spinning" :size="16" aria-hidden="true" />
+                <RefreshCw v-else-if="itinerary" :size="16" aria-hidden="true" />
+                <Play v-else :size="16" aria-hidden="true" />
+                {{ planningState === 'queued' ? '规划中' : itinerary ? '重新规划' : '开始规划' }}
+              </button>
+              <button
+                v-if="planningState === 'queued'"
+                class="cancel-planning-button"
+                type="button"
+                @click="cancelPlanning"
+              >
+                <X :size="16" aria-hidden="true" />取消规划
+              </button>
+            </div>
           </header>
 
           <p v-if="planningState === 'queued'" class="planning-status" role="status">
             <LoaderCircle class="spinning" :size="16" aria-hidden="true" />
             正在生成行程
           </p>
+          <p v-else-if="planningState === 'cancelled'" class="planning-status" role="status">规划已取消</p>
           <p v-else-if="planningError" class="planning-error" role="alert">{{ planningError }}</p>
 
           <div v-if="itineraryBusy" class="itinerary-loading" aria-label="正在加载当前行程">
@@ -290,6 +325,37 @@ watch(() => props.itinerary, (nextItinerary) => {
                 </div>
               </dl>
             </header>
+
+            <section class="knowledge-evidence" aria-labelledby="knowledge-title">
+              <header>
+                <div>
+                  <BookOpen :size="17" aria-hidden="true" />
+                  <h3 id="knowledge-title">推荐依据</h3>
+                </div>
+                <div class="evidence-badges">
+                  <span :class="['evidence-status-badge', `is-${itinerary.knowledge.status.toLowerCase()}`]">
+                    {{ evidenceStatusLabel(itinerary.knowledge.status) }}
+                  </span>
+                  <span :class="['freshness-badge', `is-${itinerary.knowledge.freshness.status.toLowerCase()}`]">
+                    {{ freshnessLabel(itinerary.knowledge.freshness.status) }}
+                  </span>
+                </div>
+              </header>
+              <p class="knowledge-query">检索问题：{{ itinerary.knowledge.query }}</p>
+              <ul v-if="itinerary.knowledge.status === 'REAL' && itinerary.knowledge.citations.length">
+                <li v-for="citation in itinerary.knowledge.citations" :key="citation.chunkId">
+                  <a :href="citation.sourceUrl" target="_blank" rel="noopener noreferrer">
+                    <span>{{ citation.title }}</span>
+                    <ExternalLink :size="13" aria-hidden="true" />
+                  </a>
+                  <small>
+                    {{ citation.sourceName }} · 文档 V{{ citation.documentVersion }} ·
+                    采集于 {{ formatCollectedAt(citation.collectedAt) }}
+                  </small>
+                </li>
+              </ul>
+              <p v-else class="knowledge-message">{{ itinerary.knowledge.message }}</p>
+            </section>
 
             <div class="itinerary-layout">
               <TripMap
@@ -636,6 +702,28 @@ h3 { margin: 0 0 12px; font-size: 13px; }
   cursor: pointer;
 }
 
+.planning-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cancel-planning-button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  color: #7c2d2d;
+  background: #fff;
+  border: 1px solid #d9a3a3;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
 .planning-button:disabled { cursor: wait; opacity: 0.72; }
 .spinning { animation: spin 0.9s linear infinite; }
 
@@ -701,6 +789,27 @@ h3 { margin: 0 0 12px; font-size: 13px; }
 .itinerary-summary dl { display: flex; gap: 30px; margin: 0; text-align: right; }
 .itinerary-summary dt { color: #71817b; font-size: 11px; }
 .itinerary-summary dd { margin: 4px 0 0; color: #17201d; font-size: 15px; font-weight: 800; }
+
+.knowledge-evidence { padding: 20px 0; border-bottom: 1px solid #e2e8e5; }
+.knowledge-evidence > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.knowledge-evidence > header > div { display: flex; align-items: center; gap: 8px; color: #315f52; }
+.knowledge-evidence h3 { margin: 0; color: #17201d; font-size: 15px; }
+.evidence-badges { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.evidence-status-badge { padding: 4px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; }
+.evidence-status-badge.is-real { color: #245c75; background: #e5f1f7; }
+.evidence-status-badge.is-demo { color: #805d0b; background: #fbf1d5; }
+.evidence-status-badge.is-unavailable { color: #7b3b3b; background: #f8e9e9; }
+.freshness-badge { padding: 4px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; }
+.freshness-badge.is-fresh { color: #236552; background: #e7f3ee; }
+.freshness-badge.is-stale { color: #805d0b; background: #fbf1d5; }
+.freshness-badge.is-unavailable { color: #6d7773; background: #edf0ef; }
+.knowledge-query { margin: 12px 0; color: #60736b; font-size: 12px; }
+.knowledge-evidence ul { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.knowledge-evidence li { padding: 10px 12px; background: #f6f8f7; border-radius: 6px; }
+.knowledge-evidence a { display: inline-flex; align-items: center; gap: 6px; color: #236552; font-size: 13px; font-weight: 750; text-decoration: none; }
+.knowledge-evidence a:hover { text-decoration: underline; }
+.knowledge-evidence small { display: block; margin-top: 5px; color: #71817b; font-size: 10px; }
+.knowledge-message { margin: 10px 0 0; color: #71817b; font-size: 12px; }
 
 .itinerary-layout { display: grid; grid-template-columns: minmax(280px, .9fr) minmax(0, 1.1fr); gap: 24px; padding-top: 24px; }
 .itinerary-days { display: grid; }

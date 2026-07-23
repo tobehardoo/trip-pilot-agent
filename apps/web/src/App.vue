@@ -6,7 +6,7 @@ import TripDashboard from './components/TripDashboard.vue'
 import TripDetail from './components/TripDetail.vue'
 import {
   ApiError,
-  REFRESH_TOKEN_KEY,
+  cancelPlanningTask,
   createPlanningTask,
   createTrip,
   getCurrentItinerary,
@@ -32,8 +32,7 @@ type Phase = 'guest' | 'restoring' | 'authenticated'
 
 class SessionChangedError extends Error {}
 
-const savedRefreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY)
-const phase = ref<Phase>(savedRefreshToken ? 'restoring' : 'guest')
+const phase = ref<Phase>('restoring')
 const busy = ref(false)
 const error = ref<string | null>(null)
 const user = ref<User | null>(null)
@@ -46,8 +45,9 @@ const detailError = ref<string | null>(null)
 const itinerary = ref<Itinerary | null>(null)
 const itineraryBusy = ref(false)
 const itineraryError = ref<string | null>(null)
-const planningState = ref<'idle' | 'queued' | 'succeeded' | 'failed'>('idle')
+const planningState = ref<'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'>('idle')
 const planningError = ref<string | null>(null)
+const activePlanningTaskId = ref<string | null>(null)
 let sessionGeneration = 0
 let detailRequestSequence = 0
 let itineraryRequestSequence = 0
@@ -65,7 +65,6 @@ function errorMessage(cause: unknown) {
 function applySession(session: AuthSession) {
   user.value = session.user
   accessToken.value = session.accessToken
-  sessionStorage.setItem(REFRESH_TOKEN_KEY, session.refreshToken)
   phase.value = 'authenticated'
 }
 
@@ -95,7 +94,6 @@ function clearLocalSession() {
   listRequestSequence += 1
   busyRequestSequence += 1
   refreshInFlight = null
-  sessionStorage.removeItem(REFRESH_TOKEN_KEY)
   phase.value = 'guest'
   busy.value = false
   user.value = null
@@ -116,6 +114,7 @@ function stopPlanningStream(resetState = true) {
   if (resetState) {
     planningState.value = 'idle'
     planningError.value = null
+    activePlanningTaskId.value = null
   }
 }
 
@@ -199,14 +198,12 @@ async function loadCurrentRoute() {
 
 async function rotateSession() {
   if (refreshInFlight) return refreshInFlight
-  const refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY)
-  if (!refreshToken) throw new ApiError(401, 'INVALID_REFRESH_TOKEN', '登录状态已过期')
   const generation = sessionGeneration
   const refreshOperation = (async () => {
-    const session = await refreshSession(refreshToken)
+    const session = await refreshSession()
     if (generation !== sessionGeneration || phase.value !== 'authenticated') {
       try {
-        await logoutSession(session.refreshToken)
+        await logoutSession()
       } catch {
         // A stale rotated token must never restore a locally ended session.
       }
@@ -276,10 +273,9 @@ async function authenticate(submission: AuthSubmission) {
 }
 
 async function restoreSession() {
-  if (!savedRefreshToken) return
   const restoreGeneration = sessionGeneration
   try {
-    const session = await refreshSession(savedRefreshToken)
+    const session = await refreshSession()
     if (restoreGeneration !== sessionGeneration || phase.value !== 'restoring') {
       throw new SessionChangedError('Session changed while restoration was in flight')
     }
@@ -377,6 +373,17 @@ function isCurrentPlanningRequest(requestSequence: number, generation: number, t
     && route.value.tripId === tripId
 }
 
+function planningFailureMessage(payload: PlanningTaskEvent['payload']): string {
+  const parts = [payload.message ?? payload.errorMessage ?? '行程规划失败，请调整条件后重试']
+  for (const conflict of payload.conflicts ?? []) {
+    if (conflict.message && !parts.includes(conflict.message)) parts.push(conflict.message)
+  }
+  for (const suggestion of payload.relaxationSuggestions ?? []) {
+    if (suggestion.message) parts.push(`建议：${suggestion.message}`)
+  }
+  return parts.join('；')
+}
+
 async function handleStartPlanning() {
   if (!selectedTrip.value || planningState.value === 'queued') return
   const tripId = selectedTrip.value.id
@@ -385,11 +392,13 @@ async function handleStartPlanning() {
   const requestSequence = planningRequestSequence
   planningState.value = 'queued'
   planningError.value = null
+  activePlanningTaskId.value = null
 
   try {
     const idempotencyKey = crypto.randomUUID()
     const task = await withAccessToken((token) => createPlanningTask(token, tripId, idempotencyKey))
     if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
+    activePlanningTaskId.value = task.taskId
     const controller = new AbortController()
     planningStreamController = controller
     let lastEventId: number | undefined
@@ -401,11 +410,18 @@ async function handleStartPlanning() {
       if (event.eventType === 'PLANNING_COMPLETED') {
         terminal = true
         planningState.value = 'succeeded'
+        activePlanningTaskId.value = null
         itineraryReload = loadItinerary(tripId)
-      } else if (event.eventType === 'PLANNING_FAILED' || event.eventType === 'PLANNING_CANCELLED') {
+      } else if (event.eventType === 'PLANNING_FAILED') {
         terminal = true
         planningState.value = 'failed'
-        planningError.value = event.payload.message ?? event.payload.errorMessage ?? '行程规划失败，请调整条件后重试'
+        activePlanningTaskId.value = null
+        planningError.value = planningFailureMessage(event.payload)
+      } else if (event.eventType === 'PLANNING_CANCELLED') {
+        terminal = true
+        planningState.value = 'cancelled'
+        activePlanningTaskId.value = null
+        planningError.value = null
       }
     }
 
@@ -424,28 +440,43 @@ async function handleStartPlanning() {
     if (itineraryReload) await itineraryReload
     if (!terminal && isCurrentPlanningRequest(requestSequence, generation, tripId)) {
       planningState.value = 'failed'
+      activePlanningTaskId.value = null
       planningError.value = '任务状态连接已中断，请稍后重试'
     }
   } catch (cause) {
     if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
     if (cause instanceof DOMException && cause.name === 'AbortError') return
     planningState.value = 'failed'
+    activePlanningTaskId.value = null
     planningError.value = errorMessage(cause)
   } finally {
     if (requestSequence === planningRequestSequence) planningStreamController = null
   }
 }
 
+async function handleCancelPlanning() {
+  const taskId = activePlanningTaskId.value
+  if (planningState.value !== 'queued' || !taskId) return
+  try {
+    await withAccessToken((token) => cancelPlanningTask(token, taskId))
+    if (activePlanningTaskId.value !== taskId) return
+    stopPlanningStream(false)
+    activePlanningTaskId.value = null
+    planningState.value = 'cancelled'
+    planningError.value = null
+  } catch (cause) {
+    if (activePlanningTaskId.value !== taskId) return
+    planningError.value = errorMessage(cause)
+  }
+}
+
 async function logout() {
-  const refreshToken = sessionStorage.getItem(REFRESH_TOKEN_KEY)
   clearLocalSession()
   error.value = null
-  if (refreshToken) {
-    try {
-      await logoutSession(refreshToken)
-    } catch {
-      // Local logout must still complete when the server is unavailable.
-    }
+  try {
+    await logoutSession()
+  } catch {
+    // Local logout must still complete when the server is unavailable.
   }
 }
 
@@ -487,6 +518,7 @@ onUnmounted(() => {
     :planning-state="planningState"
     :planning-error="planningError"
     :start-planning="handleStartPlanning"
+    :cancel-planning="handleCancelPlanning"
     :update-constraints="handleUpdateConstraints"
     :reload-trip="reloadSelectedTrip"
     @back="backToTrips"

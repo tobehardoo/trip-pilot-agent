@@ -152,4 +152,36 @@ public final class PlanningCompletedEventFixture {
                 }
                 """.formatted(eventId, traceId, taskId, tripId);
     }
+
+    public static String completedAmapEventV4(
+            UUID eventId, UUID traceId, UUID taskId, UUID tripId
+    ) {
+        String v3 = completedAmapEventV3(eventId, traceId, taskId, tripId)
+                .replace("\"schemaVersion\": 3", "\"schemaVersion\": 4");
+        String knowledge = """
+                "knowledge": {
+                  "status": "REAL",
+                  "query": "广州 历史 FRIENDS",
+                  "citations": [
+                    {
+                      "documentId": "guangzhou-history-001",
+                      "documentVersion": 2,
+                      "chunkId": "guangzhou-history-001-v2-c0",
+                      "chunkIndex": 0,
+                      "title": "广州历史文化资料",
+                      "sourceUrl": "https://www.gz.gov.cn/history",
+                      "sourceName": "广州市人民政府",
+                      "collectedAt": "2026-07-22T02:00:00Z",
+                      "reliabilityLevel": "official",
+                      "similarity": 0.87
+                    }
+                  ],
+                  "freshness": {
+                    "status": "FRESH",
+                    "checkedAt": "2026-07-23T01:00:00Z"
+                  }
+                },
+                """;
+        return v3.replace("\"itinerary\": {", knowledge + "\"itinerary\": {");
+    }
 }

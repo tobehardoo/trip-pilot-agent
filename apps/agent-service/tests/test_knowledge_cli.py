@@ -11,8 +11,13 @@ from trip_agent.retrieval.cli import (
     build_parser,
     collect_markdown_files,
     import_markdown_paths,
+    main,
     render_import_results,
     run_command,
+)
+from trip_agent.retrieval.embeddings import (
+    DashScopeEmbeddingProvider,
+    EmbeddingProviderError,
 )
 from trip_agent.retrieval.repository import KnowledgeSearchRequest
 from trip_agent.retrieval.service import KnowledgeImportResult
@@ -86,10 +91,41 @@ class RecordingRepository:
         self.search_requests.append(request)
         return ()
 
+    async def search_distinct_documents(
+        self, request: KnowledgeSearchRequest
+    ) -> tuple[object, ...]:
+        return await self.search(request)
+
+
+def test_embedding_factory_requires_a_dashscope_key_for_real_vectors() -> None:
+    with pytest.raises(ValueError, match="DASHSCOPE_API_KEY"):
+        build_embedding_provider(
+            KnowledgeSettings(
+                _env_file=None,
+                knowledge_embedding_provider="dashscope",
+                dashscope_api_key=None,
+            )
+        )
+
+    provider = build_embedding_provider(
+        KnowledgeSettings(
+            _env_file=None,
+            knowledge_embedding_provider="dashscope",
+            dashscope_api_key="local-test-key",
+            dashscope_embedding_base_url="https://dashscope.example/compatible-mode/v1",
+            knowledge_embedding_dimensions=1024,
+        )
+    )
+
+    assert isinstance(provider, DashScopeEmbeddingProvider)
+    assert provider.model_name == "text-embedding-v4"
+    assert provider.dimensions == 1024
+
 
 def test_run_command_dispatches_migrate_import_and_search(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     document = tmp_path / "guangzhou.md"
     document.write_text(
@@ -134,3 +170,59 @@ version = 1
     assert json.loads(asyncio.run(run_command(search_args, settings))) == []
     assert repository.search_requests[0].city == "广州"
     assert repository.search_requests[0].limit == 2
+
+    suite = tmp_path / "evaluation.toml"
+    suite.write_text(
+        """
+suite_id = "cli-evaluation"
+version = 1
+as_of = 2026-07-23
+[corpus_versions]
+guangzhou-cli = 1
+[[cases]]
+case_id = "culture"
+query = "广州文化"
+city = "广州"
+expected_document_ids = ["guangzhou-cli"]
+""",
+        encoding="utf-8",
+    )
+    evaluate_args = build_parser().parse_args(
+        ["evaluate", str(suite), "--top-k", "3"]
+    )
+    evaluated = json.loads(asyncio.run(run_command(evaluate_args, settings)))
+    assert evaluated["status"] == "DEMO_ONLY"
+    assert evaluated["top_k"] == 3
+    assert repository.migrate_calls == 2
+
+    monkeypatch.setenv(
+        "KNOWLEDGE_DATABASE_URL",
+        "postgresql://user:password@localhost:5432/db",
+    )
+    assert main(["evaluate", str(suite), "--top-k", "3"]) == 3
+    cli_report = json.loads(capsys.readouterr().out)
+    assert cli_report["status"] == "DEMO_ONLY"
+
+    assert main(["evaluate", str(tmp_path / "missing.toml")]) == 2
+    cli_error = json.loads(capsys.readouterr().out)
+    assert cli_error["status"] == "error"
+    assert "password" not in json.dumps(cli_error)
+
+    class FailingEmbeddingProvider:
+        model_name = "failing-real-model"
+        dimensions = 32
+
+        async def embed_texts(self, texts):
+            raise EmbeddingProviderError("secret provider response")
+
+    monkeypatch.setattr(
+        "trip_agent.retrieval.cli.build_embedding_provider",
+        lambda configured_settings: FailingEmbeddingProvider(),
+    )
+    assert main(["evaluate", str(suite)]) == 2
+    provider_error = json.loads(capsys.readouterr().out)
+    assert provider_error == {
+        "message": "embedding provider operation failed",
+        "status": "error",
+    }
+    assert "secret" not in json.dumps(provider_error)

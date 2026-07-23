@@ -9,6 +9,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.messaging.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.messaging.PlanningCompletedEventParser;
+import io.github.tobehardoo.trippilot.messaging.PlanningFailedEventParser;
+import io.github.tobehardoo.trippilot.messaging.PlanningFailedEventParserTest;
 import io.github.tobehardoo.trippilot.support.PlanningCompletedEventFixture;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,43 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private PlanningCompletionService completionService;
+
+    @Autowired
+    private PlanningFailedEventParser failedEventParser;
+
+    @Autowired
+    private PlanningFailureService failureService;
+
+    @Test
+    void persistsAnActionableInfeasibilityFailureIdempotently() throws Exception {
+        PlanningContext context = createPlanningContext("planning-infeasible@example.com");
+        UUID eventId = UUID.randomUUID();
+        String body = PlanningFailedEventParserTest.json(eventId)
+                .replace("8f5ef9c2-c194-4292-b847-5b9dcfda978b", context.traceId().toString())
+                .replace("b0642d34-e24f-4b24-9ea7-82a68a4be781", context.taskId().toString())
+                .replace("08be9aca-fb30-4309-aa4b-93c240f19d75", context.tripId().toString());
+
+        var event = failedEventParser.parse(body.getBytes(StandardCharsets.UTF_8));
+        failureService.handle(event);
+        failureService.handle(event);
+
+        Map<String, Object> stored = jdbcTemplate.queryForMap("""
+                SELECT planning_task.status, planning_task.error_code,
+                       planning_task_event.event_type,
+                       planning_task_event.payload -> 'conflicts' -> 0 ->> 'code' AS conflict_code
+                FROM business.planning_task
+                JOIN business.planning_task_event
+                  ON planning_task_event.task_id = planning_task.id
+                 AND planning_task_event.event_id = ?
+                WHERE planning_task.id = ?
+                """, eventId, context.taskId());
+
+        assertThat(stored).containsEntry("status", "FAILED")
+                .containsEntry("error_code", "NO_FEASIBLE_ITINERARY")
+                .containsEntry("event_type", "PLANNING_FAILED")
+                .containsEntry("conflict_code", "INSUFFICIENT_DAY_CAPACITY");
+        assertThat(count("business.itinerary_version")).isZero();
+    }
 
     @Test
     void persistsACompletedTaskAsAnImmutableRelationalItineraryVersion() throws Exception {
@@ -180,6 +219,52 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.days[0].transitLegs[0].provider").value("AMAP"))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].estimated").value(false))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].polyline.length()").value(2));
+    }
+
+    @Test
+    void persistsAndReturnsV4KnowledgeEvidenceWithoutDuplicatingSnapshots() throws Exception {
+        PlanningContext context = createPlanningContext("completion-knowledge@example.com");
+        PlanningCompletedEvent event = eventParser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV4(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        ));
+
+        completionService.handle(event);
+        completionService.handle(event);
+
+        Map<String, Object> evidence = jdbcTemplate.queryForMap("""
+                SELECT knowledge.status, knowledge.query, knowledge.freshness_status,
+                       knowledge.freshness_checked_at, citation.document_id,
+                       citation.document_version, citation.chunk_id, citation.source_url,
+                       citation.similarity
+                FROM business.itinerary_version_knowledge AS knowledge
+                JOIN business.itinerary_knowledge_citation AS citation
+                  ON citation.itinerary_version_id = knowledge.itinerary_version_id
+                """);
+        assertThat(evidence).containsEntry("status", "REAL")
+                .containsEntry("query", "广州 历史 FRIENDS")
+                .containsEntry("freshness_status", "FRESH")
+                .containsEntry("document_id", "guangzhou-history-001")
+                .containsEntry("document_version", 2)
+                .containsEntry("chunk_id", "guangzhou-history-001-v2-c0")
+                .containsEntry("source_url", "https://www.gz.gov.cn/history");
+        assertThat((Double) evidence.get("similarity")).isEqualTo(0.87);
+        assertThat(count("business.itinerary_version_knowledge")).isEqualTo(1);
+        assertThat(count("business.itinerary_knowledge_citation")).isEqualTo(1);
+
+        mockMvc.perform(get("/api/trips/{tripId}/itinerary", context.tripId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.knowledge.status").value("REAL"))
+                .andExpect(jsonPath("$.knowledge.query").value("广州 历史 FRIENDS"))
+                .andExpect(jsonPath("$.knowledge.freshness.status").value("FRESH"))
+                .andExpect(jsonPath("$.knowledge.citations.length()").value(1))
+                .andExpect(jsonPath("$.knowledge.citations[0].documentId")
+                        .value("guangzhou-history-001"))
+                .andExpect(jsonPath("$.knowledge.citations[0].documentVersion").value(2))
+                .andExpect(jsonPath("$.knowledge.citations[0].sourceUrl")
+                        .value("https://www.gz.gov.cn/history"));
     }
 
     @Test

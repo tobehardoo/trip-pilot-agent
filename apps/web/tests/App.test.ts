@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import App from '../src/App.vue'
+import TripDetail from '../src/components/TripDetail.vue'
 
 const authResponse = {
   user: {
@@ -10,7 +11,6 @@ const authResponse = {
     displayName: '旅行者',
   },
   accessToken: 'access-token',
-  refreshToken: 'refresh-token',
   tokenType: 'Bearer',
   expiresIn: 900,
 }
@@ -82,6 +82,28 @@ const itineraryResponse = {
       ],
     }],
   }],
+  knowledge: {
+    status: 'REAL',
+    query: '广州 岭南文化 本地美食 FRIENDS',
+    citations: [{
+      documentId: 'guangzhou-history-001',
+      documentVersion: 2,
+      chunkId: 'guangzhou-history-001-v2-c0',
+      chunkIndex: 0,
+      title: '广州历史文化资料',
+      sourceUrl: 'https://www.gz.gov.cn/history',
+      sourceName: '广州市人民政府',
+      collectedAt: '2026-07-22T02:00:00Z',
+      reliabilityLevel: 'official',
+      similarity: 0.87,
+    }],
+    freshness: {
+      status: 'FRESH',
+      checkedAt: '2026-07-23T01:00:00Z',
+      staleReason: null,
+    },
+    message: null,
+  },
   createdAt: '2026-07-16T01:00:01Z',
 }
 
@@ -130,7 +152,12 @@ function urlOf(input: RequestInfo | URL): string {
 }
 
 async function signIn(fetchMock: ReturnType<typeof vi.fn>) {
+  let restoreAttempted = false
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (!restoreAttempted && urlOf(input).endsWith('/api/auth/refresh')) {
+      restoreAttempted = true
+      return response({ code: 'INVALID_REFRESH_TOKEN', message: 'Refresh cookie is missing' }, 401)
+    }
     try {
       return await fetchMock(input, init)
     } catch (cause) {
@@ -142,7 +169,7 @@ async function signIn(fetchMock: ReturnType<typeof vi.fn>) {
   }))
   render(App)
 
-  await fireEvent.update(screen.getByLabelText('邮箱'), 'traveler@example.com')
+  await fireEvent.update(await screen.findByLabelText('邮箱'), 'traveler@example.com')
   await fireEvent.update(screen.getByLabelText('密码'), 'correct-password')
   await fireEvent.click(screen.getByRole('button', { name: '登录' }))
 }
@@ -156,7 +183,6 @@ async function openPlanningWorkspace(fetchMock: ReturnType<typeof vi.fn>) {
 
 describe('TripPilot application shell', () => {
   beforeEach(() => {
-    sessionStorage.clear()
     window.history.replaceState({}, '', '/trips')
   })
 
@@ -166,9 +192,10 @@ describe('TripPilot application shell', () => {
   })
 
   test('shows login and registration modes to unauthenticated visitors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({ code: 'INVALID_REFRESH_TOKEN' }, 401)))
     render(App)
 
-    expect(screen.getByRole('heading', { name: '登录 TripPilot' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '登录 TripPilot' })).toBeTruthy()
     expect(screen.getByLabelText('邮箱')).toBeTruthy()
     expect(screen.getByLabelText('密码')).toBeTruthy()
 
@@ -191,18 +218,16 @@ describe('TripPilot application shell', () => {
     expect(await screen.findByRole('heading', { name: '我的旅行' })).toBeTruthy()
     expect(await screen.findByRole('heading', { name: '广州周末四日' })).toBeTruthy()
     expect(screen.getByText('旅行者')).toBeTruthy()
-    expect(sessionStorage.getItem('trip-pilot.refresh-token')).toBe('refresh-token')
 
     const tripsRequest = fetchMock.mock.calls.find(([input]) => urlOf(input).endsWith('/api/trips'))
     expect(tripsRequest?.[1]?.headers).toMatchObject({ Authorization: 'Bearer access-token' })
   })
 
-  test('restores a session by rotating the saved refresh token', async () => {
-    sessionStorage.setItem('trip-pilot.refresh-token', 'saved-refresh-token')
+  test('restores a session by rotating the HttpOnly refresh cookie', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = urlOf(input)
       if (url.endsWith('/api/auth/refresh')) {
-        return response({ ...authResponse, refreshToken: 'rotated-refresh-token' })
+        return response(authResponse)
       }
       if (url.endsWith('/api/trips')) return response([tripResponse])
       throw new Error(`Unexpected request: ${url}`)
@@ -212,15 +237,16 @@ describe('TripPilot application shell', () => {
     render(App)
 
     expect(await screen.findByRole('heading', { name: '广州周末四日' })).toBeTruthy()
-    expect(sessionStorage.getItem('trip-pilot.refresh-token')).toBe('rotated-refresh-token')
+    const refreshRequest = fetchMock.mock.calls.find(([input]) => urlOf(input).endsWith('/api/auth/refresh'))
+    expect(refreshRequest?.[1]?.credentials).toBe('same-origin')
+    expect(refreshRequest?.[1]?.body).toBeUndefined()
   })
 
   test('keeps the rotated session when loading trips has a transient failure', async () => {
-    sessionStorage.setItem('trip-pilot.refresh-token', 'saved-refresh-token')
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = urlOf(input)
       if (url.endsWith('/api/auth/refresh')) {
-        return response({ ...authResponse, refreshToken: 'rotated-refresh-token' })
+        return response(authResponse)
       }
       if (url.endsWith('/api/trips')) throw new TypeError('connection reset')
       throw new Error(`Unexpected request: ${url}`)
@@ -231,7 +257,6 @@ describe('TripPilot application shell', () => {
 
     expect(await screen.findByRole('heading', { name: '我的旅行' })).toBeTruthy()
     expect((await screen.findByRole('alert')).textContent).toContain('无法连接业务服务，请稍后重试')
-    expect(sessionStorage.getItem('trip-pilot.refresh-token')).toBe('rotated-refresh-token')
   })
 
   test('refreshes an expired access token and retries trip creation once', async () => {
@@ -243,7 +268,6 @@ describe('TripPilot application shell', () => {
         return response({
           ...authResponse,
           accessToken: 'renewed-access-token',
-          refreshToken: 'rotated-refresh-token',
         })
       }
       if (url.endsWith('/api/trips') && init?.method === 'POST') {
@@ -267,7 +291,6 @@ describe('TripPilot application shell', () => {
 
     expect(await screen.findByRole('heading', { name: '广州周末四日' })).toBeTruthy()
     expect(createAttempts).toBe(2)
-    expect(sessionStorage.getItem('trip-pilot.refresh-token')).toBe('rotated-refresh-token')
   })
 
   test('revokes the refresh token when the user logs out', async () => {
@@ -286,7 +309,8 @@ describe('TripPilot application shell', () => {
     expect(await screen.findByRole('heading', { name: '登录 TripPilot' })).toBeTruthy()
     await waitFor(() => {
       const request = fetchMock.mock.calls.find(([input]) => urlOf(input).endsWith('/api/auth/logout'))
-      expect(JSON.parse(String(request?.[1]?.body))).toEqual({ refreshToken: 'refresh-token' })
+      expect(request?.[1]?.credentials).toBe('same-origin')
+      expect(request?.[1]?.body).toBeUndefined()
     })
   })
 
@@ -299,7 +323,6 @@ describe('TripPilot application shell', () => {
         displayName: '第二位旅行者',
       },
       accessToken: 'second-access-token',
-      refreshToken: 'second-refresh-token',
     }
     const secondTrip = {
       ...tripResponse,
@@ -468,7 +491,6 @@ describe('TripPilot application shell', () => {
         return response({
           ...authResponse,
           accessToken: 'renewed-access-token',
-          refreshToken: 'rotated-refresh-token',
         })
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
@@ -525,6 +547,13 @@ describe('TripPilot application shell', () => {
     expect(screen.getByRole('button', { name: '定位 品尝西关早茶' })).toBeTruthy()
     expect(screen.getByText('09:00 — 11:00')).toBeTruthy()
     expect(screen.getByText('¥860')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '推荐依据' })).toBeTruthy()
+    expect(screen.getByText('真实知识')).toBeTruthy()
+    expect(screen.getByText('来源新鲜')).toBeTruthy()
+    const sourceLink = screen.getByRole('link', { name: /广州历史文化资料/ })
+    expect(sourceLink.getAttribute('href')).toBe('https://www.gz.gov.cn/history')
+    expect(sourceLink.getAttribute('target')).toBe('_blank')
+    expect(screen.getByText(/广州市人民政府/)).toBeTruthy()
     await fireEvent.click(screen.getByRole('button', { name: '定位 品尝西关早茶' }))
     expect(screen.getByRole('button', { name: '选择活动 品尝西关早茶' }).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByText('广州市荔湾区沙面岛')).toBeTruthy()
@@ -633,6 +662,15 @@ describe('TripPilot application shell', () => {
           status: 'FAILED',
           errorCode: 'STALE_TRIP_VERSION',
           message: '旅行约束已变化，请确认最新条件后重试',
+          conflicts: [{
+            code: 'INSUFFICIENT_DAY_CAPACITY',
+            message: '活动、交通与固定安排无法同时放入可用时间',
+            affected: ['已预约午餐'],
+          }],
+          relaxationSuggestions: [{
+            code: 'REDUCE_OPTIONAL_ACTIVITIES',
+            message: '减少一个可选活动',
+          }],
         })))
         controller.close()
       },
@@ -656,6 +694,8 @@ describe('TripPilot application shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: '开始规划' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('旅行约束已变化')
+    expect(screen.getByRole('alert').textContent).toContain('活动、交通与固定安排')
+    expect(screen.getByRole('alert').textContent).toContain('建议：减少一个可选活动')
     expect(screen.getByRole('button', { name: '开始规划' })).toBeTruthy()
   })
 
@@ -701,7 +741,6 @@ describe('TripPilot application shell', () => {
         return response({
           ...authResponse,
           accessToken: 'renewed-access-token',
-          refreshToken: 'rotated-refresh-token',
         })
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
@@ -772,6 +811,43 @@ describe('TripPilot application shell', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(itineraryLoads).toBe(1)
     expect(screen.queryByRole('heading', { name: itineraryResponse.title })).toBeNull()
+  })
+
+  test('lets the owner cancel an active planning task', async () => {
+    let streamSignal: AbortSignal | undefined
+    const body = new ReadableStream<Uint8Array>()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response(planningTaskResponse, 202)
+      }
+      if (url.endsWith(planningTaskResponse.eventStreamUrl)) {
+        streamSignal = init?.signal ?? undefined
+        return { ok: true, status: 200, body } as Response
+      }
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`) && init?.method === 'DELETE') {
+        return response({ ...planningTaskResponse, status: 'CANCELLED' })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: 'Itinerary was not found' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await openPlanningWorkspace(fetchMock)
+    await fireEvent.click(screen.getByRole('button', { name: '开始规划' }))
+    await waitFor(() => expect(streamSignal).toBeTruthy())
+    await fireEvent.click(screen.getByRole('button', { name: '取消规划' }))
+
+    expect(await screen.findByText('规划已取消')).toBeTruthy()
+    expect(streamSignal?.aborted).toBe(true)
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/planning-tasks/${planningTaskResponse.taskId}`,
+      expect.objectContaining({ method: 'DELETE' }),
+    )
   })
 
   test('updates constraints with the current version and preserves fixed schedules', async () => {
@@ -876,7 +952,6 @@ describe('TripPilot application shell', () => {
 
   test('restores a deep-linked trip and loads the list when navigating back', async () => {
     window.history.replaceState({}, '', `/trips/${tripResponse.id}`)
-    sessionStorage.setItem('trip-pilot.refresh-token', 'saved-refresh-token')
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = urlOf(input)
       if (url.endsWith('/api/auth/refresh')) return response(authResponse)
@@ -984,7 +1059,6 @@ describe('TripPilot application shell', () => {
       expect(fetchMock.mock.calls.some(([input]) => urlOf(input).endsWith('/api/auth/refresh'))).toBe(true)
     })
     expect(await screen.findByRole('heading', { name: '登录 TripPilot' })).toBeTruthy()
-    expect(sessionStorage.getItem('trip-pilot.refresh-token')).toBeNull()
   })
 
   test('does not restore a session when refresh finishes after logout', async () => {
@@ -992,13 +1066,15 @@ describe('TripPilot application shell', () => {
     const pendingRefresh = new Promise<Response>((resolve) => {
       resolveRefresh = resolve
     })
-    const revokedTokens: string[] = []
+    let logoutRequests = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = urlOf(input)
       if (url.endsWith('/api/auth/login')) return response(authResponse)
       if (url.endsWith('/api/auth/refresh')) return pendingRefresh
       if (url.endsWith('/api/auth/logout')) {
-        revokedTokens.push(JSON.parse(String(init?.body)).refreshToken)
+        expect(init?.credentials).toBe('same-origin')
+        expect(init?.body).toBeUndefined()
+        logoutRequests += 1
         return response(undefined, 204)
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response({}, 401)
@@ -1018,11 +1094,9 @@ describe('TripPilot application shell', () => {
     resolveRefresh(response({
       ...authResponse,
       accessToken: 'late-access-token',
-      refreshToken: 'late-refresh-token',
     }))
-    await waitFor(() => expect(revokedTokens).toEqual(['refresh-token', 'late-refresh-token']))
+    await waitFor(() => expect(logoutRequests).toBe(2))
     expect(screen.getByRole('heading', { name: '登录 TripPilot' })).toBeTruthy()
-    expect(sessionStorage.getItem('trip-pilot.refresh-token')).toBeNull()
   })
 
   test('shows a recoverable error when browser navigation cannot load the trip list', async () => {
@@ -1113,5 +1187,58 @@ describe('TripPilot application shell', () => {
     await fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(document.activeElement).toBe(editButton)
+  })
+})
+
+describe('itinerary knowledge evidence states', () => {
+  afterEach(cleanup)
+
+  test.each([
+    ['REAL', 'FRESH', '真实知识', '来源新鲜'],
+    ['REAL', 'STALE', '真实知识', '来源可能过期'],
+    ['DEMO', 'UNAVAILABLE', '演示知识', '新鲜度不可用'],
+    ['UNAVAILABLE', 'UNAVAILABLE', '知识不可用', '新鲜度不可用'],
+  ] as const)('renders %s evidence with %s freshness', (
+    status,
+    freshnessStatus,
+    evidenceLabel,
+    freshnessText,
+  ) => {
+    const itinerary = structuredClone(itineraryResponse)
+    itinerary.knowledge.status = status
+    itinerary.knowledge.freshness.status = freshnessStatus
+    itinerary.knowledge.freshness.checkedAt = freshnessStatus === 'UNAVAILABLE'
+      ? null
+      : '2026-07-23T01:00:00Z'
+    itinerary.knowledge.freshness.staleReason = freshnessStatus === 'STALE'
+      ? 'SOURCE_VERIFICATION_OVERDUE'
+      : null
+    if (status !== 'REAL') {
+      itinerary.knowledge.citations = []
+      itinerary.knowledge.message = status === 'DEMO'
+        ? '演示模式未使用生产知识检索'
+        : '知识检索暂时不可用'
+    }
+
+    render(TripDetail, {
+      props: {
+        user: authResponse.user,
+        trip: tripResponse,
+        busy: false,
+        error: null,
+        itinerary,
+        itineraryBusy: false,
+        itineraryError: null,
+        planningState: 'succeeded',
+        planningError: null,
+        startPlanning: vi.fn(async () => {}),
+        cancelPlanning: vi.fn(async () => {}),
+        updateConstraints: vi.fn(async () => {}),
+        reloadTrip: vi.fn(async () => true),
+      },
+    })
+
+    expect(screen.getByText(evidenceLabel)).toBeTruthy()
+    expect(screen.getByText(freshnessText)).toBeTruthy()
   })
 })

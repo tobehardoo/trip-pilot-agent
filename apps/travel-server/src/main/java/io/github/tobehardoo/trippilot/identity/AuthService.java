@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Locale;
 import java.util.UUID;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.security.SecurityProperties;
 import io.github.tobehardoo.trippilot.security.TokenService;
@@ -62,10 +63,10 @@ public class AuthService {
     }
 
     @Transactional
-    public AuthResponse refresh(RefreshRequest request) {
+    public AuthResponse refresh(String refreshToken) {
         Instant now = clock.instant();
         RefreshTokenRecord existing = refreshTokenMapper
-                .findByHashForUpdate(tokenService.hashRefreshToken(request.refreshToken()))
+                .findByHashForUpdate(tokenService.hashRefreshToken(refreshToken))
                 .filter(token -> token.revokedAt() == null && token.expiresAt().isAfter(now))
                 .orElseThrow(this::invalidRefreshToken);
         UserAccount user = userMapper.findById(existing.userId()).orElseThrow(this::invalidRefreshToken);
@@ -83,9 +84,9 @@ public class AuthService {
     }
 
     @Transactional
-    public void logout(RefreshRequest request) {
+    public void logout(String refreshToken) {
         Instant now = clock.instant();
-        refreshTokenMapper.findByHashForUpdate(tokenService.hashRefreshToken(request.refreshToken()))
+        refreshTokenMapper.findByHashForUpdate(tokenService.hashRefreshToken(refreshToken))
                 .filter(token -> token.revokedAt() == null)
                 .ifPresent(token -> refreshTokenMapper.revoke(token.id(), now, null));
     }
@@ -126,7 +127,7 @@ public class AuthService {
         return new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_REFRESH_TOKEN", "Refresh token is invalid or expired");
     }
 
-    public record AuthResponse(UserResponse user, String accessToken, String refreshToken,
+    public record AuthResponse(UserResponse user, String accessToken, @JsonIgnore String refreshToken,
                                String tokenType, long expiresIn) {
     }
 

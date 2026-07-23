@@ -116,6 +116,45 @@ class PlanningCompletedEventParserTest {
     }
 
     @Test
+    void rejectsInvalidV4KnowledgeEvidenceStates() throws Exception {
+        ObjectNode realWithoutCitations = amapV4Event();
+        ((ArrayNode) realWithoutCitations.at("/payload/knowledge/citations")).removeAll();
+        ObjectNode demoWithCitation = amapV4Event();
+        ((ObjectNode) demoWithCitation.at("/payload/knowledge")).put("status", "DEMO")
+                .put("message", "demo");
+        ObjectNode unavailableWithVerification = amapV4Event();
+        ObjectNode unavailableKnowledge = (ObjectNode) unavailableWithVerification.at(
+                "/payload/knowledge"
+        );
+        unavailableKnowledge.put("status", "UNAVAILABLE").put("message", "unavailable");
+        ((ArrayNode) unavailableKnowledge.path("citations")).removeAll();
+        ((ObjectNode) unavailableKnowledge.path("freshness")).put("status", "UNAVAILABLE");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(realWithoutCitations)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("real knowledge evidence requires citations");
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(demoWithCitation)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("non-real knowledge evidence");
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(
+                        unavailableWithVerification
+                )))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("unavailable freshness cannot contain verification details");
+    }
+
+    @Test
+    void rejectsV4CitationWithNonHttpSourceUrl() throws Exception {
+        ObjectNode event = amapV4Event();
+        ((ObjectNode) event.at("/payload/knowledge/citations/0"))
+                .put("sourceUrl", "ftp://example.com/source");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("knowledge citation is invalid");
+    }
+
+    @Test
     void parsesV2DemoFallbackWithoutAmapMetadata() throws Exception {
         ObjectNode event = (ObjectNode) objectMapper.readTree(eventJson());
         event.put("schemaVersion", 2);
@@ -296,6 +335,12 @@ class PlanningCompletedEventParserTest {
 
     private ObjectNode amapV3Event() throws Exception {
         return (ObjectNode) objectMapper.readTree(PlanningCompletedEventFixture.completedAmapEventV3(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
+        ));
+    }
+
+    private ObjectNode amapV4Event() throws Exception {
+        return (ObjectNode) objectMapper.readTree(PlanningCompletedEventFixture.completedAmapEventV4(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
         ));
     }

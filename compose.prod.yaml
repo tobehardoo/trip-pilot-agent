@@ -118,9 +118,6 @@ services:
 
   knowledge-init:
     image: trip-pilot-agent-service:${IMAGE_TAG:-local}
-    build:
-      context: .
-      dockerfile: apps/agent-service/Dockerfile
     restart: "no"
     command:
       - /bin/sh

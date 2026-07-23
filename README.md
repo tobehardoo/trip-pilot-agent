@@ -1,102 +1,215 @@
-# 国内智能旅行规划 Agent
+# TripPilot 智能旅行规划
 
-这是一个面向 Java 后端与 AI Agent 求职方向的简历项目。项目采用 Java 主业务后端、Python Agent 服务和 Vue 前端，目标不是生成泛化旅游攻略，而是生成满足时间、预算、地点和交通约束的可执行国内自由行行程。
+TripPilot 是一个面向国内自由行的约束驱动型旅行规划平台。它把用户的日期、预算、兴趣、必去地点、固定安排和交通偏好转换为结构化约束，再结合真实 POI、路线与城市知识生成可执行、可解释的多日行程。
 
-当前仓库处于 M1 实施阶段。本文档集是后续实现、测试、部署和简历整理的设计依据。
+> 当前版本：可部署的 V1。默认提供无需外部 API Key 的确定性 Demo 模式，也支持接入高德与语义 Embedding 服务。
 
-## 当前实现状态
+## What：这是一个什么项目
 
-M1 正在实施。当前已经完成：
+普通旅行攻略通常只给出地点清单，难以回答“时间是否来得及”“预算是否超限”“固定预约能否保留”等问题。TripPilot 将旅行规划建模为一条可验证的异步工作流：
 
-- Spring Security 注册、登录、短时 JWT Access Token 和 HttpOnly Refresh Token Cookie 轮换。
-- Access Token 过期自动刷新并重试一次，Refresh Token 不进入 JSON/JavaScript，退出登录会在服务端撤销并清除 Cookie。
-- PostgreSQL、Flyway、MyBatis 持久化，以及按用户隔离的旅行基础业务。
-- 旅行创建、列表、详情、结构化约束和乐观锁更新接口。
-- Vue 注册/登录、会话恢复、旅行列表、结构化旅行创建和可刷新深链的旅行详情工作台。
-- 旅行约束编辑会携带乐观锁版本、保留固定安排，并在并发冲突后支持重新加载最新数据。
-- Java 规划任务 API 会在同一事务写入 `PlanningTask + Outbox`，支持幂等重放和单旅行活动任务约束。
-- Outbox 通过 RabbitMQ publisher confirm 至少一次投递；每条确认使用独立事务，失败会记录原因并指数退避。
-- Python Worker 使用严格的强类型消息契约消费创建命令，支持真实高德 POI 规划和确定性的 Demo 降级。
-- Python 已提供与规划流程解耦的强类型 `MapProvider`、高德地点搜索 2.0 适配器、Redis JSON 缓存和确定性的 Demo Map Provider；缓存故障可降级，第三方错误已统一分类。
-- Python 已新增独立 `RouteProvider`、高德 v5 步行路线适配器和 Demo 路线估算，可返回距离、耗时、分段与地图 polyline；路线缓存按起终点、POI ID、方式和 UTC 出发小时生成 SHA-256 键。
-- `PLANNING_COMPLETED` v4 携带 POI 元数据、相邻活动步行段和版本化知识引用；Java 向后兼容 v1-v3，并幂等保存不可变行程版本、活动、关系型交通段与引用快照。
-- 当前行程 API 按所有者隔离；任务 SSE 支持持久历史补发、`Last-Event-ID` 重连、实时终态通知与终态关闭。
-- Vue 工作台可直接创建规划任务，使用带 Bearer Token 的流式 `fetch` 消费 SSE，并在断线后携带 `Last-Event-ID` 补发。
-- 任务完成后自动读取当前行程，以日期和活动时间轴展示 Provider、版本与估算费用；UTC 活动时间统一按中国标准时间显示。
-- Vue 工作台已显示活动地址、地图 Marker 和步行 polyline；地图与时间轴可双向选择，缺少浏览器专用高德凭据时安全降级为可交互路线概览。
-- Java 95 个自动化测试并通过 JaCoCo 80% 门禁，Python 当前 332 个 Worker/API/Provider/规划优化/知识检索/采集测试在真实 pgvector PostgreSQL 上全部通过，以及 Vue 50 个组件、API 边界、SSE、地图、路由与仓库测试；知识检索与采集通过 80% 覆盖率门禁，Vue 总行覆盖率通过 80% 门禁。
-- Python 已新增知识导入链：广州官方 Markdown 资料、TOML 元数据与稳定切分、独立 `agent` schema 的 pgvector 持久化、版本不可变校验和 `trip-agent-knowledge` 迁移/导入/检索 CLI；演示哈希向量明确标记为离线实现，不替代生产语义模型。
-- Phase 12 已建立官方知识采集闭环：来源 TOML 注册表、广州官方固定 URL、城市筛选、白名单域名、HTTPS/凭据/公网 IP 校验、固定 URL 发现和 `trip-agent-acquisition validate` CLI；`HttpResourceFetcher` 已支持 ETag/Last-Modified 条件请求、304 强类型结果、流式响应上限、显式重定向复核、DNS 全结果公网单播校验、单次抓取 IP 固定、环境代理隔离和可重试错误分类，`AcquisitionScheduler` 已执行每来源限速、并发安全的实际放行间隔、有上限指数退避和强类型尝试记录。生产入口 `AcquisitionWorkflow` 会读取“校验器 + 对应内容哈希”的版本化条件状态，再强制执行并持久化调度结果；`knowledge_resource`、`knowledge_snapshot` 与 `knowledge_fetch_run` 通过并发安全的独立校验和迁移和单事务仓储保存当前内容状态、不可变候选及完整尝试审计。`GuangzhouGovernmentArticleExtractor` 已从 3 个真实官方页面提取正文、标题、来源和发布时间，`knowledge_extraction` 按快照与解析器版本不可变保存通过/拒绝结果和质量问题；人工审核队列、追加式操作审计、批准版本分配、发布前撤回和唯一 `KnowledgeImporter` 发布适配器已通过真实 PostgreSQL 验收。只读 `trip-agent-acquisition freshness` 会按来源周期区分最近尝试、验证、内容变化和稳定过期原因，数据库错误返回脱敏 JSON。
-- Phase 13 已建立版本化广州检索评测基线：`trip-agent-knowledge evaluate` 按固定日期和文档版本计算文档级 Recall@K/MRR，真实 PostgreSQL 在文档去重后执行 Top-K；严格 TOML、语料元数据一致性、模型/数据库错误脱敏和非零质量退出码已覆盖。`demo-hash-v1` 永远只报告 `DEMO_ONLY`，不能成为真实质量结论。
+1. 用户创建旅行并提交日期、预算、同行类型、兴趣和固定安排。
+2. Java 服务持久化规划任务与 Outbox 事件。
+3. Python Worker 检索候选 POI、路线和城市知识。
+4. 候选地点经过过滤、去重、偏好评分和稳定排序。
+5. OR-Tools CP-SAT 在时间、交通、预算与固定安排的硬约束下求解。
+6. 结果以不可变行程版本保存，并通过 SSE 实时推送给网页端。
+7. 无法满足约束时返回明确冲突与最小放宽建议，而不是静默生成错误结果。
 
-P0-1 知识采集闭环、P0-2 规划证据纵向切片和 P0-3 的确定性 V1 已完成：真实 POI 经过城市/元数据过滤、近似地点去重、偏好评分和稳定排序，OR-Tools CP-SAT 把活动、交通与固定安排放入同一硬约束时间轴；预算使用明确的 V1 活动费用估算执行硬上限，不可行结果发布结构化冲突与最小放宽建议。公开部署入口使用 HttpOnly Cookie、CSP、可信代理限流、跨服务协作取消、Prometheus 抓取、三服务生产镜像、自动知识初始化和备份恢复手册。V1 运行时不依赖 LLM；真实票价、营业时间、天气及模型生成/修复循环必须在供应商凭据与固定评测门禁通过后另行启用。
+### 核心功能
 
-本地准备：
+- 用户注册、登录、会话恢复和 HttpOnly Refresh Cookie 轮换。
+- 创建旅行、维护结构化约束、乐观锁更新和用户数据隔离。
+- 异步规划任务、实时 SSE 进度、断线补发和任务取消。
+- 高德 POI/步行路线 Provider、Redis 缓存及无密钥 Demo 降级。
+- 候选 POI 过滤、近似去重、偏好评分和确定性排序。
+- OR-Tools 时间窗、交通、预算、必去地点和固定安排约束优化。
+- 不可行规划的结构化冲突原因和放宽建议。
+- 广州城市知识导入、pgvector 检索、版本化引用和新鲜度标记。
+- 地图 Marker、步行路线、时间轴联动及无地图凭据降级视图。
+- 不可变行程版本、活动与交通段持久化。
+- Prometheus 指标、健康检查、死信队列、数据库备份和恢复工具。
+
+### 技术栈
+
+| 层级 | 技术 |
+| --- | --- |
+| Web | Vue 3、TypeScript、Vite、Pinia、Vue Router、Vitest、Nginx |
+| 业务后端 | Java 21、Spring Boot、Spring Security、MyBatis、Flyway、Maven |
+| 规划服务 | Python 3.12、FastAPI、Pydantic、aio-pika、OR-Tools、uv |
+| 数据与检索 | PostgreSQL 16、PostGIS、pgvector、Redis |
+| 异步通信 | RabbitMQ、Transactional Outbox、版本化 JSON Schema |
+| 运维 | Docker Compose、Prometheus、GitHub Actions |
+
+## Why：为什么开发 TripPilot
+
+自由行规划的难点不是“推荐几个热门景点”，而是让地点、时间、交通、预算和用户偏好同时成立。纯文本生成很容易忽略通勤成本、重复地点、预约时间或硬预算，也很难解释为什么某个方案不可行。
+
+TripPilot 的目标是把推荐能力与确定性约束结合起来：
+
+- 外部数据与知识检索负责提供候选事实和来源。
+- 可测试的规则负责过滤无效、重复或不匹配的候选项。
+- OR-Tools 负责验证时间线和硬约束。
+- 版本化事件与持久化模型保证异步链路可追踪、可重放。
+- 失败结果同样是产品输出，用户可以根据冲突原因调整条件。
+
+这种设计让生成结果从“看起来合理的攻略”变为“能够被系统校验并解释的计划”。
+
+## How：系统如何工作
+
+```mermaid
+flowchart LR
+    U["用户浏览器"] --> W["Vue 3 + Nginx"]
+    W --> J["Spring Boot 业务后端"]
+    J --> P[("PostgreSQL / pgvector")]
+    J --> Q["RabbitMQ"]
+    J --> S["SSE 事件流"]
+    Q --> A["Python Planning Worker"]
+    A --> R[("Redis")]
+    A --> P
+    A --> M["地图 / 路线 Provider"]
+    A --> K["城市知识库"]
+    S --> W
+```
+
+### 服务职责
+
+- `apps/web`：登录、旅行工作台、规划进度、地图与时间轴展示。
+- `apps/travel-server`：用户、旅行、任务、行程版本、安全、Outbox 与 SSE。
+- `apps/agent-service`：候选生成、知识检索、路线获取、约束求解与消息消费。
+- `contracts`：跨服务消息契约。
+- `knowledge`：城市知识、来源注册表与固定评测集。
+- `infra`：数据库扩展、监控与生产运行配置。
+
+### 可靠性与安全设计
+
+- 规划命令通过 Transactional Outbox 与 RabbitMQ 至少一次投递。
+- 消费端执行幂等校验，避免重复消息生成重复行程版本。
+- 任务取消同时经过消息控制面和数据库权威状态校验。
+- Refresh Token 仅通过 HttpOnly Cookie 传输，不进入 JavaScript。
+- Nginx 提供 CSP、安全响应头、可信代理解析和限流。
+- 外部知识采集包含域名白名单、DNS 公网地址校验、响应大小限制和审核发布流程。
+
+## 快速部署
+
+### 环境要求
+
+- Docker Desktop 或 Docker Engine
+- Docker Compose v2
+- 建议至少 8 GB 可用内存
+
+### 1. 准备配置
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up -d --build
-mvn test
+```
 
+Linux/macOS：
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env`，至少替换以下值：
+
+```dotenv
+POSTGRES_PASSWORD=your-local-postgres-password
+REDIS_PASSWORD=your-local-redis-password
+RABBITMQ_PASSWORD=your-local-rabbitmq-password
+JWT_SECRET=your-random-secret-at-least-32-bytes
+```
+
+本机使用纯 HTTP 访问时设置：
+
+```dotenv
+DEMO_MODE=true
+REFRESH_COOKIE_SECURE=false
+```
+
+生产环境必须使用 HTTPS，并保持 `REFRESH_COOKIE_SECURE=true`。真实密钥只能放在本地 `.env`、部署平台密钥管理或 GitHub Secrets 中。
+
+### 2. 构建并启动
+
+```powershell
+docker compose -f compose.prod.yaml --env-file .env build
+docker compose -f compose.prod.yaml --env-file .env up -d
+docker compose -f compose.prod.yaml --env-file .env ps
+```
+
+知识初始化容器会自动执行数据库迁移并导入随仓库提供的广州语料，成功后再启动规划 Worker。
+
+### 3. 访问服务
+
+- Web：<http://127.0.0.1:8080>
+- 健康检查：<http://127.0.0.1:8080/api/health>
+- Prometheus：<http://127.0.0.1:9090>
+
+打开 Web 后，注册账号、创建广州旅行并点击“开始规划”即可体验完整 Demo 流程。
+
+### 4. 查看日志或停止服务
+
+```powershell
+docker compose -f compose.prod.yaml --env-file .env logs -f
+docker compose -f compose.prod.yaml --env-file .env down
+```
+
+数据默认保存在 Docker Volume 中。若需要同时删除本地演示数据，可显式执行 `docker compose -f compose.prod.yaml --env-file .env down -v`。
+
+## 接入真实 Provider
+
+Demo 模式不依赖外部 LLM 或地图 Key。若需要真实 POI、路线和地图展示：
+
+```dotenv
+DEMO_MODE=false
+AMAP_WEB_SERVICE_KEY=your-server-side-amap-key
+VITE_AMAP_WEB_JS_KEY=your-browser-amap-key
+VITE_AMAP_SECURITY_CODE=your-browser-security-code
+```
+
+浏览器 Key 与服务端 Web Service Key 必须分开使用。语义 Embedding 可通过 `KNOWLEDGE_EMBEDDING_PROVIDER` 和对应服务凭据配置；启用前应先运行固定检索评测集。
+
+## 测试
+
+```powershell
+# Java
+mvn --batch-mode -pl apps/travel-server clean verify
+
+# Python
 Set-Location apps/agent-service
 uv sync --extra dev
 uv run pytest
-uv run trip-agent-worker
-uv run trip-agent-knowledge migrate
-uv run trip-agent-knowledge import ../../knowledge/guangzhou
+uv run ruff check .
 
+# Web
 Set-Location ../web
-pnpm install
+corepack enable
+pnpm install --frozen-lockfile
 pnpm test
-pnpm dev
+pnpm build
 ```
 
-`.env` 已被 Git 忽略。真实高德和模型 Key 只能放在本地 `.env` 或 GitHub Secrets 中。
+当前质量基线：
 
-## 文档索引
+- Java：95 项测试，JaCoCo 行覆盖率门禁 80%。
+- Python：332 项测试，知识检索与采集覆盖率超过 90%。
+- Web：50 项测试，行覆盖率超过 90%，分支覆盖率超过 80%。
 
-1. [项目定位与范围](docs/00-project-charter.md)
-2. [系统架构与技术栈](docs/01-system-architecture.md)
-3. [领域模型与数据设计](docs/02-domain-and-data.md)
-4. [Agent 工作流设计](docs/03-agent-workflow.md)
-5. [行程优化与约束求解](docs/04-planning-optimization.md)
-6. [数据、RAG 与外部 Provider](docs/05-data-rag-providers.md)
-7. [前端体验与接口契约](docs/06-frontend-and-api.md)
-8. [可靠性、安全与可观测性](docs/07-reliability-security-observability.md)
-9. [测试与 Agent 评测](docs/08-testing-and-evaluation.md)
-10. [开发路线图与 TODO](docs/09-roadmap-and-todos.md)
-11. [Phase 2 认证与旅行测试计划](docs/10-phase-2-test-plan.md)
-12. [Phase 3 异步规划命令测试计划](docs/11-phase-3-test-plan.md)
-13. [Phase 4 完成事件、行程版本与 SSE 测试计划](docs/12-phase-4-completion-and-sse-test-plan.md)
-14. [Phase 5 网页规划闭环与 Demo 行程时间轴测试计划](docs/13-phase-5-web-planning-workbench-test-plan.md)
-15. [Phase 6 高德 POI Provider 与 Redis 缓存测试计划](docs/14-phase-6-amap-poi-provider-test-plan.md)
-16. [Phase 7 真实 POI 完成事件与 Demo 降级测试计划](docs/15-phase-7-real-poi-completion-contract-test-plan.md)
-17. [Phase 8 高德步行路线 Provider 与 Redis 缓存测试计划](docs/16-phase-8-amap-route-provider-test-plan.md)
-18. [Phase 9 相邻活动路线、交通段持久化与行程 API 测试计划](docs/17-phase-9-transit-leg-contract-test-plan.md)
-19. [Phase 10 前端地图与时间轴联动测试计划](docs/18-phase-10-web-map-linkage-test-plan.md)
-20. [Phase 11 广州知识导入与 RAG 基础链路测试计划](docs/19-phase-11-guangzhou-knowledge-rag-test-plan.md)
-21. [Phase 12 官方知识采集测试计划](docs/20-phase-12-official-knowledge-acquisition-test-plan.md)
-22. [全局架构审计与优化路线](docs/21-global-architecture-review-and-optimized-roadmap.md)
-23. [Phase 13 规划知识证据测试计划](docs/22-phase-13-planning-knowledge-evidence-test-plan.md)
-24. [Phase 14 Refresh Token Cookie 安全测试计划](docs/23-phase-14-refresh-cookie-test-plan.md)
-25. [Phase 15 候选评分与约束优化测试计划](docs/24-phase-15-candidate-ranking-and-constraint-optimization-test-plan.md)
-26. [V1 生产发布与恢复手册](docs/25-production-release-runbook.md)
+## 文档
 
-## 已确认的基础约束
+- [项目范围](docs/00-project-charter.md)
+- [系统架构](docs/01-system-architecture.md)
+- [领域与数据模型](docs/02-domain-and-data.md)
+- [Agent 工作流](docs/03-agent-workflow.md)
+- [约束优化](docs/04-planning-optimization.md)
+- [数据、RAG 与 Provider](docs/05-data-rag-providers.md)
+- [可靠性、安全与可观测性](docs/07-reliability-security-observability.md)
+- [测试与评测](docs/08-testing-and-evaluation.md)
+- [产品路线图](docs/09-roadmap-and-todos.md)
+- [生产发布与恢复手册](docs/25-production-release-runbook.md)
 
-- 开发者背景：熟悉 Java，了解 Python、HTML/CSS/JavaScript 和 Vue。
-- 求职方向：Java 后端约 60%，AI 应用与 Agent 开发约 40%。
-- 开发投入：每天约 3 小时，主要使用 Codex 辅助开发。
-- 时间目标：2026 年 8 月 23 日前功能冻结，8 月底前完成部署和简历材料。
-- 开发设备：Intel Core i5-13500H、16 GB 内存、核显。
-- 开发预算：500 元人民币以内。
-- 代码仓库：计划公开到 GitHub，禁止提交任何真实 API Key、Token 或个人敏感数据。
-- 部署：开发期使用本地 Docker Compose，功能稳定后再选择腾讯云或阿里云。
+## 已知边界
 
-## 决策规则
-
-- 文档中标记为“已确认”的内容可以直接进入实现。
-- 标记为“待评测”的模型、参数和权重必须通过固定评测集决定。
-- 标记为“TODO”的功能不得阻塞 V1 核心链路。
-- 架构变更应先更新对应文档，再修改代码。
-- 实现与文档冲突时，以最新已评审的架构决策为准，并同步修正文档。
+- V1 重点支持单城市自由行，不提供机票、火车票、酒店预订或支付。
+- Demo 费用属于明确标记的估算值，不代表供应商实时报价。
+- 静态知识会显示来源与新鲜度，但出发前仍应核验营业时间、预约和票价。
+- 天气、实时票价及模型生成/修复循环需在 Provider 凭据和固定评测门禁通过后单独启用。

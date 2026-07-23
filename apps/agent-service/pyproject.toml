@@ -21,7 +21,7 @@ dev = [
   "pytest==8.4.1",
   "pytest-cov==7.1.0",
   "jsonschema==4.25.1",
-  "ruff==0.12.7",
+  "ruff==0.15.22",
 ]
 
 [project.scripts]

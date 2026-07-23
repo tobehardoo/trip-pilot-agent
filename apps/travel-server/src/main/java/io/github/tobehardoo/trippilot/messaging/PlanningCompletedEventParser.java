@@ -179,7 +179,8 @@ public class PlanningCompletedEventParser {
                 || (event.schemaVersion() != 1
                 && event.schemaVersion() != 2
                 && event.schemaVersion() != 3
-                && event.schemaVersion() != 4)) {
+                && event.schemaVersion() != 4
+                && event.schemaVersion() != 5)) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (event.eventId() == null || event.traceId() == null || event.taskId() == null
@@ -338,7 +339,7 @@ public class PlanningCompletedEventParser {
             if (leg.fromActivityIndex() != index || leg.toActivityIndex() != index + 1) {
                 throw invalid("transit legs must connect adjacent activities in order");
             }
-            if (!validTransitLeg(leg)) {
+            if (!validTransitLeg(leg, schemaVersion)) {
                 throw invalid("transit leg fields are invalid");
             }
             PlanningCompletedEvent.Activity origin = day.activities().get(index);
@@ -350,10 +351,12 @@ public class PlanningCompletedEventParser {
         }
     }
 
-    private boolean validTransitLeg(PlanningCompletedEvent.TransitLeg leg) {
+    private boolean validTransitLeg(PlanningCompletedEvent.TransitLeg leg, int schemaVersion) {
         boolean sourceMatchesEstimate = ("AMAP".equals(leg.provider()) && !leg.estimated())
                 || ("DEMO".equals(leg.provider()) && leg.estimated());
-        return "WALKING".equals(leg.mode())
+        boolean supportedMode = "WALKING".equals(leg.mode())
+                || (schemaVersion >= 5 && "DRIVING".equals(leg.mode()));
+        return supportedMode
                 && leg.distanceMeters() >= 0
                 && leg.distanceMeters() <= MAX_ROUTE_DISTANCE_METERS
                 && leg.durationSeconds() >= 0

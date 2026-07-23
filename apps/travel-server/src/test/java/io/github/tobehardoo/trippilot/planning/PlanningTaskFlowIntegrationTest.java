@@ -182,6 +182,23 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void rejectsPlanningForLegacyTripsLongerThanSevenDaysBeforeQueueing() throws Exception {
+        String accessToken = registerAndGetAccessToken("planning-legacy-long@example.com");
+        String tripId = createTrip(accessToken);
+        jdbcTemplate.update(
+                "UPDATE business.trip SET end_date = DATE '2026-08-08' WHERE id = ?",
+                UUID.fromString(tripId)
+        );
+
+        createPlanningTask(accessToken, tripId, UUID.randomUUID())
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("TRIP_DURATION_UNSUPPORTED"));
+
+        assertThat(count("business.planning_task")).isZero();
+        assertThat(count("business.outbox_event")).isZero();
+    }
+
+    @Test
     void rollsBackTheTaskWhenTheOutboxInsertFails() throws Exception {
         String email = "planning-rollback@example.com";
         String accessToken = registerAndGetAccessToken(email);
@@ -309,6 +326,91 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
             assertThat(Map.entry(version, travelers))
                     .isIn(Map.entry(0, 2), Map.entry(1, 3));
         }
+    }
+
+    @Test
+    void planningCommandSnapshotsOnlyEnabledFreshGuideFacts() throws Exception {
+        String accessToken = registerAndGetAccessToken("planning-guide-evidence@example.com");
+        UUID tripId = UUID.fromString(createTrip(accessToken));
+        UUID enabledImport = UUID.randomUUID();
+        UUID disabledImport = UUID.randomUUID();
+        UUID expiredImport = UUID.randomUUID();
+        insertGuideImport(enabledImport, tripId, "fresh", true);
+        insertGuideImport(disabledImport, tripId, "disabled", false);
+        insertGuideImport(expiredImport, tripId, "expired", true);
+        insertGuideFact(enabledImport, "新鲜事实", "2099-08-01T00:00:00Z");
+        insertGuideFact(disabledImport, "停用事实", "2099-08-01T00:00:00Z");
+        insertGuideFact(expiredImport, "过期事实", "2020-08-01T00:00:00Z");
+
+        createPlanningTask(accessToken, tripId.toString(), UUID.randomUUID())
+                .andExpect(status().isAccepted());
+
+        Map<String, Object> snapshot = jdbcTemplate.queryForMap("""
+                SELECT payload #>> '{schemaVersion}' AS schema_version,
+                       payload #>> '{payload,guideEvidence,facts,0,statement}' AS statement,
+                       jsonb_array_length(payload #> '{payload,guideEvidence,facts}') AS fact_count,
+                       (
+                         SELECT guide_evidence_snapshot #>> '{facts,0,statement}'
+                         FROM business.planning_task
+                         WHERE id = outbox_event.aggregate_id
+                       ) AS durable_statement
+                FROM business.outbox_event
+                WHERE event_type = 'PLANNING_CREATE_REQUESTED'
+                """);
+        assertThat(snapshot.get("schema_version")).isEqualTo("2");
+        assertThat(snapshot.get("statement")).isEqualTo("新鲜事实");
+        assertThat(snapshot.get("fact_count")).isEqualTo(1);
+        assertThat(snapshot.get("durable_statement")).isEqualTo(snapshot.get("statement"));
+
+        jdbcTemplate.update(
+                "UPDATE business.guide_fact SET statement = 'changed after task' "
+                        + "WHERE guide_import_id = ?",
+                enabledImport
+        );
+        jdbcTemplate.update(
+                "DELETE FROM business.outbox_event "
+                        + "WHERE event_type = 'PLANNING_CREATE_REQUESTED'"
+        );
+        String retainedStatement = jdbcTemplate.queryForObject("""
+                SELECT guide_evidence_snapshot #>> '{facts,0,statement}'
+                FROM business.planning_task
+                """, String.class);
+        assertThat(retainedStatement).isEqualTo(snapshot.get("statement"));
+    }
+
+    private void insertGuideImport(UUID id, UUID tripId, String suffix, boolean enabled) {
+        jdbcTemplate.update("""
+                INSERT INTO business.guide_import(
+                    id, trip_id, source_url, final_url, source_host, title,
+                    excerpt, content_hash, fetched_at, enabled
+                ) VALUES (?, ?, ?, ?, 'example.com', ?, 'excerpt', ?, CURRENT_TIMESTAMP, ?)
+                """,
+                id,
+                tripId,
+                "https://example.com/" + suffix,
+                "https://example.com/" + suffix,
+                "Guide " + suffix,
+                String.valueOf(suffix.charAt(0)).repeat(64),
+                enabled
+        );
+    }
+
+    private void insertGuideFact(UUID guideImportId, String statement, String expiresAt) {
+        jdbcTemplate.update("""
+                INSERT INTO business.guide_fact(
+                    id, guide_import_id, category, statement, evidence,
+                    confidence, observed_at, expires_at
+                ) VALUES (
+                    ?, ?, 'ATTRACTION', ?, ?, 0.8,
+                    LEAST(
+                        '2026-07-01T00:00:00Z'::timestamptz,
+                        ?::timestamptz - interval '1 day'
+                    ),
+                    ?::timestamptz
+                )
+                """,
+                UUID.randomUUID(), guideImportId, statement, statement, expiresAt, expiresAt
+        );
     }
 
     private org.springframework.test.web.servlet.ResultActions createPlanningTask(

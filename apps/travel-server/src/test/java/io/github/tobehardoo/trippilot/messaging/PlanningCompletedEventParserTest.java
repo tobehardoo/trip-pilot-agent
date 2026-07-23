@@ -80,6 +80,26 @@ class PlanningCompletedEventParserTest {
     }
 
     @Test
+    void acceptsDrivingTransfersOnlyInTheV5Contract() throws Exception {
+        ObjectNode current = amapV4Event();
+        current.put("schemaVersion", 5);
+        ((ObjectNode) current.at(
+                "/payload/itinerary/days/0/transitLegs/0"
+        )).put("mode", "DRIVING");
+        ObjectNode legacy = amapV4Event();
+        ((ObjectNode) legacy.at(
+                "/payload/itinerary/days/0/transitLegs/0"
+        )).put("mode", "DRIVING");
+
+        assertThat(parser.parse(objectMapper.writeValueAsBytes(current))
+                .payload().itinerary().days().getFirst().transitLegs().getFirst().mode())
+                .isEqualTo("DRIVING");
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(legacy)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("transit leg fields are invalid");
+    }
+
+    @Test
     void rejectsV3TransitLegsThatDoNotConnectEveryAdjacentActivity() throws Exception {
         ObjectNode wrongIndex = amapV3Event();
         ((ObjectNode) wrongIndex.at(

@@ -13,7 +13,7 @@ from trip_agent.providers.map import (
     ProviderSuccess,
 )
 
-type RouteMode = Literal["WALKING"]
+type RouteMode = Literal["WALKING", "DRIVING"]
 type RouteInstruction = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
 ]

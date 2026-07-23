@@ -15,10 +15,12 @@ public interface PlanningTaskMapper {
     @Insert("""
             INSERT INTO business.planning_task(
                 id, trip_id, idempotency_key, task_type, status,
-                baseline_trip_version, constraint_snapshot, trace_id, retry_count, version
+                baseline_trip_version, constraint_snapshot, guide_evidence_snapshot,
+                trace_id, retry_count, version
             ) VALUES (
                 #{id}, #{tripId}, #{idempotencyKey}, #{taskType}, #{status},
                 #{baselineTripVersion}, CAST(#{constraintSnapshotJson} AS jsonb),
+                CAST(#{guideEvidenceSnapshotJson} AS jsonb),
                 #{traceId}, #{retryCount}, #{version}
             )
             ON CONFLICT DO NOTHING
@@ -29,6 +31,7 @@ public interface PlanningTaskMapper {
             SELECT planning_task.id, planning_task.trip_id, planning_task.idempotency_key,
                    planning_task.task_type, planning_task.status, planning_task.baseline_trip_version,
                    planning_task.constraint_snapshot::text AS constraint_snapshot_json,
+                   planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
                    planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
                    planning_task.error_message, planning_task.version,
                    planning_task.created_at, planning_task.updated_at
@@ -47,6 +50,7 @@ public interface PlanningTaskMapper {
             SELECT planning_task.id, planning_task.trip_id, planning_task.idempotency_key,
                    planning_task.task_type, planning_task.status, planning_task.baseline_trip_version,
                    planning_task.constraint_snapshot::text AS constraint_snapshot_json,
+                   planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
                    planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
                    planning_task.error_message, planning_task.version,
                    planning_task.created_at, planning_task.updated_at

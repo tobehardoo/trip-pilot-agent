@@ -16,6 +16,7 @@ from trip_agent.providers._amap_route_models import (
     CachedRoute,
 )
 from trip_agent.providers._route_contracts import (
+    RouteMode,
     RoutePlan,
     RouteRequest,
     RouteResult,
@@ -34,6 +35,7 @@ class AmapRouteProvider:
     """AMap v5 walking-route adapter with an optional JSON cache."""
 
     endpoint = "https://restapi.amap.com/v5/direction/walking"
+    driving_endpoint = "https://restapi.amap.com/v5/direction/driving"
     def __init__(
         self,
         *,
@@ -67,7 +69,7 @@ class AmapRouteProvider:
 
         try:
             response = await self._http_client.get(
-                self.endpoint,
+                self.driving_endpoint if request.mode == "DRIVING" else self.endpoint,
                 params=self._request_params(request),
             )
         except httpx.TimeoutException:
@@ -115,7 +117,7 @@ class AmapRouteProvider:
                 started_at=started_at,
             )
         try:
-            plan = self._to_plan(payload.route.paths[0])
+            plan = self._to_plan(payload.route.paths[0], request.mode)
         except (ValidationError, ValueError, TypeError):
             return AmapRouteFailures.create(
                 "PROVIDER_SCHEMA_CHANGED",
@@ -165,10 +167,13 @@ class AmapRouteProvider:
             "key": self._api_key,
             "origin": self._coordinate_pair(request.origin),
             "destination": self._coordinate_pair(request.destination),
-            "isindoor": "0",
             "show_fields": "cost,navi,polyline",
             "output": "json",
         }
+        if request.mode == "WALKING":
+            params["isindoor"] = "0"
+        else:
+            params["strategy"] = "32"
         if request.origin_poi_id is not None:
             params["origin_id"] = request.origin_poi_id
         if request.destination_poi_id is not None:
@@ -176,7 +181,7 @@ class AmapRouteProvider:
         return params
 
     @staticmethod
-    def _to_plan(path: AmapWalkingPath) -> RoutePlan:
+    def _to_plan(path: AmapWalkingPath, mode: RouteMode = "WALKING") -> RoutePlan:
         steps = tuple(
             RouteStep(
                 instruction=step.instruction,
@@ -192,7 +197,7 @@ class AmapRouteProvider:
                 if not polyline or point != polyline[-1]:
                     polyline.append(point)
         return RoutePlan(
-            mode="WALKING",
+            mode=mode,
             distance_meters=int(path.distance),
             duration_seconds=int(path.cost.duration),
             steps=steps,

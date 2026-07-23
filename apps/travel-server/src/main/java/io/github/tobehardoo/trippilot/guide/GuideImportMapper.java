@@ -3,6 +3,7 @@ package io.github.tobehardoo.trippilot.guide;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.time.Instant;
 
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -16,10 +17,10 @@ public interface GuideImportMapper {
     @Insert("""
             INSERT INTO business.guide_import(
                 id, trip_id, source_url, final_url, source_host, title,
-                excerpt, content_hash, fetched_at
+                excerpt, content_hash, fetched_at, enabled
             ) VALUES (
                 #{id}, #{tripId}, #{sourceUrl}, #{finalUrl}, #{sourceHost}, #{title},
-                #{excerpt}, #{contentHash}, #{fetchedAt}
+                #{excerpt}, #{contentHash}, #{fetchedAt}, #{enabled}
             )
             ON CONFLICT (trip_id, final_url, content_hash) DO NOTHING
             """)
@@ -55,7 +56,7 @@ public interface GuideImportMapper {
 
     @Select("""
             SELECT id, trip_id, source_url, final_url, source_host, title,
-                   excerpt, content_hash, fetched_at, created_at
+                   excerpt, content_hash, fetched_at, enabled, created_at
             FROM business.guide_import
             WHERE trip_id = #{tripId}
               AND final_url = #{finalUrl}
@@ -71,7 +72,7 @@ public interface GuideImportMapper {
             SELECT guide_import.id, guide_import.trip_id, guide_import.source_url,
                    guide_import.final_url, guide_import.source_host, guide_import.title,
                    guide_import.excerpt, guide_import.content_hash,
-                   guide_import.fetched_at, guide_import.created_at
+                   guide_import.fetched_at, guide_import.enabled, guide_import.created_at
             FROM business.guide_import
             JOIN business.trip ON trip.id = guide_import.trip_id
             WHERE guide_import.trip_id = #{tripId}
@@ -91,4 +92,69 @@ public interface GuideImportMapper {
             ORDER BY created_at, id
             """)
     List<GuideFactRecord> findFacts(UUID guideImportId);
+
+    @Update("""
+            UPDATE business.guide_import
+            SET enabled = #{enabled}
+            WHERE id = #{guideImportId}
+              AND trip_id = #{tripId}
+              AND EXISTS (
+                  SELECT 1
+                  FROM business.trip
+                  WHERE trip.id = guide_import.trip_id
+                    AND trip.owner_id = #{ownerId}
+              )
+            """)
+    int updateEnabled(
+            @Param("guideImportId") UUID guideImportId,
+            @Param("tripId") UUID tripId,
+            @Param("ownerId") UUID ownerId,
+            @Param("enabled") boolean enabled
+    );
+
+    @Select("""
+            SELECT guide_import.id, guide_import.trip_id, guide_import.source_url,
+                   guide_import.final_url, guide_import.source_host, guide_import.title,
+                   guide_import.excerpt, guide_import.content_hash,
+                   guide_import.fetched_at, guide_import.enabled, guide_import.created_at
+            FROM business.guide_import
+            JOIN business.trip ON trip.id = guide_import.trip_id
+            WHERE guide_import.id = #{guideImportId}
+              AND guide_import.trip_id = #{tripId}
+              AND trip.owner_id = #{ownerId}
+            """)
+    Optional<GuideImportRecord> findOwnedById(
+            @Param("guideImportId") UUID guideImportId,
+            @Param("tripId") UUID tripId,
+            @Param("ownerId") UUID ownerId
+    );
+
+    @Select("""
+            SELECT guide_import.id AS guide_import_id,
+                   guide_fact.id AS fact_id,
+                   guide_fact.category,
+                   guide_fact.statement,
+                   guide_fact.evidence,
+                   guide_import.final_url AS source_url,
+                   guide_import.source_host,
+                   guide_import.title AS source_title,
+                   guide_fact.confidence,
+                   guide_fact.observed_at,
+                   guide_fact.expires_at
+            FROM business.guide_import
+            JOIN business.guide_fact ON guide_fact.guide_import_id = guide_import.id
+            JOIN business.trip ON trip.id = guide_import.trip_id
+            WHERE guide_import.trip_id = #{tripId}
+              AND trip.owner_id = #{ownerId}
+              AND guide_import.enabled = TRUE
+              AND guide_fact.observed_at <= #{asOf}
+              AND guide_fact.expires_at > #{asOf}
+            ORDER BY guide_import.fetched_at DESC, guide_fact.confidence DESC, guide_fact.id
+            LIMIT 100
+            """)
+    List<GuidePlanningEvidenceRecord> findFreshPlanningEvidence(
+            @Param("tripId") UUID tripId,
+            @Param("ownerId") UUID ownerId,
+            @Param("asOf") Instant asOf
+    );
 }

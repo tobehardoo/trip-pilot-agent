@@ -17,15 +17,18 @@ class DemoRouteProvider:
     """Create a deterministic straight-line walking estimate."""
 
     _earth_radius_meters = 6_371_000
-    _walking_speed_meters_per_second = 1.25
+    _speed_meters_per_second = {
+        "WALKING": 1.25,
+        "DRIVING": 8.33,
+    }
 
     async def get_route(self, request: RouteRequest) -> RouteResult:
         started_at = perf_counter()
         distance = self._distance_meters(request.origin, request.destination)
-        duration = ceil(distance / self._walking_speed_meters_per_second)
+        duration = ceil(distance / self._speed_meters_per_second[request.mode])
         polyline = (request.origin, request.destination)
         plan = RoutePlan(
-            mode="WALKING",
+            mode=request.mode,
             distance_meters=distance,
             duration_seconds=duration,
             steps=(

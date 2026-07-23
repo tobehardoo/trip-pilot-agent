@@ -22,6 +22,17 @@ export interface TripConstraints {
     startTime: string
     endTime: string
   }>
+  arrival?: { placeName: string; time: string } | null
+  departure?: { placeName: string; time: string } | null
+  accommodation?: { placeName: string } | null
+  mustVisitPlaces?: string[]
+  avoidPlaces?: string[]
+  mealWindows?: Array<{
+    mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER'
+    startTime: string
+    endTime: string
+  }>
+  mobilityLevel?: 'STANDARD' | 'REDUCED' | 'STEP_FREE'
   schemaVersion?: number
 }
 
@@ -104,6 +115,7 @@ export interface GuideImport {
   excerpt: string
   contentHash: string
   fetchedAt: string
+  enabled: boolean
   facts: GuideFact[]
 }
 
@@ -127,7 +139,7 @@ export interface ItineraryTransitLeg {
   legOrder: number
   fromActivityId: string
   toActivityId: string
-  mode: 'WALKING'
+  mode: 'WALKING' | 'DRIVING'
   distanceMeters: number
   durationSeconds: number
   provider: 'AMAP' | 'DEMO'
@@ -293,6 +305,22 @@ export function createGuideImport(
     method: 'POST',
     body: JSON.stringify({ sourceUrl }),
   }, accessToken)
+}
+
+export function updateGuideImportEnabled(
+  accessToken: string,
+  tripId: string,
+  guideImportId: string,
+  enabled: boolean,
+): Promise<GuideImport> {
+  return request(
+    `/api/trips/${encodeURIComponent(tripId)}/guide-imports/${encodeURIComponent(guideImportId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    },
+    accessToken,
+  )
 }
 
 export function createPlanningTask(

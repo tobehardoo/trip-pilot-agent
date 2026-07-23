@@ -22,6 +22,13 @@ public record TripSnapshotRecord(
         String pace,
         String preferencesJson,
         String fixedSchedulesJson,
+        String arrivalJson,
+        String departureJson,
+        String accommodationJson,
+        String mustVisitPlacesJson,
+        String avoidPlacesJson,
+        String mealWindowsJson,
+        String mobilityLevel,
         int schemaVersion
 ) {
 }

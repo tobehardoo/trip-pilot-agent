@@ -161,7 +161,7 @@ def test_demo_processor_emits_a_deterministic_completed_event() -> None:
     repeated = asyncio.run(process(command, provider_type()))
 
     assert first.event_type == "PLANNING_COMPLETED"
-    assert first.schema_version == 4
+    assert first.schema_version == 5
     assert first.event_id == repeated.event_id
     assert first.run_id == repeated.run_id
     assert first.trace_id == command.trace_id
@@ -215,7 +215,7 @@ def test_v4_processor_serializes_real_knowledge_citations_and_freshness() -> Non
     )
     wire = completed.model_dump(mode="json", by_alias=True, exclude_none=True)
 
-    assert wire["schemaVersion"] == 4
+    assert wire["schemaVersion"] == 5
     assert wire["payload"]["knowledge"] == {
         "status": "REAL",
         "query": "广州 历史",
@@ -240,7 +240,7 @@ def test_v4_processor_serializes_real_knowledge_citations_and_freshness() -> Non
     }
     schema = json.loads(
         (Path(__file__).resolve().parents[3]
-         / "contracts/messaging/planning-completed-event-v4.schema.json").read_text(
+         / "contracts/messaging/planning-completed-event-v5.schema.json").read_text(
              encoding="utf-8"
          )
     )
@@ -569,7 +569,7 @@ def test_amap_planner_builds_v4_activities_and_routes_for_every_trip_day() -> No
         )
     )
 
-    assert completed.schema_version == 4
+    assert completed.schema_version == 5
     assert completed.payload.provider == "AMAP"
     daily_titles = [
         [activity.title for activity in day.activities]
@@ -768,7 +768,7 @@ def test_classified_amap_failure_falls_back_to_an_explicit_demo_v4_result() -> N
 
     completed = asyncio.run(processor.process_planning_create(command, planner))
 
-    assert completed.schema_version == 4
+    assert completed.schema_version == 5
     assert completed.payload.provider == "DEMO"
     assert all(
         activity.source == "DEMO"

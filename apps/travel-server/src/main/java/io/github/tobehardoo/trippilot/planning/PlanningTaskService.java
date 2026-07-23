@@ -2,11 +2,14 @@ package io.github.tobehardoo.trippilot.planning;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.common.ApiException;
+import io.github.tobehardoo.trippilot.guide.GuideImportService;
 import io.github.tobehardoo.trippilot.messaging.OutboxEventRecord;
 import io.github.tobehardoo.trippilot.messaging.OutboxMapper;
 import io.github.tobehardoo.trippilot.trip.TripService;
@@ -24,11 +27,13 @@ public class PlanningTaskService {
     private static final String ROUTING_KEY = "planning.create";
     private static final String CANCEL_COMMAND_TYPE = "PLANNING_CANCEL_REQUESTED";
     private static final String CANCEL_ROUTING_KEY = "planning.cancel";
+    private static final long MAX_TRIP_DAYS = 7;
 
     private final PlanningTaskMapper planningTaskMapper;
     private final PlanningTaskEventMapper planningTaskEventMapper;
     private final OutboxMapper outboxMapper;
     private final TripService tripService;
+    private final GuideImportService guideImportService;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
 
@@ -36,12 +41,14 @@ public class PlanningTaskService {
                                PlanningTaskEventMapper planningTaskEventMapper,
                                OutboxMapper outboxMapper,
                                TripService tripService,
+                               GuideImportService guideImportService,
                                ObjectMapper objectMapper,
                                ApplicationEventPublisher eventPublisher) {
         this.planningTaskMapper = planningTaskMapper;
         this.planningTaskEventMapper = planningTaskEventMapper;
         this.outboxMapper = outboxMapper;
         this.tripService = tripService;
+        this.guideImportService = guideImportService;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
     }
@@ -53,12 +60,24 @@ public class PlanningTaskService {
         if (existing.isPresent()) {
             return toResponse(existing.get());
         }
+        if (ChronoUnit.DAYS.between(trip.startDate(), trip.endDate()) + 1 > MAX_TRIP_DAYS) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "TRIP_DURATION_UNSUPPORTED",
+                    "Planning supports trips up to 7 days; shorten the trip dates and retry"
+            );
+        }
 
         Instant now = Instant.now();
+        List<GuideImportService.PlanningGuideFact> guideFacts =
+                guideImportService.planningEvidence(ownerId, tripId, now);
         String constraintSnapshotJson = writeJson(trip.constraints());
+        GuideEvidenceSnapshot guideEvidenceSnapshot = new GuideEvidenceSnapshot(guideFacts);
+        String guideEvidenceSnapshotJson = writeJson(guideEvidenceSnapshot);
         PlanningTaskRecord task = new PlanningTaskRecord(
                 UUID.randomUUID(), tripId, idempotencyKey, TASK_TYPE, TASK_STATUS,
-                trip.version(), constraintSnapshotJson, UUID.randomUUID(), 0, null, null, 0, now, now
+                trip.version(), constraintSnapshotJson, guideEvidenceSnapshotJson,
+                UUID.randomUUID(), 0, null, null, 0, now, now
         );
         if (planningTaskMapper.insert(task) == 0) {
             return planningTaskMapper.findOwnedByIdempotencyKey(tripId, idempotencyKey, ownerId)
@@ -80,7 +99,7 @@ public class PlanningTaskService {
 
         UUID eventId = UUID.randomUUID();
         PlanningCreateCommand command = new PlanningCreateCommand(
-                COMMAND_TYPE, 1, eventId, task.traceId(), task.id(), tripId, now,
+                COMMAND_TYPE, 2, eventId, task.traceId(), task.id(), tripId, now,
                 new PlanningCreatePayload(
                         TASK_TYPE,
                         trip.version(),
@@ -88,7 +107,8 @@ public class PlanningTaskService {
                         new TripSnapshot(
                                 trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
                                 trip.status(), trip.version(), trip.constraints()
-                        )
+                        ),
+                        guideEvidenceSnapshot
                 )
         );
         outboxMapper.insert(new OutboxEventRecord(
@@ -183,7 +203,8 @@ public class PlanningTaskService {
             String taskType,
             int baselineTripVersion,
             UUID idempotencyKey,
-            TripSnapshot trip
+            TripSnapshot trip,
+            GuideEvidenceSnapshot guideEvidence
     ) {
     }
 
@@ -206,6 +227,11 @@ public class PlanningTaskService {
             String status,
             int version,
             TripService.ConstraintResponse constraints
+    ) {
+    }
+
+    private record GuideEvidenceSnapshot(
+            List<GuideImportService.PlanningGuideFact> facts
     ) {
     }
 

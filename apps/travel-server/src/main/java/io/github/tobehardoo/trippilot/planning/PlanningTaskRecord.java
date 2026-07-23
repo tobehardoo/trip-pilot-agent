@@ -11,6 +11,7 @@ public record PlanningTaskRecord(
         String status,
         int baselineTripVersion,
         String constraintSnapshotJson,
+        String guideEvidenceSnapshotJson,
         UUID traceId,
         int retryCount,
         String errorCode,

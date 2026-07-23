@@ -47,6 +47,7 @@ const props = withDefaults(defineProps<{
   guideBusy?: boolean
   guideError?: string | null
   importGuide?: (sourceUrl: string) => Promise<void>
+  setGuideEnabled?: (guideImportId: string, enabled: boolean) => Promise<void>
   startPlanning: () => Promise<void>
   cancelPlanning: () => Promise<void>
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
@@ -56,6 +57,7 @@ const props = withDefaults(defineProps<{
   guideBusy: false,
   guideError: null,
   importGuide: async () => {},
+  setGuideEnabled: async () => {},
 })
 
 const emit = defineEmits<{
@@ -91,6 +93,20 @@ const form = reactive({
   travelerType: 'SOLO' as Trip['constraints']['travelerType'],
   pace: 'BALANCED' as Trip['constraints']['pace'],
   preferences: [] as string[],
+  arrivalPlace: '',
+  arrivalTime: '',
+  departurePlace: '',
+  departureTime: '',
+  accommodationPlace: '',
+  mustVisitText: '',
+  avoidText: '',
+  breakfastStart: '',
+  breakfastEnd: '',
+  lunchStart: '',
+  lunchEnd: '',
+  dinnerStart: '',
+  dinnerEnd: '',
+  mobilityLevel: 'STANDARD' as NonNullable<Trip['constraints']['mobilityLevel']>,
 })
 
 const preferenceOptions = computed(() => [
@@ -111,6 +127,21 @@ function openEditor(event?: Event) {
   form.travelerType = props.trip.constraints.travelerType
   form.pace = props.trip.constraints.pace
   form.preferences = [...props.trip.constraints.preferences]
+  form.arrivalPlace = props.trip.constraints.arrival?.placeName ?? ''
+  form.arrivalTime = toChinaLocalInput(props.trip.constraints.arrival?.time)
+  form.departurePlace = props.trip.constraints.departure?.placeName ?? ''
+  form.departureTime = toChinaLocalInput(props.trip.constraints.departure?.time)
+  form.accommodationPlace = props.trip.constraints.accommodation?.placeName ?? ''
+  form.mustVisitText = (props.trip.constraints.mustVisitPlaces ?? []).join('、')
+  form.avoidText = (props.trip.constraints.avoidPlaces ?? []).join('、')
+  const windows = props.trip.constraints.mealWindows ?? []
+  for (const meal of ['BREAKFAST', 'LUNCH', 'DINNER'] as const) {
+    const window = windows.find((item) => item.mealType === meal)
+    const prefix = meal === 'BREAKFAST' ? 'breakfast' : meal.toLowerCase()
+    form[`${prefix}Start` as 'breakfastStart' | 'lunchStart' | 'dinnerStart'] = window?.startTime.slice(0, 5) ?? ''
+    form[`${prefix}End` as 'breakfastEnd' | 'lunchEnd' | 'dinnerEnd'] = window?.endTime.slice(0, 5) ?? ''
+  }
+  form.mobilityLevel = props.trip.constraints.mobilityLevel ?? 'STANDARD'
   formError.value = null
   versionConflict.value = false
   editing.value = true
@@ -124,6 +155,23 @@ function togglePreference(preference: string) {
 
 async function saveConstraints() {
   if (!props.trip) return
+  if (Boolean(form.arrivalPlace) !== Boolean(form.arrivalTime)) {
+    formError.value = '请同时填写到达地点和到达时间'
+    return
+  }
+  if (Boolean(form.departurePlace) !== Boolean(form.departureTime)) {
+    formError.value = '请同时填写返程地点和返程时间'
+    return
+  }
+  const partialMeal = [
+    ['早餐', form.breakfastStart, form.breakfastEnd],
+    ['午餐', form.lunchStart, form.lunchEnd],
+    ['晚餐', form.dinnerStart, form.dinnerEnd],
+  ].find(([, start, end]) => Boolean(start) !== Boolean(end))
+  if (partialMeal) {
+    formError.value = `请同时填写${partialMeal[0]}窗口的开始和结束时间`
+    return
+  }
   submitting.value = true
   formError.value = null
   versionConflict.value = false
@@ -136,6 +184,19 @@ async function saveConstraints() {
       pace: form.pace,
       preferences: [...form.preferences],
       fixedSchedules: props.trip.constraints.fixedSchedules.map((schedule) => ({ ...schedule })),
+      arrival: form.arrivalPlace && form.arrivalTime
+        ? { placeName: form.arrivalPlace, time: `${form.arrivalTime}:00+08:00` }
+        : null,
+      departure: form.departurePlace && form.departureTime
+        ? { placeName: form.departurePlace, time: `${form.departureTime}:00+08:00` }
+        : null,
+      accommodation: form.accommodationPlace
+        ? { placeName: form.accommodationPlace }
+        : null,
+      mustVisitPlaces: splitPlaces(form.mustVisitText),
+      avoidPlaces: splitPlaces(form.avoidText),
+      mealWindows: buildMealWindows(),
+      mobilityLevel: form.mobilityLevel,
     })
     editing.value = false
   } catch (cause) {
@@ -148,6 +209,29 @@ async function saveConstraints() {
   } finally {
     submitting.value = false
   }
+}
+
+function toChinaLocalInput(value?: string) {
+  if (!value) return ''
+  return new Date(value).toLocaleString('sv-SE', {
+    timeZone: 'Asia/Shanghai',
+    hour12: false,
+  }).replace(' ', 'T').slice(0, 16)
+}
+
+function splitPlaces(value: string) {
+  return [...new Set(value.split(/[,，、\n]/).map((item) => item.trim()).filter(Boolean))]
+}
+
+function buildMealWindows(): NonNullable<Trip['constraints']['mealWindows']> {
+  const values = [
+    ['BREAKFAST', form.breakfastStart, form.breakfastEnd],
+    ['LUNCH', form.lunchStart, form.lunchEnd],
+    ['DINNER', form.dinnerStart, form.dinnerEnd],
+  ] as const
+  return values
+    .filter(([, start, end]) => start && end)
+    .map(([mealType, startTime, endTime]) => ({ mealType, startTime, endTime }))
 }
 
 async function reloadLatestTrip() {
@@ -413,6 +497,7 @@ watch(() => props.itinerary, (nextItinerary) => {
           :busy="guideBusy"
           :error="guideError"
           :import-guide="importGuide"
+          :set-guide-enabled="setGuideEnabled"
         />
 
         <section class="constraints" aria-labelledby="constraints-title">
@@ -460,6 +545,22 @@ watch(() => props.itinerary, (nextItinerary) => {
                 </li>
               </ul>
             </section>
+            <section>
+              <h3>到返与住宿</h3>
+              <p class="muted">
+                到达：{{ trip.constraints.arrival?.placeName ?? '未设置' }}；
+                返程：{{ trip.constraints.departure?.placeName ?? '未设置' }}；
+                住宿：{{ trip.constraints.accommodation?.placeName ?? '未设置' }}
+              </p>
+            </section>
+            <section>
+              <h3>地点与行动能力</h3>
+              <p class="muted">
+                必去：{{ (trip.constraints.mustVisitPlaces ?? []).join('、') || '未设置' }}；
+                排除：{{ (trip.constraints.avoidPlaces ?? []).join('、') || '未设置' }}；
+                行动能力：{{ trip.constraints.mobilityLevel ?? 'STANDARD' }}
+              </p>
+            </section>
           </div>
         </section>
       </template>
@@ -504,6 +605,54 @@ watch(() => props.itinerary, (nextItinerary) => {
                 <option value="FRIENDS">朋友同行</option>
                 <option value="BUSINESS">商务出行</option>
               </select>
+            </div>
+            <div class="field">
+              <label for="arrival-place">到达地点</label>
+              <input id="arrival-place" v-model.trim="form.arrivalPlace" maxlength="120" />
+            </div>
+            <div class="field">
+              <label for="arrival-time">到达时间（北京时间）</label>
+              <input id="arrival-time" v-model="form.arrivalTime" type="datetime-local" />
+            </div>
+            <div class="field">
+              <label for="departure-place">返程地点</label>
+              <input id="departure-place" v-model.trim="form.departurePlace" maxlength="120" />
+            </div>
+            <div class="field">
+              <label for="departure-time">返程时间（北京时间）</label>
+              <input id="departure-time" v-model="form.departureTime" type="datetime-local" />
+            </div>
+            <div class="field field-wide">
+              <label for="accommodation-place">住宿锚点</label>
+              <input id="accommodation-place" v-model.trim="form.accommodationPlace" maxlength="120" />
+            </div>
+            <div class="field">
+              <label for="must-visit">必去地点（用顿号分隔）</label>
+              <input id="must-visit" v-model="form.mustVisitText" maxlength="1000" />
+            </div>
+            <div class="field">
+              <label for="avoid-places">排除地点（用顿号分隔）</label>
+              <input id="avoid-places" v-model="form.avoidText" maxlength="1000" />
+            </div>
+            <div class="field field-wide">
+              <label for="mobility-level">行动能力</label>
+              <select id="mobility-level" v-model="form.mobilityLevel">
+                <option value="STANDARD">标准步行</option>
+                <option value="REDUCED">减少步行</option>
+                <option value="STEP_FREE">尽量无台阶（车行接驳，场地需确认）</option>
+              </select>
+            </div>
+            <div v-for="meal in [
+              { key: 'breakfast', label: '早餐' },
+              { key: 'lunch', label: '午餐' },
+              { key: 'dinner', label: '晚餐' },
+            ]" :key="meal.key" class="field field-wide meal-window">
+              <label>{{ meal.label }}窗口</label>
+              <div>
+                <input v-model="form[`${meal.key}Start` as 'breakfastStart' | 'lunchStart' | 'dinnerStart']" type="time" :aria-label="`${meal.label}开始时间`" />
+                <span>至</span>
+                <input v-model="form[`${meal.key}End` as 'breakfastEnd' | 'lunchEnd' | 'dinnerEnd']" type="time" :aria-label="`${meal.label}结束时间`" />
+              </div>
             </div>
           </div>
 

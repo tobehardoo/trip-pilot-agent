@@ -22,6 +22,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -88,6 +89,36 @@ class GuideImportFlowIntegrationTest extends PostgresIntegrationTest {
         importGuide(token, tripId, "https://example.com/long-guide")
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.facts[0].statement").value("景".repeat(1_000)));
+    }
+
+    @Test
+    void ownerCanDisableAndEnableAGuideSource() throws Exception {
+        String ownerToken = register("guide-toggle-owner@example.com");
+        String otherToken = register("guide-toggle-other@example.com");
+        String tripId = createTrip(ownerToken);
+        String importId = json(importGuide(ownerToken, tripId)
+                .andExpect(status().isCreated())
+                .andReturn()).get("id").asText();
+
+        mockMvc.perform(put("/api/trips/{tripId}/guide-imports/{importId}", tripId, importId)
+                        .header("Authorization", bearer(otherToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\": false}"))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(put("/api/trips/{tripId}/guide-imports/{importId}", tripId, importId)
+                        .header("Authorization", bearer(ownerToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\": false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false));
+
+        mockMvc.perform(put("/api/trips/{tripId}/guide-imports/{importId}", tripId, importId)
+                        .header("Authorization", bearer(ownerToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\": true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true));
     }
 
     private org.springframework.test.web.servlet.ResultActions importGuide(

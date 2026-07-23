@@ -9,6 +9,7 @@ const props = defineProps<{
   busy: boolean
   error: string | null
   importGuide: (sourceUrl: string) => Promise<void>
+  setGuideEnabled?: (guideImportId: string, enabled: boolean) => Promise<void>
 }>()
 
 const sourceUrl = ref('')
@@ -96,9 +97,19 @@ function isFresh(expiresAt: string) {
           <h3>{{ guide.title }}</h3>
           <span>{{ guide.sourceHost }} · 采集于 {{ formatDateTime(guide.fetchedAt) }}</span>
         </div>
-        <a :href="guide.finalUrl" target="_blank" rel="noopener noreferrer">
-          查看原文<ExternalLink :size="13" aria-hidden="true" />
-        </a>
+        <div class="source-actions">
+          <button
+            v-if="setGuideEnabled"
+            type="button"
+            :disabled="busy"
+            @click="setGuideEnabled(guide.id, !guide.enabled)"
+          >
+            {{ guide.enabled ? '停用来源' : '启用来源' }}
+          </button>
+          <a :href="guide.finalUrl" target="_blank" rel="noopener noreferrer">
+            查看原文<ExternalLink :size="13" aria-hidden="true" />
+          </a>
+        </div>
       </header>
       <p class="guide-excerpt">{{ guide.excerpt }}</p>
       <ul v-if="guide.facts.length" class="fact-list">
@@ -155,6 +166,8 @@ function isFresh(expiresAt: string) {
 .guide-card h3 { margin: 0 0 4px; color: #17201d; font-size: 15px; }
 .guide-card header span { color: #71817b; font-size: 10px; }
 .guide-card a { display: inline-flex; align-items: center; gap: 4px; color: #236552; font-size: 11px; font-weight: 750; text-decoration: none; white-space: nowrap; }
+.source-actions { display: flex; align-items: center; gap: 10px; }
+.source-actions button { padding: 5px 8px; color: #5d4430; background: #fff7e7; border: 1px solid #e4c98f; border-radius: 4px; font-size: 10px; font-weight: 750; cursor: pointer; }
 .guide-excerpt { margin: 12px 0; color: #53675f; font-size: 12px; line-height: 1.7; }
 .fact-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .fact-list li { padding: 11px 12px; background: #f6f8f7; border-radius: 5px; }

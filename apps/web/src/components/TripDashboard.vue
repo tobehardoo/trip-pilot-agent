@@ -106,6 +106,13 @@ async function saveTrip() {
         pace: form.pace,
         preferences: [...form.preferences],
         fixedSchedules: [],
+        arrival: null,
+        departure: null,
+        accommodation: null,
+        mustVisitPlaces: [],
+        avoidPlaces: [],
+        mealWindows: [],
+        mobilityLevel: 'STANDARD',
       },
     })
     dialogOpen.value = false

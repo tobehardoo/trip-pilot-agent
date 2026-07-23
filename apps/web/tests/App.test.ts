@@ -71,7 +71,7 @@ const itineraryResponse = {
       legOrder: 0,
       fromActivityId: '66666666-6666-6666-6666-666666666666',
       toActivityId: '77777777-7777-7777-7777-777777777777',
-      mode: 'WALKING',
+      mode: 'DRIVING',
       distanceMeters: 1380,
       durationSeconds: 1100,
       provider: 'DEMO',
@@ -452,6 +452,13 @@ describe('TripPilot application shell', () => {
         pace: 'BALANCED',
         preferences: ['岭南文化', '本地美食'],
         fixedSchedules: [],
+        arrival: null,
+        departure: null,
+        accommodation: null,
+        mustVisitPlaces: [],
+        avoidPlaces: [],
+        mealWindows: [],
+        mobilityLevel: 'STANDARD',
       },
     })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -945,6 +952,16 @@ describe('TripPilot application shell', () => {
     await fireEvent.update(screen.getByLabelText('预算'), '5200')
     await fireEvent.update(screen.getByLabelText('同行人数'), '3')
     await fireEvent.update(screen.getByLabelText('同行类型'), 'FAMILY')
+    await fireEvent.update(screen.getByLabelText('到达地点'), '广州南站')
+    await fireEvent.update(screen.getByLabelText('到达时间（北京时间）'), '2026-07-18T11:00')
+    await fireEvent.update(screen.getByLabelText('返程地点'), '广州白云机场')
+    await fireEvent.update(screen.getByLabelText('返程时间（北京时间）'), '2026-07-21T17:00')
+    await fireEvent.update(screen.getByLabelText('住宿锚点'), '北京路附近酒店')
+    await fireEvent.update(screen.getByLabelText('必去地点（用顿号分隔）'), '陈家祠、沙面')
+    await fireEvent.update(screen.getByLabelText('排除地点（用顿号分隔）'), '广州塔')
+    await fireEvent.update(screen.getByLabelText('行动能力'), 'REDUCED')
+    await fireEvent.update(screen.getByLabelText('午餐开始时间'), '12:00')
+    await fireEvent.update(screen.getByLabelText('午餐结束时间'), '13:00')
     await fireEvent.click(screen.getByLabelText('舒缓'))
     await fireEvent.click(screen.getByRole('button', { name: '保存约束' }))
 
@@ -959,8 +976,42 @@ describe('TripPilot application shell', () => {
       pace: 'RELAXED',
       preferences: ['岭南文化', '本地美食'],
       fixedSchedules,
+      arrival: { placeName: '广州南站', time: '2026-07-18T11:00:00+08:00' },
+      departure: { placeName: '广州白云机场', time: '2026-07-21T17:00:00+08:00' },
+      accommodation: { placeName: '北京路附近酒店' },
+      mustVisitPlaces: ['陈家祠', '沙面'],
+      avoidPlaces: ['广州塔'],
+      mealWindows: [{ mealType: 'LUNCH', startTime: '12:00', endTime: '13:00' }],
+      mobilityLevel: 'REDUCED',
     })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  test('keeps partial travel and meal fields visible instead of silently dropping them', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(screen.getByRole('button', { name: '打开 广州周末四日' }))
+    await screen.findByRole('heading', { name: '结构化约束' })
+    await fireEvent.click(screen.getByRole('button', { name: '编辑约束' }))
+    await fireEvent.update(screen.getByLabelText('到达地点'), '广州南站')
+    await fireEvent.update(screen.getByLabelText('午餐开始时间'), '12:00')
+    await fireEvent.click(screen.getByRole('button', { name: '保存约束' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('请同时填写到达地点和到达时间')
+    expect((screen.getByLabelText('到达地点') as HTMLInputElement).value).toBe('广州南站')
+    expect((screen.getByLabelText('午餐开始时间') as HTMLInputElement).value).toBe('12:00')
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      `/api/trips/${tripResponse.id}/constraints`,
+      expect.objectContaining({ method: 'PUT' }),
+    )
   })
 
   test('keeps edits visible after a version conflict and can reload the latest trip', async () => {

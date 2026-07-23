@@ -136,7 +136,7 @@ def test_route_contract_represents_a_typed_walking_path() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("mode", "DRIVING"),
+        ("mode", "CYCLING"),
         ("departure_at", datetime(2026, 8, 1, 9, 15)),
         ("origin_poi_id", "x" * 101),
         ("destination_poi_id", "x" * 101),
@@ -206,6 +206,31 @@ def test_amap_walking_route_parses_polyline_and_uses_json_cache() -> None:
     assert ttl_seconds == 3600
     assert "local-secret-key" not in cache_key
     assert "113.261015" not in cache_key
+
+
+def test_amap_driving_route_uses_vehicle_endpoint_and_preserves_mode() -> None:
+    provider = load_route_provider_module()
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=amap_route_response())
+
+    async def run_scenario() -> Any:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            amap = provider.AmapRouteProvider(
+                api_key="local-secret-key",
+                http_client=client,
+            )
+            return await amap.get_route(route_request(provider, mode="DRIVING"))
+
+    result = asyncio.run(run_scenario())
+
+    assert isinstance(result, provider.ProviderSuccess)
+    assert result.data.mode == "DRIVING"
+    assert requests[0].url.path == "/v5/direction/driving"
+    assert requests[0].url.params["strategy"] == "32"
+    assert "isindoor" not in requests[0].url.params
 
 
 def test_amap_empty_walking_paths_is_a_typed_not_found_failure() -> None:

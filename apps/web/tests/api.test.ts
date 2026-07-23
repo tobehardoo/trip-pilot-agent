@@ -10,6 +10,7 @@ import {
   logoutSession,
   refreshSession,
   streamPlanningTaskEvents,
+  updateGuideImportEnabled,
   type CreateTripInput,
 } from '../src/lib/api'
 
@@ -149,6 +150,31 @@ test('creates and lists trip-scoped guide imports with bearer authentication', a
     '/api/trips/22222222-2222-2222-2222-222222222222/guide-imports',
     expect.objectContaining({
       headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+    }),
+  )
+})
+
+test('toggles a trip guide source with bearer authentication', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ enabled: false }),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+
+  await updateGuideImportEnabled(
+    'access-token',
+    '22222222-2222-2222-2222-222222222222',
+    '11111111-1111-1111-1111-111111111111',
+    false,
+  )
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    '/api/trips/22222222-2222-2222-2222-222222222222/guide-imports/11111111-1111-1111-1111-111111111111',
+    expect.objectContaining({
+      method: 'PUT',
+      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+      body: JSON.stringify({ enabled: false }),
     }),
   )
 })

@@ -14,6 +14,7 @@ const guideImports = [{
   excerpt: '从公园前乘地铁 1 号线到陈家祠站。',
   contentHash: 'a'.repeat(64),
   fetchedAt: '2026-07-23T08:00:00Z',
+  enabled: true,
   facts: [{
     id: '22222222-2222-2222-2222-222222222222',
     category: 'TRANSPORT',
@@ -63,4 +64,24 @@ test('shows an explicit empty and error state', () => {
 
   expect(screen.getByRole('alert').textContent).toContain('攻略站点拒绝了公开访问')
   expect(screen.getByText('还没有导入攻略')).toBeTruthy()
+})
+
+test('lets the user disable a source before the next planning task', async () => {
+  const setGuideEnabled = vi.fn(async () => {})
+  render(GuideIntelligencePanel, {
+    props: {
+      guideImports,
+      busy: false,
+      error: null,
+      importGuide: vi.fn(),
+      setGuideEnabled,
+    },
+  })
+
+  await fireEvent.click(screen.getByRole('button', { name: '停用来源' }))
+
+  expect(setGuideEnabled).toHaveBeenCalledWith(
+    '11111111-1111-1111-1111-111111111111',
+    false,
+  )
 })

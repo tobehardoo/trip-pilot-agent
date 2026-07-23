@@ -2,6 +2,7 @@ package io.github.tobehardoo.trippilot.trip;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -36,10 +37,21 @@ final class TripRequests {
             @NotNull @Pattern(regexp = "SOLO|COUPLE|FAMILY|FRIENDS|BUSINESS") String travelerType,
             @NotNull @Pattern(regexp = "RELAXED|BALANCED|INTENSIVE") String pace,
             @NotNull @Size(max = 30) List<@NotBlank @Size(max = 60) String> preferences,
-            @NotNull @Size(max = 30) List<@NotNull @Valid FixedSchedule> fixedSchedules
+            @NotNull @Size(max = 30) List<@NotNull @Valid FixedSchedule> fixedSchedules,
+            @Valid TravelAnchor arrival,
+            @Valid TravelAnchor departure,
+            @Valid PlaceAnchor accommodation,
+            @Size(max = 30) List<@NotBlank @Size(max = 120) String> mustVisitPlaces,
+            @Size(max = 30) List<@NotBlank @Size(max = 120) String> avoidPlaces,
+            @Size(max = 3) List<@NotNull @Valid MealWindow> mealWindows,
+            @Pattern(regexp = "STANDARD|REDUCED|STEP_FREE") String mobilityLevel
     ) {
         ConstraintInput asConstraintInput() {
-            return new ConstraintInput(budgetAmount, travelers, travelerType, pace, preferences, fixedSchedules);
+            return new ConstraintInput(
+                    budgetAmount, travelers, travelerType, pace, preferences, fixedSchedules,
+                    arrival, departure, accommodation, mustVisitPlaces, avoidPlaces,
+                    mealWindows, mobilityLevel
+            );
         }
     }
 
@@ -49,14 +61,45 @@ final class TripRequests {
             @NotNull @Pattern(regexp = "SOLO|COUPLE|FAMILY|FRIENDS|BUSINESS") String travelerType,
             @NotNull @Pattern(regexp = "RELAXED|BALANCED|INTENSIVE") String pace,
             @NotNull @Size(max = 30) List<@NotBlank @Size(max = 60) String> preferences,
-            @NotNull @Size(max = 30) List<@NotNull @Valid FixedSchedule> fixedSchedules
+            @NotNull @Size(max = 30) List<@NotNull @Valid FixedSchedule> fixedSchedules,
+            @Valid TravelAnchor arrival,
+            @Valid TravelAnchor departure,
+            @Valid PlaceAnchor accommodation,
+            @Size(max = 30) List<@NotBlank @Size(max = 120) String> mustVisitPlaces,
+            @Size(max = 30) List<@NotBlank @Size(max = 120) String> avoidPlaces,
+            @Size(max = 3) List<@NotNull @Valid MealWindow> mealWindows,
+            @Pattern(regexp = "STANDARD|REDUCED|STEP_FREE") String mobilityLevel
     ) {
+        ConstraintInput {
+            mustVisitPlaces = mustVisitPlaces == null ? List.of() : List.copyOf(mustVisitPlaces);
+            avoidPlaces = avoidPlaces == null ? List.of() : List.copyOf(avoidPlaces);
+            mealWindows = mealWindows == null ? List.of() : List.copyOf(mealWindows);
+            mobilityLevel = mobilityLevel == null ? "STANDARD" : mobilityLevel;
+        }
     }
 
     record FixedSchedule(
             @NotBlank @Size(max = 120) String placeName,
             @NotNull OffsetDateTime startTime,
             @NotNull OffsetDateTime endTime
+    ) {
+    }
+
+    record PlaceAnchor(
+            @NotBlank @Size(max = 120) String placeName
+    ) {
+    }
+
+    record TravelAnchor(
+            @NotBlank @Size(max = 120) String placeName,
+            @NotNull OffsetDateTime time
+    ) {
+    }
+
+    record MealWindow(
+            @NotNull @Pattern(regexp = "BREAKFAST|LUNCH|DINNER") String mealType,
+            @NotNull LocalTime startTime,
+            @NotNull LocalTime endTime
     ) {
     }
 }

@@ -47,6 +47,7 @@ public class GuideImportPersistenceService {
                     candidate.excerpt(),
                     candidate.contentHash(),
                     candidate.fetchedAt(),
+                    persisted.enabled(),
                     persisted.createdAt()
             );
             if (mapper.refreshImport(refreshed) != 1) {

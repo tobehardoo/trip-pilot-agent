@@ -13,6 +13,7 @@ public record GuideImportRecord(
         String excerpt,
         String contentHash,
         Instant fetchedAt,
+        boolean enabled,
         Instant createdAt
 ) {
 }

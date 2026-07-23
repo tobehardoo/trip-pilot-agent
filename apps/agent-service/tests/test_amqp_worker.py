@@ -84,7 +84,7 @@ def test_valid_command_is_acked_only_after_completed_event_is_published() -> Non
     assert published.message_id is not None
     body = json.loads(published.body)
     assert body["eventType"] == "PLANNING_COMPLETED"
-    assert body["schemaVersion"] == 4
+    assert body["schemaVersion"] == 5
     assert body["taskId"] == COMMAND["taskId"]
     assert body["payload"]["itinerary"]["estimatedTotalCost"] == 0
     assert isinstance(body["payload"]["itinerary"]["estimatedTotalCost"], int | float)
@@ -474,7 +474,7 @@ def test_real_worker_provider_factory_builds_amap_v3_with_routes_and_demo_fallba
 
     completed, cache_ttls = asyncio.run(run_scenario())
 
-    assert completed.schema_version == 4
+    assert completed.schema_version == 5
     assert completed.payload.provider == "AMAP"
     assert completed.payload.itinerary.days[0].activities[0].provider_poi_id == "poi-1"
     assert completed.payload.itinerary.days[0].activities[1].provider_poi_id == "poi-2"

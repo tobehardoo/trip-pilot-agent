@@ -33,6 +33,8 @@ class OptimizationConflict:
         "FIXED_SCHEDULE_OVERLAP",
         "INSUFFICIENT_DAY_CAPACITY",
         "BUDGET_EXCEEDED",
+        "MUST_VISIT_UNAVAILABLE",
+        "MOBILITY_ROUTE_TOO_LONG",
     ]
     message: str
     affected: tuple[str, ...]
@@ -45,6 +47,7 @@ class RelaxationSuggestion:
         "REDUCE_OPTIONAL_ACTIVITIES",
         "EXTEND_AVAILABLE_TIME",
         "INCREASE_BUDGET",
+        "CHANGE_MOBILITY_OR_TRANSPORT",
     ]
     message: str
 
@@ -55,6 +58,8 @@ class DailyOptimizationRequest:
     visit_duration_minutes: int = 120
     route_duration_seconds: int = 0
     fixed_schedules: tuple[TimeBlock, ...] = ()
+    available_start_minute: int = DAY_START_MINUTE
+    available_end_minute: int = DAY_END_MINUTE
     solve_timeout_seconds: float = 0.25
 
     def __post_init__(self) -> None:
@@ -62,6 +67,8 @@ class DailyOptimizationRequest:
             raise ValueError("visit duration must be positive")
         if self.route_duration_seconds < 0:
             raise ValueError("route duration must not be negative")
+        if not 0 <= self.available_start_minute < self.available_end_minute <= 24 * 60:
+            raise ValueError("available minutes must form a valid local-day range")
         if not 0 < self.solve_timeout_seconds <= 5:
             raise ValueError("solve timeout must be between zero and five seconds")
 
@@ -99,16 +106,20 @@ class DailyOptimizer:
 
         duration = request.visit_duration_minutes
         route_minutes = ceil(request.route_duration_seconds / 60)
+        day_start = request.available_start_minute
+        day_end = request.available_end_minute
+        if day_end - day_start < duration * 2 + route_minutes:
+            return _capacity_failure(request, fixed)
         model = cp_model.CpModel()
-        first_start = model.new_int_var(DAY_START_MINUTE, DAY_END_MINUTE - duration, "first")
-        second_start = model.new_int_var(DAY_START_MINUTE, DAY_END_MINUTE - duration, "second")
+        first_start = model.new_int_var(day_start, day_end - duration, "first")
+        second_start = model.new_int_var(day_start, day_end - duration, "second")
         first_interval = model.new_fixed_size_interval_var(first_start, duration, "first_visit")
         second_interval = model.new_fixed_size_interval_var(second_start, duration, "second_visit")
         model.add(second_start >= first_start + duration + route_minutes)
         intervals: list[cp_model.IntervalVar] = [first_interval, second_interval]
         for index, (_, start_minute, end_minute) in enumerate(fixed):
-            clipped_start = max(start_minute, DAY_START_MINUTE)
-            clipped_end = min(end_minute, DAY_END_MINUTE)
+            clipped_start = max(start_minute, day_start)
+            clipped_end = min(end_minute, day_end)
             if clipped_start < clipped_end:
                 intervals.append(
                     model.new_fixed_size_interval_var(
@@ -118,7 +129,7 @@ class DailyOptimizer:
         model.add_no_overlap(intervals)
         preferred_second_delta = model.new_int_var(0, DAY_END_MINUTE, "second_delta")
         model.add_abs_equality(preferred_second_delta, second_start - 13 * 60)
-        model.minimize((first_start - DAY_START_MINUTE) * 2 + preferred_second_delta)
+        model.minimize((first_start - day_start) * 2 + preferred_second_delta)
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = request.solve_timeout_seconds

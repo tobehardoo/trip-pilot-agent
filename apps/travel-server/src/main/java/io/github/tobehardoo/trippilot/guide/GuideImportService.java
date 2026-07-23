@@ -58,6 +58,7 @@ public class GuideImportService {
                 fetched.excerpt(),
                 fetched.contentHash(),
                 fetched.fetchedAt(),
+                true,
                 null
         );
         GuideImportRecord persisted = persistenceService.persist(
@@ -73,6 +74,52 @@ public class GuideImportService {
     public List<GuideImportResponse> list(UUID ownerId, UUID tripId) {
         tripService.get(ownerId, tripId);
         return mapper.findAllOwned(tripId, ownerId).stream().map(this::toResponse).toList();
+    }
+
+    @Transactional
+    public GuideImportResponse setEnabled(
+            UUID ownerId,
+            UUID tripId,
+            UUID guideImportId,
+            boolean enabled
+    ) {
+        tripService.get(ownerId, tripId);
+        if (mapper.updateEnabled(guideImportId, tripId, ownerId, enabled) != 1) {
+            throw new ApiException(
+                    HttpStatus.NOT_FOUND,
+                    "GUIDE_IMPORT_NOT_FOUND",
+                    "Guide import was not found"
+            );
+        }
+        return mapper.findOwnedById(guideImportId, tripId, ownerId)
+                .map(this::toResponse)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Updated guide import could not be read"
+                ));
+    }
+
+    @Transactional(readOnly = true)
+    public List<PlanningGuideFact> planningEvidence(
+            UUID ownerId,
+            UUID tripId,
+            Instant asOf
+    ) {
+        tripService.get(ownerId, tripId);
+        return mapper.findFreshPlanningEvidence(tripId, ownerId, asOf).stream()
+                .map(record -> new PlanningGuideFact(
+                        record.guideImportId(),
+                        record.factId(),
+                        record.category(),
+                        record.statement(),
+                        record.evidence(),
+                        record.sourceUrl(),
+                        record.sourceHost(),
+                        record.sourceTitle(),
+                        record.confidence(),
+                        record.observedAt(),
+                        record.expiresAt()
+                ))
+                .toList();
     }
 
     private GuideImportResponse toResponse(GuideImportRecord record) {
@@ -96,6 +143,7 @@ public class GuideImportService {
                 record.excerpt(),
                 record.contentHash(),
                 record.fetchedAt(),
+                record.enabled(),
                 facts
         );
     }
@@ -178,6 +226,7 @@ public class GuideImportService {
             String excerpt,
             String contentHash,
             Instant fetchedAt,
+            boolean enabled,
             List<GuideFactResponse> facts
     ) {
     }
@@ -187,6 +236,21 @@ public class GuideImportService {
             String category,
             String statement,
             String evidence,
+            double confidence,
+            Instant observedAt,
+            Instant expiresAt
+    ) {
+    }
+
+    public record PlanningGuideFact(
+            UUID guideImportId,
+            UUID factId,
+            String category,
+            String statement,
+            String evidence,
+            String sourceUrl,
+            String sourceHost,
+            String sourceTitle,
             double confidence,
             Instant observedAt,
             Instant expiresAt

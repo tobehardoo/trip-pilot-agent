@@ -19,6 +19,7 @@ import {
   refreshSession,
   register,
   streamPlanningTaskEvents,
+  updateGuideImportEnabled,
   updateTripConstraints,
   type AuthSession,
   type CreateTripInput,
@@ -418,6 +419,26 @@ async function handleImportGuide(sourceUrl: string) {
   }
 }
 
+async function handleSetGuideEnabled(guideImportId: string, enabled: boolean) {
+  if (!selectedTrip.value) return
+  const tripId = selectedTrip.value.id
+  guideBusy.value = true
+  guideError.value = null
+  try {
+    const updated = await withAccessToken((token) => (
+      updateGuideImportEnabled(token, tripId, guideImportId, enabled)
+    ))
+    guideImports.value = guideImports.value.map((guide) => (
+      guide.id === updated.id ? updated : guide
+    ))
+  } catch (cause) {
+    guideError.value = errorMessage(cause)
+    throw cause
+  } finally {
+    guideBusy.value = false
+  }
+}
+
 function isCurrentGuideRequest(requestSequence: number, generation: number, tripId: string) {
   return requestSequence === guideRequestSequence
     && isCurrentSession(generation)
@@ -585,6 +606,7 @@ onUnmounted(() => {
     :guide-busy="guideBusy"
     :guide-error="guideError"
     :import-guide="handleImportGuide"
+    :set-guide-enabled="handleSetGuideEnabled"
     :start-planning="handleStartPlanning"
     :cancel-planning="handleCancelPlanning"
     :update-constraints="handleUpdateConstraints"

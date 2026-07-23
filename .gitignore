@@ -15,6 +15,7 @@
 **/.venv/
 **/__pycache__/
 **/.pytest_cache/
+**/.pytest-temp-*/
 **/.ruff_cache/
 **/.coverage
 *.py[cod]
@@ -38,4 +39,5 @@ Thumbs.db
 logs/
 output/*.log
 output/playwright/
+output/pytest-*/
 .playwright-cli/

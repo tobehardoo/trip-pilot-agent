@@ -1,6 +1,6 @@
 """Typed message contracts for the planning worker."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 from uuid import UUID
@@ -57,6 +57,7 @@ type JsonLatitude = Annotated[
     Field(ge=Decimal("-90"), le=Decimal("90")),
     PlainSerializer(lambda value: float(value), return_type=float, when_used="json"),
 ]
+CHINA_TIME_ZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 
 class MessageModel(BaseModel):
@@ -87,6 +88,35 @@ class FixedSchedule(InboundMessageModel):
         return self
 
 
+class PlaceAnchor(InboundMessageModel):
+    place_name: NameText
+
+
+class TravelAnchor(PlaceAnchor):
+    time: datetime
+
+    @field_validator("time")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError("travel anchor time must include a timezone")
+        return value
+
+
+class MealWindow(InboundMessageModel):
+    meal_type: Literal["BREAKFAST", "LUNCH", "DINNER"]
+    start_time: time
+    end_time: time
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> Self:
+        if self.start_time.tzinfo is not None or self.end_time.tzinfo is not None:
+            raise ValueError("meal window times must be local wall-clock values")
+        if self.end_time <= self.start_time:
+            raise ValueError("meal window endTime must be after startTime")
+        return self
+
+
 class TripConstraints(InboundMessageModel):
     budget_amount: Decimal | None = Field(ge=0)
     travelers: int = Field(strict=True, ge=1, le=50)
@@ -94,7 +124,14 @@ class TripConstraints(InboundMessageModel):
     pace: Literal["RELAXED", "BALANCED", "INTENSIVE"]
     preferences: tuple[ShortText, ...] = Field(max_length=30)
     fixed_schedules: tuple[FixedSchedule, ...] = Field(max_length=30)
-    schema_version: Literal[1]
+    arrival: TravelAnchor | None = None
+    departure: TravelAnchor | None = None
+    accommodation: PlaceAnchor | None = None
+    must_visit_places: tuple[NameText, ...] = Field(default=(), max_length=30)
+    avoid_places: tuple[NameText, ...] = Field(default=(), max_length=30)
+    meal_windows: tuple[MealWindow, ...] = Field(default=(), max_length=3)
+    mobility_level: Literal["STANDARD", "REDUCED", "STEP_FREE"] = "STANDARD"
+    schema_version: Literal[1, 2]
 
     @field_validator("budget_amount", mode="before")
     @classmethod
@@ -103,6 +140,69 @@ class TripConstraints(InboundMessageModel):
         if value is not None and not is_json_number:
             raise ValueError("budgetAmount must be a JSON number or null")
         return value
+
+    @model_validator(mode="after")
+    def validate_v2_collections(self) -> Self:
+        must = {_normal_text(value) for value in self.must_visit_places}
+        avoided = {_normal_text(value) for value in self.avoid_places}
+        if must & avoided:
+            raise ValueError("mustVisitPlaces and avoidPlaces must not overlap")
+        meal_types = [window.meal_type for window in self.meal_windows]
+        if len(meal_types) != len(set(meal_types)):
+            raise ValueError("mealWindows must not repeat a mealType")
+        ordered_windows = sorted(
+            self.meal_windows,
+            key=lambda window: (window.start_time, window.end_time),
+        )
+        if any(
+            current.start_time < previous.end_time
+            for previous, current in zip(ordered_windows, ordered_windows[1:], strict=False)
+        ):
+            raise ValueError("mealWindows must not overlap")
+        return self
+
+
+class GuideFactEvidence(InboundMessageModel):
+    guide_import_id: UUID
+    fact_id: UUID
+    category: Literal[
+        "ATTRACTION",
+        "DINING",
+        "TRANSPORT",
+        "TIMING",
+        "COST",
+        "QUEUE",
+        "RESERVATION",
+        "TIP",
+    ]
+    statement: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1_000)
+    ]
+    evidence: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1_000)
+    ]
+    source_url: AnyHttpUrl
+    source_host: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=253)
+    ]
+    source_title: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
+    ]
+    confidence: float = Field(ge=0, le=1)
+    observed_at: datetime
+    expires_at: datetime
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> Self:
+        if self.observed_at.utcoffset() is None or self.expires_at.utcoffset() is None:
+            raise ValueError("guide evidence timestamps must include a timezone")
+        if self.expires_at <= self.observed_at:
+            raise ValueError("guide evidence expiresAt must be after observedAt")
+        return self
+
+
+class GuideEvidenceSnapshot(InboundMessageModel):
+    facts: tuple[GuideFactEvidence, ...] = Field(default=(), max_length=100)
 
 
 class TripSnapshot(InboundMessageModel):
@@ -118,11 +218,28 @@ class TripSnapshot(InboundMessageModel):
     def validate_dates(self) -> Self:
         if self.end_date < self.start_date:
             raise ValueError("trip endDate must not be before startDate")
+        if (self.end_date - self.start_date).days + 1 > 7:
+            raise ValueError("trip duration must not exceed 7 days")
         for schedule in self.constraints.fixed_schedules:
-            starts_before_trip = schedule.start_time.date() < self.start_date
-            ends_after_trip = schedule.end_time.date() > self.end_date
+            starts_before_trip = (
+                schedule.start_time.astimezone(CHINA_TIME_ZONE).date() < self.start_date
+            )
+            ends_after_trip = (
+                schedule.end_time.astimezone(CHINA_TIME_ZONE).date() > self.end_date
+            )
             if starts_before_trip or ends_after_trip:
                 raise ValueError("fixed schedules must fall within trip dates")
+        for anchor in (self.constraints.arrival, self.constraints.departure):
+            if anchor is not None and not (
+                self.start_date
+                <= anchor.time.astimezone(CHINA_TIME_ZONE).date()
+                <= self.end_date
+            ):
+                raise ValueError("travel anchor times must fall within trip dates")
+        arrival = self.constraints.arrival
+        departure = self.constraints.departure
+        if arrival is not None and departure is not None and departure.time <= arrival.time:
+            raise ValueError("departure time must be after arrival time")
         return self
 
 
@@ -131,6 +248,7 @@ class PlanningCreatePayload(InboundMessageModel):
     baseline_trip_version: int = Field(strict=True, ge=0)
     idempotency_key: UUID
     trip: TripSnapshot
+    guide_evidence: GuideEvidenceSnapshot = GuideEvidenceSnapshot()
 
     @model_validator(mode="after")
     def validate_baseline_version(self) -> Self:
@@ -141,13 +259,43 @@ class PlanningCreatePayload(InboundMessageModel):
 
 class PlanningCreateCommand(InboundMessageModel):
     event_type: Literal["PLANNING_CREATE_REQUESTED"]
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     event_id: UUID
     trace_id: UUID
     task_id: UUID
     trip_id: UUID
     occurred_at: datetime
     payload: PlanningCreatePayload
+
+    @model_validator(mode="after")
+    def validate_version_alignment(self) -> Self:
+        if self.occurred_at.utcoffset() is None:
+            raise ValueError("occurredAt must include a timezone")
+        constraints = self.payload.trip.constraints
+        if constraints.schema_version != self.schema_version:
+            raise ValueError("command and constraint schemaVersion must match")
+        if self.schema_version == 1 and (
+            constraints.arrival is not None
+            or constraints.departure is not None
+            or constraints.accommodation is not None
+            or constraints.must_visit_places
+            or constraints.avoid_places
+            or constraints.meal_windows
+            or constraints.mobility_level != "STANDARD"
+            or self.payload.guide_evidence.facts
+        ):
+            raise ValueError("v2 context and guide evidence require schemaVersion 2")
+        if any(
+            fact.observed_at > self.occurred_at
+            or fact.expires_at <= self.occurred_at
+            for fact in self.payload.guide_evidence.facts
+        ):
+            raise ValueError("guide evidence must be fresh at command occurredAt")
+        return self
+
+
+def _normal_text(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
 
 
 class PlanningCancelCommand(InboundMessageModel):
@@ -201,7 +349,7 @@ class ItineraryActivity(MessageModel):
 class TransitLeg(MessageModel):
     from_activity_index: int = Field(strict=True, ge=0)
     to_activity_index: int = Field(strict=True, ge=1)
-    mode: Literal["WALKING"]
+    mode: Literal["WALKING", "DRIVING"]
     distance_meters: int = Field(strict=True, ge=0, le=40_100_000)
     duration_seconds: int = Field(strict=True, ge=0, le=31_536_000)
     provider: Literal["AMAP", "DEMO"]
@@ -326,7 +474,7 @@ class PlanningCompletedPayload(MessageModel):
 
 class PlanningCompletedEvent(MessageModel):
     event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[4]
+    schema_version: Literal[5]
     event_id: UUID
     trace_id: UUID
     task_id: UUID

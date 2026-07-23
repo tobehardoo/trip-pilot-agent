@@ -22,10 +22,15 @@ public interface TripMapper {
     @Insert("""
             INSERT INTO business.trip_constraint(
                 trip_id, budget_amount, travelers, traveler_type, pace,
-                preferences, fixed_schedules, schema_version
+                preferences, fixed_schedules, arrival, departure, accommodation,
+                must_visit_places, avoid_places, meal_windows, mobility_level, schema_version
             ) VALUES (
                 #{tripId}, #{budgetAmount}, #{travelers}, #{travelerType}, #{pace},
-                CAST(#{preferencesJson} AS jsonb), CAST(#{fixedSchedulesJson} AS jsonb), #{schemaVersion}
+                CAST(#{preferencesJson} AS jsonb), CAST(#{fixedSchedulesJson} AS jsonb),
+                CAST(#{arrivalJson} AS jsonb), CAST(#{departureJson} AS jsonb),
+                CAST(#{accommodationJson} AS jsonb), CAST(#{mustVisitPlacesJson} AS jsonb),
+                CAST(#{avoidPlacesJson} AS jsonb), CAST(#{mealWindowsJson} AS jsonb),
+                #{mobilityLevel}, #{schemaVersion}
             )
             """)
     int insertConstraint(TripConstraintRecord constraint);
@@ -45,6 +50,13 @@ public interface TripMapper {
                    trip_constraint.traveler_type, trip_constraint.pace,
                    trip_constraint.preferences::text AS preferences_json,
                    trip_constraint.fixed_schedules::text AS fixed_schedules_json,
+                   trip_constraint.arrival::text AS arrival_json,
+                   trip_constraint.departure::text AS departure_json,
+                   trip_constraint.accommodation::text AS accommodation_json,
+                   trip_constraint.must_visit_places::text AS must_visit_places_json,
+                   trip_constraint.avoid_places::text AS avoid_places_json,
+                   trip_constraint.meal_windows::text AS meal_windows_json,
+                   trip_constraint.mobility_level,
                    trip_constraint.schema_version
             FROM business.trip
             JOIN business.trip_constraint ON trip_constraint.trip_id = trip.id
@@ -66,6 +78,13 @@ public interface TripMapper {
             SELECT trip_id, budget_amount, travelers, traveler_type, pace,
                    preferences::text AS preferences_json,
                    fixed_schedules::text AS fixed_schedules_json,
+                   arrival::text AS arrival_json,
+                   departure::text AS departure_json,
+                   accommodation::text AS accommodation_json,
+                   must_visit_places::text AS must_visit_places_json,
+                   avoid_places::text AS avoid_places_json,
+                   meal_windows::text AS meal_windows_json,
+                   mobility_level,
                    schema_version, updated_at
             FROM business.trip_constraint
             WHERE trip_id = #{tripId}
@@ -86,6 +105,13 @@ public interface TripMapper {
                 traveler_type = #{travelerType}, pace = #{pace},
                 preferences = CAST(#{preferencesJson} AS jsonb),
                 fixed_schedules = CAST(#{fixedSchedulesJson} AS jsonb),
+                arrival = CAST(#{arrivalJson} AS jsonb),
+                departure = CAST(#{departureJson} AS jsonb),
+                accommodation = CAST(#{accommodationJson} AS jsonb),
+                must_visit_places = CAST(#{mustVisitPlacesJson} AS jsonb),
+                avoid_places = CAST(#{avoidPlacesJson} AS jsonb),
+                meal_windows = CAST(#{mealWindowsJson} AS jsonb),
+                mobility_level = #{mobilityLevel},
                 schema_version = #{schemaVersion}, updated_at = CURRENT_TIMESTAMP
             WHERE trip_id = #{tripId}
             """)

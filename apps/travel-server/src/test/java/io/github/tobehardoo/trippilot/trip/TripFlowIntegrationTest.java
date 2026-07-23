@@ -282,6 +282,7 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                         .content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
     }
 
     private static Stream<Arguments> invalidCreateConstraints() {
@@ -309,6 +310,182 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                         "preferences": [],
                         "fixedSchedules": [null]
                         """));
+    }
+
+    @Test
+    void createsAndReadsCompleteTravelContextV2() throws Exception {
+        String token = registerAndGetAccessToken("context-v2@example.com");
+
+        MvcResult result = mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "广州无障碍周末",
+                                  "destination": "广州",
+                                  "startDate": "2026-08-01",
+                                  "endDate": "2026-08-02",
+                                  "constraints": {
+                                    "budgetAmount": 3000,
+                                    "travelers": 2,
+                                    "travelerType": "FAMILY",
+                                    "pace": "RELAXED",
+                                    "preferences": ["岭南文化"],
+                                    "fixedSchedules": [],
+                                    "arrival": {
+                                      "placeName": "广州南站",
+                                      "time": "2026-08-01T11:00:00+08:00"
+                                    },
+                                    "departure": {
+                                      "placeName": "广州白云机场",
+                                      "time": "2026-08-02T17:00:00+08:00"
+                                    },
+                                    "accommodation": {"placeName": "北京路附近酒店"},
+                                    "mustVisitPlaces": ["陈家祠"],
+                                    "avoidPlaces": ["广州塔"],
+                                    "mealWindows": [{
+                                      "mealType": "LUNCH",
+                                      "startTime": "12:00",
+                                      "endTime": "13:00"
+                                    }],
+                                    "mobilityLevel": "REDUCED"
+                                  }
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.constraints.schemaVersion").value(2))
+                .andExpect(jsonPath("$.constraints.arrival.placeName").value("广州南站"))
+                .andExpect(jsonPath("$.constraints.departure.time")
+                        .value("2026-08-02T09:00:00Z"))
+                .andExpect(jsonPath("$.constraints.accommodation.placeName").value("北京路附近酒店"))
+                .andExpect(jsonPath("$.constraints.mustVisitPlaces[0]").value("陈家祠"))
+                .andExpect(jsonPath("$.constraints.avoidPlaces[0]").value("广州塔"))
+                .andExpect(jsonPath("$.constraints.mealWindows[0].mealType").value("LUNCH"))
+                .andExpect(jsonPath("$.constraints.mobilityLevel").value("REDUCED"))
+                .andReturn();
+
+        String tripId = json(result).get("id").asText();
+        mockMvc.perform(get("/api/trips/{tripId}", tripId)
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.constraints.schemaVersion").value(2))
+                .andExpect(jsonPath("$.constraints.mustVisitPlaces[0]").value("陈家祠"));
+    }
+
+    @Test
+    void rejectsOutOfRangeTravelAnchorsAndInvalidMealWindows() throws Exception {
+        String token = registerAndGetAccessToken("context-invalid@example.com");
+        String base = """
+                {
+                  "title": "错误上下文",
+                  "destination": "广州",
+                  "startDate": "2026-08-01",
+                  "endDate": "2026-08-02",
+                  "constraints": {
+                    "budgetAmount": 3000,
+                    "travelers": 1,
+                    "travelerType": "SOLO",
+                    "pace": "BALANCED",
+                    "preferences": [],
+                    "fixedSchedules": [],
+                    %s
+                  }
+                }
+                """;
+
+        mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted("""
+                                "arrival": {
+                                  "placeName": "广州南站",
+                                  "time": "2026-07-31T23:00:00+08:00"
+                                }
+                                """)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted("""
+                                "arrival": {
+                                  "placeName": "跨时区车站",
+                                  "time": "2026-08-01T01:00:00+14:00"
+                                }
+                                """)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted("""
+                                "fixedSchedules": [{
+                                  "placeName": "跨时区安排",
+                                  "startTime": "2026-08-01T01:00:00+14:00",
+                                  "endTime": "2026-08-01T02:00:00+14:00"
+                                }]
+                                """)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted("""
+                                "mealWindows": [{
+                                  "mealType": "LUNCH",
+                                  "startTime": "13:00",
+                                  "endTime": "12:00"
+                                }]
+                                """)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted("""
+                                "mealWindows": [{
+                                  "mealType": "BREAKFAST",
+                                  "startTime": "08:00",
+                                  "endTime": "10:00"
+                                }, {
+                                  "mealType": "LUNCH",
+                                  "startTime": "09:30",
+                                  "endTime": "11:00"
+                                }]
+                                """)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void rejectsTripsLongerThanSevenDays() throws Exception {
+        String token = registerAndGetAccessToken("bounded-trip@example.com");
+
+        mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "超长旅行",
+                                  "destination": "广州",
+                                  "startDate": "2026-08-01",
+                                  "endDate": "2026-08-08",
+                                  "constraints": {
+                                    "budgetAmount": 3000,
+                                    "travelers": 1,
+                                    "travelerType": "SOLO",
+                                    "pace": "BALANCED",
+                                    "preferences": [],
+                                    "fixedSchedules": []
+                                  }
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     private org.springframework.test.web.servlet.ResultActions createTrip(String accessToken) throws Exception {

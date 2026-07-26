@@ -14,7 +14,7 @@
 行程版本不可变（immutable）是一个影响全局的设计决策。它的代价是每次修改都要复制全部活动和交通段，但换来的收益是：
 
 1. **可审计**：每个版本完整记录「谁在什么时间做了什么修改」，不依赖操作日志还原
-2. **可回滚**：回滚只需要切换 `itinerary.current_version_id` 指针，不需要逆向计算差异
+2. **可回滚**：回滚复制目标快照并创建一个新的不可变版本，不需要逆向计算差异
 3. **可比较**：版本差异计算基于两份完整的不可变快照，不担心中间状态
 4. **规划可复现**：Python Worker 持有的基线版本不会被并行修改覆盖
 
@@ -26,7 +26,7 @@ itinerary (id, trip_id, current_version_id, ...)
 
 -- 每次变更创建一个新版本
 itinerary_version (id, itinerary_id, parent_version_id, version_source, ...)
-  -- version_source: PLANNING_TASK | USER_EDIT | LOCAL_REPLAN
+  -- version_source: PLANNING_TASK | USER_EDIT | LOCAL_REPLAN | ROLLBACK
 
 -- 每个版本有若干天
 itinerary_day (id, version_id, day_date, day_index, ...)
@@ -80,6 +80,12 @@ trip_constraint (
 | `itinerary_version` | `(itinerary_id, created_at DESC)` | 版本列表和版本比较 |
 | `activity` | 查询按 `(itinerary_day_id, activity_order)` 排序 | 当前依赖外键与数据量边界，尚无专用排序索引 |
 | `guide_fact` | `guide_fact_identity_idx` | 按 `guide_import_id`、类别与事实哈希去重 |
+| `city_source_registry` | `UNIQUE(city_code, source_url)` | 防止同一城市重复注册来源 |
+| `city_intelligence_refresh` | `UNIQUE(trip_id, idempotency_key)` | 预热与规划前刷新幂等 |
+| `guide_fact` | `(city_code, category, effective_date, expires_at)` | TTL、日期适用性与合并查询 |
+| `planning_context_snapshot` | `UNIQUE(planning_task_id)` | 一个任务只冻结一个输入快照 |
+| `itinerary_rollback_record` | `UNIQUE(trip_id, idempotency_key)` | 重复回滚返回同一新版本 |
+| `planning_fact_impact` | `(itinerary_version_id, day_date)` | 结果页按版本与日期读取解释 |
 | `knowledge_chunk` | `(document_id, chunk_index)` | 文档加载后按序取片段 |
 | `knowledge_chunk_embedding` | `(embedding_model, embedding_dimensions, chunk_id)` | 先限定模型与维度，再做精确向量距离排序；当前未创建近似向量索引 |
 
@@ -91,6 +97,21 @@ trip_constraint (
 - **向前兼容**。新迁移只增不删列，不重命名已有列。需要收紧约束时新建 NOT NULL 列并提供默认值
 - **单实例迁移**。V1 假设迁移时旧版服务已停止，不支持滚动升级期间的 Schema 兼容
 - **回滚不迁移**。回滚只切回旧镜像，不执行反向数据库迁移。数据恢复通过备份
+
+### V1.3 向前迁移计划
+
+V1.2 最新迁移为 V19；V1.3 从 V20 继续编号，不修改已发布文件：
+
+- `V20__create_city_source_registry.sql`：来源注册、审核/启停字段、广州/北京/上海初始化
+  数据和唯一索引。
+- `V21__add_trusted_fact_lifecycle.sql`：规范化文档、刷新状态、事实可靠性/证据跨度/
+  结构化值、合并决策、规划上下文快照和 TTL 查询索引。
+- `V22__add_itinerary_version_recovery.sql`：版本原因/摘要、回滚来源、回滚幂等与审计、
+  规划事实影响。
+
+迁移先增加可空列并回填现有 `guide_import/guide_fact`：已有用户导入统一标为
+`COMMUNITY`，已有 `CITY_INTELLIGENCE` 标为 `PROVIDER`，不把历史社区事实升级为官方。
+回填完成后再添加约束。现有 V1.2 行程、活动、交通与知识引用不删除、不重写。
 
 ## 进一步阅读
 

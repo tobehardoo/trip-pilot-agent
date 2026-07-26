@@ -76,6 +76,31 @@ VITE_AMAP_SECURITY_CODE=your-browser-security-code
 
 服务端 Key 和浏览器 Key 必须分开，避免把 Web Service Key 暴露到前端。
 
+### 高德 Web JS 底图验收
+
+`VITE_AMAP_WEB_JS_KEY` 必须是“Web 端（JS API）”Key；`VITE_AMAP_SECURITY_CODE` 必须是
+同一高德应用下与该 Key 匹配的安全密钥。代码只能校验两者是否同时存在，不能代替控制台
+授权。
+
+高德控制台需要人工完成：
+
+1. 为本地验收加入实际访问域名，例如 `127.0.0.1` 与 `localhost`；端口按高德控制台
+   当前规则填写。
+2. 为生产加入最终 HTTPS 域名，不使用宽泛通配符。
+3. 确认安全密钥与 Web JS Key 属于同一应用，保存后重新构建 Web 镜像。
+4. 浏览器打开结果页，网络面板确认高德基础图块请求成功；页面在地图 `complete` 前应
+   保持路线概览，成功后才出现 Marker/Polyline。
+
+SDK 脚本加载成功不等于底图可用。8 秒内未收到地图 `complete`，或初始化/覆盖物失败时，
+页面必须显示诊断提示并保留路线概览。生产 CSP 需要允许 `webapi.amap.com`、
+`*.amap.com` 与高德实际图块域名；具体白名单见 `apps/web/nginx.conf`。
+
+### V1.3 事实模型配置
+
+规则抽取始终启用。结构化模型抽取是可降级增强，使用独立的模型 Provider 配置、有限输入、
+超时和重试；缺少 Key 时记录 `SKIPPED`，不导致攻略导入失败，也不会把 Demo 数据当成
+Provider 成功。任何模型密钥只注入 Python Agent API，不进入 Web 构建参数或日志。
+
 ## 数据库备份
 
 ```bash

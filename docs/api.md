@@ -23,10 +23,19 @@
 /api/trips/{tripId}/itinerary                  GET     当前行程
 /api/trips/{tripId}/itinerary/edits/preview    POST    预览编辑影响
 /api/trips/{tripId}/itinerary/edits            POST    应用编辑
+/api/trips/{tripId}/itinerary/versions         GET     版本列表
+/api/trips/{tripId}/itinerary/versions/{id}    GET     指定版本详情
+/api/trips/{tripId}/itinerary/diffs            GET     两个版本的结构化差异
+/api/trips/{tripId}/itinerary/rollbacks        POST    回滚并创建新版本
 
 /api/trips/{tripId}/guide-imports           GET     攻略导入列表
-/api/trips/{tripId}/guide-imports           POST    导入攻略 URL
+/api/trips/{tripId}/guide-imports           POST    导入 URL、正文或城市情报
 /api/trips/{tripId}/guide-imports/{id}      PUT     启用或停用攻略来源
+
+/api/city-sources                           GET     查询已注册城市来源
+/api/city-sources/{id}                      PUT     审核、启用或停用来源
+/api/trips/{tripId}/city-intelligence       GET     刷新状态和最后成功快照摘要
+/api/trips/{tripId}/city-intelligence/refreshes POST 手动触发幂等刷新
 ```
 
 ### 认证
@@ -42,6 +51,10 @@ Access Token 过期后，前端用 Refresh Cookie 调用 `/api/auth/refresh` 获
 调用方不得在 CREATE 与 REPLAN 之间复用同一幂等键。服务端会校验任务类型；REPLAN
 还会校验基线版本与规范化后的日期集合，不一致时返回 `409 IDEMPOTENCY_KEY_REUSED`。
 
+回滚请求同样要求 `Idempotency-Key`，并在请求体携带 `baseVersionId` 与
+`targetVersionId`。同一键重复提交返回第一次创建的新版本；键相同但目标不同返回
+`409 IDEMPOTENCY_KEY_REUSED`。当前版本已变化时返回 `409 ITINERARY_VERSION_CONFLICT`。
+
 ## MQ 消息契约
 
 ### 命令（Java → Python）
@@ -49,8 +62,8 @@ Access Token 过期后，前端用 Refresh Cookie 调用 `/api/auth/refresh` 获
 ```
 trip.command.exchange
 ├── planning.create  (routing key)
-│   契约: planning-create-command-v2.schema.json
-│   载荷: tripSnapshot + constraints + guideEvidence + traceId
+│   契约: planning-create-command-v3.schema.json
+│   载荷: tripSnapshot + constraints + planningContextSnapshot + traceId
 │
 ├── planning.replan  (routing key)
 │   契约: planning-replan-command-v1.schema.json
@@ -59,6 +72,10 @@ trip.command.exchange
 └── planning.cancel  (routing key)
     契约: planning-cancel-command-v1.schema.json
     载荷: taskId + traceId
+
+city-intelligence.refresh
+    契约: city-intelligence-refresh-command-v1.schema.json
+    载荷: refreshId + tripId + city + tripDates + sourceIds + idempotencyKey
 ```
 
 ### 事件（Python → Java）
@@ -73,6 +90,7 @@ trip.event.exchange
 │     v3: 增加 transitLegs（步行）
 │     v4: 增加 knowledgeEvidence
 │     v5: 交通段模式从 WALKING 扩展到 WALKING|DRIVING
+│     v6: 增加 planningFactImpacts 与事实诊断摘要
 │
 └── planning.failed  (routing key)
     契约: planning-failed-event-v1.schema.json
@@ -88,9 +106,10 @@ trip.event.exchange
 
 ### 活跃契约
 
-- `planning-completed-event-v4.schema.json`（步行模式，仍被 Java 接受）
-- `planning-completed-event-v5.schema.json`（步行+驾车，最新的完成事件格式）
-- `planning-create-command-v2.schema.json`（完整约束+攻略证据）
+- `planning-completed-event-v5.schema.json`（V1.2 兼容读取）
+- `planning-completed-event-v6.schema.json`（规划事实影响，V1.3 写入格式）
+- `planning-create-command-v3.schema.json`（完整约束+不可变城市情报快照）
+- `city-intelligence-refresh-command-v1.schema.json`
 - `planning-cancel-command-v1.schema.json`
 - `planning-replan-command-v1.schema.json`
 - `planning-failed-event-v1.schema.json`
@@ -99,6 +118,14 @@ trip.event.exchange
 
 - `planning-completed-event-v1/v2/v3.schema.json`
 - `planning-create-command-v1.schema.json`
+- `planning-create-command-v2.schema.json`
+
+### PlanningContextSnapshot V3
+
+快照包含 `snapshotId`、`schemaVersion`、旅行与任务 ID、城市、旅行日期、生成时间、
+来源、采用事实、冲突决策、排除事实、刷新诊断和 stale 状态。事实包含可靠性、
+`checkedAt`、`expiresAt`、适用日期、证据与结构化值。创建任务后快照不可更新；同一任务
+重投递必须字节语义等价。Python Worker 不得用城市名重新抓取或读取 Java 业务表。
 
 ## SSE 协议
 

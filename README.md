@@ -2,7 +2,9 @@
 
 TripPilot 是一个面向国内自由行的约束驱动型旅行规划平台。它把用户的日期、预算、兴趣、必去地点、固定安排和交通偏好转换为结构化约束，再结合真实 POI、路线与城市知识生成可执行、可解释的多日行程。
 
-> 当前版本：V1.2 发布候选。默认提供无需外部 API Key 的确定性 Demo 模式，也支持接入高德、语义 Embedding 与公开攻略情报导入。发布证据见[验收清单](docs/release-checklist.md)。
+> 发布基线：V1.2 发布候选；当前开发目标：V1.3“可信城市情报与可恢复版本”。默认提供
+> 无需外部 API Key 的确定性 Demo 模式，也支持接入高德、语义 Embedding 与公开攻略
+> 情报导入。V1.3 实际状态与证据见[验收清单](docs/release-checklist.md)。
 
 ## What：这是一个什么项目
 
@@ -221,8 +223,8 @@ pnpm build
 - [接口与消息契约](docs/api.md) — REST API、MQ 契约版本化、SSE 协议
 - [部署](docs/deployment.md) — Docker Compose、环境变量、备份恢复
 - [产品路线图](docs/roadmap.md) — 当前发布范围、生产 V1 退出条件、后续计划
-- [当前系统状态与 V1.4 规划](docs/28-current-system-status-and-v1-4-plan.md) — 架构汇报、已完成/未完成边界和未来两个版本
-- [V1.2 发布验收清单](docs/release-checklist.md) — 本次发布的范围、证据与完成定义
+- [当前系统状态与 V1.3 实施基线](docs/28-current-system-status-and-v1-4-plan.md) — 真实能力、差异、风险和实施切片
+- [V1.3 发布验收清单](docs/release-checklist.md) — 当前目标的范围、证据与完成定义
 - [技术决策记录](docs/decision-record.md) — 关键 ADR 及取舍理由
 - [产品完整度与需求基线](docs/27-product-completeness-and-requirements-baseline.md) — 详细需求清单和评分
 

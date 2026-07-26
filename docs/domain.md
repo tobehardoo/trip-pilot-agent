@@ -2,7 +2,7 @@
 
 ## 核心领域划分
 
-TripPilot 的业务可以分为六个核心领域。每个领域拥有自己的数据表、业务规则和对外接口。
+TripPilot 的业务可以分为七个核心领域。每个领域拥有自己的数据表、业务规则和对外接口。
 
 ### Trip Domain（旅行）
 
@@ -61,6 +61,39 @@ TripPilot 的业务可以分为六个核心领域。每个领域拥有自己的�
 
 **对外接口**：`GuideImportService`（Java 侧攻略管理）、`RetrievalService`（Python 侧知识检索）
 
+### City Intelligence Domain（城市情报）
+
+**职责**：管理人工注册可信来源、文档规范化结果、事实生命周期、冲突决策、刷新诊断和
+不可变规划上下文。
+
+**拥有的数据**：`city_source_registry`、`normalized_document`、`city_intelligence_refresh`、
+扩展后的 `guide_fact`、`fact_merge_decision`、`planning_context_snapshot`
+
+**关键规则**：
+
+- 来源由人工注册并审核，至少覆盖广州、北京和上海；运行时不自动发现全网官网。
+- 官方来源只有在注册表审核通过且启用时才能产生 `OFFICIAL` 事实。
+- 模型输出只是 `ExtractedFactCandidate`，必须通过 JSON Schema、证据跨度和
+  `FactValidator` 后才能进入有效事实集合。
+- 合并同时考虑类别、来源可靠性、核验时间、适用日期、过期时间、证据与景点身份；
+  不使用单一固定分数覆盖所有类别。
+- 只有新鲜、证据有效且来自审核官方来源的关闭和预约事实可形成硬约束。
+- 高德参考消费与官网门票是不同语义；社区事实只能影响排序、提示和解释。
+- 刷新失败保留最后成功事实并标记 `stale`，不得把旧事实伪装成实时数据。
+- `PlanningContextSnapshot` 在任务创建时冻结并带 `schemaVersion`；同一任务重试复用原快照。
+
+规范化端口固定为：
+
+```text
+DocumentSource → DocumentFetcher → DocumentNormalizer
+  → NormalizedDocument → RuleFactExtractor / StructuredModelFactExtractor
+  → FactValidator → FactMerger
+```
+
+`NormalizedDocument` 至少保存文档 ID、来源、城市、标题、标准化正文、内容哈希、编码、
+语言、抓取时间、元数据与原始可靠性。公开 URL 继续执行 HTTPS、DNS 公网地址、同域
+重定向、超时与大小限制；小红书只接受用户主动提供的分享正文，不保存 Cookie 或绕过访问控制。
+
 ### Identity Domain（身份）
 
 **职责**：用户注册、登录和会话管理。
@@ -82,9 +115,14 @@ TripPilot 的业务可以分为六个核心领域。每个领域拥有自己的�
 版本操作（`persistKnowledge`、`copyKnowledge`、版本比较）会在三个场景中被调用——规划完成、用户编辑、局部重规划。如果留存在 Itinerary 或 Planning 中，要么代码在三处重复，要么一个域跨越另一个域的职责边界。独立的 Version 域让版本克隆和知识引用复制成为可测试的单元操作。
 
 **关键规则**：
-- 每个版本记录父版本、创建原因（`PLANNING_TASK`、`USER_EDIT`、`LOCAL_REPLAN`）和关联规划任务
+- 每个版本记录父版本、创建原因（`PLANNING_TASK`、`USER_EDIT`、`LOCAL_REPLAN`、
+  `ROLLBACK`）和可选关联规划任务
 - 版本中包含的知识引用（`itinerary_version_knowledge`）和规划证据（`guide_evidence_snapshot`）不被后续版本修改
 - 版本比较基于不可变版本 ID，不需要快照整个行程
+- 回滚不修改历史版本或把指针直接指回旧版本；它复制目标版本并创建新的 `ROLLBACK`
+  版本，记录 `rollbackFromVersionId`、幂等键、操作者和审计时间
+- 结构化差异按稳定活动身份与内容匹配，输出新增、删除、移动、时间、交通、预算、
+  日期、锁定状态、规划事实及影响原因的变化
 
 ## 聚合关系
 
@@ -94,6 +132,8 @@ User
  │    ├── TripConstraint
  │    ├── PlanningTask
  │    │    └── PlanningTaskEvent
+ │    ├── CityIntelligenceRefresh
+ │    ├── PlanningContextSnapshot
  │    └── GuideImport
  │         └── GuideFact
  │
@@ -102,7 +142,8 @@ User
            ├── ItineraryDay
            │    ├── Activity
            │    └── TransitLeg
-           └── KnowledgeCitation
+           ├── KnowledgeCitation
+           └── PlanningFactImpact
 ```
 
 ## 数据所有权
@@ -113,6 +154,7 @@ User
 - 最终行程、版本、活动和交通段
 - Outbox 和审计记录
 - 攻略导入和事实
+- 城市来源、刷新、事实冲突、规划快照和影响记录
 
 **Python 拥有 Agent 执行事实**（`agent` Schema）：
 - Agent 运行和步骤记录
@@ -142,6 +184,7 @@ User
 - 所有修改命令携带客户端看到的版本号
 - 数据库使用乐观锁（版本字段），冲突时返回 `409 Conflict`
 - 同一旅行只允许一个修改行程的活动任务
+- 同一旅行同一刷新幂等键只能有一条刷新记录；数据库行锁和版本号阻止旧刷新覆盖新快照
 - Redis 锁只做快速拦截，数据库约束是最终保障
 
 ## 进一步阅读

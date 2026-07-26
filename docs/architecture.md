@@ -33,6 +33,36 @@ TripPilot 的核心业务——旅行规划——是一个强一致性的状态�
 
 这本质上是**两个部署单元、两种语言、一个数据库、一套消息契约**的架构。
 
+## V1.3 可信城市情报边界
+
+V1.3 不新增微服务，也不让规划 Worker 在求解过程中访问网页。动态事实按以下单向数据流
+进入规划：
+
+```text
+人工审核的城市来源注册表（Java / business）
+  → Java 创建刷新任务并通过现有 Outbox + RabbitMQ 投递
+  → Python Agent API 抓取、规范化、规则/模型候选抽取
+  → Schema 与 FactValidator 拒绝无证据或非法候选
+  → Java 复核来源身份并持久化旅行级事实、冲突和刷新诊断
+  → 创建规划任务前按类别 TTL 检查，必要时限时刷新
+  → Java 冻结 PlanningContextSnapshot V3
+  → Python Worker 只消费快照并产生 PlanningFactImpact
+  → Java 将影响记录随不可变行程版本持久化
+```
+
+责任边界：
+
+- Java 拥有城市来源注册、审核/启停、旅行刷新状态、有效事实、合并决策、规划快照、
+  版本差异、回滚与审计。
+- Python Agent API 拥有抓取与规范化实现、规则抽取器、受限模型抽取器以及抽取侧校验；
+  它返回候选和诊断，不直接写 `business` Schema。
+- Python Worker 只读取命令中的冻结快照；后续 Provider 刷新不能改变已创建任务的输入。
+- Redis 仅用于 Provider 缓存或短期并发协调；最后成功事实与刷新结果必须落 PostgreSQL。
+
+创建旅行后的预热使用现有 Outbox，失败不回滚旅行。创建规划任务前的刷新采用有上限的等待：
+高影响类别刷新失败时使用最后成功事实并标记 `stale`，没有历史事实时继续规划并返回明确
+诊断，不因单个 Provider 故障伪造实时成功。
+
 ## 为什么用异步任务模型而不是同步 HTTP
 
 旅行规划的执行链路包括：高德 POI 搜索（多次）→ 候选去重和排序 → 高德路线查询（多次）→ OR-Tools 约束求解 → pgvector 知识检索。在真实模式下，单次规划可能需要 10-30 秒。
@@ -83,6 +113,7 @@ COMMIT;
 ```
 trip.command.exchange
 ├── planning.create.queue   → Python Worker（绑定 planning.create 与 planning.replan）
+├── city-intelligence.refresh.queue → Java 刷新消费者（调用 Python Agent API）
 └── planning.cancel.queue   → Python Worker（独立控制通道）
 
 trip.event.exchange
@@ -104,6 +135,10 @@ trip.dead-letter.exchange
 去重；Python 使用确定性事件 ID，Java 在写入不可变版本前再次核对任务、旅行、
 `traceId` 和基线版本。Python 端目前没有独立的持久化幂等表，因此不能声称 Worker
 重启后已经实现严格的消费去重。
+
+城市刷新消息携带 `messageVersion`、刷新 ID 和幂等键。Java 消费者先锁定刷新记录，
+只允许 `PENDING/RETRYING` 状态进入执行，成功与失败都写结构化诊断；重复或乱序消息不会
+覆盖更新版本的成功快照。
 
 ## 安全设计
 

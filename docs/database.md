@@ -36,6 +36,10 @@ activity (id, day_id, ...)
 transit_leg (id, day_id, from_activity_id, to_activity_id, ...)
 ```
 
+`transit_leg.polyline` 始终是 JSON 数组。Provider 已核验的路线至少包含一个坐标点；
+用户切换交通方式后生成的 `DEMO` 估算段允许暂时使用空数组，避免把旧交通方式的轨迹误当成
+新路线展示，后续重规划可再写入新的轨迹。
+
 ## 约束的关系字段与 JSONB 边界
 
 `trip_constraint` 将稳定、需要校验或查询的字段关系化，将结构可演进的列表保存在 JSONB：

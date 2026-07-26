@@ -18,7 +18,7 @@ REPLAN_COMMAND = {
         "taskType": "REPLAN",
         "baselineTripVersion": 0,
         "baselineItineraryVersionId": "5ed1e169-04ec-45ed-9102-f75d833f2b8c",
-        "idempotencyKey": "1439eeb2-104f-41b8-872f-bca3127fc56d",
+        "idempotencyKey": "00000000-0000-4000-8000-000000000001",  # gitleaks:allow
         "impactedDates": ["2026-08-01"],
         "trip": {
             "title": "Guangzhou weekend",

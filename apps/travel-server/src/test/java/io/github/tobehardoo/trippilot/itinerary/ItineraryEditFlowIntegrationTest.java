@@ -165,6 +165,9 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.versionNumber").value(2))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].mode").value("DRIVING"))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].provider").value("DEMO"))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].estimated").value(true))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].polyline").isEmpty())
                 .andExpect(jsonPath("$.days[0].transitLegs[0].locked").value(true));
 
         JsonNode persisted = currentItinerary(context);

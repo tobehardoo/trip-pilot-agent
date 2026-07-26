@@ -16,7 +16,9 @@
 
 - [x] README、API、架构、数据库和部署文档与代码一致，仓库内链接有效。
 - [x] Java 非容器测试通过（42 项）。
-- [ ] Java Testcontainers 与 JaCoCo 门禁在 GitHub Actions 通过。
+- [x] Java Testcontainers 与 JaCoCo 门禁已在
+      [GitHub Actions #69](https://github.com/tobehardoo/trip-pilot-agent/actions/runs/30186403821)
+      通过。
 - [x] Python 全量测试（378 通过、34 环境跳过）与 Ruff 通过。
 - [x] Web 单元测试（73 项）、覆盖率、类型检查和生产构建通过。
 - [x] 活跃 JSON Schema 可被自动解析，失败事件模型样例通过契约校验。
@@ -29,9 +31,9 @@
 
 ## 环境受限项
 
-依赖 Docker 的 Testcontainers、完整 Compose 启动和跨服务浏览器链路，需要 Docker
-Engine 可用。若发布机器无法运行 Docker，这些项目必须在 GitHub Actions 中形成通过证据，
-本地报告需明确记录“未运行”，不得写成“通过”。
+本机 Docker Engine 不可用，因此本地未运行依赖 Docker 的验证。GitHub Actions #69 已验证
+Java Testcontainers、Python pgvector 服务、JaCoCo 门禁和生产镜像构建。完整 Compose 运行态、
+真实外部 Provider 与跨服务浏览器链路仍应在实际发布环境验证，不得以模拟烟雾测试代替。
 
 ## 完成定义
 

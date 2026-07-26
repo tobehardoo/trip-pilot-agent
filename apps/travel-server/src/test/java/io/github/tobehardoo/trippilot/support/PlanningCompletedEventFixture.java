@@ -184,4 +184,61 @@ public final class PlanningCompletedEventFixture {
                 """;
         return v3.replace("\"itinerary\": {", knowledge + "\"itinerary\": {");
     }
+
+    public static String completedTwoDayAmapEventV3(
+            UUID eventId, UUID traceId, UUID taskId, UUID tripId
+    ) {
+        String firstDay = completedAmapEventV3(eventId, traceId, taskId, tripId);
+        String secondDay = """
+                ,
+                        {
+                          "date": "2026-08-02",
+                          "activities": [
+                            {
+                              "title": "Yuexiu Park",
+                              "startTime": "2026-08-02T09:00:00+08:00",
+                              "endTime": "2026-08-02T11:00:00+08:00",
+                              "estimatedCost": 0,
+                              "source": "AMAP",
+                              "providerPoiId": "PARK-1",
+                              "coordinates": {"longitude": 113.264385, "latitude": 23.140326},
+                              "address": "Jiefang North Road"
+                            },
+                            {
+                              "title": "Chen Clan Academy",
+                              "startTime": "2026-08-02T13:00:00+08:00",
+                              "endTime": "2026-08-02T15:00:00+08:00",
+                              "estimatedCost": 0,
+                              "source": "AMAP",
+                              "providerPoiId": "ACADEMY-1",
+                              "coordinates": {"longitude": 113.246749, "latitude": 23.129191},
+                              "address": "Zhongshan 7th Road"
+                            }
+                          ],
+                          "transitLegs": [
+                            {
+                              "fromActivityIndex": 0,
+                              "toActivityIndex": 1,
+                              "mode": "WALKING",
+                              "distanceMeters": 910,
+                              "durationSeconds": 600,
+                              "provider": "AMAP",
+                              "estimated": false,
+                              "polyline": [
+                                {"longitude": 113.264385, "latitude": 23.140326},
+                                {"longitude": 113.246749, "latitude": 23.129191}
+                              ]
+                            }
+                          ]
+                        }
+                """;
+        int totalCostIndex = firstDay.indexOf("\"estimatedTotalCost\"");
+        int daysEndIndex = firstDay.lastIndexOf(']', totalCostIndex);
+        if (daysEndIndex < 0) {
+            throw new IllegalStateException("Could not extend the planning completion fixture");
+        }
+        return firstDay.substring(0, daysEndIndex)
+                + secondDay
+                + firstDay.substring(daysEndIndex);
+    }
 }

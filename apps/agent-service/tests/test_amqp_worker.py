@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import pytest
 from pydantic import ValidationError
+from test_local_replanning import REPLAN_COMMAND
 from test_planning_worker import COMMAND
 
 
@@ -78,6 +79,22 @@ def test_valid_command_is_acked_only_after_completed_event_is_published() -> Non
     assert len(exchange.published) == 1
     published, routing_key, mandatory = exchange.published[0]
     assert routing_key == "planning.completed"
+
+
+def test_valid_command_publishes_the_expected_completed_contract() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    message = FakeIncomingMessage(json.dumps(COMMAND).encode())
+    exchange = FakeExchange()
+
+    asyncio.run(amqp.handle_delivery(message, exchange))
+
+    assert message.acked is True
+    assert message.rejected_with is None
+    assert len(exchange.published) == 1
+    published, routing_key, mandatory = exchange.published[0]
+    assert routing_key == "planning.completed"
+    assert mandatory is True
+    assert json.loads(published.body)["eventType"] == "PLANNING_COMPLETED"
     assert mandatory is True
     assert published.content_type == "application/json"
     assert published.delivery_mode.name == "PERSISTENT"
@@ -100,6 +117,50 @@ def test_valid_command_is_acked_only_after_completed_event_is_published() -> Non
         "freshness": {"status": "UNAVAILABLE"},
         "message": "演示模式未使用生产知识检索",
     }
+
+
+def test_valid_replan_command_uses_the_completed_event_route() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    message = FakeIncomingMessage(json.dumps(REPLAN_COMMAND).encode())
+    exchange = FakeExchange()
+
+    asyncio.run(amqp.handle_delivery(message, exchange))
+
+    assert message.acked is True
+    assert message.rejected_with is None
+    assert len(exchange.published) == 1
+    published, routing_key, mandatory = exchange.published[0]
+    assert routing_key == "planning.completed"
+    assert mandatory is True
+    body = json.loads(published.body)
+    assert body["eventType"] == "PLANNING_COMPLETED"
+    assert body["taskId"] == REPLAN_COMMAND["taskId"]
+    assert body["payload"]["itinerary"]["days"][0]["transitLegs"][0]["distanceMeters"] > 0
+
+
+def test_replan_without_activity_coordinates_publishes_failure_without_requeue() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    invalid = deepcopy(REPLAN_COMMAND)
+    invalid["payload"]["itinerary"]["provider"] = "DEMO"
+    for day in invalid["payload"]["itinerary"]["days"]:
+        for activity in day["activities"]:
+            activity["source"] = "DEMO"
+            activity.pop("providerPoiId", None)
+            activity.pop("coordinates", None)
+            activity.pop("address", None)
+    message = FakeIncomingMessage(json.dumps(invalid).encode())
+    exchange = FakeExchange()
+
+    asyncio.run(amqp.handle_delivery(message, exchange))
+
+    assert message.acked is True
+    assert message.nacked_with is None
+    published, routing_key, mandatory = exchange.published[0]
+    assert routing_key == "planning.failed"
+    assert mandatory is True
+    body = json.loads(published.body)
+    assert body["payload"]["errorCode"] == "NO_FEASIBLE_ITINERARY"
+    assert body["payload"]["conflicts"][0]["code"] == "REPLAN_ACTIVITY_COORDINATES_MISSING"
 
 
 def test_cancel_command_suppresses_a_queued_planning_delivery() -> None:
@@ -263,6 +324,19 @@ def test_invalid_command_is_rejected_without_requeue() -> None:
     assert exchange.published == []
 
 
+def test_non_object_command_is_rejected_without_requeue() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    message = FakeIncomingMessage(b"[]")
+    exchange = FakeExchange()
+
+    asyncio.run(amqp.handle_delivery(message, exchange))
+
+    assert message.acked is False
+    assert message.rejected_with is False
+    assert message.nacked_with is None
+    assert exchange.published == []
+
+
 def test_mixed_timezone_schedule_is_rejected_without_stalling_delivery() -> None:
     amqp = import_module("trip_agent.worker.amqp")
     handle = getattr(amqp, "handle_delivery", None)
@@ -311,15 +385,19 @@ def test_infeasible_plan_publishes_an_actionable_failure_and_acks() -> None:
         async def plan(self, command: object):
             del command
             raise processor.PlanningInfeasibleError(
-                (optimization.OptimizationConflict(
-                    "INSUFFICIENT_DAY_CAPACITY",
-                    "活动、交通与固定安排无法同时放入可用时间",
-                    ("不可移动安排",),
-                ),),
-                (optimization.RelaxationSuggestion(
-                    "REDUCE_OPTIONAL_ACTIVITIES",
-                    "减少一个可选活动",
-                ),),
+                (
+                    optimization.OptimizationConflict(
+                        "INSUFFICIENT_DAY_CAPACITY",
+                        "活动、交通与固定安排无法同时放入可用时间",
+                        ("不可移动安排",),
+                    ),
+                ),
+                (
+                    optimization.RelaxationSuggestion(
+                        "REDUCE_OPTIONAL_ACTIVITIES",
+                        "减少一个可选活动",
+                    ),
+                ),
             )
 
     asyncio.run(amqp.handle_delivery(message, exchange, provider=InfeasibleProvider()))
@@ -334,9 +412,7 @@ def test_infeasible_plan_publishes_an_actionable_failure_and_acks() -> None:
     assert body["schemaVersion"] == 1
     assert body["payload"]["errorCode"] == "NO_FEASIBLE_ITINERARY"
     assert body["payload"]["conflicts"][0]["code"] == "INSUFFICIENT_DAY_CAPACITY"
-    assert body["payload"]["relaxationSuggestions"][0]["code"] == (
-        "REDUCE_OPTIONAL_ACTIVITIES"
-    )
+    assert body["payload"]["relaxationSuggestions"][0]["code"] == ("REDUCE_OPTIONAL_ACTIVITIES")
 
 
 def test_real_worker_settings_require_a_secret_amap_key_at_startup() -> None:
@@ -390,9 +466,7 @@ def test_business_database_url_never_uses_the_optional_knowledge_store_override(
         postgres_password="business-secret",
     )
 
-    assert settings.knowledge_connection_url() == (
-        "postgresql://knowledge:secret@knowledge-db/rag"
-    )
+    assert settings.knowledge_connection_url() == ("postgresql://knowledge:secret@knowledge-db/rag")
     assert settings.business_connection_url() == (
         "postgresql://business_user:business-secret@business-db:5433/trip_business"
     )

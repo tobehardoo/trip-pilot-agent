@@ -7,10 +7,10 @@ import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.tobehardoo.trippilot.messaging.PlanningCompletedEvent;
-import io.github.tobehardoo.trippilot.messaging.PlanningCompletedEventParser;
-import io.github.tobehardoo.trippilot.messaging.PlanningFailedEventParser;
-import io.github.tobehardoo.trippilot.messaging.PlanningFailedEventParserTest;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEventParser;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEventParser;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEventParserTest;
 import io.github.tobehardoo.trippilot.support.PlanningCompletedEventFixture;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;

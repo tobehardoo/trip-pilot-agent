@@ -1,0 +1,2 @@
+ALTER TABLE business.transit_leg
+    ADD COLUMN locked BOOLEAN NOT NULL DEFAULT FALSE;

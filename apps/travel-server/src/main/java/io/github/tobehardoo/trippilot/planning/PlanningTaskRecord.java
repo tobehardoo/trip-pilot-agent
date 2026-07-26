@@ -10,6 +10,8 @@ public record PlanningTaskRecord(
         String taskType,
         String status,
         int baselineTripVersion,
+        UUID baselineItineraryVersionId,
+        String impactedDatesJson,
         String constraintSnapshotJson,
         String guideEvidenceSnapshotJson,
         UUID traceId,

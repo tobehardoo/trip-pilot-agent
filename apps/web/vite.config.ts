@@ -1,14 +1,34 @@
 import vue from '@vitejs/plugin-vue'
 import { loadEnv } from 'vite'
-import { defineConfig } from 'vitest/config'
+import { configDefaults, defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
+import tailwindcss from 'tailwindcss'
+import autoprefixer from 'autoprefixer'
+
+import { mergeTripPilotEnv } from './vite-env'
 
 export default defineConfig(({ mode }) => {
-  const envDir = resolve(import.meta.dirname, '../..')
-  const env = loadEnv(mode, envDir, '')
+  const repositoryEnvDir = resolve(import.meta.dirname, '../..')
+  const webEnvDir = resolve(import.meta.dirname)
+  const env = mergeTripPilotEnv(
+    loadEnv(mode, repositoryEnvDir, ''),
+    loadEnv(mode, webEnvDir, ''),
+  )
 
   return {
-    envDir,
+    envDir: webEnvDir,
+    define: {
+      'import.meta.env.VITE_AMAP_WEB_JS_KEY': JSON.stringify(env.VITE_AMAP_WEB_JS_KEY || ''),
+      'import.meta.env.VITE_AMAP_SECURITY_CODE': JSON.stringify(env.VITE_AMAP_SECURITY_CODE || ''),
+    },
+    css: {
+      postcss: {
+        plugins: [
+          tailwindcss(),
+          autoprefixer(),
+        ],
+      },
+    },
     plugins: [vue()],
     server: {
       proxy: {
@@ -17,6 +37,7 @@ export default defineConfig(({ mode }) => {
     },
     test: {
       environment: 'jsdom',
+      exclude: [...configDefaults.exclude, 'e2e/**'],
       coverage: {
         provider: 'v8',
         include: [

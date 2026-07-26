@@ -24,6 +24,8 @@
 **/node_modules/
 **/dist/
 **/coverage/
+**/playwright-report/
+**/test-results/
 *.tsbuildinfo
 apps/web/vite.config.d.ts
 

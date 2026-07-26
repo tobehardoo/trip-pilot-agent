@@ -73,8 +73,8 @@ function renderAmap(namespace: AMapNamespace) {
   model.value.legs.forEach((leg) => {
     const polyline = new namespace.Polyline({
       path: leg.polyline.map((point) => [point.longitude, point.latitude]),
-      strokeColor: '#c38d22',
-      strokeOpacity: 0.9,
+      strokeColor: '#2563eb',
+      strokeOpacity: 0.85,
       strokeWeight: 4,
       lineJoin: 'round',
       lineCap: 'round',
@@ -146,35 +146,46 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="trip-map" aria-label="行程地图" data-testid="trip-map">
-    <header class="trip-map-heading">
-      <div>
-        <p class="eyebrow">MAP VIEW</p>
-        <h3>地点与路线</h3>
-      </div>
-      <span v-if="sdkState === 'ready'" class="map-mode"><MapPinned :size="14" aria-hidden="true" />高德地图</span>
-      <span v-else class="map-mode"><Route :size="14" aria-hidden="true" />路线概览</span>
-    </header>
-
-    <div v-if="!hasCoordinates" class="trip-map-empty">
-      <MapPinned :size="24" aria-hidden="true" />
-      <strong>暂无可定位地点</strong>
-      <span>活动生成地点后会显示在这里</span>
+  <div class="h-full w-full min-w-0" data-testid="trip-map" aria-label="行程地图" role="region">
+    <!-- No Coordinates -->
+    <div v-if="!hasCoordinates" class="flex h-full flex-col items-center justify-center gap-2 text-surface-400">
+      <MapPinned :size="28" aria-hidden="true" />
+      <strong class="text-sm text-surface-500">暂无可定位地点</strong>
+      <span class="text-xs text-surface-400">活动生成地点后会显示在这里</span>
     </div>
 
     <template v-else>
-      <div class="map-surface">
-        <div ref="mapElement" class="amap-canvas" :class="{ 'is-hidden': sdkState !== 'ready' }" aria-hidden="true"></div>
-        <div v-if="sdkState !== 'ready'" class="route-overview" aria-label="路线概览">
-          <div class="overview-grid">
+      <!-- Hidden status for screen readers / tests -->
+      <span class="sr-only" aria-live="polite">
+        {{ sdkState === 'ready' ? '高德地图' : '路线概览' }}
+      </span>
+      <div class="relative h-full w-full">
+        <!-- AMap Canvas -->
+        <div
+          ref="mapElement"
+          class="amap-canvas h-full w-full bg-surface-100"
+          :class="{ 'is-hidden': sdkState !== 'ready' }"
+          aria-hidden="true"
+        />
+
+        <!-- Fallback SVG Overview -->
+        <div
+          v-if="sdkState !== 'ready'"
+          class="absolute inset-0 grid grid-rows-[1fr_auto] p-3.5 bg-surface-50"
+          aria-label="路线概览"
+        >
+          <div
+            class="relative h-full overflow-hidden rounded-xl border border-surface-200 bg-surface-100"
+            style="background-image: linear-gradient(rgb(148 163 184 / 0.08) 1px, transparent 1px), linear-gradient(90deg, rgb(148 163 184 / 0.08) 1px, transparent 1px); background-size: 28px 28px;"
+          >
             <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
               <polyline
                 v-for="leg in model.legs"
                 :key="leg.id"
                 :points="leg.polyline.map((point) => { const projected = projectMapCoordinate(point, model.bounds!); return `${projected.x},${projected.y}` }).join(' ')"
                 fill="none"
-                stroke="#c38d22"
-                stroke-width="1.3"
+                stroke="#93c5fd"
+                stroke-width="1.5"
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 stroke-dasharray="2 1.5"
@@ -193,60 +204,84 @@ onBeforeUnmount(() => {
             >
               {{ index + 1 }}
             </button>
-            <span class="overview-label">路线概览</span>
+            <span class="absolute right-2.5 bottom-2 text-xs font-semibold text-surface-400">路线概览</span>
           </div>
-          <p v-if="sdkState === 'error'" class="map-fallback-note" role="status"><TriangleAlert :size="14" aria-hidden="true" />{{ mapError }}</p>
-          <p v-else-if="!hasAmapConfig" class="map-fallback-note" role="status">地图凭据未配置，当前显示路线概览</p>
+          <p v-if="sdkState === 'error'" class="flex items-center gap-1.5 min-h-7 mt-2 text-xs text-red-500" role="status">
+            <TriangleAlert :size="13" aria-hidden="true" />{{ mapError }}
+          </p>
+          <p v-else-if="!hasAmapConfig" class="flex items-center gap-1.5 min-h-7 mt-2 text-xs text-surface-400" role="status">
+            地图凭据未配置，当前显示路线概览
+          </p>
         </div>
       </div>
-      <div class="map-activity-list">
+
+      <!-- Activity List (bottom of map) -->
+      <div class="grid gap-px p-2 bg-surface-200">
         <button
           v-for="(activity, index) in model.activities"
           :key="activity.id"
-          class="map-activity"
-          :class="{ 'is-selected': activity.id === selectedActivity?.id }"
+          class="grid grid-cols-[25px_1fr] items-center gap-2 px-2 py-2 bg-white border-0 text-left cursor-pointer transition-colors hover:bg-primary-50"
+          :class="{ 'bg-primary-50': activity.id === selectedActivity?.id }"
           type="button"
           :aria-pressed="activity.id === selectedActivity?.id"
           @click="selectActivity(activity)"
         >
-          <span class="map-activity-index">{{ index + 1 }}</span>
-          <span class="map-activity-copy"><strong>{{ activity.title }}</strong><small>{{ activity.coordinate.longitude.toFixed(4) }}, {{ activity.coordinate.latitude.toFixed(4) }}</small></span>
+          <span
+            class="flex h-5 w-5 items-center justify-center rounded-full text-xs font-extrabold text-white"
+            :class="activity.id === selectedActivity?.id ? 'bg-primary-600' : 'bg-primary-500'"
+          >{{ index + 1 }}</span>
+          <span class="grid gap-0.5 min-w-0">
+            <strong class="truncate text-xs text-surface-700">{{ activity.title }}</strong>
+            <small class="text-[10px] text-surface-400">{{ activity.coordinate.longitude.toFixed(4) }}, {{ activity.coordinate.latitude.toFixed(4) }}</small>
+          </span>
         </button>
       </div>
     </template>
-  </section>
+  </div>
 </template>
 
 <style scoped>
-.trip-map { min-width: 0; border: 1px solid #d4ddda; background: #f7faf8; }
-.trip-map-heading { min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; background: #fff; border-bottom: 1px solid #dfe8e3; }
-.trip-map-heading h3 { margin: 5px 0 0; font-size: 16px; }
-.eyebrow { margin: 0; color: #8a650f; font-size: 10px; font-weight: 850; }
-.map-mode { display: inline-flex; align-items: center; gap: 5px; color: #52625c; font-size: 11px; font-weight: 700; }
-.map-surface { position: relative; height: 290px; }
-.amap-canvas, .route-overview { height: 100%; }
-.amap-canvas { width: 100%; background: #e9f0ec; }
-.amap-canvas.is-hidden { visibility: hidden; }
-.route-overview { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; padding: 14px; background: #eff5f1; }
-.overview-grid { position: relative; height: 100%; overflow: hidden; border: 1px solid #d2e1d9; background-color: #edf5f0; background-image: linear-gradient(rgba(109, 145, 126, .12) 1px, transparent 1px), linear-gradient(90deg, rgba(109, 145, 126, .12) 1px, transparent 1px); background-size: 28px 28px; }
-.overview-grid svg { position: absolute; inset: 0; width: 100%; height: 100%; }
-.overview-marker { position: absolute; z-index: 1; width: 26px; height: 26px; padding: 0; transform: translate(-50%, -50%); color: #fff; background: #2f705e; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 2px 5px rgba(28, 67, 54, .25); font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
-.overview-marker.is-selected { color: #3d2d06; background: #e6b44a; box-shadow: 0 0 0 3px rgba(230, 180, 74, .25), 0 2px 5px rgba(28, 67, 54, .25); }
-.overview-label { position: absolute; right: 10px; bottom: 8px; color: #5e786b; font-size: 10px; font-weight: 750; }
-.map-fallback-note { min-height: 30px; display: flex; align-items: center; gap: 5px; margin: 0; padding: 8px 3px 0; color: #63746d; font-size: 11px; }
-.map-fallback-note svg { flex: 0 0 auto; }
-.map-activity-list { display: grid; gap: 1px; padding: 8px; background: #dfe8e3; }
-.map-activity { min-width: 0; display: grid; grid-template-columns: 25px minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px; color: #34443f; background: #fff; border: 0; text-align: left; cursor: pointer; }
-.map-activity:hover, .map-activity.is-selected { background: #eef6f1; }
-.map-activity-index { width: 21px; height: 21px; display: grid; place-items: center; color: #fff; background: #2f705e; border-radius: 50%; font-size: 10px; font-weight: 800; }
-.map-activity.is-selected .map-activity-index { color: #3d2d06; background: #e6b44a; }
-.map-activity-copy { min-width: 0; display: grid; gap: 3px; }
-.map-activity-copy strong { overflow-wrap: anywhere; font-size: 12px; }
-.map-activity-copy small { color: #71817b; font-size: 10px; }
-.trip-map-empty { min-height: 290px; display: grid; place-items: center; align-content: center; gap: 8px; color: #71817b; font-size: 12px; }
-.trip-map-empty strong { color: #34443f; font-size: 14px; }
-.trip-map-empty span { color: #84938d; }
-:global(.amap-marker-pin) { width: 24px; height: 24px; display: grid; place-items: center; color: #fff; background: #2f705e; border: 2px solid #fff; border-radius: 50%; box-shadow: 0 2px 6px rgba(19, 52, 42, .3); font: 700 11px Inter, sans-serif; }
-:global(.amap-marker-pin.is-selected) { color: #3d2d06; background: #e6b44a; }
-@media (max-width: 620px) { .map-surface { height: 240px; } }
+.overview-marker {
+  position: absolute;
+  z-index: 1;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  background: #2563eb;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.overview-marker.is-selected {
+  color: #fff;
+  background: #1d4ed8;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.25), 0 2px 8px rgba(37, 99, 235, 0.3);
+}
+</style>
+
+<style>
+.amap-marker-pin {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #2563eb;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+  font: 700 11px Inter, sans-serif;
+}
+
+.amap-marker-pin.is-selected {
+  color: #fff;
+  background: #1d4ed8;
+}
 </style>

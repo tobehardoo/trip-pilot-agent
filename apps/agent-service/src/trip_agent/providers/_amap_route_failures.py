@@ -1,37 +1,23 @@
-"""Stable failure mapping for AMap route APIs."""
+"""Stable failure mapping for AMap route APIs.
+
+Error-code frozensets are imported from ``trip_agent.infrastructure.amap.errors``
+(the single source of truth, shared with the POI provider).
+"""
 
 from datetime import UTC, datetime
 from time import perf_counter
 
+from trip_agent.infrastructure.amap.errors import (
+    AUTH_CODES,
+    INVALID_REQUEST_CODES,
+    QUOTA_CODES,
+    RATE_CODES,
+    UNAVAILABLE_CODES,
+)
 from trip_agent.providers.map import ProviderErrorCode, ProviderFailure
 
 
 class AmapRouteFailures:
-    _auth_codes = frozenset(
-        {
-            "10001",
-            "10002",
-            "10005",
-            "10006",
-            "10007",
-            "10008",
-            "10009",
-            "10011",
-            "10012",
-            "10013",
-            "10026",
-            "10041",
-            "20011",
-        }
-    )
-    _rate_codes = frozenset(
-        {"10004", "10014", "10015", "10016", "10019", "10020", "10021", "10029"}
-    )
-    _quota_codes = frozenset(
-        {"10003", "10010", "10044", "10045", "40000", "40001", "40002", "40003"}
-    )
-    _unavailable_codes = frozenset({"10017"})
-    _invalid_request_codes = frozenset({"20000", "20001", "20002", "20012"})
 
     @classmethod
     def from_http(cls, status_code: int, started_at: float) -> ProviderFailure:
@@ -72,35 +58,35 @@ class AmapRouteFailures:
 
     @classmethod
     def from_business(cls, infocode: str, started_at: float) -> ProviderFailure:
-        if infocode in cls._auth_codes:
+        if infocode in AUTH_CODES:
             return cls.create(
                 "PROVIDER_AUTH_FAILED",
                 "AMap route authentication failed",
                 retryable=False,
                 started_at=started_at,
             )
-        if infocode in cls._rate_codes:
+        if infocode in RATE_CODES:
             return cls.create(
                 "PROVIDER_RATE_LIMITED",
                 "AMap route rate limit was reached",
                 retryable=True,
                 started_at=started_at,
             )
-        if infocode in cls._quota_codes:
+        if infocode in QUOTA_CODES:
             return cls.create(
                 "PROVIDER_QUOTA_EXHAUSTED",
                 "AMap route quota was exhausted",
                 retryable=False,
                 started_at=started_at,
             )
-        if infocode in cls._unavailable_codes or infocode.startswith("3"):
+        if infocode in UNAVAILABLE_CODES or infocode.startswith("3"):
             return cls.create(
                 "PROVIDER_UNAVAILABLE",
                 "AMap route service is temporarily unavailable",
                 retryable=True,
                 started_at=started_at,
             )
-        if infocode in cls._invalid_request_codes:
+        if infocode in INVALID_REQUEST_CODES:
             return cls.create(
                 "PROVIDER_REQUEST_INVALID",
                 "AMap rejected the route request parameters",

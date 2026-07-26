@@ -4,7 +4,7 @@ import java.time.Clock;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.tobehardoo.trippilot.messaging.PlanningFailedEvent;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

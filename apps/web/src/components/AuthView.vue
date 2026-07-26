@@ -38,46 +38,76 @@ function submit() {
 </script>
 
 <template>
-  <main class="auth-layout">
-    <section class="brand-panel" aria-label="TripPilot">
-      <div class="brand-mark"><Compass :size="30" stroke-width="2" /></div>
-      <div>
-        <p class="brand-name">TripPilot</p>
-        <p class="brand-caption">旅行规划工作台</p>
+  <main class="min-h-screen grid grid-cols-1 md:grid-cols-[0.9fr_1.1fr]">
+    <!-- Brand Panel -->
+    <section
+      class="relative flex flex-col min-h-[180px] md:min-h-screen p-6 md:p-11 overflow-hidden text-white bg-gradient-to-br from-primary-800 via-primary-900 to-primary-950"
+      aria-label="TripPilot"
+    >
+      <!-- Grid pattern overlay -->
+      <div
+        class="absolute inset-0 opacity-[0.04]"
+        style="background-image: linear-gradient(rgb(255 255 255 / 0.6) 1px, transparent 1px), linear-gradient(90deg, rgb(255 255 255 / 0.6) 1px, transparent 1px); background-size: 42px 42px;"
+        aria-hidden="true"
+      />
+
+      <!-- Decorative circle -->
+      <div class="absolute -right-28 bottom-24 w-96 h-96 rounded-full border border-primary-400/30" aria-hidden="true" />
+
+      <div class="relative z-10">
+        <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-500 text-white shadow-lg mb-5">
+          <Compass :size="28" stroke-width="2" aria-hidden="true" />
+        </div>
+        <p class="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight leading-none m-0">TripPilot</p>
+        <p class="mt-3 text-sm sm:text-base text-primary-200/80 m-0">旅行规划工作台</p>
       </div>
-      <div class="route-line" aria-hidden="true">
-        <span></span><span></span><span></span>
+
+      <!-- Route dots -->
+      <div class="relative z-10 mt-auto hidden md:flex items-center justify-between w-4/5 max-w-xs pt-0 border-t border-dashed border-white/40">
+        <span class="w-2.5 h-2.5 -mt-1.5 rounded-full bg-primary-400 border-2 border-primary-900 outline outline-1 outline-primary-400" />
+        <span class="w-2.5 h-2.5 -mt-1.5 rounded-full bg-primary-400 border-2 border-primary-900 outline outline-1 outline-primary-400" />
+        <span class="w-2.5 h-2.5 -mt-1.5 rounded-full bg-primary-400 border-2 border-primary-900 outline outline-1 outline-primary-400" />
       </div>
-      <p class="brand-city">GUANGZHOU · 23°N</p>
+      <p class="relative z-10 mt-4 hidden md:block text-xs font-semibold text-primary-300/70 m-0">GUANGZHOU · 23°N</p>
     </section>
 
-    <section class="auth-panel">
-      <form class="auth-form" @submit.prevent="submit">
-        <div class="form-heading">
-          <p class="eyebrow">{{ mode === 'login' ? '欢迎回来' : '开始规划' }}</p>
-          <h1>{{ mode === 'login' ? '登录 TripPilot' : '创建 TripPilot 账户' }}</h1>
+    <!-- Auth Panel -->
+    <section class="grid place-items-center p-8 md:p-10">
+      <form class="w-full max-w-[410px]" @submit.prevent="submit">
+        <div class="mb-8">
+          <p class="text-xs font-semibold uppercase tracking-widest text-primary-500 mb-2 m-0">
+            {{ mode === 'login' ? '欢迎回来' : '开始规划' }}
+          </p>
+          <h1 class="text-2xl sm:text-3xl font-bold text-surface-900 tracking-tight m-0">
+            {{ mode === 'login' ? '登录 TripPilot' : '创建 TripPilot 账户' }}
+          </h1>
         </div>
 
-        <div v-if="mode === 'register'" class="field">
-          <label for="display-name">显示名称</label>
-          <div class="input-shell">
-            <UserPlus :size="18" aria-hidden="true" />
-            <input id="display-name" v-model.trim="displayName" autocomplete="name" maxlength="80" required />
+        <!-- Display Name (register only) -->
+        <div v-if="mode === 'register'" class="mb-4">
+          <label for="display-name" class="block text-sm font-semibold text-surface-700 mb-1.5">显示名称</label>
+          <div class="flex items-center gap-2.5 h-11 rounded-xl border border-surface-200 bg-white px-3.5 focus-within:ring-2 focus-within:ring-primary-400/40 focus-within:border-primary-400 transition-shadow text-surface-400">
+            <UserPlus :size="17" aria-hidden="true" />
+            <input id="display-name" v-model.trim="displayName" autocomplete="name" maxlength="80" required
+              class="min-w-0 flex-1 border-0 bg-transparent text-surface-800 outline-0 text-sm font-medium placeholder:text-surface-300" />
           </div>
         </div>
 
-        <div class="field">
-          <label for="email">邮箱</label>
-          <div class="input-shell">
-            <Mail :size="18" aria-hidden="true" />
-            <input id="email" v-model.trim="email" type="email" autocomplete="email" maxlength="254" required />
+        <!-- Email -->
+        <div class="mb-4">
+          <label for="email" class="block text-sm font-semibold text-surface-700 mb-1.5">邮箱</label>
+          <div class="flex items-center gap-2.5 h-11 rounded-xl border border-surface-200 bg-white px-3.5 focus-within:ring-2 focus-within:ring-primary-400/40 focus-within:border-primary-400 transition-shadow text-surface-400">
+            <Mail :size="17" aria-hidden="true" />
+            <input id="email" v-model.trim="email" type="email" autocomplete="email" maxlength="254" required
+              class="min-w-0 flex-1 border-0 bg-transparent text-surface-800 outline-0 text-sm font-medium placeholder:text-surface-300" />
           </div>
         </div>
 
-        <div class="field">
-          <label for="password">密码</label>
-          <div class="input-shell">
-            <LockKeyhole :size="18" aria-hidden="true" />
+        <!-- Password -->
+        <div class="mb-1">
+          <label for="password" class="block text-sm font-semibold text-surface-700 mb-1.5">密码</label>
+          <div class="flex items-center gap-2.5 h-11 rounded-xl border border-surface-200 bg-white px-3.5 focus-within:ring-2 focus-within:ring-primary-400/40 focus-within:border-primary-400 transition-shadow text-surface-400">
+            <LockKeyhole :size="17" aria-hidden="true" />
             <input
               id="password"
               v-model="password"
@@ -86,23 +116,31 @@ function submit() {
               minlength="10"
               maxlength="72"
               required
+              class="min-w-0 flex-1 border-0 bg-transparent text-surface-800 outline-0 text-sm font-medium placeholder:text-surface-300"
             />
           </div>
-          <span v-if="mode === 'register'" class="field-note">至少 10 个字符</span>
+          <span v-if="mode === 'register'" class="block mt-1.5 text-xs text-surface-400">至少 10 个字符</span>
         </div>
 
-        <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+        <!-- Error -->
+        <p v-if="error" class="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ error }}</p>
 
-        <button class="primary-button" type="submit" :disabled="busy">
-          <LoaderCircle v-if="busy" class="spin" :size="18" aria-hidden="true" />
-          <LogIn v-else-if="mode === 'login'" :size="18" aria-hidden="true" />
-          <UserPlus v-else :size="18" aria-hidden="true" />
+        <!-- Submit -->
+        <button
+          class="mt-5 w-full h-11 inline-flex items-center justify-center gap-2 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-wait shadow-sm"
+          type="submit"
+          :disabled="busy"
+        >
+          <LoaderCircle v-if="busy" class="animate-spin" :size="17" aria-hidden="true" />
+          <LogIn v-else-if="mode === 'login'" :size="17" aria-hidden="true" />
+          <UserPlus v-else :size="17" aria-hidden="true" />
           {{ mode === 'login' ? '登录' : '创建账户并登录' }}
         </button>
 
-        <div class="mode-switch">
+        <!-- Mode Switch -->
+        <div class="flex justify-center gap-1.5 mt-5 text-sm text-surface-500">
           <span>{{ mode === 'login' ? '还没有账户？' : '已有账户？' }}</span>
-          <button type="button" @click="switchMode(mode === 'login' ? 'register' : 'login')">
+          <button type="button" class="font-semibold text-primary-600 hover:text-primary-700 p-0 bg-transparent border-0 cursor-pointer" @click="switchMode(mode === 'login' ? 'register' : 'login')">
             {{ mode === 'login' ? '创建账户' : '返回登录' }}
           </button>
         </div>
@@ -110,261 +148,3 @@ function submit() {
     </section>
   </main>
 </template>
-
-<style scoped>
-.auth-layout {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: minmax(300px, 0.9fr) minmax(460px, 1.1fr);
-  color: #17201d;
-  background: #f5f7f6;
-}
-
-.brand-panel {
-  position: relative;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  padding: 44px;
-  overflow: hidden;
-  color: #f9fbfa;
-  background-color: #173d33;
-  background-image:
-    linear-gradient(rgba(237, 242, 240, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(237, 242, 240, 0.06) 1px, transparent 1px);
-  background-size: 42px 42px;
-}
-
-.brand-panel::after {
-  content: '';
-  position: absolute;
-  right: -120px;
-  bottom: 90px;
-  width: 360px;
-  height: 360px;
-  border: 1px solid rgba(230, 180, 74, 0.38);
-  border-radius: 50%;
-}
-
-.brand-mark {
-  width: 50px;
-  height: 50px;
-  display: grid;
-  place-items: center;
-  margin-bottom: 22px;
-  color: #173d33;
-  background: #e6b44a;
-  border-radius: 6px;
-}
-
-.brand-name,
-.brand-caption,
-.brand-city {
-  margin: 0;
-  letter-spacing: 0;
-}
-
-.brand-name {
-  font-size: 42px;
-  font-weight: 760;
-  line-height: 1;
-}
-
-.brand-caption {
-  margin-top: 10px;
-  color: #c8d8d2;
-  font-size: 15px;
-}
-
-.route-line {
-  width: min(320px, 78%);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: auto;
-  border-top: 1px dashed rgba(249, 251, 250, 0.45);
-}
-
-.route-line span {
-  width: 10px;
-  height: 10px;
-  margin-top: -5px;
-  background: #e6b44a;
-  border: 2px solid #173d33;
-  border-radius: 50%;
-  outline: 1px solid #e6b44a;
-}
-
-.brand-city {
-  margin-top: 18px;
-  color: #9eb8af;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.auth-panel {
-  display: grid;
-  place-items: center;
-  padding: 40px;
-}
-
-.auth-form {
-  width: min(100%, 410px);
-}
-
-.form-heading {
-  margin-bottom: 32px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: #a06a00;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-h1 {
-  margin: 0;
-  font-size: 30px;
-  line-height: 1.25;
-  letter-spacing: 0;
-}
-
-.field {
-  margin-bottom: 18px;
-}
-
-.field label {
-  display: block;
-  margin-bottom: 7px;
-  color: #34443f;
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.input-shell {
-  height: 46px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 13px;
-  color: #71817b;
-  background: #fff;
-  border: 1px solid #cdd7d3;
-  border-radius: 5px;
-}
-
-.input-shell:focus-within {
-  border-color: #26725f;
-  box-shadow: 0 0 0 3px rgba(38, 114, 95, 0.12);
-}
-
-.input-shell input {
-  min-width: 0;
-  flex: 1;
-  border: 0;
-  outline: 0;
-  color: #17201d;
-  background: transparent;
-  font: inherit;
-}
-
-.field-note {
-  display: block;
-  margin-top: 6px;
-  color: #697872;
-  font-size: 12px;
-}
-
-.error-message {
-  margin: 0 0 16px;
-  padding: 10px 12px;
-  color: #8a2929;
-  background: #fff0ef;
-  border-left: 3px solid #bb4942;
-  font-size: 13px;
-}
-
-.primary-button {
-  width: 100%;
-  height: 46px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: #fff;
-  background: #236552;
-  border: 0;
-  border-radius: 5px;
-  font: inherit;
-  font-weight: 750;
-  cursor: pointer;
-}
-
-.primary-button:hover:not(:disabled) {
-  background: #194d3e;
-}
-
-.primary-button:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
-.mode-switch {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-  margin-top: 20px;
-  color: #697872;
-  font-size: 13px;
-}
-
-.mode-switch button {
-  padding: 0;
-  color: #236552;
-  background: transparent;
-  border: 0;
-  font: inherit;
-  font-weight: 750;
-  cursor: pointer;
-}
-
-.spin {
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (max-width: 760px) {
-  .auth-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .brand-panel {
-    min-height: 180px;
-    padding: 24px;
-  }
-
-  .brand-mark {
-    width: 42px;
-    height: 42px;
-    margin-bottom: 14px;
-  }
-
-  .brand-name {
-    font-size: 32px;
-  }
-
-  .route-line,
-  .brand-city {
-    display: none;
-  }
-
-  .auth-panel {
-    place-items: start center;
-    padding: 34px 20px 48px;
-  }
-}
-</style>

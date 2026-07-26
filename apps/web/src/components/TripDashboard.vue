@@ -10,11 +10,16 @@ import {
   Users,
   Wallet,
   X,
+  Sparkles,
 } from 'lucide-vue-next'
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 
 import type { CreateTripInput, Trip, User } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
+import Button from './ui/Button.vue'
+import Card from './ui/Card.vue'
+import Badge from './ui/Badge.vue'
+import TripTemplates from './TripTemplates.vue'
 
 const props = defineProps<{
   user: User
@@ -45,6 +50,33 @@ const form = reactive({
   preferences: [] as string[],
 })
 
+// ── Destination gradient mapping ──
+const destinationGradientMap: Record<string, string> = {
+  '广州': 'dest-gz',
+  '北京': 'dest-bj',
+  '杭州': 'dest-hz',
+  '长沙': 'dest-cs',
+  '成都': 'dest-cd',
+  '上海': 'dest-sh',
+  '深圳': 'dest-sz',
+}
+
+function destGradientClass(destination: string): string {
+  return destinationGradientMap[destination] ?? 'bg-gradient-to-br from-primary-600 via-primary-700 to-primary-800'
+}
+
+function tripDays(trip: Trip): number {
+  if (!trip.startDate || !trip.endDate) return 1
+  const start = new Date(trip.startDate)
+  const end = new Date(trip.endDate)
+  const diff = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  return Math.max(1, diff)
+}
+
+function tripThemes(trip: Trip): string[] {
+  return trip.constraints.preferences.slice(0, 2)
+}
+
 function formatDate(date: string) {
   return date.replaceAll('-', '.')
 }
@@ -59,6 +91,10 @@ function travelerTypeLabel(type: Trip['constraints']['travelerType']) {
 
 function statusLabel(status: string) {
   return { DRAFT: '草稿', PLANNING: '规划中', READY: '可使用', FAILED: '规划失败' }[status] ?? status
+}
+
+function statusVariant(status: string): 'default' | 'secondary' | 'accent' | 'warning' | 'danger' | 'success' | 'outline' {
+  return { DRAFT: 'secondary', PLANNING: 'warning', READY: 'success', FAILED: 'danger' }[status] as any ?? 'secondary'
 }
 
 function resetForm() {
@@ -79,9 +115,13 @@ const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
   () => { dialogOpen.value = false },
 )
 
-function openDialog(event?: Event) {
+function openDialog(event?: Event, initial?: Pick<typeof form, 'title' | 'destination'>) {
   rememberTrigger(event?.currentTarget)
   resetForm()
+  if (initial) {
+    form.title = initial.title
+    form.destination = initial.destination
+  }
   dialogOpen.value = true
 }
 
@@ -125,730 +165,272 @@ async function saveTrip() {
 </script>
 
 <template>
-  <div class="app-shell">
-    <header class="topbar">
-      <div class="brand-lockup">
-        <span class="brand-icon"><Compass :size="20" aria-hidden="true" /></span>
-        <div>
-          <strong>TripPilot</strong>
-          <span>旅行规划工作台</span>
-        </div>
-      </div>
-      <div class="user-actions">
-        <div class="user-copy">
-          <strong>{{ user.displayName }}</strong>
-          <span>{{ user.email }}</span>
-        </div>
-        <button class="icon-button" type="button" title="退出登录" aria-label="退出登录" @click="emit('logout')">
-          <LogOut :size="18" aria-hidden="true" />
-        </button>
-      </div>
-    </header>
-
-    <main class="dashboard">
-      <div class="page-heading">
-        <div>
-          <p class="eyebrow">TRIPS</p>
-          <h1>我的旅行</h1>
-        </div>
-        <button class="primary-button" type="button" @click="openDialog">
-          <Plus :size="18" aria-hidden="true" />
-          创建旅行
-        </button>
-      </div>
-
-      <p v-if="error" class="error-message" role="alert">{{ error }}</p>
-
-      <section v-if="busy" class="loading-state" aria-label="正在加载旅行">
-        <span></span><span></span><span></span>
-      </section>
-
-      <section v-else-if="trips.length === 0" class="empty-state">
-        <MapPin :size="30" stroke-width="1.6" aria-hidden="true" />
-        <h2>还没有旅行</h2>
-        <button type="button" @click="openDialog"><Plus :size="17" /> 创建第一条旅行</button>
-      </section>
-
-      <section v-else class="trip-grid" aria-label="旅行列表">
-        <article v-for="trip in trips" :key="trip.id" class="trip-card">
-          <div class="card-topline">
-            <span class="status-badge">{{ statusLabel(trip.status) }}</span>
-            <span class="destination"><MapPin :size="15" /> {{ trip.destination }}</span>
+  <Transition name="page" appear>
+    <div class="min-h-screen bg-surface-50">
+      <!-- Top Bar -->
+      <header class="sticky top-0 z-30 glass-surface">
+        <div class="mx-auto flex h-16 max-w-6xl items-center justify-between gap-6 px-6">
+          <div class="flex items-center gap-3 min-w-0">
+            <span class="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-600 text-white shadow-sm">
+              <Compass :size="20" aria-hidden="true" />
+            </span>
+            <div class="min-w-0">
+              <strong class="text-base text-surface-900">TripPilot</strong>
+              <span class="hidden sm:inline text-xs text-surface-400 ml-2">旅行规划工作台</span>
+            </div>
           </div>
-          <h2>{{ trip.title }}</h2>
-          <div class="date-range">
-            <CalendarDays :size="17" aria-hidden="true" />
-            <span>{{ formatDate(trip.startDate) }} — {{ formatDate(trip.endDate) }}</span>
-          </div>
-          <dl class="constraint-row">
-            <div>
-              <dt><Wallet :size="15" />预算</dt>
-              <dd>¥{{ trip.constraints.budgetAmount ?? '未设' }}</dd>
-            </div>
-            <div>
-              <dt><Users :size="15" />同行</dt>
-              <dd>{{ trip.constraints.travelers }} 人 · {{ travelerTypeLabel(trip.constraints.travelerType) }}</dd>
-            </div>
-            <div>
-              <dt><CircleGauge :size="15" />节奏</dt>
-              <dd>{{ paceLabel(trip.constraints.pace) }}</dd>
-            </div>
-          </dl>
-          <div class="card-footer">
-            <div class="preference-list">
-              <span v-for="preference in trip.constraints.preferences.slice(0, 3)" :key="preference">
-                {{ preference }}
-              </span>
+          <div class="flex items-center gap-4 min-w-0">
+            <div class="hidden sm:grid min-w-0 max-w-[220px] text-right">
+              <strong class="truncate text-sm text-surface-700">{{ user.displayName }}</strong>
+              <span class="truncate text-xs text-surface-400">{{ user.email }}</span>
             </div>
             <button
-              class="open-trip-button"
-              type="button"
-              :title="`打开 ${trip.title}`"
-              :aria-label="`打开 ${trip.title}`"
-              @click="emit('openTrip', trip.id)"
+              class="flex h-9 w-9 items-center justify-center rounded-xl border border-surface-200 bg-white text-surface-500 transition-colors hover:bg-surface-100 hover:text-surface-700"
+              type="button" title="退出登录" aria-label="退出登录"
+              @click="emit('logout')"
             >
-              <ArrowRight :size="17" aria-hidden="true" />
+              <LogOut :size="17" aria-hidden="true" />
             </button>
           </div>
-        </article>
-      </section>
-    </main>
+        </div>
+      </header>
 
-    <div v-if="dialogOpen" class="dialog-backdrop" @click.self="dialogOpen = false">
-      <section
-        ref="dialogElement"
-        class="dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="create-trip-title"
-        tabindex="-1"
-        @keydown="handleDialogKeydown"
-      >
-        <header class="dialog-header">
+      <!-- Dashboard -->
+      <main class="mx-auto max-w-6xl px-4 sm:px-6 py-8 sm:py-12">
+        <!-- Page Heading -->
+        <div class="flex items-end justify-between gap-5 mb-4">
           <div>
-            <p class="eyebrow">NEW TRIP</p>
-            <h2 id="create-trip-title">创建旅行</h2>
+            <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">Trips</p>
+            <h1 class="text-2xl sm:text-3xl font-bold text-surface-900 tracking-tight text-balance">我的旅行</h1>
           </div>
-          <button class="icon-button" type="button" title="关闭" aria-label="关闭" @click="dialogOpen = false">
-            <X :size="19" />
-          </button>
-        </header>
+          <Button variant="primary" size="md" @click="openDialog">
+            <Plus :size="17" aria-hidden="true" />
+            创建旅行
+          </Button>
+        </div>
 
-        <form @submit.prevent="saveTrip">
-          <div class="form-grid">
-            <div class="field field-wide">
-              <label for="trip-title">旅行名称</label>
-              <input id="trip-title" v-model.trim="form.title" maxlength="120" required data-modal-initial-focus />
-            </div>
-            <div class="field field-wide">
-              <label for="destination">目的地</label>
-              <input id="destination" v-model.trim="form.destination" maxlength="120" required />
-            </div>
-            <div class="field">
-              <label for="start-date">开始日期</label>
-              <input id="start-date" v-model="form.startDate" type="date" required />
-            </div>
-            <div class="field">
-              <label for="end-date">结束日期</label>
-              <input id="end-date" v-model="form.endDate" type="date" :min="form.startDate" required />
-            </div>
-            <div class="field">
-              <label for="budget">预算</label>
-              <div class="number-input"><span>¥</span><input id="budget" v-model.number="form.budgetAmount" type="number" min="0" step="0.01" required /></div>
-            </div>
-            <div class="field">
-              <label for="travelers">同行人数</label>
-              <input id="travelers" v-model.number="form.travelers" type="number" min="1" max="50" required />
-            </div>
-            <div class="field field-wide">
-              <label for="traveler-type">同行类型</label>
-              <select id="traveler-type" v-model="form.travelerType" required>
-                <option value="SOLO">独自出行</option>
-                <option value="COUPLE">伴侣同行</option>
-                <option value="FAMILY">家庭出行</option>
-                <option value="FRIENDS">朋友同行</option>
-                <option value="BUSINESS">商务出行</option>
-              </select>
-            </div>
+        <!-- Error -->
+        <p v-if="error" class="mb-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ error }}</p>
+
+        <!-- Loading -->
+        <div v-if="busy" class="flex min-h-[300px] items-center justify-center gap-2">
+          <span class="h-2 w-2 animate-pulse rounded-full bg-primary-400" />
+          <span class="h-2 w-2 animate-pulse rounded-full bg-primary-400" style="animation-delay: 0.2s" />
+          <span class="h-2 w-2 animate-pulse rounded-full bg-primary-400" style="animation-delay: 0.4s" />
+        </div>
+
+        <!-- Content when loaded -->
+        <template v-else>
+          <!-- Trip Templates (always show when not busy) -->
+          <TripTemplates
+            v-if="trips.length <= 2"
+            @select="(tmpl) => {
+              openDialog(undefined, tmpl)
+            }"
+          />
+
+          <!-- Empty State -->
+          <div
+            v-if="trips.length === 0 && !busy"
+            class="flex min-h-[220px] flex-col items-center justify-center gap-4 rounded-3xl border-2 border-dashed border-surface-200 text-surface-400 bg-white/50"
+          >
+            <MapPin :size="36" stroke-width="1.5" aria-hidden="true" />
+            <h2 class="text-lg font-semibold text-surface-500">还没有旅行</h2>
+            <p class="text-sm text-surface-400 -mt-2">选择上方模板快速开始，或点击创建旅行</p>
+            <Button variant="outline" @click="openDialog">
+              <Plus :size="16" /> 创建第一条旅行
+            </Button>
           </div>
 
-          <fieldset class="option-group">
-            <legend>旅行节奏</legend>
-            <div class="segmented-control">
-              <label><input v-model="form.pace" type="radio" value="RELAXED" />舒缓</label>
-              <label><input v-model="form.pace" type="radio" value="BALANCED" />均衡</label>
-              <label><input v-model="form.pace" type="radio" value="INTENSIVE" />紧凑</label>
+          <!-- Trip Grid -->
+          <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5" aria-label="旅行列表">
+            <Card
+              v-for="trip in trips"
+              :key="trip.id"
+              padding="none"
+              class="overflow-hidden group shadow-travel-card hover:shadow-travel-card-hover transition-all duration-300 hover:-translate-y-1"
+              role="button"
+              :aria-label="`打开 ${trip.title}`"
+              :title="`打开 ${trip.title}`"
+              tabindex="0"
+              @click="emit('openTrip', trip.id)"
+              @keydown.enter="emit('openTrip', trip.id)"
+              @keydown.space.prevent="emit('openTrip', trip.id)"
+            >
+              <!-- Card Header — City-specific gradient -->
+              <div
+                :class="destGradientClass(trip.destination)"
+                class="relative h-32 px-5 pt-4 pb-3 flex flex-col justify-between overflow-hidden"
+              >
+                <!-- Decorative pattern -->
+                <div class="absolute inset-0 opacity-10 hero-pattern" />
+                <!-- Status & Destination -->
+                <div class="relative z-10 flex items-start justify-between">
+                  <Badge :variant="statusVariant(trip.status)" size="sm">{{ statusLabel(trip.status) }}</Badge>
+                  <span class="inline-flex items-center gap-1 text-xs text-white/80 font-medium">
+                    <MapPin :size="12" aria-hidden="true" />
+                    {{ trip.destination }}
+                  </span>
+                </div>
+                <!-- Trip info overlay -->
+                <div class="relative z-10">
+                  <h2 class="text-white text-lg font-bold truncate tracking-tight">{{ trip.title }}</h2>
+                  <p class="text-white/70 text-xs mt-1">
+                    {{ tripDays(trip) }}天{{ tripDays(trip) - 1 }}夜 · {{ trip.constraints.travelers }}人同行
+                  </p>
+                </div>
+              </div>
+
+              <!-- Card Body -->
+              <div class="px-5 py-4">
+                <div class="flex items-center gap-2 text-sm text-surface-500 mb-3">
+                  <CalendarDays :size="15" class="shrink-0" aria-hidden="true" />
+                  <span>{{ formatDate(trip.startDate) }} — {{ formatDate(trip.endDate) }}</span>
+                </div>
+
+                <!-- Constraints Row -->
+                <div class="grid grid-cols-3 gap-3 py-4 border-y border-surface-100">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1 text-xs text-surface-400 mb-1"><Wallet :size="12" aria-hidden="true" />预算</div>
+                    <div class="text-sm font-semibold text-surface-700 truncate">¥{{ trip.constraints.budgetAmount ?? '未设' }}</div>
+                  </div>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1 text-xs text-surface-400 mb-1"><Users :size="12" aria-hidden="true" />同行</div>
+                    <div class="text-sm font-semibold text-surface-700 truncate">{{ trip.constraints.travelers }}人 · {{ travelerTypeLabel(trip.constraints.travelerType) }}</div>
+                  </div>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1 text-xs text-surface-400 mb-1"><CircleGauge :size="12" aria-hidden="true" />节奏</div>
+                    <div class="text-sm font-semibold text-surface-700 truncate">{{ paceLabel(trip.constraints.pace) }}</div>
+                  </div>
+                </div>
+
+                <!-- Footer: Themes + Arrow -->
+                <div class="flex items-center justify-between gap-3 mt-4">
+                  <div class="flex gap-1.5 overflow-hidden min-w-0">
+                    <span
+                      v-for="theme in tripThemes(trip)"
+                      :key="theme"
+                      class="shrink-0 rounded-full bg-primary-50 px-2.5 py-1 text-xs font-medium text-primary-600"
+                    >{{ theme }}</span>
+                    <span v-if="trip.constraints.preferences.length === 0" class="text-xs text-surface-300">未设置偏好</span>
+                  </div>
+                  <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-surface-100 text-surface-400 transition-all duration-300 group-hover:bg-primary-600 group-hover:text-white group-hover:shadow-map-marker">
+                    <ArrowRight :size="16" aria-hidden="true" />
+                  </span>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </template>
+      </main>
+
+      <!-- Create Trip Dialog -->
+      <div v-if="dialogOpen" class="fixed inset-0 z-50 flex items-start justify-center pt-[5vh] sm:pt-[8vh]" @click.self="dialogOpen = false">
+        <div class="fixed inset-0 bg-surface-900/30 backdrop-blur-sm" aria-hidden="true" />
+        <div
+          ref="dialogElement"
+          class="relative mx-4 w-full max-w-xl max-h-[90vh] overflow-y-auto animate-scale-in rounded-3xl bg-white shadow-dialog ring-1 ring-black/5"
+          role="dialog" aria-modal="true" aria-labelledby="create-trip-title"
+          tabindex="-1"
+          @keydown="handleDialogKeydown"
+        >
+          <div class="flex items-center justify-between gap-4 px-6 py-5 border-b border-surface-100">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">New Trip</p>
+              <h2 id="create-trip-title" class="text-lg font-bold text-surface-800">创建旅行</h2>
             </div>
-          </fieldset>
+            <button
+              class="flex h-9 w-9 items-center justify-center rounded-xl border border-surface-200 text-surface-400 hover:bg-surface-50 transition-colors"
+              type="button" title="关闭" aria-label="关闭"
+              @click="dialogOpen = false"
+            >
+              <X :size="17" aria-hidden="true" />
+            </button>
+          </div>
 
-          <fieldset class="option-group">
-            <legend>偏好</legend>
-            <div class="preference-options">
-              <label v-for="preference in preferenceOptions" :key="preference">
-                <input
-                  type="checkbox"
-                  :value="preference"
-                  :checked="form.preferences.includes(preference)"
-                  @change="togglePreference(preference)"
-                />
-                {{ preference }}
-              </label>
+          <form class="px-6 py-5" @submit.prevent="saveTrip">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div class="sm:col-span-2">
+                <label for="trip-title" class="block text-xs font-semibold text-surface-600 mb-1.5">旅行名称</label>
+                <input id="trip-title" v-model.trim="form.title" maxlength="120" required data-modal-initial-focus
+                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+              </div>
+              <div class="sm:col-span-2">
+                <label for="destination" class="block text-xs font-semibold text-surface-600 mb-1.5">目的地</label>
+                <input id="destination" v-model.trim="form.destination" maxlength="120" required
+                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+              </div>
+              <div>
+                <label for="start-date" class="block text-xs font-semibold text-surface-600 mb-1.5">开始日期</label>
+                <input id="start-date" v-model="form.startDate" type="date" required
+                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+              </div>
+              <div>
+                <label for="end-date" class="block text-xs font-semibold text-surface-600 mb-1.5">结束日期</label>
+                <input id="end-date" v-model="form.endDate" type="date" :min="form.startDate" required
+                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+              </div>
+              <div>
+                <label for="budget" class="block text-xs font-semibold text-surface-600 mb-1.5">预算</label>
+                <div class="flex items-center gap-2 h-10 rounded-xl border border-surface-200 bg-white px-3 focus-within:ring-2 focus-within:ring-primary-400/40 focus-within:border-primary-400 transition-shadow">
+                  <span class="text-surface-400 text-sm">¥</span>
+                  <input id="budget" v-model.number="form.budgetAmount" type="number" min="0" step="0.01" required
+                    class="w-full h-full border-0 bg-transparent text-sm text-surface-800 outline-0" />
+                </div>
+              </div>
+              <div>
+                <label for="travelers" class="block text-xs font-semibold text-surface-600 mb-1.5">同行人数</label>
+                <input id="travelers" v-model.number="form.travelers" type="number" min="1" max="50" required
+                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+              </div>
+              <div class="sm:col-span-2">
+                <label for="traveler-type" class="block text-xs font-semibold text-surface-600 mb-1.5">同行类型</label>
+                <select id="traveler-type" v-model="form.travelerType" required
+                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow">
+                  <option value="SOLO">独自出行</option>
+                  <option value="COUPLE">伴侣同行</option>
+                  <option value="FAMILY">家庭出行</option>
+                  <option value="FRIENDS">朋友同行</option>
+                  <option value="BUSINESS">商务出行</option>
+                </select>
+              </div>
             </div>
-          </fieldset>
 
-          <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+            <fieldset class="mt-5 border-0 p-0">
+              <legend class="text-xs font-semibold text-surface-600 mb-2">旅行节奏</legend>
+              <div class="grid grid-cols-3 rounded-xl bg-surface-100 p-1">
+                <label v-for="p in [{v:'RELAXED',l:'舒缓'},{v:'BALANCED',l:'均衡'},{v:'INTENSIVE',l:'紧凑'}]" :key="p.v"
+                  class="relative flex h-9 cursor-pointer items-center justify-center rounded-lg text-sm font-medium transition-all"
+                  :class="form.pace === p.v ? 'bg-white text-primary-700 shadow-sm' : 'text-surface-500 hover:text-surface-700'"
+                >
+                  <input v-model="form.pace" type="radio" :value="p.v" class="sr-only" />
+                  {{ p.l }}
+                </label>
+              </div>
+            </fieldset>
 
-          <footer class="dialog-actions">
-            <button class="secondary-button" type="button" @click="dialogOpen = false">取消</button>
-            <button class="primary-button" type="submit" :disabled="submitting">保存旅行</button>
-          </footer>
-        </form>
-      </section>
+            <fieldset class="mt-5 border-0 p-0">
+              <legend class="text-xs font-semibold text-surface-600 mb-2">偏好</legend>
+              <div class="flex flex-wrap gap-2">
+                <label v-for="preference in preferenceOptions" :key="preference"
+                  class="relative inline-flex cursor-pointer items-center rounded-xl border px-3 py-2 text-sm font-medium transition-all"
+                  :class="form.preferences.includes(preference) ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'"
+                >
+                  <input type="checkbox" :value="preference" :checked="form.preferences.includes(preference)" class="sr-only" @change="togglePreference(preference)" />
+                  {{ preference }}
+                </label>
+              </div>
+            </fieldset>
+
+            <p v-if="error" class="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ error }}</p>
+
+            <div class="flex items-center justify-end gap-3 mt-6 pt-5 border-t border-surface-100">
+              <Button variant="outline" size="sm" type="button" @click="dialogOpen = false">取消</Button>
+              <Button variant="primary" size="sm" type="submit" :disabled="submitting">保存旅行</Button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
-  </div>
+  </Transition>
 </template>
-
-<style scoped>
-.app-shell {
-  min-height: 100vh;
-  color: #17201d;
-  background: #f2f5f4;
-}
-
-.topbar {
-  height: 68px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 0 28px;
-  color: #f9fbfa;
-  background: #173d33;
-  border-bottom: 3px solid #e6b44a;
-}
-
-.brand-lockup,
-.user-actions,
-.card-topline,
-.date-range,
-.card-footer,
-.dialog-header,
-.dialog-actions {
-  display: flex;
-  align-items: center;
-}
-
-.brand-lockup {
-  gap: 10px;
-}
-
-.brand-icon {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  color: #173d33;
-  background: #e6b44a;
-  border-radius: 5px;
-}
-
-.brand-lockup div,
-.user-copy {
-  display: grid;
-}
-
-.brand-lockup strong {
-  font-size: 16px;
-}
-
-.brand-lockup span:not(.brand-icon),
-.user-copy span {
-  color: #b9ccc5;
-  font-size: 11px;
-}
-
-.user-actions {
-  gap: 14px;
-  min-width: 0;
-}
-
-.user-copy {
-  min-width: 0;
-  max-width: 280px;
-  text-align: right;
-}
-
-.user-copy strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
-.user-copy span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dashboard {
-  width: min(1180px, calc(100% - 40px));
-  margin: 0 auto;
-  padding: 42px 0 70px;
-}
-
-.page-heading {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 28px;
-}
-
-.eyebrow {
-  margin: 0 0 5px;
-  color: #8a650f;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-h1,
-h2,
-p {
-  letter-spacing: 0;
-}
-
-h1 {
-  margin: 0;
-  font-size: 28px;
-}
-
-.primary-button,
-.secondary-button,
-.empty-state button {
-  min-height: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 0 16px;
-  border-radius: 5px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 750;
-  cursor: pointer;
-}
-
-.primary-button {
-  color: #fff;
-  background: #236552;
-  border: 1px solid #236552;
-}
-
-.primary-button:hover:not(:disabled) {
-  background: #194d3e;
-}
-
-.primary-button:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
-.secondary-button {
-  color: #34443f;
-  background: #fff;
-  border: 1px solid #cbd5d1;
-}
-
-.icon-button {
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  color: inherit;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.24);
-  border-radius: 5px;
-  cursor: pointer;
-}
-
-.trip-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.trip-card {
-  min-width: 0;
-  padding: 20px;
-  background: #fff;
-  border: 1px solid #d4ddda;
-  border-top: 3px solid #2f705e;
-  border-radius: 6px;
-}
-
-.card-topline {
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.status-badge {
-  padding: 3px 7px;
-  color: #6c531a;
-  background: #fbf1d5;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.destination {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: #687872;
-  font-size: 12px;
-}
-
-.trip-card h2 {
-  margin: 18px 0 8px;
-  overflow-wrap: anywhere;
-  font-size: 19px;
-}
-
-.date-range {
-  gap: 7px;
-  color: #566760;
-  font-size: 13px;
-}
-
-.constraint-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin: 20px 0;
-  padding: 14px 0;
-  border-block: 1px solid #e4e9e7;
-}
-
-.constraint-row div {
-  min-width: 0;
-}
-
-.constraint-row dt {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #71817b;
-  font-size: 11px;
-}
-
-.constraint-row dd {
-  margin: 5px 0 0;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  font-weight: 750;
-}
-
-.card-footer {
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.open-trip-button {
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  color: #236552;
-  background: #fff;
-  border: 1px solid #a9bdb6;
-  border-radius: 5px;
-  cursor: pointer;
-}
-
-.open-trip-button:hover {
-  color: #fff;
-  background: #236552;
-  border-color: #236552;
-}
-
-.preference-list {
-  min-width: 0;
-  display: flex;
-  gap: 5px;
-  overflow: hidden;
-}
-
-.preference-list span {
-  flex: 0 0 auto;
-  padding: 3px 6px;
-  color: #53635d;
-  background: #eef2f0;
-  border-radius: 4px;
-  font-size: 10px;
-}
-
-.empty-state,
-.loading-state {
-  min-height: 330px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  color: #71817b;
-  border-block: 1px solid #d9e1de;
-}
-
-.empty-state h2 {
-  margin: 12px 0 18px;
-  color: #34443f;
-  font-size: 17px;
-}
-
-.empty-state button {
-  color: #236552;
-  background: transparent;
-  border: 1px solid #99b4aa;
-}
-
-.loading-state {
-  display: flex;
-  gap: 6px;
-}
-
-.loading-state span {
-  width: 8px;
-  height: 8px;
-  background: #2f705e;
-  border-radius: 50%;
-  animation: pulse 0.9s infinite alternate;
-}
-
-.loading-state span:nth-child(2) { animation-delay: 0.2s; }
-.loading-state span:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes pulse {
-  to { opacity: 0.25; transform: translateY(-4px); }
-}
-
-.error-message {
-  margin: 0 0 18px;
-  padding: 10px 12px;
-  color: #8a2929;
-  background: #fff0ef;
-  border-left: 3px solid #bb4942;
-  font-size: 13px;
-}
-
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-  background: rgba(15, 29, 24, 0.62);
-}
-
-.dialog {
-  width: min(620px, 100%);
-  max-height: calc(100vh - 40px);
-  overflow-y: auto;
-  padding: 24px;
-  background: #fff;
-  border-radius: 7px;
-  box-shadow: 0 22px 70px rgba(10, 28, 22, 0.24);
-}
-
-.dialog-header {
-  justify-content: space-between;
-  margin-bottom: 22px;
-}
-
-.dialog-header h2 {
-  margin: 0;
-  font-size: 21px;
-}
-
-.dialog-header .icon-button {
-  color: #45564f;
-  border-color: #d4ddda;
-}
-
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.field-wide {
-  grid-column: 1 / -1;
-}
-
-.field label,
-.option-group legend {
-  display: block;
-  margin-bottom: 7px;
-  color: #34443f;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.field input,
-.field select,
-.number-input {
-  width: 100%;
-  height: 42px;
-  padding: 0 11px;
-  color: #17201d;
-  background: #fff;
-  border: 1px solid #cbd5d1;
-  border-radius: 5px;
-  outline: 0;
-  font: inherit;
-}
-
-.field input:focus,
-.number-input:focus-within {
-  border-color: #26725f;
-  box-shadow: 0 0 0 3px rgba(38, 114, 95, 0.1);
-}
-
-.number-input {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.number-input span {
-  color: #71817b;
-}
-
-.number-input input {
-  height: 38px;
-  padding: 0;
-  border: 0;
-  box-shadow: none;
-}
-
-.option-group {
-  margin: 20px 0 0;
-  padding: 0;
-  border: 0;
-}
-
-.segmented-control {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  padding: 3px;
-  background: #edf1ef;
-  border-radius: 5px;
-}
-
-.segmented-control label {
-  position: relative;
-  display: grid;
-  place-items: center;
-  min-height: 34px;
-  border-radius: 4px;
-  color: #5f7069;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.segmented-control label:has(input:checked) {
-  color: #194d3e;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(23, 61, 51, 0.12);
-}
-
-.segmented-control label:has(input:focus-visible),
-.preference-options label:has(input:focus-visible) {
-  outline: 2px solid #26725f;
-  outline-offset: 2px;
-}
-
-.segmented-control input,
-.preference-options input {
-  position: absolute;
-  opacity: 0;
-}
-
-.preference-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.preference-options label {
-  position: relative;
-  padding: 7px 10px;
-  color: #52625c;
-  background: #fff;
-  border: 1px solid #cbd5d1;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.preference-options label:has(input:checked) {
-  color: #194d3e;
-  background: #e8f2ee;
-  border-color: #5c9685;
-}
-
-.dialog-actions {
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 24px;
-  padding-top: 18px;
-  border-top: 1px solid #e2e8e5;
-}
-
-@media (max-width: 900px) {
-  .trip-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 620px) {
-  .topbar {
-    height: 62px;
-    padding: 0 16px;
-  }
-
-  .brand-lockup span:not(.brand-icon),
-  .user-copy span {
-    display: none;
-  }
-
-  .user-copy {
-    max-width: 110px;
-  }
-
-  .dashboard {
-    width: min(100% - 28px, 1180px);
-    padding-top: 28px;
-  }
-
-  .page-heading {
-    align-items: center;
-  }
-
-  .trip-grid,
-  .form-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .field-wide {
-    grid-column: auto;
-  }
-
-  .dialog {
-    padding: 19px;
-  }
-}
-</style>

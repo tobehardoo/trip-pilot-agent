@@ -3,15 +3,14 @@ package io.github.tobehardoo.trippilot.planning;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.github.tobehardoo.trippilot.itinerary.ItineraryMapper;
-import io.github.tobehardoo.trippilot.messaging.PlanningCompletedEvent;
+import io.github.tobehardoo.trippilot.itinerary.ItineraryService;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,20 +23,20 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
 
     private final PlanningTaskMapper taskMapper;
     private final PlanningTaskEventMapper taskEventMapper;
-    private final ItineraryMapper itineraryMapper;
+    private final ItineraryService itineraryService;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
 
     public PlanningCompletionService(PlanningTaskMapper taskMapper,
                                      PlanningTaskEventMapper taskEventMapper,
-                                     ItineraryMapper itineraryMapper,
+                                     ItineraryService itineraryService,
                                      ObjectMapper objectMapper,
                                      Clock clock,
                                      ApplicationEventPublisher eventPublisher) {
         this.taskMapper = taskMapper;
         this.taskEventMapper = taskEventMapper;
-        this.itineraryMapper = itineraryMapper;
+        this.itineraryService = itineraryService;
         this.objectMapper = objectMapper;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
@@ -65,10 +64,36 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         }
         validateDates(event, task);
         if (task.baselineTripVersion() != task.currentTripVersion()) {
-            persistStaleFailure(event, task);
+            persistStaleFailure(event, task, "STALE_TRIP_VERSION",
+                    "Trip constraints changed while planning was running");
             return;
         }
-        persistCompletedItinerary(event, task);
+        if ("REPLAN".equals(task.taskType())) {
+            if (!task.baselineItineraryVersionId()
+                    .equals(itineraryService.getCurrentVersionForTask(task.tripId()))) {
+                persistStaleFailure(event, task, "STALE_ITINERARY_VERSION",
+                        "The itinerary changed while local replanning was running");
+                return;
+            }
+            ItineraryService.CreateItineraryResult result =
+                    itineraryService.createReplanVersion(
+                            task.tripId(), event, task, clock);
+            updateTaskToSucceeded(
+                    event, task, result, "PLANNING_COMPLETED",
+                    writeJson(new CompletionPayload(SUCCEEDED, event.runId(),
+                            result.versionId(), result.versionNumber(),
+                            result.provider())));
+            return;
+        }
+        ItineraryService.CreateItineraryResult result =
+                itineraryService.createInitialItinerary(
+                        task.tripId(), event, task.id(),
+                        task.constraintSnapshotJson(), clock);
+        updateTaskToSucceeded(
+                event, task, result, "PLANNING_COMPLETED",
+                writeJson(new CompletionPayload(SUCCEEDED, event.runId(),
+                        result.versionId(), result.versionNumber(),
+                        result.provider())));
     }
 
     private void validateIdentity(PlanningCompletedEvent event, PlanningTaskCompletionRecord task) {
@@ -90,109 +115,41 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                 throw rejected("Completed itinerary dates must be ordered within the trip range");
             }
             for (PlanningCompletedEvent.Activity activity : day.activities()) {
-                if (!day.date().equals(activity.startTime().toLocalDate())
-                        || !day.date().equals(activity.endTime().toLocalDate())) {
+                if (!day.date().equals(activity.startTime().withOffsetSameInstant(ZoneOffset.ofHours(8)).toLocalDate())
+                        || !day.date().equals(activity.endTime().withOffsetSameInstant(ZoneOffset.ofHours(8)).toLocalDate())) {
                     throw rejected("Activities must remain within their itinerary day");
                 }
             }
         }
     }
 
-    private void persistCompletedItinerary(PlanningCompletedEvent event,
-                                           PlanningTaskCompletionRecord task) {
+    private void updateTaskToSucceeded(
+            PlanningCompletedEvent event,
+            PlanningTaskCompletionRecord task,
+            ItineraryService.CreateItineraryResult version,
+            String eventType,
+            String payloadJson) {
         Instant now = clock.instant();
-        itineraryMapper.insertItinerary(UUID.randomUUID(), task.tripId());
-        ItineraryMapper.ItineraryState itinerary = itineraryMapper.findStateForUpdate(task.tripId())
-                .orElseThrow(() -> new IllegalStateException("Itinerary could not be created"));
-        UUID versionId = UUID.randomUUID();
-        int versionNumber = itinerary.currentVersionNumber() + 1;
-        PlanningCompletedEvent.Itinerary result = event.payload().itinerary();
-        requireOne(itineraryMapper.insertVersion(new ItineraryMapper.VersionWrite(
-                versionId, itinerary.id(), versionNumber, itinerary.currentVersionId(), task.id(),
-                result.title().strip(), result.estimatedTotalCost(), event.payload().provider(),
-                task.constraintSnapshotJson(), now
-        )), "itinerary version");
-        persistKnowledge(versionId, event.payload().knowledge());
-        for (int dayIndex = 0; dayIndex < result.days().size(); dayIndex++) {
-            persistDay(versionId, dayIndex, result.days().get(dayIndex));
-        }
-        requireOne(itineraryMapper.updateCurrentVersion(itinerary.id(), versionId), "current version");
         requireOne(taskMapper.updateTerminalStatus(
                 task.id(), task.taskVersion(), SUCCEEDED, null, null
         ), "planning task status");
         publishAfterCommit(insertTaskEvent(new PlanningTaskEventRecord(
-                null, event.eventId(), task.id(), "PLANNING_COMPLETED", 1,
-                writeJson(new CompletionPayload(
-                        SUCCEEDED, event.runId(), versionId, versionNumber, event.payload().provider()
-                )), now
+                null, event.eventId(), task.id(), eventType, 1, payloadJson, now
         )));
     }
 
-    private void persistKnowledge(UUID versionId,
-                                  PlanningCompletedEvent.KnowledgeEvidence knowledge) {
-        if (knowledge == null) {
-            return;
-        }
-        PlanningCompletedEvent.KnowledgeFreshness freshness = knowledge.freshness();
-        requireOne(itineraryMapper.insertKnowledge(new ItineraryMapper.KnowledgeWrite(
-                versionId, knowledge.status(), knowledge.query().strip(), freshness.status(),
-                freshness.checkedAt(), freshness.staleReason(), knowledge.message()
-        )), "itinerary knowledge evidence");
-        for (int index = 0; index < knowledge.citations().size(); index++) {
-            PlanningCompletedEvent.KnowledgeCitation citation = knowledge.citations().get(index);
-            requireOne(itineraryMapper.insertKnowledgeCitation(
-                    new ItineraryMapper.KnowledgeCitationWrite(
-                            UUID.randomUUID(), versionId, index, citation.documentId(),
-                            citation.documentVersion(), citation.chunkId(), citation.chunkIndex(),
-                            citation.title().strip(), citation.sourceUrl(), citation.sourceName().strip(),
-                            citation.collectedAt(), citation.reliabilityLevel(), citation.similarity()
-                    )
-            ), "itinerary knowledge citation");
-        }
-    }
-
-    private void persistDay(UUID versionId, int dayIndex, PlanningCompletedEvent.Day day) {
-        UUID dayId = UUID.randomUUID();
-        requireOne(itineraryMapper.insertDay(new ItineraryMapper.DayWrite(
-                dayId, versionId, day.date(), dayIndex
-        )), "itinerary day");
-        List<UUID> activityIds = new ArrayList<>(day.activities().size());
-        for (int activityIndex = 0; activityIndex < day.activities().size(); activityIndex++) {
-            PlanningCompletedEvent.Activity activity = day.activities().get(activityIndex);
-            PlanningCompletedEvent.Coordinates coordinates = activity.coordinates();
-            UUID activityId = UUID.randomUUID();
-            activityIds.add(activityId);
-            requireOne(itineraryMapper.insertActivity(new ItineraryMapper.ActivityWrite(
-                    activityId, dayId, activityIndex, activity.title().strip(),
-                    activity.startTime(), activity.endTime(), activity.estimatedCost(), activity.source(),
-                    activity.providerPoiId(), coordinates == null ? null : coordinates.longitude(),
-                    coordinates == null ? null : coordinates.latitude(), activity.address()
-            )), "itinerary activity");
-        }
-        for (int legIndex = 0; legIndex < day.transitLegs().size(); legIndex++) {
-            PlanningCompletedEvent.TransitLeg leg = day.transitLegs().get(legIndex);
-            requireOne(itineraryMapper.insertTransitLeg(new ItineraryMapper.TransitLegWrite(
-                    UUID.randomUUID(), dayId, legIndex,
-                    activityIds.get(leg.fromActivityIndex()),
-                    activityIds.get(leg.toActivityIndex()),
-                    leg.mode(), leg.distanceMeters(), leg.durationSeconds(), leg.provider(),
-                    leg.estimated(), writeJson(leg.polyline())
-            )), "itinerary transit leg");
-        }
-    }
-
     private void persistStaleFailure(PlanningCompletedEvent event,
-                                     PlanningTaskCompletionRecord task) {
+                                     PlanningTaskCompletionRecord task,
+                                     String errorCode,
+                                     String message) {
         Instant now = clock.instant();
         requireOne(taskMapper.updateTerminalStatus(
-                task.id(), task.taskVersion(), FAILED, "STALE_TRIP_VERSION",
-                "Trip constraints changed while planning was running"
+                task.id(), task.taskVersion(), FAILED, errorCode, message
         ), "planning task status");
         publishAfterCommit(insertTaskEvent(new PlanningTaskEventRecord(
                 null, event.eventId(), task.id(), "PLANNING_FAILED", 1,
                 writeJson(new FailurePayload(
-                        FAILED, "STALE_TRIP_VERSION",
-                        "Trip constraints changed while planning was running"
+                        FAILED, errorCode, message
                 )), now
         )));
     }

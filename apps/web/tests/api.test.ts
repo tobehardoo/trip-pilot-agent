@@ -2,13 +2,16 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import {
   ApiError,
+  applyItineraryEdit,
   cancelPlanningTask,
   createGuideImport,
+  createItineraryReplan,
   createPlanningTask,
   createTrip,
   listGuideImports,
   logoutSession,
   refreshSession,
+  previewItineraryEdit,
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
   type CreateTripInput,
@@ -117,6 +120,74 @@ test('cancels a planning task with bearer authentication', async () => {
     expect.objectContaining({
       method: 'DELETE',
       headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+    }),
+  )
+})
+
+test('previews and applies an itinerary edit with its base version', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ canApply: true }),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+  const input = {
+    baseVersionId: '11111111-1111-1111-1111-111111111111',
+    operation: 'DELETE_ACTIVITY' as const,
+    activityId: '22222222-2222-2222-2222-222222222222',
+  }
+
+  await previewItineraryEdit('access-token', '33333333-3333-3333-3333-333333333333', input)
+  await applyItineraryEdit('access-token', '33333333-3333-3333-3333-333333333333', input)
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    '/api/trips/33333333-3333-3333-3333-333333333333/itinerary/edits/preview',
+    expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+      body: JSON.stringify(input),
+    }),
+  )
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    '/api/trips/33333333-3333-3333-3333-333333333333/itinerary/edits',
+    expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+      body: JSON.stringify(input),
+    }),
+  )
+})
+
+test('creates a local itinerary replan with impacted dates and an idempotency key', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 202,
+    json: async () => ({ taskType: 'REPLAN' }),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+  const input = {
+    baseVersionId: '11111111-1111-1111-1111-111111111111',
+    dates: ['2026-08-01'],
+  }
+
+  await createItineraryReplan(
+    'access-token',
+    '33333333-3333-3333-3333-333333333333',
+    input,
+    '44444444-4444-4444-8444-444444444444',
+  )
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    '/api/trips/33333333-3333-3333-3333-333333333333/itinerary/replans',
+    expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({
+        Authorization: 'Bearer access-token',
+        'Idempotency-Key': '44444444-4444-4444-8444-444444444444',
+      }),
+      body: JSON.stringify(input),
     }),
   )
 })

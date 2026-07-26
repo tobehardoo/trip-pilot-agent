@@ -2,7 +2,7 @@
 
 TripPilot 是一个面向国内自由行的约束驱动型旅行规划平台。它把用户的日期、预算、兴趣、必去地点、固定安排和交通偏好转换为结构化约束，再结合真实 POI、路线与城市知识生成可执行、可解释的多日行程。
 
-> 当前版本：可部署的 V1.1。默认提供无需外部 API Key 的确定性 Demo 模式，也支持接入高德、语义 Embedding 与公开攻略情报导入。
+> 当前版本：V1.2 候选验证中。默认提供无需外部 API Key 的确定性 Demo 模式，也支持接入高德、语义 Embedding 与公开攻略情报导入。发布证据见[验收清单](docs/release-checklist.md)。
 
 ## What：这是一个什么项目
 
@@ -36,7 +36,7 @@ TripPilot 是一个面向国内自由行的约束驱动型旅行规划平台。�
 
 | 层级 | 技术 |
 | --- | --- |
-| Web | Vue 3、TypeScript、Vite、Pinia、Vue Router、Vitest、Nginx |
+| Web | Vue 3、TypeScript、Vite、Vitest、Nginx |
 | 业务后端 | Java 21、Spring Boot、Spring Security、MyBatis、Flyway、Maven |
 | 规划服务 | Python 3.12、FastAPI、Pydantic、aio-pika、OR-Tools、uv |
 | 数据与检索 | PostgreSQL 16、PostGIS、pgvector、Redis |
@@ -151,7 +151,10 @@ docker compose -f compose.prod.yaml --env-file .env ps
 - 健康检查：<http://127.0.0.1:8080/api/health>
 - Prometheus：<http://127.0.0.1:9090>
 
-打开 Web 后，注册账号并创建旅行。在“攻略情报”中可粘贴无需登录即可访问的公开攻略链接，系统会把提取到的时效事实保存到当前行程，供用户核对行程方案。V1.1 中这些事实作为独立的决策辅助信息展示，不会自动改写 OR-Tools 的地点候选或硬约束。
+打开 Web 后，注册账号并创建旅行。在“攻略情报”中可粘贴无需登录即可访问的公开攻略链接，
+系统会把提取到的新鲜事实保存到当前旅行，并把启用的证据快照交给规划任务。攻略事实只能
+影响候选排序和软建议，不会绕过 OR-Tools 的硬约束或把未经授权 Provider 核验的信息当作
+实时闭馆、票价或预约结论。
 
 ### 4. 查看日志或停止服务
 
@@ -172,6 +175,8 @@ AMAP_WEB_SERVICE_KEY=your-server-side-amap-key
 VITE_AMAP_WEB_JS_KEY=your-browser-amap-key
 VITE_AMAP_SECURITY_CODE=your-browser-security-code
 ```
+
+本地开发可将两个 `VITE_AMAP_*` 变量放在仓库根 `.env` 或 `apps/web/.env.local`；Web 本地文件优先，修改后需要重启 Vite。
 
 浏览器 Key 与服务端 Web Service Key 必须分开使用。语义 Embedding 可通过 `KNOWLEDGE_EMBEDDING_PROVIDER` 和对应服务凭据配置；启用前应先运行固定检索评测集。
 
@@ -195,25 +200,25 @@ pnpm test
 pnpm build
 ```
 
-当前质量基线：
+质量不使用容易过期的固定测试数量描述。CI 以以下门禁为准：
 
-- Java：98 项测试，JaCoCo 行覆盖率门禁 80%。
-- Python：342 项测试（含按外部环境跳过项），新增攻略情报模块覆盖率不低于 80%。
-- Web：54 项测试，地图与 Provider 核心模块行覆盖率超过 90%。
+- Java：`mvn --batch-mode verify`，JaCoCo 行覆盖率门禁 80%。
+- Python：Ruff、全量 Pytest，以及检索/采集模块覆盖率门禁 80%。
+- Web：Vitest 覆盖率、TypeScript 类型检查和生产构建。
+- 基础设施：Compose 配置、生产镜像构建与敏感信息扫描。
 
 ## 文档
 
-- [项目范围](docs/00-project-charter.md)
-- [系统架构](docs/01-system-architecture.md)
-- [领域与数据模型](docs/02-domain-and-data.md)
-- [Agent 工作流](docs/03-agent-workflow.md)
-- [约束优化](docs/04-planning-optimization.md)
-- [数据、RAG 与 Provider](docs/05-data-rag-providers.md)
-- [可靠性、安全与可观测性](docs/07-reliability-security-observability.md)
-- [测试与评测](docs/08-testing-and-evaluation.md)
-- [产品路线图](docs/09-roadmap-and-todos.md)
-- [产品完整度与需求基线](docs/27-product-completeness-and-requirements-baseline.md)
-- [生产发布与恢复手册](docs/25-production-release-runbook.md)
+- [系统架构设计](docs/architecture.md) — 为什么选择模块化单体、异步任务模型、Transactional Outbox
+- [领域模型](docs/domain.md) — 核心领域划分、聚合关系、数据所有权
+- [规划算法与 Agent](docs/planning.md) — 三段式 Pipeline、约束求解、Provider 设计
+- [数据库设计](docs/database.md) — Schema 分治、版本不可变、JSONB 边界、索引策略
+- [接口与消息契约](docs/api.md) — REST API、MQ 契约版本化、SSE 协议
+- [部署](docs/deployment.md) — Docker Compose、环境变量、备份恢复
+- [产品路线图](docs/roadmap.md) — 当前发布范围、生产 V1 退出条件、后续计划
+- [V1.2 发布验收清单](docs/release-checklist.md) — 本次发布的范围、证据与完成定义
+- [技术决策记录](docs/decision-record.md) — 关键 ADR 及取舍理由
+- [产品完整度与需求基线](docs/27-product-completeness-and-requirements-baseline.md) — 详细需求清单和评分
 
 ## 已知边界
 

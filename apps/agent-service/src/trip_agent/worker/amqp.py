@@ -1,6 +1,7 @@
 """AMQP transport for the planning worker."""
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
@@ -19,6 +20,14 @@ from pydantic import Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from trip_agent.acquisition.registry import SourceCatalog
+from trip_agent.domain.planning.protocols import (
+    KnowledgeEvidenceProvider,
+    PlanningInfeasibleError,
+    PlanningProvider,
+)
+from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider
+from trip_agent.infrastructure.demo.knowledge_provider import DemoKnowledgeEvidenceProvider
+from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
 from trip_agent.providers.map import AmapMapProvider, JsonCache
 from trip_agent.providers.redis_cache import RedisJsonCache
 from trip_agent.providers.route import AmapRouteProvider
@@ -28,7 +37,11 @@ from trip_agent.retrieval.embeddings import (
     HashEmbeddingProvider,
 )
 from trip_agent.retrieval.repository import PsycopgKnowledgeRepository
-from trip_agent.worker.contracts import PlanningCancelCommand, PlanningCreateCommand
+from trip_agent.worker.contracts import (
+    PlanningCancelCommand,
+    PlanningCreateCommand,
+    PlanningReplanCommand,
+)
 from trip_agent.worker.knowledge import (
     KnowledgeFreshnessProvider,
     KnowledgeSearchRepository,
@@ -36,16 +49,11 @@ from trip_agent.worker.knowledge import (
     StaticCatalogKnowledgeFreshnessProvider,
 )
 from trip_agent.worker.processor import (
-    AmapPlanningProvider,
-    DemoKnowledgeEvidenceProvider,
-    DemoPlanningProvider,
-    FallbackPlanningProvider,
-    KnowledgeEvidenceProvider,
-    PlanningInfeasibleError,
-    PlanningProvider,
     planning_failed_event,
     process_planning_create,
+    process_planning_replan,
 )
+from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider
 
 COMMAND_EXCHANGE = "trip.command.exchange"
 EVENT_EXCHANGE = "trip.event.exchange"
@@ -54,6 +62,7 @@ CREATE_QUEUE = "planning.create.queue"
 CANCEL_QUEUE = "planning.cancel.queue"
 DEAD_LETTER_QUEUE = "planning.dead-letter.queue"
 CREATE_ROUTING_KEY = "planning.create"
+REPLAN_ROUTING_KEY = "planning.replan"
 CANCEL_ROUTING_KEY = "planning.cancel"
 COMPLETED_ROUTING_KEY = "planning.completed"
 FAILED_ROUTING_KEY = "planning.failed"
@@ -164,9 +173,7 @@ class WorkerSettings(BaseSettings):
     knowledge_embedding_dimensions: int = Field(default=1024, ge=1, le=4096)
     knowledge_embedding_model: str = "text-embedding-v4"
     dashscope_api_key: SecretStr | None = None
-    dashscope_embedding_base_url: str = (
-        "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    )
+    dashscope_embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     dashscope_embedding_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     knowledge_source_directory: Path = Path("../../knowledge/sources")
     postgres_host: str = "localhost"
@@ -313,9 +320,7 @@ async def worker_runtime(settings: WorkerSettings) -> AsyncIterator[WorkerRuntim
         yield WorkerRuntime(
             planning_provider=planning_provider,
             knowledge_provider=build_knowledge_provider(settings),
-            cancellation_oracle=PsycopgCancellationOracle(
-                settings.business_connection_url()
-            ),
+            cancellation_oracle=PsycopgCancellationOracle(settings.business_connection_url()),
         )
 
 
@@ -328,7 +333,15 @@ async def handle_delivery(
     cancellation_oracle: CancellationOracle | None = None,
 ) -> None:
     try:
-        command = PlanningCreateCommand.model_validate_json(message.body)
+        raw_command: Any = json.loads(message.body)
+        if not isinstance(raw_command, dict):
+            raise ValueError("planning command must be a JSON object")
+        event_type = raw_command.get("eventType")
+        command = (
+            PlanningReplanCommand.model_validate(raw_command)
+            if event_type == "PLANNING_REPLAN_REQUESTED"
+            else PlanningCreateCommand.model_validate(raw_command)
+        )
     except (ValidationError, TypeError, ValueError) as exception:
         error_count = exception.error_count() if isinstance(exception, ValidationError) else 1
         logger.warning("rejecting invalid planning command: %s", error_count)
@@ -336,11 +349,22 @@ async def handle_delivery(
         return
 
     try:
-        process_task = asyncio.create_task(process_planning_create(
-            command,
-            provider or DemoPlanningProvider(),
-            knowledge_provider=knowledge_provider,
-        ))
+        planning_provider = provider or DemoPlanningProvider()
+        if isinstance(command, PlanningReplanCommand):
+            process_task = asyncio.create_task(
+                process_planning_replan(
+                    command,
+                    planning_provider,
+                )
+            )
+        else:
+            process_task = asyncio.create_task(
+                process_planning_create(
+                    command,
+                    planning_provider,
+                    knowledge_provider=knowledge_provider,
+                )
+            )
         cancel_wait: asyncio.Task[bool] | None = None
         if cancellation_registry is not None:
             signal = cancellation_registry.signal_for(command.task_id)
@@ -519,6 +543,7 @@ async def _consume(
         )
         dead_letter_queue = await channel.declare_queue(DEAD_LETTER_QUEUE, durable=True)
         await command_queue.bind(command_exchange, routing_key=CREATE_ROUTING_KEY)
+        await command_queue.bind(command_exchange, routing_key=REPLAN_ROUTING_KEY)
         await cancel_queue.bind(command_exchange, routing_key=CANCEL_ROUTING_KEY)
         await dead_letter_queue.bind(dead_letter_exchange, routing_key="planning.#")
         cancellation_registry = CancellationRegistry()

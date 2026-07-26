@@ -371,7 +371,7 @@ def test_v3_activity_contract_requires_real_amap_metadata_and_numeric_coordinate
 def test_v3_json_schema_enforces_provider_estimate_consistency() -> None:
     schema = json.loads(
         (Path(__file__).resolve().parents[3]
-         / "contracts/messaging/planning-completed-event-v3.schema.json").read_text(
+         / "contracts/messaging/legacy/planning-completed-event-v3.schema.json").read_text(
              encoding="utf-8"
          )
     )

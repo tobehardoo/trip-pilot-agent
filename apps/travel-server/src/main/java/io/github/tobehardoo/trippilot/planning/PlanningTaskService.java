@@ -3,15 +3,20 @@ package io.github.tobehardoo.trippilot.planning;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.guide.GuideImportService;
-import io.github.tobehardoo.trippilot.messaging.OutboxEventRecord;
-import io.github.tobehardoo.trippilot.messaging.OutboxMapper;
+import io.github.tobehardoo.trippilot.itinerary.ItineraryMapper;
+import io.github.tobehardoo.trippilot.itinerary.ItineraryService;
+import io.github.tobehardoo.trippilot.infrastructure.mq.OutboxEventRecord;
+import io.github.tobehardoo.trippilot.infrastructure.mq.OutboxMapper;
 import io.github.tobehardoo.trippilot.trip.TripService;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.ApplicationEventPublisher;
@@ -21,15 +26,20 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class PlanningTaskService {
 
-    private static final String TASK_TYPE = "CREATE";
+    private static final String CREATE_TASK_TYPE = "CREATE";
+    private static final String REPLAN_TASK_TYPE = "REPLAN";
     private static final String TASK_STATUS = "QUEUED";
     private static final String COMMAND_TYPE = "PLANNING_CREATE_REQUESTED";
     private static final String ROUTING_KEY = "planning.create";
+    private static final String REPLAN_COMMAND_TYPE = "PLANNING_REPLAN_REQUESTED";
+    private static final String REPLAN_ROUTING_KEY = "planning.replan";
     private static final String CANCEL_COMMAND_TYPE = "PLANNING_CANCEL_REQUESTED";
     private static final String CANCEL_ROUTING_KEY = "planning.cancel";
     private static final long MAX_TRIP_DAYS = 7;
 
     private final PlanningTaskMapper planningTaskMapper;
+    private final ItineraryMapper itineraryMapper;
+    private final ItineraryService itineraryService;
     private final PlanningTaskEventMapper planningTaskEventMapper;
     private final OutboxMapper outboxMapper;
     private final TripService tripService;
@@ -38,6 +48,8 @@ public class PlanningTaskService {
     private final ApplicationEventPublisher eventPublisher;
 
     public PlanningTaskService(PlanningTaskMapper planningTaskMapper,
+                               ItineraryMapper itineraryMapper,
+                               ItineraryService itineraryService,
                                PlanningTaskEventMapper planningTaskEventMapper,
                                OutboxMapper outboxMapper,
                                TripService tripService,
@@ -45,6 +57,8 @@ public class PlanningTaskService {
                                ObjectMapper objectMapper,
                                ApplicationEventPublisher eventPublisher) {
         this.planningTaskMapper = planningTaskMapper;
+        this.itineraryMapper = itineraryMapper;
+        this.itineraryService = itineraryService;
         this.planningTaskEventMapper = planningTaskEventMapper;
         this.outboxMapper = outboxMapper;
         this.tripService = tripService;
@@ -58,6 +72,7 @@ public class PlanningTaskService {
         TripService.TripResponse trip = tripService.get(ownerId, tripId);
         var existing = planningTaskMapper.findOwnedByIdempotencyKey(tripId, idempotencyKey, ownerId);
         if (existing.isPresent()) {
+            PlanningTaskIdempotency.requireCreateMatch(existing.get());
             return toResponse(existing.get());
         }
         if (ChronoUnit.DAYS.between(trip.startDate(), trip.endDate()) + 1 > MAX_TRIP_DAYS) {
@@ -69,19 +84,30 @@ public class PlanningTaskService {
         }
 
         Instant now = Instant.now();
+        itineraryMapper.findStateForUpdate(tripId);
+        if (itineraryMapper.hasLockedItineraryElements(tripId)) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "ITINERARY_LOCKED_ACTIVITIES",
+                    "Unlock locked activities before starting full replanning"
+            );
+        }
         List<GuideImportService.PlanningGuideFact> guideFacts =
                 guideImportService.planningEvidence(ownerId, tripId, now);
         String constraintSnapshotJson = writeJson(trip.constraints());
         GuideEvidenceSnapshot guideEvidenceSnapshot = new GuideEvidenceSnapshot(guideFacts);
         String guideEvidenceSnapshotJson = writeJson(guideEvidenceSnapshot);
         PlanningTaskRecord task = new PlanningTaskRecord(
-                UUID.randomUUID(), tripId, idempotencyKey, TASK_TYPE, TASK_STATUS,
-                trip.version(), constraintSnapshotJson, guideEvidenceSnapshotJson,
+                UUID.randomUUID(), tripId, idempotencyKey, CREATE_TASK_TYPE, TASK_STATUS,
+                trip.version(), null, null, constraintSnapshotJson, guideEvidenceSnapshotJson,
                 UUID.randomUUID(), 0, null, null, 0, now, now
         );
         if (planningTaskMapper.insert(task) == 0) {
             return planningTaskMapper.findOwnedByIdempotencyKey(tripId, idempotencyKey, ownerId)
-                    .map(this::toResponse)
+                    .map(existingTask -> {
+                        PlanningTaskIdempotency.requireCreateMatch(existingTask);
+                        return toResponse(existingTask);
+                    })
                     .orElseThrow(() -> new ApiException(
                             HttpStatus.CONFLICT,
                             "PLANNING_TASK_ACTIVE",
@@ -101,7 +127,7 @@ public class PlanningTaskService {
         PlanningCreateCommand command = new PlanningCreateCommand(
                 COMMAND_TYPE, 2, eventId, task.traceId(), task.id(), tripId, now,
                 new PlanningCreatePayload(
-                        TASK_TYPE,
+                        CREATE_TASK_TYPE,
                         trip.version(),
                         idempotencyKey,
                         new TripSnapshot(
@@ -116,6 +142,131 @@ public class PlanningTaskService {
                 writeJson(command), "PENDING", 0, now, null, now, null
         ));
         return toResponse(task);
+    }
+
+    @Transactional
+    public PlanningTaskResponse createReplan(
+            UUID ownerId, UUID tripId, UUID idempotencyKey, LocalReplanRequest request) {
+        TripService.TripResponse trip = tripService.get(ownerId, tripId);
+        var existing = planningTaskMapper.findOwnedByIdempotencyKey(tripId, idempotencyKey, ownerId);
+        if (existing.isPresent()) {
+            PlanningTaskIdempotency.requireReplanMatch(existing.get(), request, objectMapper);
+            return toResponse(existing.get());
+        }
+        ItineraryMapper.EditableCurrentVersion current = itineraryMapper
+                .findCurrentVersionOwnedForEditForUpdate(tripId, ownerId)
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.NOT_FOUND, "ITINERARY_NOT_FOUND", "Itinerary was not found"
+                ));
+        if (request == null || request.baseVersionId() == null
+                || !request.baseVersionId().equals(current.versionId())) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "ITINERARY_VERSION_CONFLICT",
+                    "The itinerary was updated. Reload it before starting local replanning"
+            );
+        }
+        List<LocalDate> dates = validateReplanDates(request.dates(), current.versionId());
+        ItineraryService.ItineraryResponse itinerary = itineraryService.getCurrent(ownerId, tripId);
+        Instant now = Instant.now();
+        String constraintSnapshotJson = writeJson(trip.constraints());
+        String impactedDatesJson = writeJson(dates);
+        PlanningTaskRecord task = new PlanningTaskRecord(
+                UUID.randomUUID(), tripId, idempotencyKey, REPLAN_TASK_TYPE, TASK_STATUS,
+                trip.version(), current.versionId(), impactedDatesJson,
+                constraintSnapshotJson, writeJson(new GuideEvidenceSnapshot(List.of())),
+                UUID.randomUUID(), 0, null, null, 0, now, now
+        );
+        if (planningTaskMapper.insert(task) == 0) {
+            return planningTaskMapper.findOwnedByIdempotencyKey(tripId, idempotencyKey, ownerId)
+                    .map(existingTask -> {
+                        PlanningTaskIdempotency.requireReplanMatch(
+                                existingTask, request, objectMapper
+                        );
+                        return toResponse(existingTask);
+                    })
+                    .orElseThrow(() -> new ApiException(
+                            HttpStatus.CONFLICT,
+                            "PLANNING_TASK_ACTIVE",
+                            "This trip already has an active planning task"
+                    ));
+        }
+        if (planningTaskEventMapper.insert(new PlanningTaskEventRecord(
+                null, UUID.randomUUID(), task.id(), "PLANNING_QUEUED", 1,
+                writeJson(new TaskStatusPayload(TASK_STATUS)), now
+        )) != 1) {
+            throw new IllegalStateException("Could not persist planning queued event");
+        }
+
+        UUID eventId = UUID.randomUUID();
+        ReplanItinerarySnapshot snapshot = toReplanSnapshot(itinerary);
+        PlanningReplanCommand command = new PlanningReplanCommand(
+                REPLAN_COMMAND_TYPE, 1, eventId, task.traceId(), task.id(), tripId, now,
+                new PlanningReplanPayload(
+                        REPLAN_TASK_TYPE, trip.version(), current.versionId(), idempotencyKey,
+                        dates,
+                        new TripSnapshot(
+                                trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
+                                trip.status(), trip.version(), trip.constraints()
+                        ),
+                        snapshot,
+                        itinerary.knowledge()
+                )
+        );
+        outboxMapper.insert(new OutboxEventRecord(
+                eventId, "PLANNING_TASK", task.id(), REPLAN_COMMAND_TYPE, REPLAN_ROUTING_KEY,
+                writeJson(command), "PENDING", 0, now, null, now, null
+        ));
+        return toResponse(task);
+    }
+
+    private List<LocalDate> validateReplanDates(List<LocalDate> requestedDates, UUID versionId) {
+        if (requestedDates == null || requestedDates.isEmpty()) {
+            throw invalidReplanScope("At least one itinerary date must be selected");
+        }
+        LinkedHashSet<LocalDate> dates = new LinkedHashSet<>(requestedDates);
+        if (dates.size() != requestedDates.size()) {
+            throw invalidReplanScope("Itinerary dates must not be repeated");
+        }
+        var availableDates = itineraryMapper.findDays(versionId).stream()
+                .map(ItineraryMapper.StoredDay::date)
+                .collect(java.util.stream.Collectors.toSet());
+        if (!availableDates.containsAll(dates)) {
+            throw invalidReplanScope("Every replanning date must belong to the current itinerary");
+        }
+        return dates.stream().sorted().toList();
+    }
+
+    private ApiException invalidReplanScope(String message) {
+        return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "ITINERARY_REPLAN_INVALID", message);
+    }
+
+    private ReplanItinerarySnapshot toReplanSnapshot(ItineraryService.ItineraryResponse itinerary) {
+        List<ReplanDaySnapshot> days = itinerary.days().stream().map(day -> {
+            Map<UUID, Integer> activityIndexes = new HashMap<>();
+            List<ReplanActivitySnapshot> activities = new java.util.ArrayList<>();
+            for (int index = 0; index < day.activities().size(); index++) {
+                ItineraryService.ActivityResponse activity = day.activities().get(index);
+                activityIndexes.put(activity.id(), index);
+                activities.add(new ReplanActivitySnapshot(
+                        activity.title(), activity.startTime(), activity.endTime(),
+                        activity.estimatedCost(), activity.source(), activity.providerPoiId(),
+                        activity.coordinates(), activity.address()
+                ));
+            }
+            List<ReplanTransitSnapshot> transitLegs = day.transitLegs().stream()
+                    .map(leg -> new ReplanTransitSnapshot(
+                            activityIndexes.get(leg.fromActivityId()),
+                            activityIndexes.get(leg.toActivityId()), leg.mode(),
+                            leg.distanceMeters(), leg.durationSeconds(), leg.provider(),
+                            leg.estimated(), leg.polyline()
+                    ))
+                    .toList();
+            return new ReplanDaySnapshot(day.date(), activities, transitLegs);
+        }).toList();
+        return new ReplanItinerarySnapshot(
+                itinerary.title(), itinerary.provider(), days, itinerary.estimatedTotalCost()
+        );
     }
 
     @Transactional
@@ -167,6 +318,11 @@ public class PlanningTaskService {
         );
     }
 
+    @Transactional(readOnly = true)
+    public boolean hasActiveTask(UUID tripId) {
+        return planningTaskMapper.existsActiveByTripId(tripId);
+    }
+
     private String writeJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -205,6 +361,72 @@ public class PlanningTaskService {
             UUID idempotencyKey,
             TripSnapshot trip,
             GuideEvidenceSnapshot guideEvidence
+    ) {
+    }
+
+    public record LocalReplanRequest(UUID baseVersionId, List<LocalDate> dates) {
+    }
+
+    private record PlanningReplanCommand(
+            String eventType,
+            int schemaVersion,
+            UUID eventId,
+            UUID traceId,
+            UUID taskId,
+            UUID tripId,
+            Instant occurredAt,
+            PlanningReplanPayload payload
+    ) {
+    }
+
+    private record PlanningReplanPayload(
+            String taskType,
+            int baselineTripVersion,
+            UUID baselineItineraryVersionId,
+            UUID idempotencyKey,
+            List<LocalDate> impactedDates,
+            TripSnapshot trip,
+            ReplanItinerarySnapshot itinerary,
+            ItineraryService.KnowledgeResponse knowledge
+    ) {
+    }
+
+    private record ReplanItinerarySnapshot(
+            String title,
+            String provider,
+            List<ReplanDaySnapshot> days,
+            java.math.BigDecimal estimatedTotalCost
+    ) {
+    }
+
+    private record ReplanDaySnapshot(
+            LocalDate date,
+            List<ReplanActivitySnapshot> activities,
+            List<ReplanTransitSnapshot> transitLegs
+    ) {
+    }
+
+    private record ReplanActivitySnapshot(
+            String title,
+            java.time.OffsetDateTime startTime,
+            java.time.OffsetDateTime endTime,
+            java.math.BigDecimal estimatedCost,
+            String source,
+            String providerPoiId,
+            ItineraryService.CoordinatesResponse coordinates,
+            String address
+    ) {
+    }
+
+    private record ReplanTransitSnapshot(
+            int fromActivityIndex,
+            int toActivityIndex,
+            String mode,
+            int distanceMeters,
+            int durationSeconds,
+            String provider,
+            boolean estimated,
+            List<ItineraryService.CoordinatesResponse> polyline
     ) {
     }
 

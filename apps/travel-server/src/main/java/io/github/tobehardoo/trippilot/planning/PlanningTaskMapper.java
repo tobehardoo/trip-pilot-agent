@@ -15,11 +15,13 @@ public interface PlanningTaskMapper {
     @Insert("""
             INSERT INTO business.planning_task(
                 id, trip_id, idempotency_key, task_type, status,
-                baseline_trip_version, constraint_snapshot, guide_evidence_snapshot,
+                baseline_trip_version, baseline_itinerary_version_id, impacted_dates,
+                constraint_snapshot, guide_evidence_snapshot,
                 trace_id, retry_count, version
             ) VALUES (
                 #{id}, #{tripId}, #{idempotencyKey}, #{taskType}, #{status},
-                #{baselineTripVersion}, CAST(#{constraintSnapshotJson} AS jsonb),
+                #{baselineTripVersion}, #{baselineItineraryVersionId},
+                CAST(#{impactedDatesJson} AS jsonb), CAST(#{constraintSnapshotJson} AS jsonb),
                 CAST(#{guideEvidenceSnapshotJson} AS jsonb),
                 #{traceId}, #{retryCount}, #{version}
             )
@@ -30,6 +32,8 @@ public interface PlanningTaskMapper {
     @Select("""
             SELECT planning_task.id, planning_task.trip_id, planning_task.idempotency_key,
                    planning_task.task_type, planning_task.status, planning_task.baseline_trip_version,
+                   planning_task.baseline_itinerary_version_id,
+                   planning_task.impacted_dates::text AS impacted_dates_json,
                    planning_task.constraint_snapshot::text AS constraint_snapshot_json,
                    planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
                    planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
@@ -49,6 +53,8 @@ public interface PlanningTaskMapper {
     @Select("""
             SELECT planning_task.id, planning_task.trip_id, planning_task.idempotency_key,
                    planning_task.task_type, planning_task.status, planning_task.baseline_trip_version,
+                   planning_task.baseline_itinerary_version_id,
+                   planning_task.impacted_dates::text AS impacted_dates_json,
                    planning_task.constraint_snapshot::text AS constraint_snapshot_json,
                    planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
                    planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
@@ -63,16 +69,21 @@ public interface PlanningTaskMapper {
     );
 
     @Select("""
-            SELECT planning_task.id, planning_task.trip_id, planning_task.status,
-                   planning_task.baseline_trip_version, planning_task.trace_id,
+            SELECT planning_task.id, planning_task.trip_id, planning_task.task_type,
+                   planning_task.status, planning_task.baseline_trip_version,
+                   planning_task.baseline_itinerary_version_id,
+                   planning_task.impacted_dates::text AS impacted_dates_json,
+                   planning_task.trace_id,
                    planning_task.version AS task_version,
                    planning_task.constraint_snapshot::text AS constraint_snapshot_json,
                    trip.version AS current_trip_version,
+                   itinerary.current_version_id AS current_itinerary_version_id,
                    trip.start_date AS trip_start_date,
                    trip.end_date AS trip_end_date,
                    planning_task.created_at
             FROM business.planning_task
             JOIN business.trip ON trip.id = planning_task.trip_id
+            LEFT JOIN business.itinerary ON itinerary.trip_id = planning_task.trip_id
             WHERE planning_task.id = #{taskId}
             FOR UPDATE OF planning_task, trip
             """)
@@ -103,4 +114,13 @@ public interface PlanningTaskMapper {
               AND planning_task.status IN ('QUEUED', 'RUNNING', 'CANCELLING')
             """)
     int cancelOwned(@Param("taskId") UUID taskId, @Param("ownerId") UUID ownerId);
+
+    @Select("""
+            SELECT EXISTS (
+                SELECT 1 FROM business.planning_task
+                WHERE trip_id = #{tripId}
+                  AND status IN ('CREATED','QUEUED','RUNNING','WAITING_USER','RETRYING','CANCELLING')
+            )
+            """)
+    boolean existsActiveByTripId(@Param("tripId") UUID tripId);
 }

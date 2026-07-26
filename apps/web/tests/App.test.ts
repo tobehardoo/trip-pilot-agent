@@ -159,7 +159,11 @@ async function signIn(fetchMock: ReturnType<typeof vi.fn>) {
       return response({ code: 'INVALID_REFRESH_TOKEN', message: 'Refresh cookie is missing' }, 401)
     }
     if (urlOf(input).endsWith('/guide-imports') && init?.method !== 'POST') {
-      return response([])
+      try {
+        return await fetchMock(input, init)
+      } catch {
+        return response([])
+      }
     }
     try {
       return await fetchMock(input, init)
@@ -871,6 +875,61 @@ describe('TripPilot application shell', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(screen.queryByText(importedGuide.title)).toBeNull()
     expect(screen.getByText('还没有导入攻略')).toBeTruthy()
+  })
+
+  test('ignores a late guide toggle after leaving and reopening the trip', async () => {
+    let resolveToggle!: (result: Response) => void
+    const pendingToggle = new Promise<Response>((resolve) => {
+      resolveToggle = resolve
+    })
+    const guide = {
+      id: '99999999-9999-9999-9999-999999999999',
+      sourceUrl: 'https://example.com/guide',
+      finalUrl: 'https://example.com/guide',
+      sourceHost: 'example.com',
+      title: 'Controllable guide source',
+      excerpt: 'Late toggle must not cross route boundaries.',
+      contentHash: 'a'.repeat(64),
+      fetchedAt: '2026-07-23T08:00:00Z',
+      enabled: true,
+      facts: [],
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith('/guide-imports') && init?.method !== 'POST') return response([guide])
+      if (url.endsWith(`/guide-imports/${guide.id}`) && init?.method === 'PUT') return pendingToggle
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: 'Itinerary was not found' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await openPlanningWorkspace(fetchMock)
+    const guideCard = (await screen.findByText(guide.title)).closest('article')
+    const toggle = guideCard?.querySelector('button') as HTMLButtonElement | null
+    expect(toggle).toBeTruthy()
+    const enabledLabel = toggle?.textContent?.trim()
+    await fireEvent.click(toggle!)
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input, init]) => (
+        urlOf(input).endsWith(`/guide-imports/${guide.id}`)
+        && init?.method === 'PUT'
+      ))).toBe(true)
+    })
+
+    window.history.pushState({}, '', '/trips')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await waitFor(() => expect(screen.queryByText(guide.title)).toBeNull())
+    window.history.pushState({}, '', `/trips/${tripResponse.id}`)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    const reopenedCard = (await screen.findByText(guide.title)).closest('article')
+    resolveToggle(response({ ...guide, enabled: false }))
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(reopenedCard?.querySelector('button')?.textContent?.trim()).toBe(enabledLabel)
   })
 
   test('lets the owner cancel an active planning task', async () => {

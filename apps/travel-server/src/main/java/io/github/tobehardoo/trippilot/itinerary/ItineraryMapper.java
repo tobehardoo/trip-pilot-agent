@@ -38,10 +38,10 @@ public interface ItineraryMapper {
     @Insert("""
             INSERT INTO business.itinerary_version(
                 id, itinerary_id, version_number, parent_version_id, planning_task_id,
-                title, estimated_total_cost, provider, constraint_snapshot, created_at
+                version_source, title, estimated_total_cost, provider, constraint_snapshot, created_at
             ) VALUES (
                 #{id}, #{itineraryId}, #{versionNumber}, #{parentVersionId}, #{planningTaskId},
-                #{title}, #{estimatedTotalCost}, #{provider},
+                #{versionSource}, #{title}, #{estimatedTotalCost}, #{provider},
                 CAST(#{constraintSnapshotJson} AS jsonb), #{createdAt}
             )
             """)
@@ -57,11 +57,11 @@ public interface ItineraryMapper {
             INSERT INTO business.activity(
                 id, itinerary_day_id, activity_order, title,
                 start_time, end_time, estimated_cost, source,
-                provider_poi_id, longitude, latitude, address
+                provider_poi_id, longitude, latitude, address, locked
             ) VALUES (
                 #{id}, #{itineraryDayId}, #{activityOrder}, #{title},
                 #{startTime}, #{endTime}, #{estimatedCost}, #{source},
-                #{providerPoiId}, #{longitude}, #{latitude}, #{address}
+                #{providerPoiId}, #{longitude}, #{latitude}, #{address}, #{locked}
             )
             """)
     int insertActivity(ActivityWrite activity);
@@ -69,11 +69,11 @@ public interface ItineraryMapper {
     @Insert("""
             INSERT INTO business.transit_leg(
                 id, itinerary_day_id, leg_order, from_activity_id, to_activity_id,
-                mode, distance_meters, duration_seconds, provider, estimated, polyline
+                mode, distance_meters, duration_seconds, provider, estimated, polyline, locked
             ) VALUES (
                 #{id}, #{itineraryDayId}, #{legOrder}, #{fromActivityId}, #{toActivityId},
                 #{mode}, #{distanceMeters}, #{durationSeconds}, #{provider}, #{estimated},
-                CAST(#{polylineJson} AS jsonb)
+                CAST(#{polylineJson} AS jsonb), #{locked}
             )
             """)
     int insertTransitLeg(TransitLegWrite transitLeg);
@@ -126,6 +126,74 @@ public interface ItineraryMapper {
     );
 
     @Select("""
+            SELECT itinerary.id AS itinerary_id,
+                   itinerary_version.id AS version_id,
+                   itinerary_version.version_number,
+                   itinerary_version.parent_version_id,
+                   itinerary_version.title,
+                   itinerary_version.estimated_total_cost,
+                   itinerary_version.provider,
+                   itinerary_version.constraint_snapshot::text AS constraint_snapshot_json,
+                   itinerary_version.created_at
+            FROM business.itinerary
+            JOIN business.trip ON trip.id = itinerary.trip_id
+            JOIN business.itinerary_version
+              ON itinerary_version.id = itinerary.current_version_id
+            WHERE itinerary.trip_id = #{tripId} AND trip.owner_id = #{ownerId}
+            """)
+    Optional<EditableCurrentVersion> findCurrentVersionOwnedForEdit(
+            @Param("tripId") UUID tripId, @Param("ownerId") UUID ownerId
+    );
+
+    @Select("""
+            SELECT itinerary.id AS itinerary_id,
+                   itinerary_version.id AS version_id,
+                   itinerary_version.version_number,
+                   itinerary_version.parent_version_id,
+                   itinerary_version.title,
+                   itinerary_version.estimated_total_cost,
+                   itinerary_version.provider,
+                   itinerary_version.constraint_snapshot::text AS constraint_snapshot_json,
+                   itinerary_version.created_at
+            FROM business.itinerary
+            JOIN business.trip ON trip.id = itinerary.trip_id
+            JOIN business.itinerary_version
+              ON itinerary_version.id = itinerary.current_version_id
+            WHERE itinerary.trip_id = #{tripId} AND trip.owner_id = #{ownerId}
+            FOR UPDATE OF itinerary
+            """)
+    Optional<EditableCurrentVersion> findCurrentVersionOwnedForEditForUpdate(
+            @Param("tripId") UUID tripId, @Param("ownerId") UUID ownerId
+    );
+
+    @Select("""
+            SELECT EXISTS (
+                SELECT 1
+                FROM business.itinerary
+                WHERE itinerary.trip_id = #{tripId}
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM business.activity
+                          JOIN business.itinerary_day
+                            ON itinerary_day.id = activity.itinerary_day_id
+                          WHERE itinerary_day.itinerary_version_id = itinerary.current_version_id
+                            AND activity.locked = TRUE
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM business.transit_leg
+                          JOIN business.itinerary_day
+                            ON itinerary_day.id = transit_leg.itinerary_day_id
+                          WHERE itinerary_day.itinerary_version_id = itinerary.current_version_id
+                            AND transit_leg.locked = TRUE
+                      )
+                  )
+            )
+            """)
+    boolean hasLockedItineraryElements(@Param("tripId") UUID tripId);
+
+    @Select("""
             SELECT id, day_date AS date, day_index
             FROM business.itinerary_day
             WHERE itinerary_version_id = #{versionId}
@@ -135,7 +203,7 @@ public interface ItineraryMapper {
 
     @Select("""
             SELECT id, activity_order, title, start_time, end_time, estimated_cost, source,
-                   provider_poi_id, longitude, latitude, address
+                   provider_poi_id, longitude, latitude, address, locked
             FROM business.activity
             WHERE itinerary_day_id = #{dayId}
             ORDER BY activity_order
@@ -145,7 +213,7 @@ public interface ItineraryMapper {
     @Select("""
             SELECT id, leg_order, from_activity_id, to_activity_id, mode,
                    distance_meters, duration_seconds, provider, estimated,
-                   polyline::text AS polyline_json
+                   polyline::text AS polyline_json, locked
             FROM business.transit_leg
             WHERE itinerary_day_id = #{dayId}
             ORDER BY leg_order
@@ -159,6 +227,15 @@ public interface ItineraryMapper {
             WHERE itinerary_version_id = #{versionId}
             """)
     Optional<StoredKnowledge> findKnowledge(UUID versionId);
+
+    @Select("""
+            SELECT id, itinerary_id, version_number, parent_version_id, title,
+                   estimated_total_cost, provider, constraint_snapshot::text AS constraint_snapshot_json,
+                   created_at
+            FROM business.itinerary_version
+            WHERE id = #{versionId}
+            """)
+    Optional<StoredVersion> findVersion(UUID versionId);
 
     @Select("""
             SELECT document_id, document_version, chunk_id, chunk_index, title,
@@ -183,6 +260,7 @@ public interface ItineraryMapper {
             int versionNumber,
             UUID parentVersionId,
             UUID planningTaskId,
+            String versionSource,
             String title,
             BigDecimal estimatedTotalCost,
             String provider,
@@ -206,7 +284,8 @@ public interface ItineraryMapper {
             String providerPoiId,
             BigDecimal longitude,
             BigDecimal latitude,
-            String address
+            String address,
+            boolean locked
     ) {
     }
 
@@ -221,7 +300,8 @@ public interface ItineraryMapper {
             int durationSeconds,
             String provider,
             boolean estimated,
-            String polylineJson
+            String polylineJson,
+            boolean locked
     ) {
     }
 
@@ -264,6 +344,32 @@ public interface ItineraryMapper {
     ) {
     }
 
+    record StoredVersion(
+            UUID id,
+            UUID itineraryId,
+            int versionNumber,
+            UUID parentVersionId,
+            String title,
+            BigDecimal estimatedTotalCost,
+            String provider,
+            String constraintSnapshotJson,
+            Instant createdAt
+    ) {
+    }
+
+    record EditableCurrentVersion(
+            UUID itineraryId,
+            UUID versionId,
+            int versionNumber,
+            UUID parentVersionId,
+            String title,
+            BigDecimal estimatedTotalCost,
+            String provider,
+            String constraintSnapshotJson,
+            Instant createdAt
+    ) {
+    }
+
     record StoredDay(UUID id, LocalDate date, int dayIndex) {
     }
 
@@ -278,7 +384,8 @@ public interface ItineraryMapper {
             String providerPoiId,
             BigDecimal longitude,
             BigDecimal latitude,
-            String address
+            String address,
+            boolean locked
     ) {
     }
 
@@ -292,7 +399,8 @@ public interface ItineraryMapper {
             int durationSeconds,
             String provider,
             boolean estimated,
-            String polylineJson
+            String polylineJson,
+            boolean locked
     ) {
     }
 

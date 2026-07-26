@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-failed-event-v1.schema.json",
+  "title": "Planning Failed Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType",
+    "schemaVersion",
+    "eventId",
+    "traceId",
+    "taskId",
+    "tripId",
+    "runId",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_FAILED"},
+    "schemaVersion": {"const": 1},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "runId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "shortText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "affectedItem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "affected"],
+      "properties": {
+        "code": {"$ref": "#/$defs/shortText"},
+        "message": {"$ref": "#/$defs/message"},
+        "affected": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {"$ref": "#/$defs/affectedItem"}
+        }
+      }
+    },
+    "relaxation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"$ref": "#/$defs/shortText"},
+        "message": {"$ref": "#/$defs/message"}
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "errorCode",
+        "message",
+        "conflicts",
+        "relaxationSuggestions"
+      ],
+      "properties": {
+        "status": {"const": "FAILED"},
+        "errorCode": {"const": "NO_FEASIBLE_ITINERARY"},
+        "message": {"$ref": "#/$defs/message"},
+        "conflicts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {"$ref": "#/$defs/conflict"}
+        },
+        "relaxationSuggestions": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"$ref": "#/$defs/relaxation"}
+        }
+      }
+    }
+  }
+}

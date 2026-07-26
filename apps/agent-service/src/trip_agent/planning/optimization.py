@@ -1,13 +1,14 @@
 """Bounded CP-SAT scheduling for a pair of daily POI visits."""
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from math import ceil
 from typing import Literal
 
 from ortools.sat.python import cp_model
 
-CHINA_TIME_ZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+from trip_agent.domain.shared import CHINA_TIME_ZONE
+
 DAY_START_MINUTE = 9 * 60
 DAY_END_MINUTE = 18 * 60
 

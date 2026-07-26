@@ -6,8 +6,10 @@ import TripDashboard from './components/TripDashboard.vue'
 import TripDetail from './components/TripDetail.vue'
 import {
   ApiError,
+  applyItineraryEdit,
   cancelPlanningTask,
   createGuideImport,
+  createItineraryReplan,
   createPlanningTask,
   createTrip,
   getCurrentItinerary,
@@ -16,6 +18,7 @@ import {
   listGuideImports,
   login,
   logoutSession,
+  previewItineraryEdit,
   refreshSession,
   register,
   streamPlanningTaskEvents,
@@ -25,6 +28,10 @@ import {
   type CreateTripInput,
   type GuideImport,
   type Itinerary,
+  type ItineraryEditInput,
+  type ItineraryEditPreview,
+  type ItineraryReplanInput,
+  type PlanningTask,
   type PlanningTaskEvent,
   type Trip,
   type UpdateTripConstraintsInput,
@@ -394,6 +401,22 @@ async function handleUpdateConstraints(input: UpdateTripConstraintsInput) {
   if (route.value.name === 'trip-detail' && route.value.tripId === updated.id) selectedTrip.value = updated
 }
 
+async function handlePreviewItineraryEdit(input: ItineraryEditInput): Promise<ItineraryEditPreview> {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  const tripId = selectedTrip.value.id
+  return withAccessToken((token) => previewItineraryEdit(token, tripId, input))
+}
+
+async function handleApplyItineraryEdit(input: ItineraryEditInput) {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  const tripId = selectedTrip.value.id
+  const updated = await withAccessToken((token) => applyItineraryEdit(token, tripId, input))
+  if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
+    itinerary.value = updated
+    itineraryError.value = null
+  }
+}
+
 async function handleImportGuide(sourceUrl: string) {
   if (!selectedTrip.value) return
   const tripId = selectedTrip.value.id
@@ -422,20 +445,23 @@ async function handleImportGuide(sourceUrl: string) {
 async function handleSetGuideEnabled(guideImportId: string, enabled: boolean) {
   if (!selectedTrip.value) return
   const tripId = selectedTrip.value.id
+  const generation = sessionGeneration
+  const requestSequence = ++guideRequestSequence
   guideBusy.value = true
   guideError.value = null
   try {
     const updated = await withAccessToken((token) => (
       updateGuideImportEnabled(token, tripId, guideImportId, enabled)
     ))
+    if (!isCurrentGuideRequest(requestSequence, generation, tripId)) return
     guideImports.value = guideImports.value.map((guide) => (
       guide.id === updated.id ? updated : guide
     ))
   } catch (cause) {
+    if (!isCurrentGuideRequest(requestSequence, generation, tripId)) return
     guideError.value = errorMessage(cause)
-    throw cause
   } finally {
-    guideBusy.value = false
+    if (isCurrentGuideRequest(requestSequence, generation, tripId)) guideBusy.value = false
   }
 }
 
@@ -469,7 +495,9 @@ function planningFailureMessage(payload: PlanningTaskEvent['payload']): string {
   return parts.join('；')
 }
 
-async function handleStartPlanning() {
+async function runPlanningTask(
+  createTask: (accessToken: string, idempotencyKey: string) => Promise<PlanningTask>,
+) {
   if (!selectedTrip.value || planningState.value === 'queued') return
   const tripId = selectedTrip.value.id
   const generation = sessionGeneration
@@ -481,7 +509,7 @@ async function handleStartPlanning() {
 
   try {
     const idempotencyKey = crypto.randomUUID()
-    const task = await withAccessToken((token) => createPlanningTask(token, tripId, idempotencyKey))
+    const task = await withAccessToken((token) => createTask(token, idempotencyKey))
     if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
     activePlanningTaskId.value = task.taskId
     const controller = new AbortController()
@@ -539,6 +567,22 @@ async function handleStartPlanning() {
   }
 }
 
+async function handleStartPlanning() {
+  if (!selectedTrip.value) return
+  const tripId = selectedTrip.value.id
+  await runPlanningTask((token, idempotencyKey) => (
+    createPlanningTask(token, tripId, idempotencyKey)
+  ))
+}
+
+async function handleStartReplanning(input: ItineraryReplanInput) {
+  if (!selectedTrip.value || !itinerary.value) return
+  const tripId = selectedTrip.value.id
+  await runPlanningTask((token, idempotencyKey) => (
+    createItineraryReplan(token, tripId, input, idempotencyKey)
+  ))
+}
+
 async function handleCancelPlanning() {
   const taskId = activePlanningTaskId.value
   if (planningState.value !== 'queued' || !taskId) return
@@ -577,119 +621,62 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main v-if="phase === 'restoring'" class="restoring" aria-label="正在恢复登录状态">
-    <div class="restore-mark">TP</div>
-    <span></span><span></span><span></span>
-  </main>
-  <TripDashboard
-    v-else-if="phase === 'authenticated' && user && route.name === 'trip-list'"
-    :user="user"
-    :trips="trips"
-    :busy="busy"
-    :error="error"
-    :create-trip="handleCreateTrip"
-    @logout="logout"
-    @open-trip="openTrip"
-  />
-  <TripDetail
-    v-else-if="phase === 'authenticated' && user && route.name === 'trip-detail'"
-    :user="user"
-    :trip="selectedTrip"
-    :busy="detailBusy"
-    :error="detailError"
-    :itinerary="itinerary"
-    :itinerary-busy="itineraryBusy"
-    :itinerary-error="itineraryError"
-    :planning-state="planningState"
-    :planning-error="planningError"
-    :guide-imports="guideImports"
-    :guide-busy="guideBusy"
-    :guide-error="guideError"
-    :import-guide="handleImportGuide"
-    :set-guide-enabled="handleSetGuideEnabled"
-    :start-planning="handleStartPlanning"
-    :cancel-planning="handleCancelPlanning"
-    :update-constraints="handleUpdateConstraints"
-    :reload-trip="reloadSelectedTrip"
-    @back="backToTrips"
-    @logout="logout"
-  />
-  <section v-else-if="phase === 'authenticated' && user" class="not-found">
-    <h1>页面不存在</h1>
-    <button type="button" @click="backToTrips">返回旅行列表</button>
-  </section>
-  <AuthView v-else :busy="busy" :error="error" @submit="authenticate" />
+  <Transition name="page" mode="out-in">
+    <main v-if="phase === 'restoring'" key="restoring" class="min-h-screen flex items-center justify-center gap-1.5 bg-gradient-to-br from-primary-800 to-primary-950" aria-label="正在恢复登录状态">
+      <div class="w-10 h-10 grid place-items-center mr-2 rounded-lg bg-primary-500 text-primary-900 font-extrabold text-sm shadow-lg">TP</div>
+      <span></span><span></span><span></span>
+    </main>
+    <TripDashboard
+      v-else-if="phase === 'authenticated' && user && route.name === 'trip-list'"
+      key="dashboard"
+      :user="user"
+      :trips="trips"
+      :busy="busy"
+      :error="error"
+      :create-trip="handleCreateTrip"
+      @logout="logout"
+      @open-trip="openTrip"
+    />
+    <TripDetail
+      v-else-if="phase === 'authenticated' && user && route.name === 'trip-detail'"
+      :key="route.tripId"
+      :user="user"
+      :trip="selectedTrip"
+      :busy="detailBusy"
+      :error="detailError"
+      :itinerary="itinerary"
+      :itinerary-busy="itineraryBusy"
+      :itinerary-error="itineraryError"
+      :planning-state="planningState"
+      :planning-error="planningError"
+      :guide-imports="guideImports"
+      :guide-busy="guideBusy"
+      :guide-error="guideError"
+      :import-guide="handleImportGuide"
+      :set-guide-enabled="handleSetGuideEnabled"
+      :preview-itinerary-edit="handlePreviewItineraryEdit"
+      :apply-itinerary-edit="handleApplyItineraryEdit"
+      :start-replanning="handleStartReplanning"
+      :start-planning="handleStartPlanning"
+      :cancel-planning="handleCancelPlanning"
+      :update-constraints="handleUpdateConstraints"
+      :reload-trip="reloadSelectedTrip"
+      @back="backToTrips"
+      @logout="logout"
+    />
+    <section v-else-if="phase === 'authenticated' && user" key="404" class="min-h-screen grid place-items-center content-center gap-5 text-surface-900 bg-surface-50">
+      <h1 class="m-0 text-2xl font-bold">页面不存在</h1>
+      <button type="button" class="min-h-10 px-4 text-white bg-primary-600 border-0 rounded-xl cursor-pointer font-medium hover:bg-primary-700 transition-colors" @click="backToTrips">返回旅行列表</button>
+    </section>
+    <AuthView v-else key="auth" :busy="busy" :error="error" @submit="authenticate" />
+  </Transition>
 </template>
 
 <style>
-:root {
-  color-scheme: light;
-  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  min-width: 320px;
-  min-height: 100vh;
-  margin: 0;
-}
-
-button,
-input,
-select {
-  letter-spacing: 0;
-}
-
-button:focus-visible,
-input:focus-visible,
-select:focus-visible {
-  outline: 2px solid #26725f;
-  outline-offset: 2px;
-}
-
-.restoring {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: #173d33;
-}
-
-.not-found {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 18px;
-  color: #17201d;
-  background: #f2f5f4;
-}
-
-.not-found h1 { margin: 0; font-size: 25px; }
-.not-found button { min-height: 40px; padding: 0 16px; color: #fff; background: #236552; border: 0; border-radius: 5px; cursor: pointer; }
-
-.restore-mark {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  margin-right: 8px;
-  color: #173d33;
-  background: #e6b44a;
-  border-radius: 6px;
-  font-weight: 800;
-}
-
 .restoring > span {
   width: 7px;
   height: 7px;
-  background: #d5e2de;
+  background: #93c5fd;
   border-radius: 50%;
   animation: restore-pulse 0.8s infinite alternate;
 }

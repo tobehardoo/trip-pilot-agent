@@ -1,6 +1,6 @@
 """Typed message contracts for the planning worker."""
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 from uuid import UUID
@@ -16,6 +16,8 @@ from pydantic import (
     model_validator,
 )
 from pydantic.alias_generators import to_camel
+
+from trip_agent.domain.shared import CHINA_TIME_ZONE, normalize_text
 
 type JsonDecimal = Annotated[
     Decimal,
@@ -57,8 +59,6 @@ type JsonLatitude = Annotated[
     Field(ge=Decimal("-90"), le=Decimal("90")),
     PlainSerializer(lambda value: float(value), return_type=float, when_used="json"),
 ]
-CHINA_TIME_ZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
-
 
 class MessageModel(BaseModel):
     model_config = ConfigDict(
@@ -143,8 +143,8 @@ class TripConstraints(InboundMessageModel):
 
     @model_validator(mode="after")
     def validate_v2_collections(self) -> Self:
-        must = {_normal_text(value) for value in self.must_visit_places}
-        avoided = {_normal_text(value) for value in self.avoid_places}
+        must = {normalize_text(value) for value in self.must_visit_places}
+        avoided = {normalize_text(value) for value in self.avoid_places}
         if must & avoided:
             raise ValueError("mustVisitPlaces and avoidPlaces must not overlap")
         meal_types = [window.meal_type for window in self.meal_windows]
@@ -224,16 +224,12 @@ class TripSnapshot(InboundMessageModel):
             starts_before_trip = (
                 schedule.start_time.astimezone(CHINA_TIME_ZONE).date() < self.start_date
             )
-            ends_after_trip = (
-                schedule.end_time.astimezone(CHINA_TIME_ZONE).date() > self.end_date
-            )
+            ends_after_trip = schedule.end_time.astimezone(CHINA_TIME_ZONE).date() > self.end_date
             if starts_before_trip or ends_after_trip:
                 raise ValueError("fixed schedules must fall within trip dates")
         for anchor in (self.constraints.arrival, self.constraints.departure):
             if anchor is not None and not (
-                self.start_date
-                <= anchor.time.astimezone(CHINA_TIME_ZONE).date()
-                <= self.end_date
+                self.start_date <= anchor.time.astimezone(CHINA_TIME_ZONE).date() <= self.end_date
             ):
                 raise ValueError("travel anchor times must fall within trip dates")
         arrival = self.constraints.arrival
@@ -286,16 +282,14 @@ class PlanningCreateCommand(InboundMessageModel):
         ):
             raise ValueError("v2 context and guide evidence require schemaVersion 2")
         if any(
-            fact.observed_at > self.occurred_at
-            or fact.expires_at <= self.occurred_at
+            fact.observed_at > self.occurred_at or fact.expires_at <= self.occurred_at
             for fact in self.payload.guide_evidence.facts
         ):
             raise ValueError("guide evidence must be fresh at command occurredAt")
         return self
 
 
-def _normal_text(value: str) -> str:
-    return "".join(character for character in value.casefold() if character.isalnum())
+# normalize_text is imported from trip_agent.domain.shared
 
 
 class PlanningCancelCommand(InboundMessageModel):
@@ -453,6 +447,83 @@ class KnowledgeEvidence(MessageModel):
             raise ValueError("non-real knowledge evidence must not contain citations")
         if self.freshness.status != "UNAVAILABLE" or self.message is None:
             raise ValueError("non-real knowledge evidence requires an unavailable reason")
+        return self
+
+
+class ReplanItineraryDay(InboundMessageModel):
+    date: date
+    activities: tuple[ItineraryActivity, ...] = Field(min_length=1)
+    transit_legs: tuple[TransitLeg, ...]
+
+    def to_itinerary_day(self) -> ItineraryDay:
+        return ItineraryDay(
+            date=self.date,
+            activities=self.activities,
+            transit_legs=self.transit_legs,
+        )
+
+
+class ReplanItinerarySnapshot(InboundMessageModel):
+    title: ItineraryText
+    provider: Literal["AMAP", "DEMO"]
+    days: tuple[ReplanItineraryDay, ...] = Field(min_length=1)
+    estimated_total_cost: JsonDecimal
+
+    @model_validator(mode="after")
+    def validate_activity_sources(self) -> Self:
+        if any(
+            activity.source != self.provider for day in self.days for activity in day.activities
+        ):
+            raise ValueError("replan activity source must match itinerary provider")
+        return self
+
+
+class PlanningReplanPayload(InboundMessageModel):
+    task_type: Literal["REPLAN"]
+    baseline_trip_version: int = Field(strict=True, ge=0)
+    baseline_itinerary_version_id: UUID
+    idempotency_key: UUID
+    impacted_dates: tuple[date, ...] = Field(min_length=1, max_length=7)
+    trip: TripSnapshot
+    itinerary: ReplanItinerarySnapshot
+    knowledge: KnowledgeEvidence
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> Self:
+        if self.baseline_trip_version != self.trip.version:
+            raise ValueError("baselineTripVersion must match trip.version")
+        if len(self.impacted_dates) != len(set(self.impacted_dates)):
+            raise ValueError("impactedDates must not contain duplicates")
+        expected_dates = tuple(
+            self.trip.start_date + timedelta(days=offset)
+            for offset in range((self.trip.end_date - self.trip.start_date).days + 1)
+        )
+        if tuple(day.date for day in self.itinerary.days) != expected_dates:
+            raise ValueError("replan itinerary must contain every trip date in order")
+        expected_date_set = set(expected_dates)
+        if any(value not in expected_date_set for value in self.impacted_dates):
+            raise ValueError("impactedDates must fall within the itinerary")
+        impacted = set(self.impacted_dates)
+        for day in self.itinerary.days:
+            if day.date not in impacted or day.transit_legs:
+                day.to_itinerary_day()
+        return self
+
+
+class PlanningReplanCommand(InboundMessageModel):
+    event_type: Literal["PLANNING_REPLAN_REQUESTED"]
+    schema_version: Literal[1]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    occurred_at: datetime
+    payload: PlanningReplanPayload
+
+    @model_validator(mode="after")
+    def validate_occurred_at(self) -> Self:
+        if self.occurred_at.utcoffset() is None:
+            raise ValueError("occurredAt must include a timezone")
         return self
 
 

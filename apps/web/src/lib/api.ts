@@ -132,6 +132,7 @@ export interface ItineraryActivity {
     latitude: number
   } | null
   address: string | null
+  locked: boolean
 }
 
 export interface ItineraryTransitLeg {
@@ -140,6 +141,7 @@ export interface ItineraryTransitLeg {
   fromActivityId: string
   toActivityId: string
   mode: 'WALKING' | 'DRIVING'
+  locked: boolean
   distanceMeters: number
   durationSeconds: number
   provider: 'AMAP' | 'DEMO'
@@ -189,6 +191,43 @@ export interface Itinerary {
   }>
   knowledge: ItineraryKnowledge
   createdAt: string
+}
+
+export type ItineraryEditOperation =
+  | 'DELETE_ACTIVITY'
+  | 'LOCK_ACTIVITY'
+  | 'UNLOCK_ACTIVITY'
+  | 'MOVE_ACTIVITY'
+  | 'UPDATE_TRANSIT_LEG'
+
+export interface ItineraryEditInput {
+  baseVersionId: string
+  operation: ItineraryEditOperation
+  activityId?: string
+  transitLegId?: string
+  targetDate?: string
+  targetOrder?: number
+  targetStartTime?: string
+  targetEndTime?: string
+  transitMode?: 'WALKING' | 'DRIVING'
+  transitLocked?: boolean
+}
+
+export interface ItineraryEditPreview {
+  operation: ItineraryEditOperation
+  canApply: boolean
+  impactedDates: string[]
+  impactedActivityIds: string[]
+  warnings: string[]
+  blockingReasons: Array<{
+    code: string
+    message: string
+  }>
+}
+
+export interface ItineraryReplanInput {
+  baseVersionId: string
+  dates: string[]
 }
 
 export interface PlanningEventStreamOptions {
@@ -342,6 +381,41 @@ export function cancelPlanningTask(accessToken: string, taskId: string): Promise
 
 export function getCurrentItinerary(accessToken: string, tripId: string): Promise<Itinerary> {
   return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary`, {}, accessToken)
+}
+
+export function previewItineraryEdit(
+  accessToken: string,
+  tripId: string,
+  input: ItineraryEditInput,
+): Promise<ItineraryEditPreview> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/edits/preview`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, accessToken)
+}
+
+export function applyItineraryEdit(
+  accessToken: string,
+  tripId: string,
+  input: ItineraryEditInput,
+): Promise<Itinerary> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/edits`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, accessToken)
+}
+
+export function createItineraryReplan(
+  accessToken: string,
+  tripId: string,
+  input: ItineraryReplanInput,
+  idempotencyKey: string,
+): Promise<PlanningTask> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/replans`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(input),
+  }, accessToken)
 }
 
 export async function streamPlanningTaskEvents(

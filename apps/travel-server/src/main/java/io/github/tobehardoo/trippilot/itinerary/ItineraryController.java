@@ -6,6 +6,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -23,5 +25,21 @@ public class ItineraryController {
     ItineraryService.ItineraryResponse getCurrent(
             @AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
         return itineraryService.getCurrent(UUID.fromString(jwt.getSubject()), tripId);
+    }
+
+    @PostMapping("/edits/preview")
+    ItineraryService.ItineraryEditPreviewResponse previewEdit(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID tripId,
+            @RequestBody ItineraryService.ItineraryEditRequest request) {
+        return itineraryService.previewEdit(UUID.fromString(jwt.getSubject()), tripId, request);
+    }
+
+    @PostMapping("/edits")
+    ItineraryService.ItineraryResponse applyEdit(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID tripId,
+            @RequestBody ItineraryService.ItineraryEditRequest request) {
+        return itineraryService.applyEdit(UUID.fromString(jwt.getSubject()), tripId, request);
     }
 }

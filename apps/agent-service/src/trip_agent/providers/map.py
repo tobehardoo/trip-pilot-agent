@@ -19,6 +19,14 @@ from pydantic import (
     model_validator,
 )
 
+from trip_agent.infrastructure.amap.errors import (
+    AUTH_CODES,
+    INVALID_REQUEST_CODES,
+    QUOTA_CODES,
+    RATE_CODES,
+    UNAVAILABLE_CODES,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -185,31 +193,6 @@ class AmapMapProvider:
     """AMap v5 POI text-search adapter with an optional JSON cache."""
 
     endpoint = "https://restapi.amap.com/v5/place/text"
-    _auth_error_codes = frozenset(
-        {
-            "10001",
-            "10002",
-            "10005",
-            "10006",
-            "10007",
-            "10008",
-            "10009",
-            "10011",
-            "10012",
-            "10013",
-            "10026",
-            "10041",
-            "20011",
-        }
-    )
-    _rate_error_codes = frozenset(
-        {"10004", "10014", "10015", "10016", "10019", "10020", "10021", "10029"}
-    )
-    _quota_error_codes = frozenset(
-        {"10003", "10010", "10044", "10045", "40000", "40001", "40002", "40003"}
-    )
-    _unavailable_error_codes = frozenset({"10017"})
-    _invalid_request_codes = frozenset({"20000", "20001", "20002", "20012"})
 
     def __init__(
         self,
@@ -382,23 +365,23 @@ class AmapMapProvider:
         )
 
     def _business_failure(self, infocode: str, started_at: float) -> ProviderFailure:
-        if infocode in self._auth_error_codes:
+        if infocode in AUTH_CODES:
             code: ProviderErrorCode = "PROVIDER_AUTH_FAILED"
             message = "AMap authentication failed"
             retryable = False
-        elif infocode in self._rate_error_codes:
+        elif infocode in RATE_CODES:
             code = "PROVIDER_RATE_LIMITED"
             message = "AMap rate limit was reached"
             retryable = True
-        elif infocode in self._quota_error_codes:
+        elif infocode in QUOTA_CODES:
             code = "PROVIDER_QUOTA_EXHAUSTED"
             message = "AMap quota was exhausted"
             retryable = False
-        elif infocode in self._unavailable_error_codes or infocode.startswith("3"):
+        elif infocode in UNAVAILABLE_CODES or infocode.startswith("3"):
             code = "PROVIDER_UNAVAILABLE"
             message = "AMap is temporarily unavailable"
             retryable = True
-        elif infocode in self._invalid_request_codes:
+        elif infocode in INVALID_REQUEST_CODES:
             code = "PROVIDER_REQUEST_INVALID"
             message = "AMap rejected the request parameters"
             retryable = False

@@ -24,7 +24,8 @@
 - [x] `docker compose config` 与生产 Compose 配置校验通过。
 - [x] 独立代码审查不存在 Critical 或 Important 问题。
 - [x] `git diff --check`、敏感文件名检查通过。
-- [ ] 变更提交到独立分支、推送 GitHub，并创建 Draft PR。
+- [x] 变更已提交到独立分支、推送 GitHub，并创建 Draft PR
+      [#23](https://github.com/tobehardoo/trip-pilot-agent/pull/23)。
 
 ## 环境受限项
 

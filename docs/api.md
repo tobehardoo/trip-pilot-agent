@@ -38,6 +38,15 @@
 /api/trips/{tripId}/city-intelligence/refreshes POST 手动触发幂等刷新
 ```
 
+`GET /api/city-sources` 支持 `cityCode`、`enabled`、`reviewStatus` 过滤。更新来源时请求体
+包含 `enabled`、`reviewStatus`、可选 `reviewNote` 与 `expectedVersion`；并发版本不匹配
+返回 `409 CITY_SOURCE_VERSION_CONFLICT`，成功更新记录审核人、审核时间并递增版本。
+
+攻略导入响应保留 V1.2 的 `facts`，并追加 `normalizedDocument`、`trustedFacts`、
+`rejectedFacts`、`factMergeDecisions` 与 `modelExtraction`。`trustedFacts` 包含
+`normalizedValue`、证据跨度、核验/过期时间、来源可靠性和
+`hardConstraintEligible`；Java 会再次校验证据跨度和强约束资格后才持久化。
+
 ### 认证
 
 所有 `/api/**` 请求（除 `/api/auth/**` 和 `/api/health` 外）需要 `Authorization: Bearer <accessToken>`。

@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -15,6 +16,18 @@ from trip_agent.acquisition.security import SourceSecurityError, validate_source
 from trip_agent.guide_intelligence.city_intelligence import AmapCityIntelligenceProvider
 from trip_agent.guide_intelligence.extraction import GenericGuideExtractor
 from trip_agent.guide_intelligence.models import GuideImportResult, GuideSourceType
+from trip_agent.guide_intelligence.structured_model import (
+    ModelExtractionResult,
+    StructuredModelFactExtractor,
+    configured_structured_extractor,
+)
+from trip_agent.guide_intelligence.trusted_facts import (
+    DocumentNormalizer,
+    FactMerger,
+    FactValidator,
+    NormalizedDocument,
+    RuleFactExtractor,
+)
 
 _TEXT_SOURCE_LABELS: dict[GuideSourceType, str] = {
     "PASTED_TEXT": "用户粘贴文本",
@@ -41,9 +54,15 @@ class GuideImportService:
         *,
         fetcher: GuideFetcher | None = None,
         extractor: GenericGuideExtractor | None = None,
+        structured_extractor: StructuredModelFactExtractor | None = None,
     ) -> None:
         self._fetcher = fetcher or HttpResourceFetcher()
         self._extractor = extractor or GenericGuideExtractor()
+        self._normalizer = DocumentNormalizer()
+        self._rule_extractor = RuleFactExtractor()
+        self._validator = FactValidator()
+        self._merger = FactMerger()
+        self._structured_extractor = structured_extractor
 
     async def import_url(self, source_url: str) -> GuideImportResult:
         host = _candidate_host(source_url)
@@ -73,7 +92,7 @@ class GuideImportService:
             fetched_at=fetched.fetched_at,
         )
         content_hash = hashlib.sha256(extracted.content.encode()).hexdigest()
-        return GuideImportResult(
+        result = GuideImportResult(
             source_type="PUBLIC_GUIDE_URL",
             source_url=normalized_url,
             final_url=fetched.final_url,
@@ -84,6 +103,17 @@ class GuideImportService:
             fetched_at=fetched.fetched_at,
             facts=extracted.facts,
         )
+        document = self._normalizer.normalize_html(
+            source_type="PUBLIC_GUIDE_URL",
+            source_name=urlsplit(fetched.final_url).hostname or host,
+            source_url=fetched.final_url,
+            city="USER_TRIP",
+            content=fetched.content,
+            content_type=fetched.content_type,
+            fetched_at=fetched.fetched_at,
+            reliability_level="PUBLIC_GUIDE",
+        )
+        return await self._enrich(result, document)
 
     def import_text(
         self,
@@ -106,7 +136,7 @@ class GuideImportService:
             "https://user-content.trippilot.invalid/"
             f"{source_type.casefold().replace('_', '-')}/{content_hash[:24]}"
         )
-        return GuideImportResult(
+        result = GuideImportResult(
             source_type=source_type,
             source_url=source_url,
             final_url=source_url,
@@ -117,6 +147,36 @@ class GuideImportService:
             fetched_at=fetched_at,
             facts=extracted.facts,
         )
+        document = self._normalizer.normalize_text(
+            source_type=source_type,
+            source_name=_TEXT_SOURCE_LABELS[source_type],
+            source_url=source_url,
+            city="USER_TRIP",
+            title=extracted.title,
+            content=extracted.content,
+            fetched_at=fetched_at,
+            encoding="utf-8",
+            reliability_level="COMMUNITY",
+        )
+        return self._enrich_rules(result, document)
+
+    async def import_text_with_model(
+        self,
+        *,
+        source_type: GuideSourceType,
+        title: str,
+        content: str,
+        observed_at: datetime | None = None,
+    ) -> GuideImportResult:
+        result = self.import_text(
+            source_type=source_type,
+            title=title,
+            content=content,
+            observed_at=observed_at,
+        )
+        if result.normalized_document is None:
+            raise AssertionError("text normalization must produce a document")
+        return await self._enrich(result, result.normalized_document)
 
     async def import_city(
         self,
@@ -145,7 +205,7 @@ class GuideImportService:
             "https://lbs.amap.com/api/webservice/guide/api/weatherinfo"
             f"#trip-pilot-city={normalized_city}"
         )
-        return GuideImportResult(
+        result = GuideImportResult(
             source_type="CITY_INTELLIGENCE",
             source_url=source_url,
             final_url=source_url,
@@ -156,6 +216,88 @@ class GuideImportService:
             fetched_at=fetched_at,
             facts=extracted.facts,
         )
+        document = self._normalizer.normalize_structured(
+            source_type="CITY_INTELLIGENCE",
+            source_name="高德城市情报",
+            source_url=source_url,
+            city=normalized_city,
+            title=extracted.title,
+            content=extracted.content,
+            fetched_at=fetched_at,
+            reliability_level="WEATHER_PROVIDER",
+            metadata={
+                "provider": "AMAP",
+                "startDate": start_date.isoformat(),
+                "endDate": end_date.isoformat(),
+            },
+        )
+        return await self._enrich(result, document)
+
+    def _enrich_rules(
+        self,
+        result: GuideImportResult,
+        document: NormalizedDocument,
+    ) -> GuideImportResult:
+        candidates = self._rule_extractor.extract(
+            document,
+            checked_at=result.fetched_at,
+        )
+        validation = self._validator.validate(document, candidates)
+        merge = self._merger.merge(validation.accepted)
+        return replace(
+            result,
+            normalized_document=document,
+            trusted_facts=merge.selected_facts,
+            rejected_facts=validation.rejected,
+            merge_decisions=merge.decisions,
+            model_extraction=ModelExtractionResult(
+                status="SKIPPED",
+                candidates=(),
+                attempts=0,
+                failure_code="MODEL_NOT_RUN",
+                failure_reason="only deterministic extraction was requested",
+            ),
+        )
+
+    async def _enrich(
+        self,
+        result: GuideImportResult,
+        document: NormalizedDocument,
+    ) -> GuideImportResult:
+        rule_candidates = self._rule_extractor.extract(
+            document,
+            checked_at=result.fetched_at,
+        )
+        model_result = await self._extract_model(document, result.fetched_at)
+        validation = self._validator.validate(
+            document,
+            (*rule_candidates, *model_result.candidates),
+        )
+        merge = self._merger.merge(validation.accepted)
+        return replace(
+            result,
+            normalized_document=document,
+            trusted_facts=merge.selected_facts,
+            rejected_facts=validation.rejected,
+            merge_decisions=merge.decisions,
+            model_extraction=model_result,
+        )
+
+    async def _extract_model(
+        self,
+        document: NormalizedDocument,
+        checked_at: datetime,
+    ) -> ModelExtractionResult:
+        if self._structured_extractor is not None:
+            return await self._structured_extractor.extract(
+                document,
+                checked_at=checked_at,
+            )
+        async with httpx.AsyncClient(trust_env=False) as http_client:
+            return await configured_structured_extractor(http_client).extract(
+                document,
+                checked_at=checked_at,
+            )
 
 
 def _candidate_host(source_url: str) -> str:

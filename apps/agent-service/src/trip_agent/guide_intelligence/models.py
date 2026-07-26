@@ -1,8 +1,16 @@
 """Immutable models for imported guide intelligence."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal
+
+from trip_agent.guide_intelligence.structured_model import ModelExtractionResult
+from trip_agent.guide_intelligence.trusted_facts import (
+    FactMergeDecision,
+    NormalizedDocument,
+    RejectedFact,
+    ValidatedFact,
+)
 
 type GuideSourceType = Literal[
     "PUBLIC_GUIDE_URL",
@@ -69,3 +77,16 @@ class GuideImportResult:
     content_hash: str
     fetched_at: datetime
     facts: tuple[TravelFact, ...]
+    normalized_document: NormalizedDocument | None = None
+    trusted_facts: tuple[ValidatedFact, ...] = ()
+    rejected_facts: tuple[RejectedFact, ...] = ()
+    merge_decisions: tuple[FactMergeDecision, ...] = ()
+    model_extraction: ModelExtractionResult = field(
+        default_factory=lambda: ModelExtractionResult(
+            status="SKIPPED",
+            candidates=(),
+            attempts=0,
+            failure_code="MODEL_NOT_RUN",
+            failure_reason="trusted fact pipeline was not requested",
+        )
+    )

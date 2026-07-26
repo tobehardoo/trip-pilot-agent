@@ -12,6 +12,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedFact;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedGuide;
+import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedMergeDecision;
+import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedModelExtraction;
+import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedNormalizedDocument;
+import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedTrustedFact;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -89,6 +93,39 @@ class GuideImportFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.sourceType").value("XIAOHONGSHU_SHARED_TEXT"))
                 .andExpect(jsonPath("$.sourceHost").value("小红书分享文本"))
                 .andExpect(jsonPath("$.facts[0].category").value("LOCATION"));
+    }
+
+    @Test
+    void persistsAndReturnsValidatedV13FactsWithEvidenceSpans() throws Exception {
+        String token = register("trusted-fact-owner@example.com");
+        String tripId = createTrip(token);
+
+        mockMvc.perform(post("/api/trips/{tripId}/guide-imports", tripId)
+                        .header("Authorization", bearer(token))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceType": "TEXT_FILE",
+                                  "title": "广州攻略.txt",
+                                  "content": "地址：广州市荔湾区中山七路恩龙里34号。"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.normalizedDocument.sourceType").value("TEXT_FILE"))
+                .andExpect(jsonPath("$.trustedFacts[0].category").value("ADDRESS"))
+                .andExpect(jsonPath("$.trustedFacts[0].evidenceStart").value(0))
+                .andExpect(jsonPath("$.trustedFacts[0].evidenceEnd").value(20))
+                .andExpect(jsonPath("$.trustedFacts[0].reliabilityLevel").value("COMMUNITY"))
+                .andExpect(jsonPath("$.factMergeDecisions[0].selectedFactId")
+                        .value("fact_00000000000000000000000000000001"))
+                .andExpect(jsonPath("$.modelExtraction.status").value("SKIPPED"));
+
+        mockMvc.perform(get("/api/trips/{tripId}/guide-imports", tripId)
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].trustedFacts.length()").value(1))
+                .andExpect(jsonPath("$[0].trustedFacts[0].normalizedValue.address")
+                        .value("广州市荔湾区中山七路恩龙里34号"));
     }
 
     @Test
@@ -353,6 +390,58 @@ class GuideImportFlowIntegrationTest extends PostgresIntegrationTest {
                                 : textImport
                                 ? request.content()
                                 : "从公园前乘地铁 1 号线到陈家祠站。";
+                FetchedNormalizedDocument normalizedDocument = textImport
+                        ? new FetchedNormalizedDocument(
+                                "doc_00000000000000000000000000000001",
+                                sourceType,
+                                "用户文本文件",
+                                sourceUrl,
+                                "广州",
+                                request.title(),
+                                statement,
+                                observedAt,
+                                "b".repeat(64),
+                                "utf-8",
+                                "zh-CN",
+                                java.util.Map.of(),
+                                "COMMUNITY",
+                                false
+                        )
+                        : null;
+                List<FetchedTrustedFact> trustedFacts = textImport
+                        ? List.of(new FetchedTrustedFact(
+                                "fact_00000000000000000000000000000001",
+                                "doc_00000000000000000000000000000001",
+                                "ADDRESS",
+                                statement,
+                                java.util.Map.of(
+                                        "address",
+                                        "广州市荔湾区中山七路恩龙里34号"
+                                ),
+                                statement,
+                                0,
+                                statement.length(),
+                                0.9,
+                                null,
+                                observedAt,
+                                observedAt.plusSeconds(90 * 86_400L),
+                                sourceType,
+                                "用户文本文件",
+                                sourceUrl,
+                                "COMMUNITY",
+                                false,
+                                false
+                        ))
+                        : List.of();
+                List<FetchedMergeDecision> mergeDecisions = textImport
+                        ? List.of(new FetchedMergeDecision(
+                                "fact_00000000000000000000000000000001",
+                                List.of(),
+                                List.of(),
+                                "selected community source",
+                                false
+                        ))
+                        : List.of();
                 return new FetchedGuide(
                         sourceType,
                         sourceUrl,
@@ -376,7 +465,17 @@ class GuideImportFlowIntegrationTest extends PostgresIntegrationTest {
                                 cityImport ? request.startDate() : null,
                                 observedAt,
                                 observedAt.plusSeconds(7 * 86_400L)
-                        ))
+                        )),
+                        normalizedDocument,
+                        trustedFacts,
+                        List.of(),
+                        mergeDecisions,
+                        new FetchedModelExtraction(
+                                "SKIPPED",
+                                0,
+                                "MODEL_NOT_CONFIGURED",
+                                "structured model provider is not configured"
+                        )
                 );
             };
         }

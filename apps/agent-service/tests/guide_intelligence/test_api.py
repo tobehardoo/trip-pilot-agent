@@ -30,7 +30,7 @@ class StubImportService:
             ),
         )
 
-    def import_text(
+    async def import_text_with_model(
         self,
         *,
         source_type: str,
@@ -122,6 +122,46 @@ def test_accepts_user_provided_text_without_fetching_a_url(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["sourceType"] == "TEXT_FILE"
     assert response.json()["sourceHost"] == "用户粘贴文本"
+
+
+def test_text_import_returns_v13_trusted_fact_contract(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_INTERNAL_TOKEN", "test-internal-token")
+    monkeypatch.delenv("STRUCTURED_MODEL_ENDPOINT", raising=False)
+    monkeypatch.delenv("STRUCTURED_MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("STRUCTURED_MODEL_NAME", raising=False)
+
+    response = TestClient(app).post(
+        "/internal/v1/guide-imports",
+        headers={"X-Internal-Token": "test-internal-token"},
+        json={
+            "sourceType": "TEXT_FILE",
+            "title": "广州攻略.txt",
+            "content": (
+                "陈家祠地址：广州市荔湾区中山七路恩龙里34号。\n"
+                "开放时间：09:00-17:30，成人门票10元，需要提前预约。"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["normalizedDocument"]["sourceType"] == "TEXT_FILE"
+    assert body["normalizedDocument"]["encoding"] == "utf-8"
+    assert {fact["category"] for fact in body["trustedFacts"]} >= {
+        "ADDRESS",
+        "OPENING_HOURS",
+        "TICKET_PRICE",
+        "RESERVATION_REQUIREMENT",
+    }
+    assert all(
+        fact["evidence"]
+        == body["normalizedDocument"]["content"][
+            fact["evidenceStart"] : fact["evidenceEnd"]
+        ]
+        for fact in body["trustedFacts"]
+    )
+    assert body["modelExtraction"]["status"] == "SKIPPED"
+    assert body["modelExtraction"]["failureCode"] == "MODEL_NOT_CONFIGURED"
 
 
 def test_rejects_ambiguous_guide_import_input(monkeypatch) -> None:

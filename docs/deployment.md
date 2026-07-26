@@ -58,6 +58,9 @@ curl http://127.0.0.1:8080/api/health
 | `RABBITMQ_PASSWORD` | RabbitMQ 密码 |
 | `JWT_SECRET` | JWT 签名密钥，至少 32 字节随机值 |
 | `AGENT_INTERNAL_TOKEN` | Java 调用 Python 攻略 API 的内部令牌 |
+| `STRUCTURED_MODEL_ENDPOINT` | 可选的 HTTPS 结构化输出端点；留空时规则抽取继续运行 |
+| `STRUCTURED_MODEL_API_KEY` | 仅注入 Agent API 的模型密钥，不进入 Web 或日志 |
+| `STRUCTURED_MODEL_NAME` | 模型 Provider 上支持严格 JSON Schema 的模型名 |
 | `DEMO_MODE` | `true` 时不依赖高德 Key，使用 Demo Provider |
 | `REFRESH_COOKIE_SECURE` | 生产 HTTPS 环境必须为 `true`；本机 HTTP 可设 `false` |
 
@@ -100,6 +103,10 @@ SDK 脚本加载成功不等于底图可用。8 秒内未收到地图 `complete`
 规则抽取始终启用。结构化模型抽取是可降级增强，使用独立的模型 Provider 配置、有限输入、
 超时和重试；缺少 Key 时记录 `SKIPPED`，不导致攻略导入失败，也不会把 Demo 数据当成
 Provider 成功。任何模型密钥只注入 Python Agent API，不进入 Web 构建参数或日志。
+默认限制为 30,000 字符、8 秒超时、最多重试 1 次；分别由
+`STRUCTURED_MODEL_MAX_INPUT_CHARACTERS`、`STRUCTURED_MODEL_TIMEOUT_SECONDS` 和
+`STRUCTURED_MODEL_MAX_RETRIES` 调整。端点必须是 HTTPS 且兼容严格
+`response_format=json_schema`；若 Provider 不兼容会记录 `FAILED` 并只采用规则结果。
 
 ## 数据库备份
 

@@ -75,6 +75,87 @@ class GuideImportResponse(BaseModel):
     content_hash: str = Field(alias="contentHash")
     fetched_at: datetime = Field(alias="fetchedAt")
     facts: list[TravelFactResponse]
+    normalized_document: "NormalizedDocumentResponse | None" = Field(
+        default=None,
+        alias="normalizedDocument",
+    )
+    trusted_facts: list["TrustedFactResponse"] = Field(
+        default_factory=list,
+        alias="trustedFacts",
+    )
+    rejected_facts: list["RejectedFactResponse"] = Field(
+        default_factory=list,
+        alias="rejectedFacts",
+    )
+    merge_decisions: list["MergeDecisionResponse"] = Field(
+        default_factory=list,
+        alias="factMergeDecisions",
+    )
+    model_extraction: "ModelExtractionResponse" = Field(alias="modelExtraction")
+
+
+class NormalizedDocumentResponse(BaseModel):
+    document_id: str = Field(alias="documentId")
+    source_type: str = Field(alias="sourceType")
+    source_name: str = Field(alias="sourceName")
+    source_url: str | None = Field(alias="sourceUrl")
+    city: str
+    title: str
+    content: str
+    fetched_at: datetime = Field(alias="fetchedAt")
+    content_hash: str = Field(alias="contentHash")
+    encoding: str
+    language: str
+    metadata: dict[str, object]
+    reliability_level: str = Field(alias="reliabilityLevel")
+    source_reviewed: bool = Field(alias="sourceReviewed")
+
+
+class TrustedFactResponse(BaseModel):
+    fact_id: str = Field(alias="factId")
+    document_id: str = Field(alias="documentId")
+    category: str
+    statement: str
+    normalized_value: dict[str, object] = Field(alias="normalizedValue")
+    evidence: str
+    evidence_start: int = Field(alias="evidenceStart")
+    evidence_end: int = Field(alias="evidenceEnd")
+    confidence: float
+    checked_at: datetime = Field(alias="checkedAt")
+    expires_at: datetime = Field(alias="expiresAt")
+    effective_date: date | None = Field(alias="effectiveDate")
+    source_type: str = Field(alias="sourceType")
+    source_name: str = Field(alias="sourceName")
+    source_url: str | None = Field(alias="sourceUrl")
+    reliability_level: str = Field(alias="reliabilityLevel")
+    source_reviewed: bool = Field(alias="sourceReviewed")
+    hard_constraint_eligible: bool = Field(alias="hardConstraintEligible")
+
+
+class RejectionReasonResponse(BaseModel):
+    code: str
+    message: str
+
+
+class RejectedFactResponse(BaseModel):
+    category: str
+    statement: str
+    reasons: list[RejectionReasonResponse]
+
+
+class MergeDecisionResponse(BaseModel):
+    selected_fact_id: str = Field(alias="selectedFactId")
+    conflict_fact_ids: list[str] = Field(alias="conflictFactIds")
+    downgraded_fact_ids: list[str] = Field(alias="downgradedFactIds")
+    reason: str
+    needs_manual_review: bool = Field(alias="needsManualReview")
+
+
+class ModelExtractionResponse(BaseModel):
+    status: str
+    attempts: int
+    failure_code: str | None = Field(alias="failureCode")
+    failure_reason: str | None = Field(alias="failureReason")
 
 
 @router.post("/guide-imports", response_model=GuideImportResponse)
@@ -98,7 +179,7 @@ async def import_guide(
         else:
             if request.title is None or request.content is None:
                 raise ValueError("text imports require title and content")
-            result = service.import_text(
+            result = await service.import_text_with_model(
                 source_type=request.sourceType,
                 title=request.title,
                 content=request.content,
@@ -137,6 +218,80 @@ async def import_guide(
             )
             for fact in result.facts
         ],
+        normalizedDocument=(
+            NormalizedDocumentResponse(
+                documentId=result.normalized_document.document_id,
+                sourceType=result.normalized_document.source_type,
+                sourceName=result.normalized_document.source_name,
+                sourceUrl=result.normalized_document.source_url,
+                city=result.normalized_document.city,
+                title=result.normalized_document.title,
+                content=result.normalized_document.content,
+                fetchedAt=result.normalized_document.fetched_at,
+                contentHash=result.normalized_document.content_hash,
+                encoding=result.normalized_document.encoding,
+                language=result.normalized_document.language,
+                metadata=dict(result.normalized_document.metadata),
+                reliabilityLevel=result.normalized_document.reliability_level,
+                sourceReviewed=result.normalized_document.source_reviewed,
+            )
+            if result.normalized_document is not None
+            else None
+        ),
+        trustedFacts=[
+            TrustedFactResponse(
+                factId=fact.fact_id,
+                documentId=fact.document_id,
+                category=fact.category,
+                statement=fact.statement,
+                normalizedValue=dict(fact.normalized_value),
+                evidence=fact.evidence,
+                evidenceStart=fact.evidence_start,
+                evidenceEnd=fact.evidence_end,
+                confidence=fact.confidence,
+                checkedAt=fact.checked_at,
+                expiresAt=fact.expires_at,
+                effectiveDate=fact.effective_date,
+                sourceType=fact.source_type,
+                sourceName=fact.source_name,
+                sourceUrl=fact.source_url,
+                reliabilityLevel=fact.reliability_level,
+                sourceReviewed=fact.source_reviewed,
+                hardConstraintEligible=fact.hard_constraint_eligible,
+            )
+            for fact in result.trusted_facts
+        ],
+        rejectedFacts=[
+            RejectedFactResponse(
+                category=rejected.candidate.category,
+                statement=rejected.candidate.statement,
+                reasons=[
+                    RejectionReasonResponse(code=reason.code, message=reason.message)
+                    for reason in rejected.reasons
+                ],
+            )
+            for rejected in result.rejected_facts
+        ],
+        factMergeDecisions=[
+            MergeDecisionResponse(
+                selectedFactId=decision.selected_fact.fact_id,
+                conflictFactIds=[
+                    fact.fact_id for fact in decision.conflict_facts
+                ],
+                downgradedFactIds=[
+                    fact.fact_id for fact in decision.downgraded_facts
+                ],
+                reason=decision.reason,
+                needsManualReview=decision.needs_manual_review,
+            )
+            for decision in result.merge_decisions
+        ],
+        modelExtraction=ModelExtractionResponse(
+            status=result.model_extraction.status,
+            attempts=result.model_extraction.attempts,
+            failureCode=result.model_extraction.failure_code,
+            failureReason=result.model_extraction.failure_reason,
+        ),
     )
 
 

@@ -25,11 +25,14 @@ const selectedActivity = computed(() => {
 })
 const hasCoordinates = computed(() => model.value.activities.length > 0)
 const hasAmapConfig = computed(() => Boolean(getAMapConfig()))
+const MAP_LOAD_TIMEOUT_MS = 8_000
 let map: AMapMap | null = null
 let amap: AMapNamespace | null = null
 let markers: AMapMarker[] = []
 let polylines: AMapPolyline[] = []
 let mapLoadSequence = 0
+let mapLoadTimer: ReturnType<typeof setTimeout> | null = null
+let mapBaseReady = false
 
 function selectActivity(activity: MapActivity) {
   emit('selectActivity', activity.id)
@@ -46,11 +49,19 @@ function clearOverlays() {
   polylines = []
 }
 
+function clearMapLoadTimer() {
+  if (mapLoadTimer === null) return
+  clearTimeout(mapLoadTimer)
+  mapLoadTimer = null
+}
+
 function destroyMap() {
+  clearMapLoadTimer()
   clearOverlays()
   map?.destroy?.()
   map = null
   amap = null
+  mapBaseReady = false
 }
 
 function markerContent(activity: MapActivity, index: number) {
@@ -58,18 +69,9 @@ function markerContent(activity: MapActivity, index: number) {
   return `<span class="amap-marker-pin${selected ? ' is-selected' : ''}">${index + 1}</span>`
 }
 
-function renderAmap(namespace: AMapNamespace) {
-  if (!mapElement.value) return
+function renderOverlays(namespace: AMapNamespace) {
+  if (!map) return
   clearOverlays()
-  if (!map) {
-    map = new namespace.Map(mapElement.value, {
-      zoom: 12,
-      center: selectedActivity.value
-        ? [selectedActivity.value.coordinate.longitude, selectedActivity.value.coordinate.latitude]
-        : undefined,
-      resizeEnable: true,
-    })
-  }
   model.value.legs.forEach((leg) => {
     const polyline = new namespace.Polyline({
       path: leg.polyline.map((point) => [point.longitude, point.latitude]),
@@ -95,6 +97,55 @@ function renderAmap(namespace: AMapNamespace) {
     markers.push(marker)
   })
   if (markers.length > 0 || polylines.length > 0) map.setFitView([...markers, ...polylines])
+}
+
+function startMapLoadTimeout(pendingMap: AMapMap) {
+  clearMapLoadTimer()
+  mapLoadTimer = setTimeout(() => {
+    if (map !== pendingMap || sdkState.value !== 'loading') return
+    destroyMap()
+    sdkState.value = 'error'
+    mapError.value = '高德底图未完成加载。请检查 Web JS Key 的域名白名单是否包含当前地址，并确认安全密钥与 Key 匹配；已切换为路线概览。'
+  }, MAP_LOAD_TIMEOUT_MS)
+}
+
+function renderAmap(namespace: AMapNamespace) {
+  if (!mapElement.value) return
+  if (!map) {
+    const createdMap = new namespace.Map(mapElement.value, {
+      zoom: 12,
+      center: selectedActivity.value
+        ? [selectedActivity.value.coordinate.longitude, selectedActivity.value.coordinate.latitude]
+        : undefined,
+      resizeEnable: true,
+      viewMode: '2D',
+      mapStyle: 'amap://styles/normal',
+    })
+    map = createdMap
+    if (createdMap.on) {
+      createdMap.on('complete', () => {
+        if (map !== createdMap) return
+        clearMapLoadTimer()
+        mapBaseReady = true
+        try {
+          renderOverlays(namespace)
+          sdkState.value = 'ready'
+        } catch {
+          destroyMap()
+          sdkState.value = 'error'
+          mapError.value = '高德地图暂时无法加载，已切换为路线概览'
+        }
+      })
+      if (!mapBaseReady) startMapLoadTimeout(createdMap)
+      return
+    }
+    mapBaseReady = true
+  }
+  if (!mapBaseReady) {
+    startMapLoadTimeout(map)
+    return
+  }
+  renderOverlays(namespace)
   sdkState.value = 'ready'
 }
 

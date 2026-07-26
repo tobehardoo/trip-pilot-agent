@@ -3,6 +3,7 @@ package io.github.tobehardoo.trippilot.guide;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -22,7 +23,11 @@ public class GuideImportService {
     private static final int MAX_FACT_TEXT_LENGTH = 1_000;
     private static final Set<String> FACT_CATEGORIES = Set.of(
             "ATTRACTION", "DINING", "TRANSPORT", "TIMING",
-            "COST", "QUEUE", "RESERVATION", "TIP"
+            "COST", "QUEUE", "RESERVATION", "LOCATION", "WEATHER", "TIP"
+    );
+    private static final Set<String> SOURCE_TYPES = Set.of(
+            "PUBLIC_GUIDE_URL", "PASTED_TEXT", "TEXT_FILE",
+            "XIAOHONGSHU_SHARED_TEXT", "CITY_INTELLIGENCE"
     );
 
     private final TripService tripService;
@@ -43,14 +48,47 @@ public class GuideImportService {
     }
 
     public GuideImportResponse create(UUID ownerId, UUID tripId, GuideImportRequest request) {
-        tripService.get(ownerId, tripId);
-        String sourceUrl = validateSourceUrl(request.sourceUrl());
-        FetchedGuide fetched = intelligenceClient.fetch(sourceUrl);
+        TripService.TripResponse trip = tripService.get(ownerId, tripId);
+        String sourceType = request.normalizedSourceType();
+        GuideImportRequest normalizedRequest;
+        if ("PUBLIC_GUIDE_URL".equals(sourceType)) {
+            normalizedRequest = new GuideImportRequest(
+                    validateSourceUrl(request.sourceUrl()),
+                    sourceType,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+        } else if ("CITY_INTELLIGENCE".equals(sourceType)) {
+            normalizedRequest = new GuideImportRequest(
+                    null,
+                    sourceType,
+                    null,
+                    null,
+                    trip.destination(),
+                    trip.startDate(),
+                    trip.endDate()
+            );
+        } else {
+            normalizedRequest = new GuideImportRequest(
+                    null,
+                    sourceType,
+                    request.title().trim(),
+                    request.content().trim(),
+                    null,
+                    null,
+                    null
+            );
+        }
+        FetchedGuide fetched = intelligenceClient.fetch(normalizedRequest);
         validateFetchedGuide(fetched);
 
         GuideImportRecord candidate = new GuideImportRecord(
                 UUID.randomUUID(),
                 tripId,
+                fetched.sourceType(),
                 fetched.sourceUrl(),
                 fetched.finalUrl(),
                 fetched.sourceHost(),
@@ -112,10 +150,12 @@ public class GuideImportService {
                         record.category(),
                         record.statement(),
                         record.evidence(),
+                        record.sourceType(),
                         record.sourceUrl(),
                         record.sourceHost(),
                         record.sourceTitle(),
                         record.confidence(),
+                        record.effectiveDate(),
                         record.observedAt(),
                         record.expiresAt()
                 ))
@@ -130,12 +170,14 @@ public class GuideImportService {
                         fact.statement(),
                         fact.evidence(),
                         fact.confidence(),
+                        fact.effectiveDate(),
                         fact.observedAt(),
                         fact.expiresAt()
                 ))
                 .toList();
         return new GuideImportResponse(
                 record.id(),
+                record.sourceType(),
                 record.sourceUrl(),
                 record.finalUrl(),
                 record.sourceHost(),
@@ -168,6 +210,7 @@ public class GuideImportService {
         if (guide == null
                 || guide.facts() == null
                 || guide.facts().size() > MAX_FACTS
+                || !SOURCE_TYPES.contains(guide.sourceType())
                 || invalidText(guide.sourceUrl(), 2_048)
                 || invalidText(guide.finalUrl(), 2_048)
                 || invalidText(guide.sourceHost(), 253)
@@ -219,6 +262,7 @@ public class GuideImportService {
 
     public record GuideImportResponse(
             UUID id,
+            String sourceType,
             String sourceUrl,
             String finalUrl,
             String sourceHost,
@@ -237,6 +281,7 @@ public class GuideImportService {
             String statement,
             String evidence,
             double confidence,
+            LocalDate effectiveDate,
             Instant observedAt,
             Instant expiresAt
     ) {
@@ -248,10 +293,12 @@ public class GuideImportService {
             String category,
             String statement,
             String evidence,
+            String sourceType,
             String sourceUrl,
             String sourceHost,
             String sourceTitle,
             double confidence,
+            LocalDate effectiveDate,
             Instant observedAt,
             Instant expiresAt
     ) {

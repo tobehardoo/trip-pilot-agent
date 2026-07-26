@@ -16,6 +16,7 @@ export interface AMapPolyline {
 
 export interface AMapMap {
   setFitView(overlays?: unknown[]): void
+  on?(event: string, handler: () => void): void
   setCenter?(position: [number, number]): void
   setZoom?(zoom: number): void
   destroy?(): void

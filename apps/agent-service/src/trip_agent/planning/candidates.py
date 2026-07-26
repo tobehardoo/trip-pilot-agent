@@ -18,6 +18,9 @@ type RejectionReason = Literal[
 
 _CITY_SUFFIXES = ("特别行政区", "自治州", "地区", "盟", "市")
 _FAMILY_FRIENDLY_TERMS = ("公园", "博物馆", "科技馆", "动物园", "植物园", "儿童")
+_RAIN_TERMS = ("雨", "雷阵雨", "暴雨", "台风", "降水")
+_INDOOR_TERMS = ("博物馆", "美术馆", "科技馆", "展览馆", "室内", "商场", "剧院")
+_OUTDOOR_TERMS = ("公园", "广场", "山", "湖", "海滩", "步行街", "户外")
 _POSITIVE_GUIDE_TERMS = (
     "推荐",
     "值得",
@@ -79,6 +82,7 @@ class CandidateRanker:
         must_visit_places: tuple[str, ...] = (),
         avoid_places: tuple[str, ...] = (),
         guide_statements: tuple[str, ...] = (),
+        weather_statements: tuple[str, ...] = (),
     ) -> CandidateRanking:
         if limit < 1:
             raise ValueError("candidate limit must be positive")
@@ -118,6 +122,7 @@ class CandidateRanker:
                     traveler_type,
                     must_visit_places,
                     guide_statements,
+                    weather_statements,
                 )
             )
 
@@ -142,6 +147,7 @@ class CandidateRanker:
         traveler_type: TravelerType,
         must_visit_places: tuple[str, ...],
         guide_statements: tuple[str, ...],
+        weather_statements: tuple[str, ...],
     ) -> RankedCandidate:
         score = 20
         reasons = ["VALID_CITY_AND_METADATA"]
@@ -161,6 +167,14 @@ class CandidateRanker:
         ):
             score += 25
             reasons.append("GUIDE_FACT_MATCH")
+        weather_text = _text_key(" ".join(weather_statements))
+        if is_adverse_weather_statement(weather_text):
+            if any(_text_key(term) in searchable for term in _INDOOR_TERMS):
+                score += 20
+                reasons.append("WEATHER_INDOOR_PREFERENCE")
+            elif any(_text_key(term) in searchable for term in _OUTDOOR_TERMS):
+                score -= 10
+                reasons.append("WEATHER_OUTDOOR_PENALTY")
         if traveler_type == "FAMILY" and any(term in searchable for term in _FAMILY_FRIENDLY_TERMS):
             score += 15
             reasons.append("FAMILY_FRIENDLY")
@@ -194,3 +208,8 @@ def is_positive_guide_statement(value: str) -> bool:
         any(_text_key(term) in normalized for term in _POSITIVE_GUIDE_TERMS)
         and not any(_text_key(term) in normalized for term in _NEGATIVE_GUIDE_TERMS)
     )
+
+
+def is_adverse_weather_statement(value: str) -> bool:
+    normalized = _text_key(value)
+    return any(_text_key(term) in normalized for term in _RAIN_TERMS)

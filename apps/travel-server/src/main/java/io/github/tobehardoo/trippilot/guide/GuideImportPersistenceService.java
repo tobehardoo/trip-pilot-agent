@@ -29,6 +29,11 @@ public class GuideImportPersistenceService {
         // Ownership is checked again after the network request so a deleted or
         // transferred trip cannot receive data based on stale authorization.
         tripService.get(ownerId, tripId);
+        if ("CITY_INTELLIGENCE".equals(candidate.sourceType())) {
+            mapper.lockTripForCityRefresh(tripId).orElseThrow(
+                    () -> new IllegalStateException("Trip disappeared during city refresh")
+            );
+        }
         boolean created = mapper.insertImport(candidate) == 1;
         GuideImportRecord persisted = created
                 ? candidate
@@ -40,6 +45,7 @@ public class GuideImportPersistenceService {
             GuideImportRecord refreshed = new GuideImportRecord(
                     persisted.id(),
                     persisted.tripId(),
+                    candidate.sourceType(),
                     candidate.sourceUrl(),
                     candidate.finalUrl(),
                     candidate.sourceHost(),
@@ -63,9 +69,13 @@ public class GuideImportPersistenceService {
                     fact.statement(),
                     fact.evidence(),
                     fact.confidence(),
+                    fact.effectiveDate(),
                     fact.observedAt(),
                     fact.expiresAt()
             ));
+        }
+        if ("CITY_INTELLIGENCE".equals(candidate.sourceType())) {
+            mapper.disableOtherCityImports(tripId, persisted.id());
         }
         return persisted;
     }

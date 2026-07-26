@@ -228,7 +228,11 @@ def _merge_guide_evidence(
             source_url=fact.source_url,
             source_name=fact.source_host[:120],
             collected_at=fact.observed_at,
-            reliability_level="community-guide",
+            reliability_level=(
+                "provider-live"
+                if fact.source_type == "CITY_INTELLIGENCE"
+                else "community-guide"
+            ),
             similarity=fact.confidence,
         )
         for index, fact in enumerate(facts)

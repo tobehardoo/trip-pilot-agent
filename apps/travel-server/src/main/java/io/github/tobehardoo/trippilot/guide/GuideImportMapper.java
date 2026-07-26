@@ -14,12 +14,20 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface GuideImportMapper {
 
+    @Select("""
+            SELECT id
+            FROM business.trip
+            WHERE id = #{tripId}
+            FOR UPDATE
+            """)
+    Optional<UUID> lockTripForCityRefresh(UUID tripId);
+
     @Insert("""
             INSERT INTO business.guide_import(
-                id, trip_id, source_url, final_url, source_host, title,
+                id, trip_id, source_type, source_url, final_url, source_host, title,
                 excerpt, content_hash, fetched_at, enabled
             ) VALUES (
-                #{id}, #{tripId}, #{sourceUrl}, #{finalUrl}, #{sourceHost}, #{title},
+                #{id}, #{tripId}, #{sourceType}, #{sourceUrl}, #{finalUrl}, #{sourceHost}, #{title},
                 #{excerpt}, #{contentHash}, #{fetchedAt}, #{enabled}
             )
             ON CONFLICT (trip_id, final_url, content_hash) DO NOTHING
@@ -28,11 +36,13 @@ public interface GuideImportMapper {
 
     @Update("""
             UPDATE business.guide_import
-            SET source_url = #{sourceUrl},
+            SET source_type = #{sourceType},
+                source_url = #{sourceUrl},
                 source_host = #{sourceHost},
                 title = #{title},
                 excerpt = #{excerpt},
-                fetched_at = #{fetchedAt}
+                fetched_at = #{fetchedAt},
+                enabled = #{enabled}
             WHERE id = #{id}
               AND trip_id = #{tripId}
             """)
@@ -41,10 +51,10 @@ public interface GuideImportMapper {
     @Insert("""
             INSERT INTO business.guide_fact(
                 id, guide_import_id, category, statement, evidence,
-                confidence, observed_at, expires_at
+                confidence, effective_date, observed_at, expires_at
             ) VALUES (
                 #{id}, #{guideImportId}, #{category}, #{statement}, #{evidence},
-                #{confidence}, #{observedAt}, #{expiresAt}
+                #{confidence}, #{effectiveDate}, #{observedAt}, #{expiresAt}
             )
             ON CONFLICT (guide_import_id, category, statement_hash) DO UPDATE
             SET evidence = EXCLUDED.evidence,
@@ -55,7 +65,7 @@ public interface GuideImportMapper {
     int upsertFact(GuideFactRecord record);
 
     @Select("""
-            SELECT id, trip_id, source_url, final_url, source_host, title,
+            SELECT id, trip_id, source_type, source_url, final_url, source_host, title,
                    excerpt, content_hash, fetched_at, enabled, created_at
             FROM business.guide_import
             WHERE trip_id = #{tripId}
@@ -69,7 +79,8 @@ public interface GuideImportMapper {
     );
 
     @Select("""
-            SELECT guide_import.id, guide_import.trip_id, guide_import.source_url,
+            SELECT guide_import.id, guide_import.trip_id, guide_import.source_type,
+                   guide_import.source_url,
                    guide_import.final_url, guide_import.source_host, guide_import.title,
                    guide_import.excerpt, guide_import.content_hash,
                    guide_import.fetched_at, guide_import.enabled, guide_import.created_at
@@ -86,7 +97,7 @@ public interface GuideImportMapper {
 
     @Select("""
             SELECT id, guide_import_id, category, statement, evidence,
-                   confidence, observed_at, expires_at
+                   confidence, effective_date, observed_at, expires_at
             FROM business.guide_fact
             WHERE guide_import_id = #{guideImportId}
             ORDER BY created_at, id
@@ -112,8 +123,22 @@ public interface GuideImportMapper {
             @Param("enabled") boolean enabled
     );
 
+    @Update("""
+            UPDATE business.guide_import
+            SET enabled = FALSE
+            WHERE trip_id = #{tripId}
+              AND source_type = 'CITY_INTELLIGENCE'
+              AND id <> #{currentImportId}
+              AND enabled = TRUE
+            """)
+    int disableOtherCityImports(
+            @Param("tripId") UUID tripId,
+            @Param("currentImportId") UUID currentImportId
+    );
+
     @Select("""
-            SELECT guide_import.id, guide_import.trip_id, guide_import.source_url,
+            SELECT guide_import.id, guide_import.trip_id, guide_import.source_type,
+                   guide_import.source_url,
                    guide_import.final_url, guide_import.source_host, guide_import.title,
                    guide_import.excerpt, guide_import.content_hash,
                    guide_import.fetched_at, guide_import.enabled, guide_import.created_at
@@ -135,10 +160,12 @@ public interface GuideImportMapper {
                    guide_fact.category,
                    guide_fact.statement,
                    guide_fact.evidence,
+                   guide_import.source_type,
                    guide_import.final_url AS source_url,
                    guide_import.source_host,
                    guide_import.title AS source_title,
                    guide_fact.confidence,
+                   guide_fact.effective_date,
                    guide_fact.observed_at,
                    guide_fact.expires_at
             FROM business.guide_import

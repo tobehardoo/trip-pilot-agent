@@ -27,6 +27,7 @@ import {
   type AuthSession,
   type CreateTripInput,
   type GuideImport,
+  type GuideImportInput,
   type Itinerary,
   type ItineraryEditInput,
   type ItineraryEditPreview,
@@ -417,7 +418,7 @@ async function handleApplyItineraryEdit(input: ItineraryEditInput) {
   }
 }
 
-async function handleImportGuide(sourceUrl: string) {
+async function handleImportGuide(input: GuideImportInput) {
   if (!selectedTrip.value) return
   const tripId = selectedTrip.value.id
   const generation = sessionGeneration
@@ -426,7 +427,7 @@ async function handleImportGuide(sourceUrl: string) {
   guideError.value = null
   try {
     const imported = await withAccessToken((token) => (
-      createGuideImport(token, tripId, sourceUrl)
+      createGuideImport(token, tripId, input)
     ))
     if (!isCurrentGuideRequest(requestSequence, generation, tripId)) return
     guideImports.value = [

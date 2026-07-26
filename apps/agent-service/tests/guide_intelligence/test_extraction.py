@@ -65,6 +65,60 @@ def test_deduplicates_sentences_and_allows_an_article_without_supported_facts() 
     assert result.facts == ()
 
 
+def test_extracts_structured_facts_from_pasted_chinese_travel_text() -> None:
+    fetched_at = datetime(2026, 7, 26, 8, 0, tzinfo=UTC)
+    content = """
+    广州两日游
+    陈家祠位于广州市荔湾区中山七路恩龙里34号，是本次必去景点。
+    成人门票 10 元，开放时间为 09:00-17:30，16:30 停止入场，需要提前预约。
+    明天广州有雷阵雨，最高温度 32℃，建议携带雨具。
+    """
+
+    result = GenericGuideExtractor().extract_text(
+        title="广州两日游.txt",
+        content=content,
+        fetched_at=fetched_at,
+    )
+
+    assert result.title == "广州两日游.txt"
+    assert {fact.category for fact in result.facts} >= {
+        "ATTRACTION",
+        "LOCATION",
+        "COST",
+        "TIMING",
+        "RESERVATION",
+        "WEATHER",
+    }
+    assert all(fact.evidence in result.content for fact in result.facts)
+    weather = next(fact for fact in result.facts if fact.category == "WEATHER")
+    assert weather.expires_at == fetched_at + timedelta(days=1)
+
+
+def test_normalizes_xiaohongshu_share_text_without_treating_share_url_as_a_fact() -> None:
+    fetched_at = datetime(2026, 7, 26, 8, 0, tzinfo=UTC)
+    content = """
+    复制后打开【小红书】查看笔记！
+    广州塔夜游攻略
+    地址：广州市海珠区阅江西路222号。
+    门票约 150 元，建议 17:00 前到达并提前购票。
+    http://xhslink.com/a1b2c3
+    """
+
+    result = GenericGuideExtractor().extract_text(
+        title="小红书分享正文",
+        content=content,
+        fetched_at=fetched_at,
+    )
+
+    assert "复制后打开【小红书】" not in result.content
+    assert "xhslink.com" not in result.content
+    assert {fact.category for fact in result.facts} >= {
+        "LOCATION",
+        "COST",
+        "RESERVATION",
+    }
+
+
 def test_caps_article_and_fact_expansion() -> None:
     fetched_at = datetime(2026, 7, 23, 8, 0, tzinfo=UTC)
     paragraphs = "".join(

@@ -5,7 +5,7 @@ APIs for POI search and route planning, on the candidate ranker for scoring, and
 OR‑Tools for daily schedule optimisation.
 """
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from itertools import combinations
 from math import ceil
 from typing import TYPE_CHECKING
@@ -49,6 +49,7 @@ from trip_agent.providers.map import (
 from trip_agent.providers.route import RoutePlan, RouteProvider, RouteRequest
 from trip_agent.worker.contracts import (
     ActivityCoordinates,
+    GuideFactEvidence,
     Itinerary,
     ItineraryDay,
     PlanningCreateCommand,
@@ -58,6 +59,28 @@ from trip_agent.worker.contracts import (
 
 if TYPE_CHECKING:
     pass  # All runtime types are imported above.
+
+
+def _non_weather_guide_statements(
+    facts: tuple[GuideFactEvidence, ...],
+) -> tuple[str, ...]:
+    return tuple(
+        f"{fact.statement} {fact.evidence}"
+        for fact in facts
+        if fact.category != "WEATHER"
+    )
+
+
+def weather_statements_for_date(
+    facts: tuple[GuideFactEvidence, ...],
+    trip_date: date,
+) -> tuple[str, ...]:
+    """Return only structured weather evidence that applies to one trip day."""
+    return tuple(
+        f"{fact.statement} {fact.evidence}"
+        for fact in facts
+        if fact.category == "WEATHER" and fact.effective_date == trip_date
+    )
 
 
 class AmapPlanningProvider:
@@ -93,10 +116,8 @@ class AmapPlanningProvider:
             MAX_PLANNING_CANDIDATES,
             max(required_pois, required_pois * 2),
         )
-        guide_statements = tuple(
-            f"{fact.statement} {fact.evidence}"
-            for fact in command.payload.guide_evidence.facts
-        )
+        guide_facts = command.payload.guide_evidence.facts
+        guide_statements = _non_weather_guide_statements(guide_facts)
         baseline_ranking = self._candidate_ranker.rank(
             raw_pois,
             destination=trip.destination,
@@ -164,10 +185,15 @@ class AmapPlanningProvider:
         )
         days, pois = baseline_days, baseline_selected
         guide_influenced = False
-        if guide_statements and guided_pois != baseline_pois:
+        if guide_facts:
             try:
                 days, pois = await self._build_feasible_days(
-                    command, guided_pois, anchors, route_cache, route_calls,
+                    command,
+                    guided_pois,
+                    anchors,
+                    route_cache,
+                    route_calls,
+                    use_guide_evidence=True,
                 )
                 guide_influenced = tuple(poi.provider_id for poi in pois) != tuple(
                     poi.provider_id for poi in baseline_selected
@@ -225,6 +251,8 @@ class AmapPlanningProvider:
         anchors: ResolvedTravelAnchors,
         route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]] | None = None,
         route_calls: list[int] | None = None,
+        *,
+        use_guide_evidence: bool = False,
     ) -> tuple[list[ItineraryDay], tuple[Poi, ...]]:
         trip = command.payload.trip
         day_count = (trip.end_date - trip.start_date).days + 1
@@ -244,12 +272,32 @@ class AmapPlanningProvider:
                 if unmatched_must_visits:
                     return None
                 return list(days), selected
-            pairs = list(combinations(range(len(remaining)), 2))
+            ranked_remaining = remaining
+            if use_guide_evidence:
+                trip_date = trip.start_date + timedelta(days=offset)
+                ranking = self._candidate_ranker.rank(
+                    remaining,
+                    destination=trip.destination,
+                    preferences=trip.constraints.preferences,
+                    traveler_type=trip.constraints.traveler_type,
+                    limit=len(remaining),
+                    must_visit_places=trip.constraints.must_visit_places,
+                    avoid_places=trip.constraints.avoid_places,
+                    guide_statements=_non_weather_guide_statements(
+                        command.payload.guide_evidence.facts
+                    ),
+                    weather_statements=weather_statements_for_date(
+                        command.payload.guide_evidence.facts,
+                        trip_date,
+                    ),
+                )
+                ranked_remaining = tuple(item.poi for item in ranking.selected)
+            pairs = list(combinations(range(len(ranked_remaining)), 2))
             pairs.sort(
                 key=lambda pair: (
                     -sum(
                         any(
-                            text_matches(place, remaining[index].name)
+                            text_matches(place, ranked_remaining[index].name)
                             for place in unmatched_must_visits
                         )
                         for index in pair
@@ -265,21 +313,23 @@ class AmapPlanningProvider:
                 try:
                     day = await self._day(
                         command, offset,
-                        remaining[first_index], remaining[second_index],
+                        ranked_remaining[first_index], ranked_remaining[second_index],
                         anchors, cache, calls,
                     )
                 except PlanningInfeasibleError as failure:
                     last_infeasible[:] = [failure]
                     continue
-                chosen = (remaining[first_index], remaining[second_index])
+                chosen = (
+                    ranked_remaining[first_index],
+                    ranked_remaining[second_index],
+                )
                 next_unmatched = frozenset(
                     place
                     for place in unmatched_must_visits
                     if not any(text_matches(place, poi.name) for poi in chosen)
                 )
-                removed = {first_index, second_index}
                 next_remaining = tuple(
-                    poi for index, poi in enumerate(remaining) if index not in removed
+                    poi for poi in ranked_remaining if poi not in chosen
                 )
                 result = await search(
                     offset + 1, next_remaining, (*selected, *chosen),
@@ -436,9 +486,8 @@ class AmapPlanningProvider:
                 limit=required_count,
                 must_visit_places=trip.constraints.must_visit_places,
                 avoid_places=trip.constraints.avoid_places,
-                guide_statements=tuple(
-                    f"{fact.statement} {fact.evidence}"
-                    for fact in command.payload.guide_evidence.facts
+                guide_statements=_non_weather_guide_statements(
+                    command.payload.guide_evidence.facts
                 ),
             )
             if len(ranking.selected) >= required_count:

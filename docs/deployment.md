@@ -70,6 +70,10 @@ VITE_AMAP_WEB_JS_KEY=your-browser-amap-key
 VITE_AMAP_SECURITY_CODE=your-browser-security-code
 ```
 
+`AMAP_WEB_SERVICE_KEY` 同时注入规划 Worker 与内部 Agent API：前者用于 POI/路线，后者
+用于城市天气和景点情报同步。缺失时公开正文识别仍可用，但城市情报同步会明确返回 502，
+不会伪装为实时数据。
+
 服务端 Key 和浏览器 Key 必须分开，避免把 Web Service Key 暴露到前端。
 
 ## 数据库备份

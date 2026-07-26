@@ -1,8 +1,16 @@
 """Immutable models for imported guide intelligence."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
+
+type GuideSourceType = Literal[
+    "PUBLIC_GUIDE_URL",
+    "PASTED_TEXT",
+    "TEXT_FILE",
+    "XIAOHONGSHU_SHARED_TEXT",
+    "CITY_INTELLIGENCE",
+]
 
 type FactCategory = Literal[
     "ATTRACTION",
@@ -12,6 +20,8 @@ type FactCategory = Literal[
     "COST",
     "QUEUE",
     "RESERVATION",
+    "LOCATION",
+    "WEATHER",
     "TIP",
 ]
 
@@ -24,6 +34,7 @@ class TravelFact:
     confidence: float
     observed_at: datetime
     expires_at: datetime
+    effective_date: date | None = None
 
     def __post_init__(self) -> None:
         if not self.statement.strip() or not self.evidence.strip():
@@ -49,6 +60,7 @@ class ExtractedGuide:
 
 @dataclass(frozen=True, slots=True)
 class GuideImportResult:
+    source_type: GuideSourceType
     source_url: str
     final_url: str
     source_host: str

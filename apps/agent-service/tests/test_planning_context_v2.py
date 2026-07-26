@@ -9,6 +9,7 @@ from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 from test_planning_worker import COMMAND
 
+from trip_agent.domain.shared import matched_guide_fact_ids
 from trip_agent.planning.candidates import CandidateRanker
 from trip_agent.planning.optimization import DailyOptimizationRequest, DailyOptimizer, TimeBlock
 from trip_agent.providers.map import Coordinates, Poi, ProviderSuccess
@@ -94,6 +95,20 @@ def _local(day: date, hour: int, minute: int = 0) -> datetime:
     return datetime.combine(day, datetime.min.time(), CHINA_TIME_ZONE).replace(
         hour=hour, minute=minute
     )
+
+
+def test_adverse_weather_fact_is_reported_as_used_agent_evidence() -> None:
+    payload = _v2_command()
+    fact = payload["payload"]["guideEvidence"]["facts"][0]
+    fact["category"] = "WEATHER"
+    fact["statement"] = "广州市当前天气：雷阵雨，31℃。"
+    fact["evidence"] = fact["statement"]
+    fact["effectiveDate"] = "2026-08-01"
+    command = PlanningCreateCommand.model_validate(payload)
+
+    used = matched_guide_fact_ids(command, (_poi("museum", "广州博物馆"),))
+
+    assert used == (command.payload.guide_evidence.facts[0].fact_id,)
 
 
 def _route_success(request: object, *, distance: int = 600, duration: int = 600):
@@ -664,6 +679,7 @@ def test_queue_delay_removes_guide_fact_that_expired_before_execution() -> None:
 def test_used_guide_citation_survives_twenty_rag_citations() -> None:
     payload = _v2_command()
     payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []
+    payload["payload"]["guideEvidence"]["facts"][0]["sourceType"] = "CITY_INTELLIGENCE"
     command = PlanningCreateCommand.model_validate(payload)
     fact_id = command.payload.guide_evidence.facts[0].fact_id
     rag_citations = tuple(
@@ -717,3 +733,20 @@ def test_used_guide_citation_survives_twenty_rag_citations() -> None:
     assert str(fact_id) in {
         citation.chunk_id for citation in completed.payload.knowledge.citations
     }
+    city_citation = next(
+        citation
+        for citation in completed.payload.knowledge.citations
+        if citation.chunk_id == str(fact_id)
+    )
+    assert city_citation.reliability_level == "provider-live"
+
+
+def test_weather_guide_fact_accepts_an_effective_date() -> None:
+    payload = _v2_command()
+    fact = payload["payload"]["guideEvidence"]["facts"][0]
+    fact["category"] = "WEATHER"
+    fact["effectiveDate"] = "2026-08-01"
+
+    command = PlanningCreateCommand.model_validate(payload)
+
+    assert command.payload.guide_evidence.facts[0].effective_date == date(2026, 8, 1)

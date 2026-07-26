@@ -7,6 +7,7 @@ afterEach(() => {
   cleanup()
   delete window.AMap
   vi.unstubAllEnvs()
+  vi.useRealTimers()
 })
 
 const itinerary = {
@@ -39,6 +40,96 @@ test('renders a clickable route overview when the AMap JS key is absent', async 
 
   await fireEvent.click(screen.getByRole('button', { name: '定位 早茶' }))
   expect(result.emitted().selectActivity).toEqual([['b']])
+})
+
+test('keeps the route overview visible until AMap reports that base tiles are complete', async () => {
+  vi.stubEnv('VITE_AMAP_WEB_JS_KEY', 'browser-js-key')
+  vi.stubEnv('VITE_AMAP_SECURITY_CODE', 'browser-security-code')
+  let completeMap = () => {}
+  const mapConstructed = vi.fn()
+  const setFitView = vi.fn()
+  window.AMap = {
+    Map: class {
+      constructor() { mapConstructed() }
+      setFitView = setFitView
+      on(event: string, handler: () => void) {
+        if (event === 'complete') completeMap = handler
+      }
+    },
+    Marker: class {
+      setMap() {}
+    },
+    Polyline: class {
+      setMap() {}
+    },
+  }
+
+  render(TripMap, { props: { itinerary, selectedActivityId: 'a' } })
+
+  await vi.waitFor(() => expect(mapConstructed).toHaveBeenCalledTimes(1))
+  expect(setFitView).not.toHaveBeenCalled()
+  expect(screen.getByLabelText('路线概览')).toBeTruthy()
+  completeMap()
+  await vi.waitFor(() => expect(setFitView).toHaveBeenCalledTimes(1))
+  expect(await screen.findByText('高德地图')).toBeTruthy()
+})
+
+test('shows an actionable fallback when AMap never finishes loading base tiles', async () => {
+  vi.useFakeTimers()
+  vi.stubEnv('VITE_AMAP_WEB_JS_KEY', 'browser-js-key')
+  vi.stubEnv('VITE_AMAP_SECURITY_CODE', 'browser-security-code')
+  const mapConstructed = vi.fn()
+  const destroy = vi.fn()
+  window.AMap = {
+    Map: class {
+      constructor() { mapConstructed() }
+      setFitView() {}
+      destroy = destroy
+      on() {}
+    },
+    Marker: class {
+      setMap() {}
+    },
+    Polyline: class {
+      setMap() {}
+    },
+  }
+
+  render(TripMap, { props: { itinerary, selectedActivityId: 'a' } })
+  await vi.waitFor(() => expect(mapConstructed).toHaveBeenCalledTimes(1))
+  await vi.advanceTimersByTimeAsync(8_000)
+
+  expect(screen.getByText(/域名白名单/)).toBeTruthy()
+  expect(destroy).toHaveBeenCalledTimes(1)
+})
+
+test('requests the standard two-dimensional AMap base layer explicitly', async () => {
+  vi.stubEnv('VITE_AMAP_WEB_JS_KEY', 'browser-js-key')
+  vi.stubEnv('VITE_AMAP_SECURITY_CODE', 'browser-security-code')
+  let mapOptions: Record<string, unknown> | undefined
+  window.AMap = {
+    Map: class {
+      constructor(_container: HTMLElement, options?: Record<string, unknown>) {
+        mapOptions = options
+      }
+      setFitView() {}
+      on(_event: string, handler: () => void) { handler() }
+    },
+    Marker: class {
+      setMap() {}
+    },
+    Polyline: class {
+      setMap() {}
+    },
+  }
+
+  render(TripMap, { props: { itinerary, selectedActivityId: 'a' } })
+  await vi.waitFor(() => expect(mapOptions).toBeDefined())
+
+  expect(mapOptions).toMatchObject({
+    viewMode: '2D',
+    mapStyle: 'amap://styles/normal',
+  })
 })
 
 test('renders AMap markers and polylines and releases the map on unmount', async () => {

@@ -6,6 +6,7 @@ import java.util.UUID;
 public record GuideImportRecord(
         UUID id,
         UUID tripId,
+        String sourceType,
         String sourceUrl,
         String finalUrl,
         String sourceHost,

@@ -203,7 +203,10 @@ test('creates and lists trip-scoped guide imports with bearer authentication', a
   await createGuideImport(
     'access-token',
     '22222222-2222-2222-2222-222222222222',
-    'https://example.com/guide',
+    {
+      sourceType: 'PUBLIC_GUIDE_URL',
+      sourceUrl: 'https://example.com/guide',
+    },
   )
   await listGuideImports('access-token', '22222222-2222-2222-2222-222222222222')
 
@@ -213,7 +216,10 @@ test('creates and lists trip-scoped guide imports with bearer authentication', a
     expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
-      body: JSON.stringify({ sourceUrl: 'https://example.com/guide' }),
+      body: JSON.stringify({
+        sourceType: 'PUBLIC_GUIDE_URL',
+        sourceUrl: 'https://example.com/guide',
+      }),
     }),
   )
   expect(fetchMock).toHaveBeenNthCalledWith(

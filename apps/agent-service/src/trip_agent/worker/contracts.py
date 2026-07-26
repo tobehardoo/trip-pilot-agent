@@ -173,6 +173,8 @@ class GuideFactEvidence(InboundMessageModel):
         "COST",
         "QUEUE",
         "RESERVATION",
+        "LOCATION",
+        "WEATHER",
         "TIP",
     ]
     statement: Annotated[
@@ -181,6 +183,13 @@ class GuideFactEvidence(InboundMessageModel):
     evidence: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1_000)
     ]
+    source_type: Literal[
+        "PUBLIC_GUIDE_URL",
+        "PASTED_TEXT",
+        "TEXT_FILE",
+        "XIAOHONGSHU_SHARED_TEXT",
+        "CITY_INTELLIGENCE",
+    ] = "PUBLIC_GUIDE_URL"
     source_url: AnyHttpUrl
     source_host: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=253)
@@ -189,6 +198,7 @@ class GuideFactEvidence(InboundMessageModel):
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
     ]
     confidence: float = Field(ge=0, le=1)
+    effective_date: date | None = None
     observed_at: datetime
     expires_at: datetime
 

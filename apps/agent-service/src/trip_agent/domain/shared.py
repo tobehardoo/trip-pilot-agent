@@ -133,15 +133,26 @@ def matched_guide_fact_ids(
 ) -> tuple[UUID, ...]:
     """Return guide-fact IDs whose statements matched any of the selected POIs."""
     from trip_agent.planning.candidates import (  # noqa: PLC0415
+        is_adverse_weather_statement,
         is_positive_guide_statement,
     )
 
     return tuple(
         fact.fact_id
         for fact in command.payload.guide_evidence.facts
-        if is_positive_guide_statement(f"{fact.statement} {fact.evidence}")
-        and any(
-            text_matches(poi.name, f"{fact.statement} {fact.evidence}")
-            for poi in pois
+        if (
+            fact.category == "WEATHER"
+            and fact.effective_date is not None
+            and command.payload.trip.start_date
+            <= fact.effective_date
+            <= command.payload.trip.end_date
+            and is_adverse_weather_statement(f"{fact.statement} {fact.evidence}")
+        )
+        or (
+            is_positive_guide_statement(f"{fact.statement} {fact.evidence}")
+            and any(
+                text_matches(poi.name, f"{fact.statement} {fact.evidence}")
+                for poi in pois
+            )
         )
     )

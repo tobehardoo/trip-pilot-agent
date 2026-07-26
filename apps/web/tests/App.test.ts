@@ -834,6 +834,7 @@ describe('TripPilot application shell', () => {
     })
     const importedGuide = {
       id: '99999999-9999-9999-9999-999999999999',
+      sourceType: 'PUBLIC_GUIDE_URL',
       sourceUrl: 'https://example.com/guide',
       finalUrl: 'https://example.com/guide',
       sourceHost: 'example.com',
@@ -884,6 +885,7 @@ describe('TripPilot application shell', () => {
     })
     const guide = {
       id: '99999999-9999-9999-9999-999999999999',
+      sourceType: 'PUBLIC_GUIDE_URL',
       sourceUrl: 'https://example.com/guide',
       finalUrl: 'https://example.com/guide',
       sourceHost: 'example.com',

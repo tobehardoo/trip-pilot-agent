@@ -1,8 +1,6 @@
 package io.github.tobehardoo.trippilot.guide;
 
 import java.time.Duration;
-import java.util.Map;
-
 import io.github.tobehardoo.trippilot.common.ApiException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -34,12 +32,12 @@ public class HttpGuideIntelligenceClient implements GuideIntelligenceClient {
     }
 
     @Override
-    public FetchedGuide fetch(String sourceUrl) {
+    public FetchedGuide fetch(GuideImportRequest request) {
         try {
             FetchedGuide response = restClient.post()
                     .uri("/internal/v1/guide-imports")
                     .header("X-Internal-Token", internalToken)
-                    .body(Map.of("sourceUrl", sourceUrl))
+                    .body(request)
                     .retrieve()
                     .body(FetchedGuide.class);
             if (response == null) {

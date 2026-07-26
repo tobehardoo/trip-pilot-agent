@@ -1,13 +1,15 @@
 package io.github.tobehardoo.trippilot.guide;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 
 public interface GuideIntelligenceClient {
 
-    FetchedGuide fetch(String sourceUrl);
+    FetchedGuide fetch(GuideImportRequest request);
 
     record FetchedGuide(
+            String sourceType,
             String sourceUrl,
             String finalUrl,
             String sourceHost,
@@ -24,6 +26,7 @@ public interface GuideIntelligenceClient {
             String statement,
             String evidence,
             double confidence,
+            LocalDate effectiveDate,
             Instant observedAt,
             Instant expiresAt
     ) {

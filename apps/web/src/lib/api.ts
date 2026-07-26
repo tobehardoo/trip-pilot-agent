@@ -96,9 +96,43 @@ export interface PlanningTaskEvent {
   createdAt: string
 }
 
+export type GuideSourceType =
+  | 'PUBLIC_GUIDE_URL'
+  | 'PASTED_TEXT'
+  | 'TEXT_FILE'
+  | 'XIAOHONGSHU_SHARED_TEXT'
+  | 'CITY_INTELLIGENCE'
+
+export type GuideImportInput =
+  | {
+      sourceType: 'PUBLIC_GUIDE_URL'
+      sourceUrl: string
+    }
+  | {
+      sourceType: Exclude<GuideSourceType, 'PUBLIC_GUIDE_URL' | 'CITY_INTELLIGENCE'>
+      title: string
+      content: string
+    }
+  | {
+      sourceType: 'CITY_INTELLIGENCE'
+      city: string
+      startDate: string
+      endDate: string
+    }
+
 export interface GuideFact {
   id: string
-  category: 'ATTRACTION' | 'DINING' | 'TRANSPORT' | 'TIMING' | 'COST' | 'QUEUE' | 'RESERVATION' | 'TIP'
+  category:
+    | 'ATTRACTION'
+    | 'DINING'
+    | 'TRANSPORT'
+    | 'TIMING'
+    | 'COST'
+    | 'QUEUE'
+    | 'RESERVATION'
+    | 'LOCATION'
+    | 'WEATHER'
+    | 'TIP'
   statement: string
   evidence: string
   confidence: number
@@ -108,6 +142,7 @@ export interface GuideFact {
 
 export interface GuideImport {
   id: string
+  sourceType: GuideSourceType
   sourceUrl: string
   finalUrl: string
   sourceHost: string
@@ -338,11 +373,11 @@ export function listGuideImports(accessToken: string, tripId: string): Promise<G
 export function createGuideImport(
   accessToken: string,
   tripId: string,
-  sourceUrl: string,
+  input: GuideImportInput,
 ): Promise<GuideImport> {
   return request(`/api/trips/${encodeURIComponent(tripId)}/guide-imports`, {
     method: 'POST',
-    body: JSON.stringify({ sourceUrl }),
+    body: JSON.stringify(input),
   }, accessToken)
 }
 

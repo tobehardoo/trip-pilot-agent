@@ -25,11 +25,36 @@ _REMOVED_SELECTORS = (
 _BLOCK_TAGS = ("p", "li", "h2", "h3", "blockquote")
 _SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*|\n+")
 _WHITESPACE = re.compile(r"\s+")
+_SHARE_URL = re.compile(r"^https?://(?:www\.)?(?:xhslink\.com|xiaohongshu\.com)/\S+$", re.I)
+_XIAOHONGSHU_BOILERPLATE = re.compile(
+    r"^(?:复制后打开|打开小红书|【?小红书】?).*(?:查看|笔记|内容)",
+    re.I,
+)
 _MAX_CONTENT_CHARACTERS = 100_000
 _MAX_SENTENCE_CHARACTERS = 1_000
 _MAX_SENTENCES = 500
 _MAX_FACTS = 100
 _CATEGORY_RULES: tuple[tuple[FactCategory, re.Pattern[str], int, float], ...] = (
+    (
+        "WEATHER",
+        re.compile(
+            r"天气|气温|温度|降雨|下雨|雨夹雪|雷阵雨|阵雨|暴雨|晴(?:天|朗)?|"
+            r"多云|阴天|台风|大风|高温|低温|湿度|℃|weather|forecast|temperature",
+            re.I,
+        ),
+        1,
+        0.82,
+    ),
+    (
+        "LOCATION",
+        re.compile(
+            r"地址|位于|地处|坐落|经纬度|坐标|"
+            r"(?:路|街|巷|大道|胡同|弄)\s*\d+\s*号|location|address",
+            re.I,
+        ),
+        90,
+        0.82,
+    ),
     (
         "TRANSPORT",
         re.compile(r"地铁|公交|巴士|打车|步行|换乘|线路|号线|车站|metro|subway|bus|taxi", re.I),
@@ -50,13 +75,21 @@ _CATEGORY_RULES: tuple[tuple[FactCategory, re.Pattern[str], int, float], ...] = 
     ),
     (
         "COST",
-        re.compile(r"人均|门票|票价|免费|收费|预算|(?:\d+(?:\.\d+)?)\s*元|price|cost|free", re.I),
+        re.compile(
+            r"人均|门票|票价|成人票|学生票|儿童票|免费|收费|预算|"
+            r"[¥￥]\s*\d+(?:\.\d+)?|(?:\d+(?:\.\d+)?)\s*元|price|cost|free",
+            re.I,
+        ),
         14,
         0.82,
     ),
     (
         "TIMING",
-        re.compile(r"开放时间|营业时间|闭馆|开门|关门|早上|上午|下午|晚上|\d{1,2}[:：]\d{2}", re.I),
+        re.compile(
+            r"开放时间|营业时间|停止入场|入园|开园|闭园|闭馆|开门|关门|"
+            r"早上|上午|下午|晚上|周[一二三四五六日天]|每日|\d{1,2}[:：]\d{2}",
+            re.I,
+        ),
         14,
         0.8,
     ),
@@ -71,7 +104,11 @@ _CATEGORY_RULES: tuple[tuple[FactCategory, re.Pattern[str], int, float], ...] = 
     ),
     (
         "ATTRACTION",
-        re.compile(r"景点|博物馆|公园|寺|祠|塔|古镇|故居|展馆|值得|attraction|museum|park", re.I),
+        re.compile(
+            r"景点|景区|博物馆|公园|寺|祠|塔|古镇|故居|展馆|美术馆|"
+            r"动物园|植物园|步行街|必去|值得|attraction|museum|park",
+            re.I,
+        ),
         90,
         0.76,
     ),
@@ -116,6 +153,28 @@ class GenericGuideExtractor:
             facts=_extract_facts(sentences, fetched_at),
         )
 
+    def extract_text(
+        self,
+        *,
+        title: str,
+        content: str,
+        fetched_at: datetime,
+    ) -> ExtractedGuide:
+        if fetched_at.tzinfo is None or fetched_at.utcoffset() is None:
+            raise ValueError("fetched_at must be timezone-aware")
+        normalized_title = _normalize(title)[:300]
+        if not normalized_title:
+            raise ValueError("guide title cannot be empty")
+        sentences = _unique_sentences(_plain_text_blocks(content))
+        article_content = "\n".join(sentences)
+        if not article_content:
+            raise ValueError("guide text did not contain readable content")
+        return ExtractedGuide(
+            title=normalized_title,
+            content=article_content,
+            facts=_extract_facts(sentences, fetched_at),
+        )
+
 
 def _select_container(soup: BeautifulSoup) -> Tag:
     for selector in _CONTENT_SELECTORS:
@@ -155,6 +214,18 @@ def _block_text(container: Tag) -> Iterable[str]:
         if not text:
             continue
         yield from (part for part in _SENTENCE_SPLIT.split(text) if part)
+
+
+def _plain_text_blocks(content: str) -> Iterable[str]:
+    for part in _SENTENCE_SPLIT.split(content):
+        text = _normalize(part)
+        if (
+            not text
+            or _SHARE_URL.fullmatch(text) is not None
+            or _XIAOHONGSHU_BOILERPLATE.search(text) is not None
+        ):
+            continue
+        yield text
 
 
 def _unique_sentences(values: Iterable[str]) -> tuple[str, ...]:

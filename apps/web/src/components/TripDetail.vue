@@ -29,6 +29,7 @@ import { computed, nextTick, reactive, ref, watch } from 'vue'
 import {
   ApiError,
   type GuideImport,
+  type GuideImportInput,
   type Itinerary,
   type ItineraryActivity,
   type ItineraryEditInput,
@@ -63,7 +64,7 @@ const props = withDefaults(defineProps<{
   guideImports?: GuideImport[]
   guideBusy?: boolean
   guideError?: string | null
-  importGuide?: (sourceUrl: string) => Promise<void>
+  importGuide?: (input: GuideImportInput) => Promise<void>
   setGuideEnabled?: (guideImportId: string, enabled: boolean) => Promise<void>
   previewItineraryEdit?: (input: ItineraryEditInput) => Promise<ItineraryEditPreview>
   applyItineraryEdit?: (input: ItineraryEditInput) => Promise<void>
@@ -1021,6 +1022,9 @@ watch(() => props.itinerary, (nextItinerary) => {
         <div class="mt-8">
           <GuideIntelligencePanel
             :guide-imports="guideImports"
+            :destination="trip.destination"
+            :start-date="trip.startDate"
+            :end-date="trip.endDate"
             :busy="guideBusy"
             :error="guideError"
             :import-guide="importGuide"

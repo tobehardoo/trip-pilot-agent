@@ -1,3 +1,7 @@
+from datetime import date
+from types import SimpleNamespace
+
+from trip_agent.infrastructure.amap.planning_provider import weather_statements_for_date
 from trip_agent.planning.candidates import CandidateRanker
 from trip_agent.providers.map import Coordinates, Poi
 
@@ -68,3 +72,43 @@ def test_ranker_rejects_invalid_city_empty_address_and_duplicate_places() -> Non
         "CITY_MISMATCH",
         "DUPLICATE_PROVIDER_ID",
     }
+
+
+def test_ranker_prefers_indoor_places_when_city_weather_reports_rain() -> None:
+    result = CandidateRanker().rank(
+        (
+            poi("park", "越秀公园", type_name="公园广场"),
+            poi("museum", "广州博物馆", type_name="博物馆"),
+        ),
+        destination="广州",
+        preferences=(),
+        traveler_type="FRIENDS",
+        limit=2,
+        weather_statements=("广州市当前天气：雷阵雨，31℃，湿度78%。",),
+    )
+
+    assert [item.poi.provider_id for item in result.selected] == ["museum", "park"]
+    assert "WEATHER_INDOOR_PREFERENCE" in result.selected[0].reasons
+    assert "WEATHER_OUTDOOR_PENALTY" in result.selected[1].reasons
+
+
+def test_weather_statements_only_apply_to_their_effective_trip_date() -> None:
+    facts = (
+        SimpleNamespace(
+            category="WEATHER",
+            effective_date=date(2026, 8, 1),
+            statement="2026-08-01 广州雷阵雨",
+            evidence="白天雷阵雨",
+        ),
+        SimpleNamespace(
+            category="TIP",
+            effective_date=None,
+            statement="烟雨路适合步行",
+            evidence="社区攻略",
+        ),
+    )
+
+    assert weather_statements_for_date(facts, date(2026, 8, 1)) == (
+        "2026-08-01 广州雷阵雨 白天雷阵雨",
+    )
+    assert weather_statements_for_date(facts, date(2026, 8, 2)) == ()

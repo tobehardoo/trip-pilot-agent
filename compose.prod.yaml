@@ -132,6 +132,7 @@ services:
       - "8090"
     environment:
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-${JWT_SECRET:?JWT_SECRET is required}}
+      AMAP_WEB_SERVICE_KEY: ${AMAP_WEB_SERVICE_KEY:-}
     healthcheck:
       test:
         - CMD

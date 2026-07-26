@@ -52,6 +52,39 @@ def test_import_uses_single_host_allowlist_and_returns_traceable_result() -> Non
     assert result.facts[0].category == "TRANSPORT"
 
 
+def test_import_text_does_not_fetch_and_returns_a_traceable_local_source() -> None:
+    fetched_at = datetime(2026, 7, 26, 8, 0, tzinfo=UTC)
+    fetcher = StubFetcher(
+        ResourceFetched(
+            status="FETCHED",
+            requested_url="https://unused.example/guide",
+            final_url="https://unused.example/guide",
+            fetched_at=fetched_at,
+            content=b"",
+            content_type="text/html",
+            validators=FetchValidators(),
+        )
+    )
+
+    result = GuideImportService(fetcher=fetcher).import_text(
+        source_type="XIAOHONGSHU_SHARED_TEXT",
+        title="广州塔小红书分享",
+        content="广州塔地址是阅江西路222号，门票约150元，建议提前购票。",
+        observed_at=fetched_at,
+    )
+
+    assert fetcher.source is None
+    assert result.source_type == "XIAOHONGSHU_SHARED_TEXT"
+    assert result.source_url.startswith("https://user-content.trippilot.invalid/")
+    assert result.final_url == result.source_url
+    assert result.source_host == "小红书分享文本"
+    assert {fact.category for fact in result.facts} >= {
+        "LOCATION",
+        "COST",
+        "RESERVATION",
+    }
+
+
 @pytest.mark.parametrize(
     "url",
     [

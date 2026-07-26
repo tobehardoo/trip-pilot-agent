@@ -167,6 +167,9 @@ Prometheus (9090, 仅本地回环)
 
 ## 进一步阅读
 
+- [当前系统状态与 V1.4 规划](28-current-system-status-and-v1-4-plan.md) — 当前运行证据、
+  已完成/未完成边界与未来两个版本
+
 - [领域模型](domain.md) — 理解各领域的边界和聚合关系
 - [规划算法与 Agent](planning.md) — 了解规划 Pipeline 和约束求解的设计
 - [技术决策记录](decision-record.md) — 查看每个架构决策的完整背景和取舍

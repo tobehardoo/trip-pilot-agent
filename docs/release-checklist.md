@@ -15,12 +15,12 @@
 ## 必须通过
 
 - [x] README、API、架构、数据库和部署文档与代码一致，仓库内链接有效。
-- [x] Java 非容器测试通过（42 项）。
+- [x] Java 全量测试通过（162 项，包含 Testcontainers）。
 - [x] Java Testcontainers 与 JaCoCo 门禁已在
       [GitHub Actions #69](https://github.com/tobehardoo/trip-pilot-agent/actions/runs/30186403821)
       通过。
-- [x] Python 全量测试（378 通过、34 环境跳过）与 Ruff 通过。
-- [x] Web 单元测试（73 项）、覆盖率、类型检查和生产构建通过。
+- [x] Python 全量测试（389 通过、34 环境跳过）与 Ruff 通过。
+- [x] 已推送版本的 Web 单元测试、覆盖率、类型检查和生产构建通过。
 - [x] 活跃 JSON Schema 可被自动解析，失败事件模型样例通过契约校验。
 - [x] Playwright 浏览器烟雾测试覆盖登录态恢复、旅行工作台和行程编辑入口（2 项）。
 - [x] `docker compose config` 与生产 Compose 配置校验通过。
@@ -29,11 +29,18 @@
 - [x] 变更已提交到独立分支、推送 GitHub，并创建 Draft PR
       [#23](https://github.com/tobehardoo/trip-pilot-agent/pull/23)。
 
-## 环境受限项
+## 当前本机运行补充证据
 
-本机 Docker Engine 不可用，因此本地未运行依赖 Docker 的验证。GitHub Actions #69 已验证
-Java Testcontainers、Python pgvector 服务、JaCoCo 门禁和生产镜像构建。完整 Compose 运行态、
-真实外部 Provider 与跨服务浏览器链路仍应在实际发布环境验证，不得以模拟烟雾测试代替。
+2026-07-26 已在本机启动完整生产 Compose：PostgreSQL、Redis、RabbitMQ、Java、
+Python Worker、内部攻略 API、Web 和 Prometheus 均运行，`/api/health` 返回 `UP`。
+
+仍未闭环的环境项：
+
+- 当前高德 Web JS Key 能加载 SDK、路线与 Marker，但 `127.0.0.1:8080` 未显示底图；
+  需要在高德控制台完成 Key 类型、安全密钥和域名白名单核验。
+- 真实外部 Provider 与浏览器—Java—RabbitMQ—Python—PostgreSQL—SSE 跨服务 E2E
+  尚未成为发布门禁。
+- 本地地图生命周期加固和新增 Web 测试仍在工作区验证，未计入已推送 PR 证据。
 
 ## 完成定义
 

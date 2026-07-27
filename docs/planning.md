@@ -160,6 +160,31 @@ OR-Tools 返回无解时，系统不会立即向用户报错，而是按顺序�
 
 这个设计的代价是取消有延迟——如果 Worker 正在执行 OR-Tools 求解，它需要等当前求解完成（有超时上限）后才能在下一个检查点响应取消。对于 V1 的规划周期（10-30 秒），几秒的延迟是可以接受的。
 
+## V2.0 规划执行目标（待实现）
+
+当前规划 Pipeline 的已实现行为以本文上方章节为准。V2 不改变“冻结输入快照后再召回、排序、
+路线和求解”的原则，但要求把执行过程和通勤调整变成可观察、可恢复的正式链路。
+
+规划 Worker 的目标事件顺序为：
+
+```text
+TASK_ACCEPTED -> CONTEXT_VALIDATING -> CITY_FACTS_LOADING -> POI_RECALLING
+-> KNOWLEDGE_RETRIEVING -> CANDIDATES_RANKING -> ROUTES_CALCULATING
+-> CONSTRAINTS_SOLVING -> RESULT_EXPLAINING -> RESULT_PERSISTING -> COMPLETED
+```
+
+每个版本化进度事件应包含 `stage`、`progress`、`message`、`occurredAt`、`taskId` 和
+`sequence`。Java 持久化关键状态并经 SSE 推送；重连从最后状态恢复，重复或乱序事件不得导致
+进度倒退。取消和失败事件必须带可理解的阶段与原因。Demo Provider 必须复用同一协议，Web 不得
+生成模拟百分比。
+
+V2 还将把相邻活动间的通勤段纳入正式版本数据：用户请求影响预览，服务端重算距离、时长、
+费用、出发时间、冲突和日汇总，用户确认后创建不可变版本。Provider 失败可以返回估算值，
+但必须明确标记估算或过期状态，不能伪装成路线结果。
+
+具体范围、契约门禁和验收证据见 [V2.0 方针与范围](v2-roadmap.md) 与
+[V2.0 交付与验收清单](v2-delivery-checklist.md)。
+
 ## 进一步阅读
 
 - [系统架构设计](architecture.md) — 异步任务模型的整体设计

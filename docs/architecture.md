@@ -200,10 +200,28 @@ Prometheus (9090, 仅本地回环)
 
 本地开发单机 16 GB 可运行核心服务。云端演示推荐 4 核 8 GB。
 
+## V2.0 演进边界（待实现）
+
+以下内容是 V2 的目标架构，不是当前实现声明。范围和验收以
+[V2.0 方针与范围](v2-roadmap.md) 为准。
+
+- **Web**：引入 Vue Router 与 Pinia，`App.vue` 收敛为应用壳、会话初始化、通知、错误
+  边界和路由出口。业务流程由领域 Store 与 composable 共同承担，逐步迁移而非重写。
+- **Java**：继续维持模块化单体与 `controller -> application -> domain -> infrastructure`
+  分层。超大 Service 按查询、比较、回滚、创建等用例拆分，不引入完整 CQRS 或事件溯源。
+- **Python**：按高德 Client、鉴权限流、POI/路线映射、缓存、降级、指标和规划各步骤拆分，
+  让 Worker 可以发出真实阶段和诊断，而不是继续堆叠在单一 Provider 或编排文件中。
+- **跨服务**：规划创建/取消/进度/完成/失败、城市刷新、局部重规划和事实影响均以
+  `contracts/` 中的版本化 JSON Schema 为中心；每端都验证其序列化、解析和示例。
+- **运行时**：保留 Transactional Outbox、RabbitMQ at-least-once 投递、不可变行程版本和
+  Demo/真实 Provider 区分。V2 新增指标、结构化日志和受保护诊断能力，不新增基础设施。
+
+只有相关代码、迁移、契约、测试和验收同时完成后，才将上述目标写入“当前架构”章节。
+
 ## 进一步阅读
 
-- [当前系统状态与 V1.4 规划](28-current-system-status-and-v1-4-plan.md) — 当前运行证据、
-  已完成/未完成边界与未来两个版本
+- [V1.3 当前系统状态与 V2 交接](28-current-system-status-and-v1-4-plan.md) — 当前运行证据、
+  外部限制与 V2 文档入口
 
 - [领域模型](domain.md) — 理解各领域的边界和聚合关系
 - [规划算法与 Agent](planning.md) — 了解规划 Pipeline 和约束求解的设计

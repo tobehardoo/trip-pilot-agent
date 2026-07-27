@@ -1,8 +1,23 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render as renderComponent, screen, waitFor } from '@testing-library/vue'
+import type { Component } from 'vue'
+import { createPinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import App from '../src/App.vue'
+import { createTripPilotRouter } from '../src/app/router'
 import TripDetail from '../src/components/TripDetail.vue'
+
+function render(component: Component, options?: Parameters<typeof renderComponent>[1]) {
+  if (component !== App) return renderComponent(component, options)
+
+  return renderComponent(component, {
+    ...options,
+    global: {
+      ...options?.global,
+      plugins: [createPinia(), createTripPilotRouter(), ...(options?.global?.plugins ?? [])],
+    },
+  })
+}
 
 const authResponse = {
   user: {

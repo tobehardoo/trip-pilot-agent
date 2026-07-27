@@ -16,6 +16,7 @@
 **/__pycache__/
 **/.pytest_cache/
 **/.pytest-temp-*/
+apps/agent-service/.tmp/
 **/.ruff_cache/
 **/.coverage
 *.py[cod]

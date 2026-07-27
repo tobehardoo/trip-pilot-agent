@@ -41,4 +41,11 @@ public interface PlanningTaskEventMapper {
     List<PlanningTaskEventRecord> findAfter(
             @Param("taskId") UUID taskId, @Param("afterId") long afterId
     );
+
+    @Select("""
+            SELECT COALESCE(MAX((payload ->> 'sequence')::integer), 0)
+            FROM business.planning_task_event
+            WHERE task_id = #{taskId} AND event_type = 'PLANNING_PROGRESS'
+            """)
+    int findLatestProgressSequence(UUID taskId);
 }

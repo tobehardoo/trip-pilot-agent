@@ -3,14 +3,15 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, Protocol, Self
 from urllib.parse import quote
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import aio_pika
 import httpx
@@ -40,6 +41,9 @@ from trip_agent.retrieval.repository import PsycopgKnowledgeRepository
 from trip_agent.worker.contracts import (
     PlanningCancelCommand,
     PlanningCreateCommand,
+    PlanningProgressEvent,
+    PlanningProgressPayload,
+    PlanningProgressStage,
     PlanningReplanCommand,
 )
 from trip_agent.worker.knowledge import (
@@ -53,6 +57,7 @@ from trip_agent.worker.processor import (
     process_planning_create,
     process_planning_replan,
 )
+from trip_agent.worker.progress import planning_progress_reporting
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider
 
 COMMAND_EXCHANGE = "trip.command.exchange"
@@ -66,6 +71,7 @@ REPLAN_ROUTING_KEY = "planning.replan"
 CANCEL_ROUTING_KEY = "planning.cancel"
 COMPLETED_ROUTING_KEY = "planning.completed"
 FAILED_ROUTING_KEY = "planning.failed"
+PROGRESS_ROUTING_KEY = "planning.progress"
 DEAD_LETTER_ROUTING_KEY = "planning.create.dead"
 CANCEL_DEAD_LETTER_ROUTING_KEY = "planning.cancel.dead"
 
@@ -94,6 +100,100 @@ class EventExchange(Protocol):
 
 class CancellationOracle(Protocol):
     def is_cancelled(self, task_id: UUID) -> Awaitable[bool]: ...
+
+
+@dataclass(slots=True)
+class PlanningProgressPublisher:
+    """Publishes each observed worker milestone once per planning command."""
+
+    event_exchange: EventExchange
+    command: PlanningCreateCommand | PlanningReplanCommand
+    _emitted_stages: set[PlanningProgressStage] = field(default_factory=set)
+    _last_stage_rank: int = 0
+    _sequence: int = 0
+
+    _stage_order = (
+        "TASK_ACCEPTED",
+        "CONTEXT_VALIDATING",
+        "CITY_FACTS_LOADING",
+        "POI_RECALLING",
+        "CANDIDATES_RANKING",
+        "ROUTES_CALCULATING",
+        "CONSTRAINTS_SOLVING",
+        "KNOWLEDGE_RETRIEVING",
+        "RESULT_EXPLAINING",
+        "RESULT_PERSISTING",
+    )
+    _stage_progress = {
+        "TASK_ACCEPTED": 5,
+        "CONTEXT_VALIDATING": 15,
+        "CITY_FACTS_LOADING": 25,
+        "POI_RECALLING": 35,
+        "CANDIDATES_RANKING": 45,
+        "ROUTES_CALCULATING": 55,
+        "CONSTRAINTS_SOLVING": 65,
+        "KNOWLEDGE_RETRIEVING": 75,
+        "RESULT_EXPLAINING": 85,
+        "RESULT_PERSISTING": 95,
+    }
+
+    async def report(
+        self,
+        stage: PlanningProgressStage,
+        message: str,
+        statistics: Mapping[str, int] | None = None,
+    ) -> None:
+        if stage in self._emitted_stages:
+            return
+        rank = self._stage_order.index(stage) + 1
+        if rank < self._last_stage_rank:
+            logger.warning(
+                "ignoring regressive planning stage task_id=%s stage=%s",
+                self.command.task_id,
+                stage,
+            )
+            return
+        self._sequence += 1
+        event = PlanningProgressEvent(
+            event_type="PLANNING_PROGRESS",
+            schema_version=1,
+            event_id=uuid5(
+                NAMESPACE_URL,
+                f"trip-pilot/planning-progress/{self.command.event_id}/{stage}",
+            ),
+            trace_id=self.command.trace_id,
+            task_id=self.command.task_id,
+            trip_id=self.command.trip_id,
+            occurred_at=datetime.now(UTC),
+            payload=PlanningProgressPayload(
+                stage=stage,
+                sequence=self._sequence,
+                progress=self._stage_progress[stage],
+                message=message,
+                statistics=dict(statistics or {}),
+            ),
+        )
+        outgoing = aio_pika.Message(
+            body=event.model_dump_json(by_alias=True, exclude_none=True).encode(),
+            content_type="application/json",
+            content_encoding="utf-8",
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+            message_id=str(event.event_id),
+            correlation_id=str(event.trace_id),
+            type=event.event_type,
+            headers={
+                "traceId": str(event.trace_id),
+                "taskId": str(event.task_id),
+                "tripId": str(event.trip_id),
+            },
+        )
+        await self.event_exchange.publish(
+            outgoing,
+            routing_key=PROGRESS_ROUTING_KEY,
+            mandatory=True,
+        )
+        self._emitted_stages.add(stage)
+        self._last_stage_rank = rank
 
 
 class PsycopgCancellationOracle:
@@ -350,72 +450,92 @@ async def handle_delivery(
 
     try:
         planning_provider = provider or DemoPlanningProvider()
-        if isinstance(command, PlanningReplanCommand):
-            process_task = asyncio.create_task(
-                process_planning_replan(
-                    command,
-                    planning_provider,
-                )
-            )
-        else:
-            process_task = asyncio.create_task(
-                process_planning_create(
-                    command,
-                    planning_provider,
-                    knowledge_provider=knowledge_provider,
-                )
-            )
-        cancel_wait: asyncio.Task[bool] | None = None
+        progress_publisher = PlanningProgressPublisher(event_exchange, command)
         if cancellation_registry is not None:
             signal = cancellation_registry.signal_for(command.task_id)
             if signal.is_set():
-                process_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await process_task
                 cancellation_registry.finish(command.task_id)
                 await message.ack()
                 return
-            cancel_wait = asyncio.create_task(signal.wait())
-            done, _ = await asyncio.wait(
-                (process_task, cancel_wait),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            if cancel_wait in done and signal.is_set():
-                process_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await process_task
-                cancellation_registry.finish(command.task_id)
-                await message.ack()
-                return
-            cancel_wait.cancel()
-            with suppress(asyncio.CancelledError):
-                await cancel_wait
-        completed = await process_task
         if await _is_cancelled(command.task_id, cancellation_registry, cancellation_oracle):
             if cancellation_registry is not None:
                 cancellation_registry.finish(command.task_id)
             await message.ack()
             return
-        outgoing = aio_pika.Message(
-            body=completed.model_dump_json(by_alias=True, exclude_none=True).encode(),
-            content_type="application/json",
-            content_encoding="utf-8",
-            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-            message_id=str(completed.event_id),
-            correlation_id=str(completed.trace_id),
-            type=completed.event_type,
-            headers={
-                "traceId": str(completed.trace_id),
-                "taskId": str(completed.task_id),
-                "tripId": str(completed.trip_id),
-                "runId": str(completed.run_id),
-            },
-        )
-        await event_exchange.publish(
-            outgoing,
-            routing_key=COMPLETED_ROUTING_KEY,
-            mandatory=True,
-        )
+        async with planning_progress_reporting(progress_publisher.report):
+            await progress_publisher.report(
+                "TASK_ACCEPTED",
+                "Planning task accepted by the worker",
+                {
+                    "tripDays": (
+                        command.payload.trip.end_date - command.payload.trip.start_date
+                    ).days
+                    + 1,
+                },
+            )
+            if isinstance(command, PlanningReplanCommand):
+                process_task = asyncio.create_task(
+                    process_planning_replan(
+                        command,
+                        planning_provider,
+                    )
+                )
+            else:
+                process_task = asyncio.create_task(
+                    process_planning_create(
+                        command,
+                        planning_provider,
+                        knowledge_provider=knowledge_provider,
+                    )
+                )
+            cancel_wait: asyncio.Task[bool] | None = None
+            if cancellation_registry is not None:
+                signal = cancellation_registry.signal_for(command.task_id)
+                cancel_wait = asyncio.create_task(signal.wait())
+                done, _ = await asyncio.wait(
+                    (process_task, cancel_wait),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if cancel_wait in done and signal.is_set():
+                    process_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await process_task
+                    cancellation_registry.finish(command.task_id)
+                    await message.ack()
+                    return
+                cancel_wait.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cancel_wait
+            completed = await process_task
+            if await _is_cancelled(command.task_id, cancellation_registry, cancellation_oracle):
+                if cancellation_registry is not None:
+                    cancellation_registry.finish(command.task_id)
+                await message.ack()
+                return
+            await progress_publisher.report(
+                "RESULT_PERSISTING",
+                "Preparing the itinerary for persistence",
+            )
+            outgoing = aio_pika.Message(
+                body=completed.model_dump_json(by_alias=True, exclude_none=True).encode(),
+                content_type="application/json",
+                content_encoding="utf-8",
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                message_id=str(completed.event_id),
+                correlation_id=str(completed.trace_id),
+                type=completed.event_type,
+                headers={
+                    "traceId": str(completed.trace_id),
+                    "taskId": str(completed.task_id),
+                    "tripId": str(completed.trip_id),
+                    "runId": str(completed.run_id),
+                },
+            )
+            await event_exchange.publish(
+                outgoing,
+                routing_key=COMPLETED_ROUTING_KEY,
+                mandatory=True,
+            )
     except PlanningInfeasibleError as failure:
         try:
             cancelled = await _is_cancelled(

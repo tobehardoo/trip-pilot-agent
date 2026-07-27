@@ -13,6 +13,8 @@ from trip_agent.worker.contracts import (
     PlanningCreateCommand,
     PlanningFailedEvent,
     PlanningFailedPayload,
+    PlanningProgressEvent,
+    PlanningProgressPayload,
     PlanningRelaxation,
 )
 from trip_agent.worker.processor import DemoPlanningProvider, process_planning_create
@@ -27,6 +29,7 @@ ACTIVE_SCHEMA_FILES = (
     "planning-create-command-v2.schema.json",
     "planning-create-command-v3.schema.json",
     "planning-failed-event-v1.schema.json",
+    "planning-progress-event-v1.schema.json",
     "planning-replan-command-v1.schema.json",
 )
 
@@ -70,6 +73,28 @@ def test_v6_completed_event_contract_accepts_worker_output() -> None:
     Draft202012Validator(schema).validate(
         event.model_dump(mode="json", by_alias=True, exclude_none=True)
     )
+
+
+def test_progress_event_model_matches_its_json_schema() -> None:
+    event = PlanningProgressEvent(
+        event_type="PLANNING_PROGRESS",
+        schema_version=1,
+        event_id=UUID("5aa31052-2c21-53af-bddb-6a86614d801b"),
+        trace_id=UUID("ea930620-41a7-4fdc-b6d1-d298a850112a"),
+        task_id=UUID("dfb858fc-b910-4056-a375-2366dcaab690"),
+        trip_id=UUID("d209daf2-f004-42cc-8385-510825f40fe1"),
+        occurred_at=datetime(2026, 7, 27, 8, 0, tzinfo=UTC),
+        payload=PlanningProgressPayload(
+            stage="TASK_ACCEPTED",
+            sequence=1,
+            progress=5,
+            message="Planning task accepted",
+            statistics={"tripDays": 3},
+        ),
+    )
+
+    schema = _load_schema("planning-progress-event-v1.schema.json")
+    Draft202012Validator(schema).validate(event.model_dump(mode="json", by_alias=True))
 
 
 def _load_schema(file_name: str) -> dict[str, object]:

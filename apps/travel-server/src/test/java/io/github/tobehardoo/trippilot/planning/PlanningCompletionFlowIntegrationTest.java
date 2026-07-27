@@ -11,6 +11,8 @@ import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEventParser;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEventParser;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEventParserTest;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningProgressEvent;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningProgressEventParser;
 import io.github.tobehardoo.trippilot.support.PlanningCompletedEventFixture;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -55,6 +57,48 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private PlanningFailureService failureService;
+
+    @Autowired
+    private PlanningProgressEventParser progressEventParser;
+
+    @Autowired
+    private PlanningProgressService progressService;
+
+    @Test
+    void persistsMonotonicProgressEventsAndMarksTheTaskRunning() throws Exception {
+        PlanningContext context = createPlanningContext("planning-progress@example.com");
+        PlanningProgressEvent accepted = progressEvent(
+                UUID.randomUUID(), context, "TASK_ACCEPTED", 1
+        );
+        PlanningProgressEvent validating = progressEvent(
+                UUID.randomUUID(), context, "CONTEXT_VALIDATING", 2
+        );
+
+        progressService.handle(accepted);
+        progressService.handle(accepted);
+        progressService.handle(validating);
+
+        Map<String, Object> result = jdbcTemplate.queryForMap("""
+                SELECT planning_task.status,
+                       COUNT(planning_task_event.id) FILTER (
+                           WHERE planning_task_event.event_type = 'PLANNING_PROGRESS'
+                       ) AS progress_count,
+                       MAX((planning_task_event.payload ->> 'sequence')::integer) AS latest_sequence
+                FROM business.planning_task
+                LEFT JOIN business.planning_task_event
+                  ON planning_task_event.task_id = planning_task.id
+                WHERE planning_task.id = ?
+                GROUP BY planning_task.status
+                """, context.taskId());
+
+        assertThat(result).containsEntry("status", "RUNNING")
+                .containsEntry("progress_count", 2L)
+                .containsEntry("latest_sequence", 2);
+        assertThatThrownBy(() -> progressService.handle(progressEvent(
+                UUID.randomUUID(), context, "CITY_FACTS_LOADING", 2
+        ))).isInstanceOf(PlanningEventRejectedException.class)
+                .hasMessageContaining("sequence must increase");
+    }
 
     @Test
     void persistsAnActionableInfeasibilityFailureIdempotently() throws Exception {
@@ -620,6 +664,36 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
         return eventParser.parse(bytes(PlanningCompletedEventFixture.completedEvent(
                 eventId, context.traceId(), context.taskId(), context.tripId()
         )));
+    }
+
+    private PlanningProgressEvent progressEvent(
+            UUID eventId,
+            PlanningContext context,
+            String stage,
+            int sequence
+    ) {
+        String body = """
+                {
+                  "eventType":"PLANNING_PROGRESS",
+                  "schemaVersion":1,
+                  "eventId":"%s",
+                  "traceId":"%s",
+                  "taskId":"%s",
+                  "tripId":"%s",
+                  "occurredAt":"2026-07-27T08:00:00Z",
+                  "payload":{
+                    "stage":"%s",
+                    "sequence":%d,
+                    "progress":%d,
+                    "message":"Planning progress update",
+                    "statistics":{"tripDays":1}
+                  }
+                }
+                """.formatted(
+                eventId, context.traceId(), context.taskId(), context.tripId(), stage, sequence,
+                sequence * 10
+        );
+        return progressEventParser.parse(bytes(body));
     }
 
     private String taskStatus(UUID taskId) {

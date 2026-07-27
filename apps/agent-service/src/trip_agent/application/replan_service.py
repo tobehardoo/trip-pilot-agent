@@ -21,6 +21,7 @@ from trip_agent.worker.contracts import (
     ReplanItineraryDay,
     TransitLeg,
 )
+from trip_agent.worker.progress import report_planning_progress
 
 
 class LocalReplanningProvider:
@@ -44,6 +45,11 @@ class LocalReplanningProvider:
     async def replan(self, command: PlanningReplanCommand) -> PlanningResult:
         snapshot = command.payload.itinerary
         impacted_dates = set(command.payload.impacted_dates)
+        await report_planning_progress(
+            "ROUTES_CALCULATING",
+            "Refreshing routes for the impacted itinerary days",
+            {"impactedDays": len(impacted_dates)},
+        )
         days: list[ItineraryDay] = []
         for day in snapshot.days:
             replanned = (

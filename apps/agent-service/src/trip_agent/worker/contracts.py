@@ -788,3 +788,46 @@ class PlanningFailedEvent(MessageModel):
     run_id: UUID
     occurred_at: datetime
     payload: PlanningFailedPayload
+
+
+type PlanningProgressStage = Literal[
+    "TASK_ACCEPTED",
+    "CONTEXT_VALIDATING",
+    "CITY_FACTS_LOADING",
+    "POI_RECALLING",
+    "CANDIDATES_RANKING",
+    "ROUTES_CALCULATING",
+    "CONSTRAINTS_SOLVING",
+    "KNOWLEDGE_RETRIEVING",
+    "RESULT_EXPLAINING",
+    "RESULT_PERSISTING",
+]
+type ProgressStatistic = Annotated[
+    int,
+    Field(strict=True, ge=0, le=2_147_483_647),
+]
+
+
+class PlanningProgressPayload(MessageModel):
+    stage: PlanningProgressStage
+    sequence: int = Field(strict=True, ge=1, le=100)
+    progress: int = Field(strict=True, ge=0, le=100)
+    message: KnowledgeMessage
+    statistics: dict[ShortText, ProgressStatistic] = Field(default_factory=dict, max_length=20)
+
+
+class PlanningProgressEvent(MessageModel):
+    event_type: Literal["PLANNING_PROGRESS"]
+    schema_version: Literal[1]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    occurred_at: datetime
+    payload: PlanningProgressPayload
+
+    @model_validator(mode="after")
+    def validate_occurred_at(self) -> Self:
+        if self.occurred_at.utcoffset() is None:
+            raise ValueError("occurredAt must include a timezone")
+        return self

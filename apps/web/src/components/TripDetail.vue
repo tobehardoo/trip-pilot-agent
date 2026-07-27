@@ -38,6 +38,7 @@ import {
   type ItineraryReplanInput,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
+  type PlanningProgressUpdate,
   type Trip,
   type UpdateTripConstraintsInput,
   type User,
@@ -76,6 +77,8 @@ const props = withDefaults(defineProps<{
   ) => Promise<void>
   planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'
   planningError: string | null
+  planningProgress?: PlanningProgressUpdate | null
+  planningProgressHistory?: PlanningProgressUpdate[]
   guideImports?: GuideImport[]
   guideBusy?: boolean
   guideError?: string | null
@@ -90,6 +93,8 @@ const props = withDefaults(defineProps<{
   reloadTrip: () => Promise<boolean>
 }>(), {
   guideImports: () => [],
+  planningProgress: null,
+  planningProgressHistory: () => [],
   itineraryVersions: () => [],
   versionBusy: false,
   versionError: null,
@@ -808,6 +813,8 @@ watch(() => props.itinerary, (nextItinerary) => {
         <PlanningProgress
           v-if="planningState !== 'idle'"
           :planning-state="planningState"
+          :progress="planningProgress"
+          :progress-history="planningProgressHistory"
         />
 
         <!-- Itinerary Loading/Error/Empty -->

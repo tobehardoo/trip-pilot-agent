@@ -54,6 +54,15 @@
 - [ ] V2-P0-25 Demo 模式复用同一协议；前端不再生成模拟百分比。
 - [ ] V2-P0-26 采集每阶段耗时，并提供单元、集成和浏览器恢复测试。
 
+**执行检查点（2026-07-27，进行中）**
+
+- 已新增 `contracts/messaging/planning-progress-event-v1.schema.json`，并由 Python 模型、Java 解析器和 TypeScript API 类型共同校验。事件包含 `stage`、`sequence`、阶段边界 `progress`、`message`、`occurredAt`、任务标识和可选统计。
+- Worker 在任务接收、上下文、城市事实、POI、排序、路线、约束、知识、解释和持久化的实际处理边界发布事件；Demo 和局部重规划只发布真实经历的阶段，前端会显示 `not used`，不会模拟百分比或步骤完成。
+- Java 消费 `planning.progress.queue`，校验归属与递增序号，幂等持久化到现有任务事件流，并在首个进度事件将任务转为 `RUNNING`；现有 SSE 与 `Last-Event-ID` 回放机制复用该记录。
+- 已验证 Java 152 项、Python 415 项（34 跳过）、Web 85 项、Web 类型检查和生产构建。阶段耗时指标和浏览器级 SSE 恢复仍未完成，因此 P0-2 保持未勾选。
+
+参见 [规划进度契约](planning-progress.md)。
+
 ## P0-3 通勤数据写回
 
 - [ ] V2-P0-30 为 `TransitLeg` 增加正式的活动起止、模式、距离、时长、费用、Provider、路线 ID、计算时间和过期标识。

@@ -56,6 +56,7 @@ from trip_agent.worker.contracts import (
     PlanningReplanCommand,
     TransitLeg,
 )
+from trip_agent.worker.progress import report_planning_progress
 
 
 def _non_weather_guide_statements(
@@ -108,7 +109,17 @@ class AmapPlanningProvider:
         trip = command.payload.trip
         day_count = (trip.end_date - trip.start_date).days + 1
         required_pois = day_count * 2
+        await report_planning_progress(
+            "POI_RECALLING",
+            "Loading destination points of interest",
+            {"requiredPoiCount": required_pois},
+        )
         raw_pois = await self._collect_pois(command, required_pois)
+        await report_planning_progress(
+            "CANDIDATES_RANKING",
+            "Ranking candidates against traveler preferences",
+            {"candidateCount": len(raw_pois)},
+        )
         candidate_pool_size = min(
             MAX_PLANNING_CANDIDATES,
             max(required_pois, required_pois * 2),
@@ -174,6 +185,10 @@ class AmapPlanningProvider:
                     RelaxationSuggestion("REDUCE_OPTIONAL_ACTIVITIES", "减少可选活动"),
                 ),
             )
+        await report_planning_progress(
+            "ROUTES_CALCULATING",
+            "Calculating routes between selected activities",
+        )
         anchors = await self._resolve_travel_anchors(command)
         route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]] = {}
         route_calls = [0]
@@ -251,6 +266,10 @@ class AmapPlanningProvider:
         *,
         use_guide_evidence: bool = False,
     ) -> tuple[list[ItineraryDay], tuple[Poi, ...]]:
+        await report_planning_progress(
+            "CONSTRAINTS_SOLVING",
+            "Solving time, budget, and mobility constraints",
+        )
         trip = command.payload.trip
         day_count = (trip.end_date - trip.start_date).days + 1
         cache = route_cache if route_cache is not None else {}

@@ -104,6 +104,13 @@ public interface PlanningTaskMapper {
 
     @Update("""
             UPDATE business.planning_task
+            SET status = 'RUNNING', version = version + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{taskId} AND version = #{expectedVersion} AND status = 'QUEUED'
+            """)
+    int markRunning(@Param("taskId") UUID taskId, @Param("expectedVersion") int expectedVersion);
+
+    @Update("""
+            UPDATE business.planning_task
             SET status = 'CANCELLED', error_code = NULL,
                 error_message = NULL, version = planning_task.version + 1,
                 updated_at = CURRENT_TIMESTAMP

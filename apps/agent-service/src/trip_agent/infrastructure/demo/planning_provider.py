@@ -24,6 +24,7 @@ from trip_agent.worker.contracts import (
     PlanningCreateCommand,
     PlanningReplanCommand,
 )
+from trip_agent.worker.progress import report_planning_progress
 
 
 class DemoPlanningProvider:
@@ -52,6 +53,11 @@ class DemoPlanningProvider:
                 ),
             )
         day_count = (trip.end_date - trip.start_date).days + 1
+        await report_planning_progress(
+            "CONSTRAINTS_SOLVING",
+            "Solving the requested schedule constraints",
+            {"tripDays": day_count},
+        )
         days = tuple(self._day(command, offset) for offset in range(day_count))
         return PlanningResult(
             provider="DEMO",

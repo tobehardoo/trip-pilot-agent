@@ -42,6 +42,8 @@ import {
   type ItineraryVersionSummary,
   type PlanningTask,
   type PlanningTaskEvent,
+  type PlanningProgressStage,
+  type PlanningProgressUpdate,
   type Trip,
   type UpdateTripConstraintsInput,
 } from '../lib/api'
@@ -82,6 +84,8 @@ const versionBusy = ref(false)
 const versionError = ref<string | null>(null)
 const planningState = ref<'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'>('idle')
 const planningError = ref<string | null>(null)
+const planningProgress = ref<PlanningProgressUpdate | null>(null)
+const planningProgressHistory = ref<PlanningProgressUpdate[]>([])
 const guideImports = ref<GuideImport[]>([])
 const guideBusy = ref(false)
 const guideError = ref<string | null>(null)
@@ -160,6 +164,8 @@ function stopPlanningStream(resetState = true) {
     planningState.value = 'idle'
     planningError.value = null
     activePlanningTaskId.value = null
+    planningProgress.value = null
+    planningProgressHistory.value = []
   }
 }
 
@@ -555,6 +561,40 @@ function isCurrentPlanningRequest(requestSequence: number, generation: number, t
     && route.value.tripId === tripId
 }
 
+const planningProgressStages: PlanningProgressStage[] = [
+  'TASK_ACCEPTED',
+  'CONTEXT_VALIDATING',
+  'CITY_FACTS_LOADING',
+  'POI_RECALLING',
+  'CANDIDATES_RANKING',
+  'ROUTES_CALCULATING',
+  'CONSTRAINTS_SOLVING',
+  'KNOWLEDGE_RETRIEVING',
+  'RESULT_EXPLAINING',
+  'RESULT_PERSISTING',
+]
+
+function toPlanningProgressUpdate(event: PlanningTaskEvent): PlanningProgressUpdate | null {
+  const { stage, sequence, progress, message, statistics } = event.payload
+  if (!planningProgressStages.includes(stage as PlanningProgressStage)
+    || typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence < 1
+    || typeof progress !== 'number' || !Number.isSafeInteger(progress) || progress < 0 || progress > 100
+    || typeof message !== 'string' || !message.trim()) {
+    return null
+  }
+  const safeStatistics = Object.fromEntries(Object.entries(statistics ?? {}).filter(([, value]) => (
+    Number.isSafeInteger(value) && value >= 0
+  )))
+  return {
+    stage: stage as PlanningProgressStage,
+    sequence,
+    progress,
+    message,
+    statistics: safeStatistics,
+    occurredAt: event.createdAt,
+  }
+}
+
 function planningFailureMessage(payload: PlanningTaskEvent['payload']): string {
   const parts = [payload.message ?? payload.errorMessage ?? '行程规划失败，请调整条件后重试']
   for (const conflict of payload.conflicts ?? []) {
@@ -577,6 +617,8 @@ async function runPlanningTask(
   planningState.value = 'queued'
   planningError.value = null
   activePlanningTaskId.value = null
+  planningProgress.value = null
+  planningProgressHistory.value = []
 
   try {
     const idempotencyKey = crypto.randomUUID()
@@ -591,7 +633,14 @@ async function runPlanningTask(
     const handleEvent = (event: PlanningTaskEvent) => {
       if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
       lastEventId = event.eventId
-      if (event.eventType === 'PLANNING_COMPLETED') {
+      if (event.eventType === 'PLANNING_PROGRESS') {
+        const update = toPlanningProgressUpdate(event)
+        if (!update || (planningProgress.value && update.sequence <= planningProgress.value.sequence)) {
+          return
+        }
+        planningProgress.value = update
+        planningProgressHistory.value = [...planningProgressHistory.value, update]
+      } else if (event.eventType === 'PLANNING_COMPLETED') {
         terminal = true
         planningState.value = 'succeeded'
         activePlanningTaskId.value = null
@@ -736,6 +785,8 @@ onUnmounted(() => {
       :rollback-itinerary="handleRollbackItinerary"
       :planning-state="planningState"
       :planning-error="planningError"
+      :planning-progress="planningProgress"
+      :planning-progress-history="planningProgressHistory"
       :guide-imports="guideImports"
       :guide-busy="guideBusy"
       :guide-error="guideError"

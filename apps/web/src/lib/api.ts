@@ -72,6 +72,27 @@ export interface PlanningTask {
   updatedAt: string
 }
 
+export type PlanningProgressStage =
+  | 'TASK_ACCEPTED'
+  | 'CONTEXT_VALIDATING'
+  | 'CITY_FACTS_LOADING'
+  | 'POI_RECALLING'
+  | 'CANDIDATES_RANKING'
+  | 'ROUTES_CALCULATING'
+  | 'CONSTRAINTS_SOLVING'
+  | 'KNOWLEDGE_RETRIEVING'
+  | 'RESULT_EXPLAINING'
+  | 'RESULT_PERSISTING'
+
+export interface PlanningProgressUpdate {
+  stage: PlanningProgressStage
+  sequence: number
+  progress: number
+  message: string
+  statistics: Record<string, number>
+  occurredAt: string
+}
+
 export interface PlanningTaskEvent {
   eventId: number
   taskId: string
@@ -79,6 +100,10 @@ export interface PlanningTaskEvent {
   schemaVersion: number
   payload: {
     status?: string
+    stage?: PlanningProgressStage
+    sequence?: number
+    progress?: number
+    statistics?: Record<string, number>
     errorCode?: string
     errorMessage?: string
     message?: string

@@ -76,8 +76,8 @@ def test_valid_command_is_acked_only_after_completed_event_is_published() -> Non
     assert message.acked is True
     assert message.rejected_with is None
     assert message.nacked_with is None
-    assert len(exchange.published) == 1
-    published, routing_key, mandatory = exchange.published[0]
+    assert len(exchange.published) > 1
+    published, routing_key, mandatory = exchange.published[-1]
     assert routing_key == "planning.completed"
 
 
@@ -90,8 +90,8 @@ def test_valid_command_publishes_the_expected_completed_contract() -> None:
 
     assert message.acked is True
     assert message.rejected_with is None
-    assert len(exchange.published) == 1
-    published, routing_key, mandatory = exchange.published[0]
+    assert len(exchange.published) > 1
+    published, routing_key, mandatory = exchange.published[-1]
     assert routing_key == "planning.completed"
     assert mandatory is True
     assert json.loads(published.body)["eventType"] == "PLANNING_COMPLETED"
@@ -119,6 +119,46 @@ def test_valid_command_publishes_the_expected_completed_contract() -> None:
     }
 
 
+def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    message = FakeIncomingMessage(json.dumps(COMMAND).encode())
+    exchange = FakeExchange()
+
+    asyncio.run(amqp.handle_delivery(message, exchange))
+
+    routing_keys = [routing_key for _, routing_key, _ in exchange.published]
+    assert routing_keys[-1] == "planning.completed"
+    assert routing_keys[:-1] == [
+        "planning.progress",
+        "planning.progress",
+        "planning.progress",
+        "planning.progress",
+        "planning.progress",
+        "planning.progress",
+        "planning.progress",
+    ]
+    progress_events = [
+        json.loads(published.body)
+        for published, routing_key, _ in exchange.published
+        if routing_key == "planning.progress"
+    ]
+    assert [event["payload"]["stage"] for event in progress_events] == [
+        "TASK_ACCEPTED",
+        "CONTEXT_VALIDATING",
+        "CITY_FACTS_LOADING",
+        "CONSTRAINTS_SOLVING",
+        "KNOWLEDGE_RETRIEVING",
+        "RESULT_EXPLAINING",
+        "RESULT_PERSISTING",
+    ]
+    assert [event["payload"]["sequence"] for event in progress_events] == list(range(1, 8))
+    assert [event["payload"]["progress"] for event in progress_events] == [
+        5, 15, 25, 65, 75, 85, 95,
+    ]
+    assert all(event["eventType"] == "PLANNING_PROGRESS" for event in progress_events)
+    assert all(event["schemaVersion"] == 1 for event in progress_events)
+
+
 def test_valid_replan_command_uses_the_completed_event_route() -> None:
     amqp = import_module("trip_agent.worker.amqp")
     message = FakeIncomingMessage(json.dumps(REPLAN_COMMAND).encode())
@@ -128,8 +168,8 @@ def test_valid_replan_command_uses_the_completed_event_route() -> None:
 
     assert message.acked is True
     assert message.rejected_with is None
-    assert len(exchange.published) == 1
-    published, routing_key, mandatory = exchange.published[0]
+    assert len(exchange.published) > 1
+    published, routing_key, mandatory = exchange.published[-1]
     assert routing_key == "planning.completed"
     assert mandatory is True
     body = json.loads(published.body)
@@ -155,7 +195,7 @@ def test_replan_without_activity_coordinates_publishes_failure_without_requeue()
 
     assert message.acked is True
     assert message.nacked_with is None
-    published, routing_key, mandatory = exchange.published[0]
+    published, routing_key, mandatory = exchange.published[-1]
     assert routing_key == "planning.failed"
     assert mandatory is True
     body = json.loads(published.body)
@@ -181,7 +221,7 @@ def test_cancel_command_suppresses_a_queued_planning_delivery() -> None:
     assert exchange.published == []
 
 
-def test_cancel_command_interrupts_an_in_flight_provider_without_publishing() -> None:
+def test_cancel_command_interrupts_an_in_flight_provider_without_a_terminal_event() -> None:
     amqp = import_module("trip_agent.worker.amqp")
     registry = amqp.CancellationRegistry()
     create = FakeIncomingMessage(json.dumps(COMMAND).encode())
@@ -218,7 +258,8 @@ def test_cancel_command_interrupts_an_in_flight_provider_without_publishing() ->
     assert cancel.acked is True
     assert create.acked is True
     assert create.nacked_with is None
-    assert exchange.published == []
+    assert exchange.published
+    assert all(routing_key == "planning.progress" for _, routing_key, _ in exchange.published)
 
 
 def test_authoritative_cancelled_status_suppresses_a_late_completion() -> None:
@@ -258,7 +299,7 @@ def test_maximum_valid_preferences_publish_a_bounded_knowledge_query() -> None:
 
     assert message.acked is True
     assert message.nacked_with is None
-    body = json.loads(exchange.published[0][0].body)
+    body = json.loads(exchange.published[-1][0].body)
     query = body["payload"]["knowledge"]["query"]
     assert 1 <= len(query) <= 200
     assert query.startswith("广" * 120)
@@ -304,7 +345,7 @@ def test_delivery_uses_the_configured_knowledge_evidence_provider() -> None:
         )
     )
 
-    body = json.loads(exchange.published[0][0].body)
+    body = json.loads(exchange.published[-1][0].body)
     assert body["payload"]["knowledge"]["status"] == "REAL"
     assert body["payload"]["knowledge"]["citations"][0]["documentId"] == "doc-1"
 
@@ -404,7 +445,7 @@ def test_infeasible_plan_publishes_an_actionable_failure_and_acks() -> None:
 
     assert message.acked is True
     assert message.nacked_with is None
-    published, routing_key, mandatory = exchange.published[0]
+    published, routing_key, mandatory = exchange.published[-1]
     assert routing_key == "planning.failed"
     assert mandatory is True
     body = json.loads(published.body)

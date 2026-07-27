@@ -54,6 +54,7 @@ from trip_agent.worker.contracts import (
     PlanningRelaxation,
     PlanningReplanCommand,
 )
+from trip_agent.worker.progress import report_planning_progress
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider  # noqa: F811
 
 __all__ = [
@@ -90,10 +91,27 @@ async def process_planning_create(
     occurred_at: datetime | None = None,
 ) -> PlanningCompletedEvent:
     completed_at = occurred_at or datetime.now(UTC)
+    await report_planning_progress(
+        "CONTEXT_VALIDATING",
+        "Validating the planning context and constraints",
+    )
     effective_command = _command_with_fresh_guide_evidence(command, completed_at)
+    await report_planning_progress(
+        "CITY_FACTS_LOADING",
+        "Loading current city facts and guide evidence",
+        {"guideFactCount": len(effective_command.payload.guide_evidence.facts)},
+    )
     result = await provider.plan(effective_command)
+    await report_planning_progress(
+        "KNOWLEDGE_RETRIEVING",
+        "Retrieving supporting travel knowledge",
+    )
     knowledge = await (knowledge_provider or DemoKnowledgeEvidenceProvider()).get_evidence(
         effective_command
+    )
+    await report_planning_progress(
+        "RESULT_EXPLAINING",
+        "Preparing evidence and explanations for the itinerary",
     )
     knowledge = _merge_guide_evidence(
         effective_command,
@@ -126,7 +144,16 @@ async def process_planning_replan(
     occurred_at: datetime | None = None,
 ) -> PlanningCompletedEvent:
     completed_at = occurred_at or datetime.now(UTC)
+    await report_planning_progress(
+        "CONTEXT_VALIDATING",
+        "Validating the local replanning scope",
+        {"impactedDays": len(command.payload.impacted_dates)},
+    )
     result = await provider.replan(command)
+    await report_planning_progress(
+        "RESULT_EXPLAINING",
+        "Preparing the updated local itinerary",
+    )
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
         schema_version=6,

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import {
   CalendarDays,
+  Archive,
+  ArchiveRestore,
   CircleGauge,
   Compass,
   ArrowRight,
   LogOut,
   MapPin,
   Plus,
+  Search,
   Users,
   Wallet,
   X,
@@ -21,21 +24,31 @@ import Card from './ui/Card.vue'
 import Badge from './ui/Badge.vue'
 import TripTemplates from './TripTemplates.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   user: User
   trips: Trip[]
   busy: boolean
   error: string | null
   createTrip: (input: CreateTripInput) => Promise<void>
-}>()
+  destinationQuery?: string
+  includeArchived?: boolean
+}>(), {
+  destinationQuery: '',
+  includeArchived: false,
+})
 
 const emit = defineEmits<{
   logout: []
   openTrip: [tripId: string]
+  search: [destination: string]
+  includeArchived: [includeArchived: boolean]
+  archiveTrip: [tripId: string]
+  restoreTrip: [tripId: string]
 }>()
 
 const preferenceOptions = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
 const dialogOpen = ref(false)
+const destinationQuery = ref(props.destinationQuery)
 const dialogElement = ref<HTMLElement | null>(null)
 const submitting = ref(false)
 const form = reactive({
@@ -209,6 +222,37 @@ async function saveTrip() {
           </Button>
         </div>
 
+        <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <form class="flex max-w-md flex-1 items-center gap-2" data-testid="trip-search-form" @submit.prevent="emit('search', destinationQuery)">
+            <input
+              v-model.trim="destinationQuery"
+              class="h-10 min-w-0 flex-1 rounded-lg border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:border-primary-400 focus:ring-2 focus:ring-primary-400/30"
+              type="search"
+              placeholder="目的地搜索"
+              aria-label="目的地搜索"
+              data-testid="trip-destination-search"
+            />
+            <button
+              class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-200 bg-white text-surface-600 hover:bg-surface-100"
+              type="submit"
+              title="搜索旅行"
+              aria-label="搜索旅行"
+            >
+              <Search :size="17" aria-hidden="true" />
+            </button>
+          </form>
+          <label class="inline-flex h-10 items-center gap-2 self-start rounded-lg border border-surface-200 bg-white px-3 text-sm text-surface-600">
+            <input
+              :checked="includeArchived"
+              class="h-4 w-4 accent-primary-600"
+              type="checkbox"
+              data-testid="include-archived"
+              @change="emit('includeArchived', ($event.target as HTMLInputElement).checked)"
+            />
+            包含已归档
+          </label>
+        </div>
+
         <!-- Error -->
         <p v-if="error" class="mb-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ error }}</p>
 
@@ -265,12 +309,40 @@ async function saveTrip() {
                 <!-- Decorative pattern -->
                 <div class="absolute inset-0 opacity-10 hero-pattern" />
                 <!-- Status & Destination -->
-                <div class="relative z-10 flex items-start justify-between">
-                  <Badge :variant="statusVariant(trip.status)" size="sm">{{ statusLabel(trip.status) }}</Badge>
-                  <span class="inline-flex items-center gap-1 text-xs text-white/80 font-medium">
-                    <MapPin :size="12" aria-hidden="true" />
-                    {{ trip.destination }}
-                  </span>
+                <div class="relative z-10 flex items-start justify-between gap-2">
+                  <div class="flex min-w-0 items-center gap-2">
+                    <Badge :variant="statusVariant(trip.status)" size="sm">{{ statusLabel(trip.status) }}</Badge>
+                    <span class="inline-flex min-w-0 items-center gap-1 truncate text-xs font-medium text-white/80">
+                      <MapPin :size="12" aria-hidden="true" />
+                      {{ trip.destination }}
+                    </span>
+                  </div>
+                  <button
+                    v-if="trip.archivedAt"
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
+                    type="button"
+                    :title="'恢复 ' + trip.title"
+                    :aria-label="'恢复 ' + trip.title"
+                    :data-testid="`restore-trip-${trip.id}`"
+                    @click.stop="emit('restoreTrip', trip.id)"
+                    @keydown.enter.stop
+                    @keydown.space.stop
+                  >
+                    <ArchiveRestore :size="15" aria-hidden="true" />
+                  </button>
+                  <button
+                    v-else
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
+                    type="button"
+                    :title="'归档 ' + trip.title"
+                    :aria-label="'归档 ' + trip.title"
+                    :data-testid="`archive-trip-${trip.id}`"
+                    @click.stop="emit('archiveTrip', trip.id)"
+                    @keydown.enter.stop
+                    @keydown.space.stop
+                  >
+                    <Archive :size="15" aria-hidden="true" />
+                  </button>
                 </div>
                 <!-- Trip info overlay -->
                 <div class="relative z-10">

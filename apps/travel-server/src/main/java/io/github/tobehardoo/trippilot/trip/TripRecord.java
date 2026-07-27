@@ -14,6 +14,7 @@ public record TripRecord(
         String status,
         int version,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        Instant archivedAt
 ) {
 }

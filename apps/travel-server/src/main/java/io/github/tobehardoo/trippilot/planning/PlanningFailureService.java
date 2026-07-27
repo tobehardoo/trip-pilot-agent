@@ -1,6 +1,7 @@
 package io.github.tobehardoo.trippilot.planning;
 
 import java.time.Clock;
+import java.time.Instant;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,17 +18,20 @@ public class PlanningFailureService {
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
+    private final PlanningMetrics metrics;
 
     public PlanningFailureService(PlanningTaskMapper taskMapper,
                                   PlanningTaskEventMapper eventMapper,
                                   ObjectMapper objectMapper,
                                   Clock clock,
-                                  ApplicationEventPublisher eventPublisher) {
+                                  ApplicationEventPublisher eventPublisher,
+                                  PlanningMetrics metrics) {
         this.taskMapper = taskMapper;
         this.eventMapper = eventMapper;
         this.objectMapper = objectMapper;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -49,12 +53,17 @@ public class PlanningFailureService {
             throw rejected("Planning task cannot accept a failure event in status " + task.status());
         }
         PlanningFailedEvent.Payload payload = event.payload();
+        Instant now = clock.instant();
         requireOne(taskMapper.updateTerminalStatus(
                 task.id(), task.taskVersion(), "FAILED", payload.errorCode(), payload.message()
         ), "planning task status");
+        eventMapper.findLatestProgress(task.id()).ifPresent(progress -> metrics.stageDuration(
+                progress.stage(), java.time.Duration.between(progress.createdAt(), now)
+        ));
+        metrics.taskFinished(task.taskType(), "FAILED", java.time.Duration.between(task.createdAt(), now));
         PlanningTaskEventRecord record = new PlanningTaskEventRecord(
                 null, event.eventId(), task.id(), "PLANNING_FAILED", event.schemaVersion(),
-                writeJson(payload), clock.instant()
+                writeJson(payload), now
         );
         requireOne(eventMapper.insert(record), "planning task failure event");
         PlanningTaskEventRecord stored = eventMapper.findByEventId(event.eventId())

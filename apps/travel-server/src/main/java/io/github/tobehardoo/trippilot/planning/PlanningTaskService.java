@@ -53,6 +53,7 @@ public class PlanningTaskService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
+    private final PlanningMetrics metrics;
 
     public PlanningTaskService(PlanningTaskMapper planningTaskMapper,
                                ItineraryMapper itineraryMapper,
@@ -66,7 +67,8 @@ public class PlanningTaskService {
                                PlanningContextSnapshotService planningContextSnapshotService,
                                ObjectMapper objectMapper,
                                ApplicationEventPublisher eventPublisher,
-                               PlatformTransactionManager transactionManager) {
+                               PlatformTransactionManager transactionManager,
+                               PlanningMetrics metrics) {
         this.planningTaskMapper = planningTaskMapper;
         this.itineraryMapper = itineraryMapper;
         this.itineraryService = itineraryService;
@@ -80,6 +82,7 @@ public class PlanningTaskService {
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.metrics = metrics;
     }
 
     public PlanningTaskResponse create(UUID ownerId, UUID tripId, UUID idempotencyKey) {
@@ -148,6 +151,7 @@ public class PlanningTaskService {
                             "This trip already has an active planning task"
                     ));
         }
+        metrics.taskCreated(task.taskType());
         PlanningContextSnapshot planningContext = planningContextSnapshotService.freeze(
                 ownerId,
                 task.id(),
@@ -243,6 +247,7 @@ public class PlanningTaskService {
                             "This trip already has an active planning task"
                     ));
         }
+        metrics.taskCreated(task.taskType());
         if (planningTaskEventMapper.insert(new PlanningTaskEventRecord(
                 null, UUID.randomUUID(), task.id(), "PLANNING_QUEUED", 1,
                 writeJson(new TaskStatusPayload(TASK_STATUS)), now
@@ -338,6 +343,7 @@ public class PlanningTaskService {
             );
         }
         Instant now = Instant.now();
+        metrics.taskFinished(existing.taskType(), "CANCELLED", java.time.Duration.between(existing.createdAt(), now));
         PlanningTaskEventRecord event = new PlanningTaskEventRecord(
                 null, UUID.randomUUID(), taskId, "PLANNING_CANCELLED", 1,
                 writeJson(new TaskStatusPayload("CANCELLED")), now

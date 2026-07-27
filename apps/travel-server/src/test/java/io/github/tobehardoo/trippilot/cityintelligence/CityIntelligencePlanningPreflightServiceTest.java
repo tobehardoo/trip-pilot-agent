@@ -146,7 +146,8 @@ class CityIntelligencePlanningPreflightServiceTest {
                 0,
                 null,
                 Instant.now(),
-                Instant.now()
+                Instant.now(),
+                null
         );
     }
 

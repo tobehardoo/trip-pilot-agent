@@ -47,6 +47,25 @@ export interface Trip {
   constraints: TripConstraints
   createdAt: string
   updatedAt: string
+  archivedAt: string | null
+}
+
+export interface TripSearch {
+  destination?: string
+  status?: string
+  startDate?: string
+  endDate?: string
+  includeArchived?: boolean
+  page?: number
+  size?: number
+}
+
+export interface TripPage {
+  items: Trip[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
 }
 
 export interface CreateTripInput {
@@ -200,12 +219,16 @@ export interface ItineraryTransitLeg {
   legOrder: number
   fromActivityId: string
   toActivityId: string
-  mode: 'WALKING' | 'DRIVING'
+  mode: 'WALKING' | 'TRANSIT' | 'DRIVING' | 'TAXI'
   locked: boolean
   distanceMeters: number
   durationSeconds: number
   provider: 'AMAP' | 'DEMO'
   estimated: boolean
+  estimatedCost: number
+  providerRouteId: string | null
+  calculatedAt: string
+  stale: boolean
   polyline: Array<{
     longitude: number
     latitude: number
@@ -328,6 +351,10 @@ export interface ItineraryTransitDiff {
   provider: string
   estimated: boolean
   locked: boolean
+  estimatedCost: number
+  providerRouteId: string | null
+  calculatedAt: string
+  stale: boolean
 }
 
 export type ItineraryEditOperation =
@@ -346,7 +373,7 @@ export interface ItineraryEditInput {
   targetOrder?: number
   targetStartTime?: string
   targetEndTime?: string
-  transitMode?: 'WALKING' | 'DRIVING'
+  transitMode?: 'WALKING' | 'TRANSIT' | 'DRIVING' | 'TAXI'
   transitLocked?: boolean
 }
 
@@ -365,6 +392,50 @@ export interface ItineraryEditPreview {
 export interface ItineraryReplanInput {
   baseVersionId: string
   dates: string[]
+}
+
+export interface ItineraryShareStatus {
+  id: string
+  versionId: string
+  expiresAt: string | null
+  revokedAt: string | null
+  createdAt: string
+}
+
+export interface CreatedItineraryShare extends ItineraryShareStatus {
+  shareToken: string
+}
+
+export interface SharedItinerary {
+  title: string
+  estimatedTotalCost: number
+  provider: 'AMAP' | 'DEMO'
+  days: Array<{
+    date: string
+    activities: Array<{
+      title: string
+      startTime: string
+      endTime: string
+      estimatedCost: number
+      address: string | null
+    }>
+    transitLegs: Array<{
+      mode: string
+      distanceMeters: number
+      durationSeconds: number
+      estimatedCost: number
+      provider: string
+      estimated: boolean
+      stale: boolean
+    }>
+  }>
+  sources: Array<{
+    title: string
+    sourceName: string
+    sourceUrl: string
+    reliabilityLevel: string
+  }>
+  generatedAt: string
 }
 
 export interface PlanningEventStreamOptions {
@@ -440,6 +511,26 @@ export function logoutSession(): Promise<void> {
 
 export function listTrips(accessToken: string): Promise<Trip[]> {
   return request('/api/trips', {}, accessToken)
+}
+
+export function searchTrips(accessToken: string, search: TripSearch = {}): Promise<TripPage> {
+  const query = new URLSearchParams()
+  if (search.destination?.trim()) query.set('destination', search.destination.trim())
+  if (search.status?.trim()) query.set('status', search.status.trim())
+  if (search.startDate) query.set('startDate', search.startDate)
+  if (search.endDate) query.set('endDate', search.endDate)
+  query.set('includeArchived', String(search.includeArchived ?? false))
+  query.set('page', String(search.page ?? 0))
+  query.set('size', String(search.size ?? 100))
+  return request(`/api/trips/search?${query}`, {}, accessToken)
+}
+
+export function archiveTrip(accessToken: string, tripId: string): Promise<void> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/archive`, { method: 'POST' }, accessToken)
+}
+
+export function restoreTrip(accessToken: string, tripId: string): Promise<void> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/restore`, { method: 'POST' }, accessToken)
 }
 
 export function getTrip(accessToken: string, tripId: string): Promise<Trip> {
@@ -588,6 +679,72 @@ export function createItineraryReplan(
     headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(input),
   }, accessToken)
+}
+
+export function listItineraryShares(
+  accessToken: string,
+  tripId: string,
+): Promise<ItineraryShareStatus[]> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/shares`, {}, accessToken)
+}
+
+export function createItineraryShare(
+  accessToken: string,
+  tripId: string,
+  versionId: string,
+  expiresAt?: string,
+): Promise<CreatedItineraryShare> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/shares`, {
+    method: 'POST',
+    body: JSON.stringify({ versionId, ...(expiresAt ? { expiresAt } : {}) }),
+  }, accessToken)
+}
+
+export function revokeItineraryShare(
+  accessToken: string,
+  tripId: string,
+  shareId: string,
+): Promise<void> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/shares/${encodeURIComponent(shareId)}`, {
+    method: 'DELETE',
+  }, accessToken)
+}
+
+export function getSharedItinerary(shareToken: string): Promise<SharedItinerary> {
+  return request(`/api/shares/${encodeURIComponent(shareToken)}`)
+}
+
+export async function downloadItineraryExport(
+  accessToken: string,
+  tripId: string,
+  versionId: string,
+  format: 'ics' | 'pdf',
+): Promise<void> {
+  const query = new URLSearchParams({ versionId })
+  const result = await fetch(
+    `/api/trips/${encodeURIComponent(tripId)}/itinerary/exports/${format}?${query}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  )
+  if (!result.ok) {
+    let body: ApiErrorBody = {}
+    try {
+      body = await result.json() as ApiErrorBody
+    } catch {
+      // Binary endpoints can fail before emitting a JSON error body.
+    }
+    throw new ApiError(result.status, body.code ?? 'REQUEST_FAILED', body.message ?? '导出失败')
+  }
+  const contentDisposition = result.headers.get('Content-Disposition') ?? ''
+  const filename = contentDisposition.match(/filename\*?=(?:UTF-8''|"?)([^";]+)/i)?.[1]
+    ?? `trip-pilot-itinerary.${format}`
+  const objectUrl = URL.createObjectURL(await result.blob())
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = decodeURIComponent(filename)
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
 }
 
 export async function streamPlanningTaskEvents(

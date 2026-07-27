@@ -16,6 +16,7 @@ public record TripSnapshotRecord(
         int version,
         Instant createdAt,
         Instant updatedAt,
+        Instant archivedAt,
         BigDecimal budgetAmount,
         int travelers,
         String travelerType,

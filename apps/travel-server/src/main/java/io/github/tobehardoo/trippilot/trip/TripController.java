@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -40,6 +41,22 @@ public class TripController {
         return tripService.list(userId(jwt));
     }
 
+    @GetMapping("/search")
+    TripService.TripPage search(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) String destination,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) java.time.LocalDate startDate,
+            @RequestParam(required = false) java.time.LocalDate endDate,
+            @RequestParam(defaultValue = "false") boolean includeArchived,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return tripService.search(userId(jwt), new TripService.TripSearch(
+                destination, status, startDate, endDate, includeArchived, page, size
+        ));
+    }
+
     @GetMapping("/{tripId}")
     TripService.TripResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
         return tripService.get(userId(jwt), tripId);
@@ -49,6 +66,18 @@ public class TripController {
     TripService.TripResponse updateConstraints(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId,
                                                @Valid @RequestBody UpdateConstraintRequest request) {
         return tripService.updateConstraints(userId(jwt), tripId, request);
+    }
+
+    @PostMapping("/{tripId}/archive")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void archive(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
+        tripService.archive(userId(jwt), tripId);
+    }
+
+    @PostMapping("/{tripId}/restore")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void restore(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
+        tripService.restore(userId(jwt), tripId);
     }
 
     private UUID userId(Jwt jwt) {

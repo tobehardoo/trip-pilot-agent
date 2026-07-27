@@ -10,23 +10,30 @@ import { useAuthStore } from '../app/stores/auth'
 import {
   ApiError,
   applyItineraryEdit,
+  archiveTrip,
   cancelPlanningTask,
   createGuideImport,
+  createItineraryShare,
   createItineraryReplan,
   createPlanningTask,
   createTrip,
   diffItineraryVersions,
+  downloadItineraryExport,
   getCurrentItinerary,
   getTrip,
   listTrips,
+  searchTrips,
   listGuideImports,
   listItineraryVersions,
+  listItineraryShares,
   login,
   logoutSession,
   previewItineraryEdit,
   refreshSession,
   register,
   rollbackItinerary,
+  revokeItineraryShare,
+  restoreTrip,
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
   updateTripConstraints,
@@ -38,6 +45,7 @@ import {
   type ItineraryEditInput,
   type ItineraryEditPreview,
   type ItineraryReplanInput,
+  type ItineraryShareStatus,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
   type PlanningTask,
@@ -58,6 +66,8 @@ const router = useRouter()
 const busy = ref(false)
 const error = ref<string | null>(null)
 const trips = ref<Trip[]>([])
+const destinationSearch = ref('')
+const includeArchived = ref(false)
 const selectedTrip = ref<Trip | null>(null)
 const route = computed<AppRoute>(() => {
   const tripId = typeof currentRoute.params.tripId === 'string'
@@ -80,6 +90,7 @@ const itinerary = ref<Itinerary | null>(null)
 const itineraryBusy = ref(false)
 const itineraryError = ref<string | null>(null)
 const itineraryVersions = ref<ItineraryVersionSummary[]>([])
+const itineraryShares = ref<ItineraryShareStatus[]>([])
 const versionBusy = ref(false)
 const versionError = ref<string | null>(null)
 const planningState = ref<'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'>('idle')
@@ -94,6 +105,7 @@ let sessionGeneration = 0
 let detailRequestSequence = 0
 let itineraryRequestSequence = 0
 let versionRequestSequence = 0
+let shareRequestSequence = 0
 let listRequestSequence = 0
 let busyRequestSequence = 0
 let planningRequestSequence = 0
@@ -141,6 +153,8 @@ function clearLocalSession() {
   authStore.clearSession()
   busy.value = false
   trips.value = []
+  destinationSearch.value = ''
+  includeArchived.value = false
   selectedTrip.value = null
   detailBusy.value = false
   detailError.value = null
@@ -148,6 +162,7 @@ function clearLocalSession() {
   itineraryBusy.value = false
   itineraryError.value = null
   itineraryVersions.value = []
+  itineraryShares.value = []
   versionBusy.value = false
   versionError.value = null
   guideImports.value = []
@@ -174,10 +189,20 @@ function syncTripInList(loadedTrip: Trip) {
   trips.value = trips.value.map((trip) => trip.id === loadedTrip.id ? loadedTrip : trip)
 }
 
-async function loadTrips() {
+async function loadTrips(forceSearch = false) {
   const requestSequence = ++listRequestSequence
-  const loadedTrips = await withAccessToken((token) => listTrips(token))
-  if (requestSequence === listRequestSequence) trips.value = loadedTrips
+  if (!forceSearch && !destinationSearch.value && !includeArchived.value) {
+    const loadedTrips = await withAccessToken((token) => listTrips(token))
+    if (requestSequence === listRequestSequence) trips.value = loadedTrips
+    return
+  }
+  const loadedTrips = await withAccessToken((token) => searchTrips(token, {
+    destination: destinationSearch.value,
+    includeArchived: includeArchived.value,
+    page: 0,
+    size: 100,
+  }))
+  if (requestSequence === listRequestSequence) trips.value = loadedTrips.items
 }
 
 async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<boolean> {
@@ -189,6 +214,7 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
     itinerary.value = null
     itineraryError.value = null
     itineraryVersions.value = []
+    itineraryShares.value = []
     versionError.value = null
     guideImports.value = []
     guideError.value = null
@@ -202,6 +228,7 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
       loadItinerary(tripId),
       loadGuideImportsForTrip(tripId),
       loadItineraryVersionsForTrip(tripId),
+      loadItinerarySharesForTrip(tripId),
     ])
     return true
   } catch (cause) {
@@ -228,6 +255,21 @@ async function loadItineraryVersionsForTrip(tripId: string): Promise<boolean> {
     return false
   } finally {
     if (requestSequence === versionRequestSequence) versionBusy.value = false
+  }
+}
+
+async function loadItinerarySharesForTrip(tripId: string): Promise<boolean> {
+  const requestSequence = ++shareRequestSequence
+  try {
+    const loaded = await withAccessToken((token) => listItineraryShares(token, tripId))
+    if (requestSequence !== shareRequestSequence
+      || route.value.name !== 'trip-detail'
+      || route.value.tripId !== tripId) return false
+    itineraryShares.value = loaded
+    return true
+  } catch {
+    if (requestSequence === shareRequestSequence) itineraryShares.value = []
+    return false
   }
 }
 
@@ -428,12 +470,56 @@ async function handleCreateTrip(input: CreateTripInput) {
   error.value = null
   try {
     const created = await withAccessToken((token) => createTrip(token, input))
-    listRequestSequence += 1
-    trips.value = [created, ...trips.value]
+    if (destinationSearch.value || includeArchived.value) {
+      await loadTrips(true)
+    } else {
+      listRequestSequence += 1
+      trips.value = [created, ...trips.value]
+    }
   } catch (cause) {
     if (cause instanceof SessionChangedError) return
     error.value = errorMessage(cause)
     throw cause
+  }
+}
+
+async function refreshTripList() {
+  const busySequence = beginBusy()
+  error.value = null
+  try {
+    await loadTrips(true)
+  } catch (cause) {
+    error.value = errorMessage(cause)
+  } finally {
+    endBusy(busySequence)
+  }
+}
+
+async function handleTripSearch(destination: string) {
+  destinationSearch.value = destination
+  await refreshTripList()
+}
+
+async function handleIncludeArchived(nextIncludeArchived: boolean) {
+  includeArchived.value = nextIncludeArchived
+  await refreshTripList()
+}
+
+async function handleArchiveTrip(tripId: string) {
+  try {
+    await withAccessToken((token) => archiveTrip(token, tripId))
+    await refreshTripList()
+  } catch (cause) {
+    error.value = errorMessage(cause)
+  }
+}
+
+async function handleRestoreTrip(tripId: string) {
+  try {
+    await withAccessToken((token) => restoreTrip(token, tripId))
+    await refreshTripList()
+  } catch (cause) {
+    error.value = errorMessage(cause)
   }
 }
 
@@ -492,6 +578,32 @@ async function handleRollbackItinerary(
     itineraryError.value = null
     await loadItineraryVersionsForTrip(tripId)
   }
+}
+
+async function handleCreateItineraryShare(versionId: string, expiresAt?: string) {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  const tripId = selectedTrip.value.id
+  const created = await withAccessToken((token) => createItineraryShare(token, tripId, versionId, expiresAt))
+  if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
+    itineraryShares.value = [created, ...itineraryShares.value.filter((share) => share.id !== created.id)]
+  }
+  return created
+}
+
+async function handleRevokeItineraryShare(shareId: string) {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  const tripId = selectedTrip.value.id
+  await withAccessToken((token) => revokeItineraryShare(token, tripId, shareId))
+  if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
+    itineraryShares.value = itineraryShares.value.map((share) => (
+      share.id === shareId ? { ...share, revokedAt: new Date().toISOString() } : share
+    ))
+  }
+}
+
+async function handleDownloadItineraryExport(versionId: string, format: 'ics' | 'pdf') {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  return withAccessToken((token) => downloadItineraryExport(token, selectedTrip.value!.id, versionId, format))
 }
 
 async function handleImportGuide(input: GuideImportInput) {
@@ -765,8 +877,14 @@ onUnmounted(() => {
       :busy="busy"
       :error="error"
       :create-trip="handleCreateTrip"
+      :destination-query="destinationSearch"
+      :include-archived="includeArchived"
       @logout="logout"
       @open-trip="openTrip"
+      @search="handleTripSearch"
+      @include-archived="handleIncludeArchived"
+      @archive-trip="handleArchiveTrip"
+      @restore-trip="handleRestoreTrip"
     />
     <TripDetail
       v-else-if="phase === 'authenticated' && user && route.name === 'trip-detail'"
@@ -779,10 +897,14 @@ onUnmounted(() => {
       :itinerary-busy="itineraryBusy"
       :itinerary-error="itineraryError"
       :itinerary-versions="itineraryVersions"
+      :itinerary-shares="itineraryShares"
       :version-busy="versionBusy"
       :version-error="versionError"
       :get-itinerary-version-diff="handleGetItineraryVersionDiff"
       :rollback-itinerary="handleRollbackItinerary"
+      :create-itinerary-share="handleCreateItineraryShare"
+      :revoke-itinerary-share="handleRevokeItineraryShare"
+      :download-itinerary-export="handleDownloadItineraryExport"
       :planning-state="planningState"
       :planning-error="planningError"
       :planning-progress="planningProgress"

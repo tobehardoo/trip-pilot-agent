@@ -8,7 +8,7 @@ ENV UV_HTTP_TIMEOUT=120 \
 COPY apps/agent-service/pyproject.toml apps/agent-service/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY apps/agent-service/src ./src
-RUN uv sync --frozen --no-dev --offline
+RUN uv sync --frozen --no-dev
 COPY knowledge/sources ./knowledge/sources
 COPY knowledge/guangzhou ./knowledge/guangzhou
 USER trip

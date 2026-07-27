@@ -181,7 +181,9 @@ public class ItineraryVersionService {
                                 activityIds.get(leg.fromActivityId()),
                                 activityIds.get(leg.toActivityId()), leg.mode(),
                                 leg.distanceMeters(), leg.durationSeconds(), leg.provider(),
-                                leg.estimated(), leg.polylineJson(), leg.locked()
+                                leg.estimated(), leg.polylineJson(), leg.locked(),
+                                leg.estimatedCost(), leg.providerRouteId(),
+                                leg.calculatedAt(), leg.stale()
                         )
                 ), "rollback transit leg");
             }
@@ -225,7 +227,11 @@ public class ItineraryVersionService {
                         leg.durationSeconds(),
                         leg.provider(),
                         leg.estimated(),
-                        leg.locked()
+                        leg.locked(),
+                        leg.estimatedCost(),
+                        leg.providerRouteId(),
+                        leg.calculatedAt(),
+                        leg.stale()
                 ));
             }
         }
@@ -389,6 +395,9 @@ public class ItineraryVersionService {
                 || before.durationSeconds() != after.durationSeconds()) {
             changes.add("ROUTE_CHANGED");
         }
+        if (before.estimatedCost().compareTo(after.estimatedCost()) != 0) {
+            changes.add("COST_CHANGED");
+        }
         if (before.locked() != after.locked()) {
             changes.add("LOCK_CHANGED");
         }
@@ -456,7 +465,11 @@ public class ItineraryVersionService {
             int durationSeconds,
             String provider,
             boolean estimated,
-            boolean locked
+            boolean locked,
+            BigDecimal estimatedCost,
+            String providerRouteId,
+            Instant calculatedAt,
+            boolean stale
     ) {
     }
     public record TransitChange(

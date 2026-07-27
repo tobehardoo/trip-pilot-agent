@@ -2,6 +2,7 @@ package io.github.tobehardoo.trippilot.itinerary;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -72,6 +73,20 @@ public class ItineraryService {
         return toItineraryResponse(version);
     }
 
+    /**
+     * Resolves a version only after a caller has independently authorized public sharing.
+     * This method intentionally has no controller exposure so ownership checks cannot be bypassed.
+     */
+    @Transactional(readOnly = true)
+    public ItineraryResponse getVersionForAuthorizedShare(UUID versionId) {
+        ItineraryMapper.StoredVersion version = itineraryMapper.findVersion(versionId)
+                .orElseThrow(this::itineraryNotFound);
+        return toItineraryResponse(new ItineraryMapper.CurrentVersion(
+                version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
+                version.estimatedTotalCost(), version.provider(), version.createdAt(), null
+        ));
+    }
+
     @Transactional(readOnly = true)
     public ItineraryEditPreviewResponse previewEdit(
             UUID ownerId, UUID tripId, ItineraryEditRequest request) {
@@ -85,7 +100,7 @@ public class ItineraryService {
             return blockedPreview(request, "ITINERARY_PLANNING_ACTIVE", PLANNING_ACTIVE_MESSAGE);
         }
         EditableItinerary itinerary = readEditableItinerary(version.versionId());
-        EditEvaluation evaluation = evaluate(itinerary, request);
+        EditEvaluation evaluation = evaluate(itinerary, request, budgetFrom(version.constraintSnapshotJson()));
         return evaluation.toPreview(request.operation());
     }
 
@@ -103,7 +118,7 @@ public class ItineraryService {
         }
 
         EditableItinerary itinerary = readEditableItinerary(version.versionId());
-        EditEvaluation evaluation = evaluate(itinerary, request);
+        EditEvaluation evaluation = evaluate(itinerary, request, budgetFrom(version.constraintSnapshotJson()));
         if (!evaluation.canApply()) {
             throw evaluation.toApiException();
         }
@@ -173,13 +188,17 @@ public class ItineraryService {
         );
     }
 
-    private EditEvaluation evaluate(EditableItinerary itinerary, ItineraryEditRequest request) {
+    private EditEvaluation evaluate(
+            EditableItinerary itinerary,
+            ItineraryEditRequest request,
+            BigDecimal budgetAmount
+    ) {
         EditOperation operation = EditOperation.from(request.operation());
         if (operation == null) {
             return EditEvaluation.blocked("ITINERARY_EDIT_INVALID", "The edit operation is not supported");
         }
         if (operation == EditOperation.UPDATE_TRANSIT_LEG) {
-            return evaluateTransitLeg(itinerary, request);
+            return evaluateTransitLeg(itinerary, request, budgetAmount);
         }
         if (request.activityId() == null) {
             return EditEvaluation.blocked("ITINERARY_ACTIVITY_NOT_FOUND", "An activity must be selected");
@@ -200,7 +219,10 @@ public class ItineraryService {
     }
 
     private EditEvaluation evaluateTransitLeg(
-            EditableItinerary itinerary, ItineraryEditRequest request) {
+            EditableItinerary itinerary,
+            ItineraryEditRequest request,
+            BigDecimal budgetAmount
+    ) {
         if (request.transitLegId() == null) {
             return EditEvaluation.blocked("ITINERARY_TRANSIT_LEG_NOT_FOUND", "A transit leg must be selected");
         }
@@ -214,7 +236,8 @@ public class ItineraryService {
                     "A transit mode or lock state is required");
         }
         if (request.transitMode() != null
-                && !List.of("WALKING", "DRIVING").contains(request.transitMode())) {
+                && !List.of("WALKING", "TRANSIT", "DRIVING", "TAXI")
+                        .contains(request.transitMode())) {
             return EditEvaluation.blocked("ITINERARY_EDIT_INVALID",
                     "The selected transit mode is not supported");
         }
@@ -222,6 +245,25 @@ public class ItineraryService {
                 && !request.transitMode().equals(location.leg().mode())) {
             return EditEvaluation.blocked("ITINERARY_TRANSIT_LEG_LOCKED",
                     "A locked transit leg cannot change its mode");
+        }
+        if (request.transitMode() != null && !request.transitMode().equals(location.leg().mode())) {
+            ActivityLocation from = itinerary.findActivity(location.leg().fromActivityId());
+            ActivityLocation to = itinerary.findActivity(location.leg().toActivityId());
+            int durationSeconds = estimatedTransitDuration(request.transitMode(), location.leg().distanceMeters());
+            if (from == null || to == null
+                    || Duration.between(from.activity().endTime(), to.activity().startTime()).getSeconds()
+                    < durationSeconds) {
+                return EditEvaluation.blocked("ITINERARY_TRANSIT_CONFLICT",
+                        "The selected transit mode does not fit between its activities");
+            }
+            BigDecimal updatedCost = estimatedTransitCost(request.transitMode(), location.leg().distanceMeters());
+            BigDecimal totalCost = itinerary.totalCost()
+                    .subtract(location.leg().estimatedCost())
+                    .add(updatedCost);
+            if (budgetAmount != null && totalCost.compareTo(budgetAmount) > 0) {
+                return EditEvaluation.blocked("ITINERARY_BUDGET_CONFLICT",
+                        "The selected transit mode exceeds the trip budget");
+            }
         }
         return EditEvaluation.allowed(
                 EditOperation.UPDATE_TRANSIT_LEG,
@@ -356,23 +398,48 @@ public class ItineraryService {
             return new ItineraryMapper.StoredTransitLeg(
                     leg.id(), leg.legOrder(), leg.fromActivityId(), leg.toActivityId(),
                     leg.mode(), leg.distanceMeters(), leg.durationSeconds(), leg.provider(),
-                    leg.estimated(), leg.polylineJson(), locked
+                    leg.estimated(), leg.polylineJson(), locked, leg.estimatedCost(),
+                    leg.providerRouteId(), leg.calculatedAt(), leg.stale()
             );
         }
         return new ItineraryMapper.StoredTransitLeg(
                 leg.id(), leg.legOrder(), leg.fromActivityId(), leg.toActivityId(),
                 mode, leg.distanceMeters(), estimatedTransitDuration(mode, leg.distanceMeters()),
-                "DEMO", true, "[]", locked
+                "DEMO", true, "[]", locked,
+                estimatedTransitCost(mode, leg.distanceMeters()), null, Instant.now(), false
         );
     }
 
     private static int estimatedTransitDuration(String mode, int distanceMeters) {
         double seconds = switch (mode) {
             case "WALKING" -> distanceMeters / 1.25;
+            case "TRANSIT" -> distanceMeters / 5.5 + 420;
             case "DRIVING" -> distanceMeters / 8.33 + 180;
+            case "TAXI" -> distanceMeters / 8.33 + 300;
             default -> throw new IllegalArgumentException("Unsupported transit mode: " + mode);
         };
         return Math.max(60, (int) Math.round(seconds / 60) * 60);
+    }
+
+    private static BigDecimal estimatedTransitCost(String mode, int distanceMeters) {
+        double kilometers = Math.max(1, distanceMeters) / 1_000D;
+        double cost = switch (mode) {
+            case "WALKING" -> 0D;
+            case "TRANSIT" -> 2D + Math.floor(kilometers / 6D);
+            case "DRIVING" -> Math.max(3D, kilometers * 0.8D);
+            case "TAXI" -> 12D + kilometers * 2.6D;
+            default -> throw new IllegalArgumentException("Unsupported transit mode: " + mode);
+        };
+        return BigDecimal.valueOf(cost).setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal budgetFrom(String constraintSnapshotJson) {
+        try {
+            var budget = objectMapper.readTree(constraintSnapshotJson).get("budgetAmount");
+            return budget == null || budget.isNull() ? null : budget.decimalValue();
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not read itinerary budget snapshot", exception);
+        }
     }
 
     private void persistEditedVersion(
@@ -381,7 +448,11 @@ public class ItineraryService {
         BigDecimal totalCost = itinerary.days().stream()
                 .flatMap(day -> day.activities().stream())
                 .map(EditableActivity::estimatedCost)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .add(itinerary.days().stream()
+                        .flatMap(day -> day.transitLegs().stream())
+                        .map(ItineraryMapper.StoredTransitLeg::estimatedCost)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add));
         requireOne(itineraryMapper.insertVersion(new ItineraryMapper.VersionWrite(
                 versionId, sourceVersion.itineraryId(), sourceVersion.versionNumber() + 1,
                 sourceVersion.versionId(), null, "USER_EDIT", sourceVersion.title(), totalCost,
@@ -429,7 +500,7 @@ public class ItineraryService {
             requireOne(itineraryMapper.insertTransitLeg(new ItineraryMapper.TransitLegWrite(
                     UUID.randomUUID(), newDayId, index, fromActivityId, toActivityId, leg.mode(),
                     leg.distanceMeters(), leg.durationSeconds(), leg.provider(), leg.estimated(), leg.polylineJson(),
-                    leg.locked()
+                    leg.locked(), leg.estimatedCost(), leg.providerRouteId(), leg.calculatedAt(), leg.stale()
             )), "itinerary edit transit leg");
         }
     }
@@ -484,7 +555,8 @@ public class ItineraryService {
         return new TransitLegResponse(
                 leg.id(), leg.legOrder(), leg.fromActivityId(), leg.toActivityId(), leg.mode(),
                 leg.distanceMeters(), leg.durationSeconds(), leg.provider(), leg.estimated(),
-                readPolyline(leg.polylineJson()), leg.locked()
+                readPolyline(leg.polylineJson()), leg.locked(), leg.estimatedCost(),
+                leg.providerRouteId(), leg.calculatedAt(), leg.stale()
         );
     }
 
@@ -594,8 +666,12 @@ public class ItineraryService {
             String provider,
             boolean estimated,
             List<CoordinatesResponse> polyline,
-            boolean locked
-    ) {
+            boolean locked,
+            BigDecimal estimatedCost,
+            String providerRouteId,
+            Instant calculatedAt,
+            boolean stale
+        ) {
     }
 
     public record KnowledgeResponse(
@@ -702,6 +778,17 @@ public class ItineraryService {
 
         EditableDay findDay(LocalDate date) {
             return days.stream().filter(day -> day.date().equals(date)).findFirst().orElse(null);
+        }
+
+        BigDecimal totalCost() {
+            return days.stream()
+                    .flatMap(day -> day.activities().stream())
+                    .map(EditableActivity::estimatedCost)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .add(days.stream()
+                            .flatMap(day -> day.transitLegs().stream())
+                            .map(ItineraryMapper.StoredTransitLeg::estimatedCost)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add));
         }
 
         ActivityLocation findActivity(UUID activityId) {
@@ -997,7 +1084,8 @@ public class ItineraryService {
                                     leg.mode(), leg.distanceMeters(),
                                     leg.durationSeconds(), leg.provider(),
                                     leg.estimated(),
-                                    writeJson(leg.polyline()), false
+                                    writeJson(leg.polyline()), false,
+                                    BigDecimal.ZERO, null, Instant.now(), false
                             )
                     ),
                     "itinerary transit leg"
@@ -1061,7 +1149,8 @@ public class ItineraryService {
                                     leg.estimated(),
                                     writeJson(leg.polyline()),
                                     index < sourceLegs.size()
-                                            && sourceLegs.get(index).locked()
+                                            && sourceLegs.get(index).locked(),
+                                    BigDecimal.ZERO, null, Instant.now(), false
                             )
                     ),
                     "local replan transit leg"
@@ -1094,7 +1183,8 @@ public class ItineraryService {
                                     leg.mode(), leg.distanceMeters(),
                                     leg.durationSeconds(), leg.provider(),
                                     leg.estimated(), leg.polylineJson(),
-                                    leg.locked()
+                                    leg.locked(), leg.estimatedCost(), leg.providerRouteId(),
+                                    leg.calculatedAt(), leg.stale()
                             )
                     ),
                     "local replan transit leg"

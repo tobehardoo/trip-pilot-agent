@@ -111,7 +111,8 @@ class CityIntelligenceRefreshProcessorTest {
                 "DRAFT",
                 0,
                 Instant.now(),
-                Instant.now()
+                Instant.now(),
+                null
         );
         Queue<Integer> runningResults = new ArrayDeque<>(List.of(markRunningResults));
         List<Completion> completions = new ArrayList<>();

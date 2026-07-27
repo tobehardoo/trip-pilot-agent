@@ -330,12 +330,16 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         )
                         .header("Authorization", bearer(context.accessToken()))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(transitEditJson(versionId, legId, "DRIVING", true)))
+                        .content(transitEditJson(versionId, legId, "TRANSIT", true)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.versionNumber").value(2))
-                .andExpect(jsonPath("$.days[0].transitLegs[0].mode").value("DRIVING"))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].mode").value("TRANSIT"))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].provider").value("DEMO"))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].estimated").value(true))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].estimatedCost").value(2))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].providerRouteId").isEmpty())
+                .andExpect(jsonPath("$.days[0].transitLegs[0].calculatedAt").isNotEmpty())
+                .andExpect(jsonPath("$.days[0].transitLegs[0].stale").value(false))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].polyline").isEmpty())
                 .andExpect(jsonPath("$.days[0].transitLegs[0].locked").value(true))
                 .andReturn();
@@ -352,12 +356,46 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.changedTransitLegs.length()").value(1))
                 .andExpect(jsonPath("$.changedTransitLegs[0].changes")
                         .value(org.hamcrest.Matchers.hasItems(
-                                "MODE_CHANGED", "LOCK_CHANGED"
+                                "MODE_CHANGED", "COST_CHANGED", "LOCK_CHANGED"
                         )));
 
         JsonNode persisted = currentItinerary(context);
-        assertThat(persisted.at("/days/0/transitLegs/0/mode").asText()).isEqualTo("DRIVING");
+        assertThat(persisted.at("/days/0/transitLegs/0/mode").asText()).isEqualTo("TRANSIT");
         assertThat(persisted.at("/days/0/transitLegs/0/locked").asBoolean()).isTrue();
+    }
+
+    @Test
+    void rejectsTransitModeThatCannotFitBetweenItsActivities() throws Exception {
+        PlanningContext context = completedItinerary("edit-transit-conflict@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID versionId = uuid(current, "versionId");
+        UUID legId = uuid(current.at("/days/0/transitLegs/0"), "id");
+        UUID firstActivityId = uuid(current.at("/days/0/activities/0"), "id");
+        UUID secondActivityId = uuid(current.at("/days/0/activities/1"), "id");
+        jdbcTemplate.update("UPDATE business.transit_leg SET distance_meters = 20000 WHERE id = ?", legId);
+        jdbcTemplate.update("""
+                UPDATE business.activity
+                SET start_time = (SELECT end_time + INTERVAL '10 minutes'
+                                  FROM business.activity WHERE id = ?),
+                    end_time = (SELECT end_time + INTERVAL '70 minutes'
+                                FROM business.activity WHERE id = ?)
+                WHERE id = ?
+                """, firstActivityId, firstActivityId, secondActivityId);
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(versionId, legId, "TRANSIT", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canApply").value(false))
+                .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_TRANSIT_CONFLICT"));
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(versionId, legId, "TRANSIT", false)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("ITINERARY_TRANSIT_CONFLICT"));
     }
 
     @Test

@@ -53,7 +53,7 @@ public class TripService {
         UUID tripId = UUID.randomUUID();
         TripRecord trip = new TripRecord(
                 tripId, ownerId, request.title().trim(), request.destination().trim(),
-                request.startDate(), request.endDate(), "DRAFT", 0, null, null
+                request.startDate(), request.endDate(), "DRAFT", 0, null, null, null
         );
         tripMapper.insertTrip(trip);
         tripMapper.insertConstraint(toRecord(tripId, request.constraints()));
@@ -69,6 +69,22 @@ public class TripService {
     @Transactional(readOnly = true)
     public List<TripResponse> list(UUID ownerId) {
         return tripMapper.findAllOwned(ownerId).stream().map(this::toResponse).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public TripPage search(UUID ownerId, TripSearch search) {
+        TripSearch normalized = normalizeSearch(search);
+        long totalElements = tripMapper.countSearchOwned(
+                ownerId, normalized.destination(), normalized.status(), normalized.startDate(),
+                normalized.endDate(), normalized.includeArchived()
+        );
+        int offset = Math.multiplyExact(normalized.page(), normalized.size());
+        List<TripResponse> items = tripMapper.searchOwned(
+                ownerId, normalized.destination(), normalized.status(), normalized.startDate(),
+                normalized.endDate(), normalized.includeArchived(), normalized.size(), offset
+        ).stream().map(this::toResponse).toList();
+        int totalPages = (int) Math.ceil((double) totalElements / normalized.size());
+        return new TripPage(items, normalized.page(), normalized.size(), totalElements, totalPages);
     }
 
     @Transactional(readOnly = true)
@@ -91,6 +107,18 @@ public class TripService {
         }
         tripMapper.updateConstraint(toRecord(tripId, request.asConstraintInput()));
         return get(ownerId, tripId);
+    }
+
+    @Transactional
+    public void archive(UUID ownerId, UUID tripId) {
+        findOwned(ownerId, tripId);
+        tripMapper.archiveOwned(tripId, ownerId);
+    }
+
+    @Transactional
+    public void restore(UUID ownerId, UUID tripId) {
+        findOwned(ownerId, tripId);
+        tripMapper.restoreOwned(tripId, ownerId);
     }
 
     private TripRecord findOwned(UUID ownerId, UUID tripId) {
@@ -127,7 +155,8 @@ public class TripService {
         );
         return new TripResponse(
                 trip.id(), trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
-                trip.status(), trip.version(), constraintResponse, trip.createdAt(), trip.updatedAt()
+                trip.status(), trip.version(), constraintResponse, trip.createdAt(), trip.updatedAt(),
+                trip.archivedAt()
         );
     }
 
@@ -148,7 +177,25 @@ public class TripService {
         return new TripResponse(
                 snapshot.id(), snapshot.title(), snapshot.destination(),
                 snapshot.startDate(), snapshot.endDate(), snapshot.status(), snapshot.version(),
-                constraintResponse, snapshot.createdAt(), snapshot.updatedAt()
+                constraintResponse, snapshot.createdAt(), snapshot.updatedAt(), snapshot.archivedAt()
+        );
+    }
+
+    private TripSearch normalizeSearch(TripSearch search) {
+        if (search == null || search.page() < 0 || search.size() < 1 || search.size() > 100) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "TRIP_SEARCH_INVALID",
+                    "Page must be non-negative and page size must be between 1 and 100");
+        }
+        if (search.startDate() != null && search.endDate() != null
+                && search.startDate().isAfter(search.endDate())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "TRIP_SEARCH_INVALID",
+                    "Search start date must be before search end date");
+        }
+        return new TripSearch(
+                search.destination() == null || search.destination().isBlank()
+                        ? null : search.destination().trim(),
+                search.status() == null || search.status().isBlank() ? null : search.status().trim(),
+                search.startDate(), search.endDate(), search.includeArchived(), search.page(), search.size()
         );
     }
 
@@ -193,7 +240,28 @@ public class TripService {
             int version,
             ConstraintResponse constraints,
             java.time.Instant createdAt,
-            java.time.Instant updatedAt
+            java.time.Instant updatedAt,
+            java.time.Instant archivedAt
+    ) {
+    }
+
+    public record TripSearch(
+            String destination,
+            String status,
+            LocalDate startDate,
+            LocalDate endDate,
+            boolean includeArchived,
+            int page,
+            int size
+    ) {
+    }
+
+    public record TripPage(
+            List<TripResponse> items,
+            int page,
+            int size,
+            long totalElements,
+            int totalPages
     ) {
     }
 

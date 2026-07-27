@@ -28,6 +28,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
+    private final PlanningMetrics metrics;
 
     public PlanningCompletionService(PlanningTaskMapper taskMapper,
                                      PlanningTaskEventMapper taskEventMapper,
@@ -35,7 +36,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                                      PlanningFactImpactMapper factImpactMapper,
                                      ObjectMapper objectMapper,
                                      Clock clock,
-                                     ApplicationEventPublisher eventPublisher) {
+                                     ApplicationEventPublisher eventPublisher,
+                                     PlanningMetrics metrics) {
         this.taskMapper = taskMapper;
         this.taskEventMapper = taskEventMapper;
         this.itineraryService = itineraryService;
@@ -43,6 +45,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         this.objectMapper = objectMapper;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -168,6 +171,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         requireOne(taskMapper.updateTerminalStatus(
                 task.id(), task.taskVersion(), SUCCEEDED, null, null
         ), "planning task status");
+        recordFinalStageDuration(task.id(), now);
+        metrics.taskFinished(task.taskType(), SUCCEEDED, java.time.Duration.between(task.createdAt(), now));
         publishAfterCommit(insertTaskEvent(new PlanningTaskEventRecord(
                 null, event.eventId(), task.id(), eventType, 1, payloadJson, now
         )));
@@ -181,6 +186,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         requireOne(taskMapper.updateTerminalStatus(
                 task.id(), task.taskVersion(), FAILED, errorCode, message
         ), "planning task status");
+        recordFinalStageDuration(task.id(), now);
+        metrics.taskFinished(task.taskType(), FAILED, java.time.Duration.between(task.createdAt(), now));
         publishAfterCommit(insertTaskEvent(new PlanningTaskEventRecord(
                 null, event.eventId(), task.id(), "PLANNING_FAILED", 1,
                 writeJson(new FailurePayload(
@@ -197,6 +204,12 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
 
     private void publishAfterCommit(PlanningTaskEventRecord event) {
         eventPublisher.publishEvent(new PlanningTaskEventCreated(event));
+    }
+
+    private void recordFinalStageDuration(UUID taskId, Instant completedAt) {
+        taskEventMapper.findLatestProgress(taskId).ifPresent(progress -> metrics.stageDuration(
+                progress.stage(), java.time.Duration.between(progress.createdAt(), completedAt)
+        ));
     }
 
     private void requireOne(int updatedRows, String operation) {

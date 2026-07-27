@@ -20,6 +20,10 @@ class ItineraryServiceTransitEditTest {
                 "AMAP",
                 false,
                 "[{\"longitude\":113.31,\"latitude\":23.11}]",
+                false,
+                java.math.BigDecimal.ZERO,
+                null,
+                java.time.Instant.EPOCH,
                 false
         );
 
@@ -33,5 +37,42 @@ class ItineraryServiceTransitEditTest {
         assertThat(driving.estimated()).isTrue();
         assertThat(driving.polylineJson()).isEqualTo("[]");
         assertThat(driving.locked()).isTrue();
+    }
+
+    @Test
+    void publicTransitAndTaxiModesReceiveExplicitBackendEstimates() {
+        ItineraryMapper.StoredTransitLeg walking = new ItineraryMapper.StoredTransitLeg(
+                UUID.randomUUID(),
+                0,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "WALKING",
+                5_000,
+                4_020,
+                "AMAP",
+                false,
+                "[{\"longitude\":113.31,\"latitude\":23.11}]",
+                false,
+                java.math.BigDecimal.ZERO,
+                null,
+                java.time.Instant.EPOCH,
+                false
+        );
+
+        ItineraryMapper.StoredTransitLeg transit = ItineraryService.applyTransitLegEdit(
+                walking, "TRANSIT", false
+        );
+        ItineraryMapper.StoredTransitLeg taxi = ItineraryService.applyTransitLegEdit(
+                walking, "TAXI", false
+        );
+
+        assertThat(transit.mode()).isEqualTo("TRANSIT");
+        assertThat(transit.durationSeconds()).isLessThan(walking.durationSeconds());
+        assertThat(transit.provider()).isEqualTo("DEMO");
+        assertThat(transit.estimated()).isTrue();
+        assertThat(taxi.mode()).isEqualTo("TAXI");
+        assertThat(taxi.durationSeconds()).isLessThan(walking.durationSeconds());
+        assertThat(taxi.provider()).isEqualTo("DEMO");
+        assertThat(taxi.estimated()).isTrue();
     }
 }

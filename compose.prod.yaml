@@ -13,7 +13,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trip_pilot} -d ${POSTGRES_DB:-trip_pilot}"]
       interval: 5s
@@ -209,7 +208,10 @@ services:
       retries: 20
 
   prometheus:
-    image: prom/prometheus:v3.5.0
+    image: trip-pilot-prometheus:${IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: infra/monitoring/Dockerfile
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -217,7 +219,6 @@ services:
     ports:
       - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
-      - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     depends_on:
       travel-server:

@@ -69,11 +69,13 @@ public interface ItineraryMapper {
     @Insert("""
             INSERT INTO business.transit_leg(
                 id, itinerary_day_id, leg_order, from_activity_id, to_activity_id,
-                mode, distance_meters, duration_seconds, provider, estimated, polyline, locked
+                mode, distance_meters, duration_seconds, provider, estimated, polyline, locked,
+                estimated_cost, provider_route_id, calculated_at, stale
             ) VALUES (
                 #{id}, #{itineraryDayId}, #{legOrder}, #{fromActivityId}, #{toActivityId},
                 #{mode}, #{distanceMeters}, #{durationSeconds}, #{provider}, #{estimated},
-                CAST(#{polylineJson} AS jsonb), #{locked}
+                CAST(#{polylineJson} AS jsonb), #{locked}, #{estimatedCost},
+                #{providerRouteId}, #{calculatedAt}, #{stale}
             )
             """)
     int insertTransitLeg(TransitLegWrite transitLeg);
@@ -234,7 +236,8 @@ public interface ItineraryMapper {
     @Select("""
             SELECT id, leg_order, from_activity_id, to_activity_id, mode,
                    distance_meters, duration_seconds, provider, estimated,
-                   polyline::text AS polyline_json, locked
+                   polyline::text AS polyline_json, locked, estimated_cost,
+                   provider_route_id, calculated_at, stale
             FROM business.transit_leg
             WHERE itinerary_day_id = #{dayId}
             ORDER BY leg_order
@@ -322,7 +325,11 @@ public interface ItineraryMapper {
             String provider,
             boolean estimated,
             String polylineJson,
-            boolean locked
+            boolean locked,
+            BigDecimal estimatedCost,
+            String providerRouteId,
+            Instant calculatedAt,
+            boolean stale
     ) {
     }
 
@@ -422,7 +429,11 @@ public interface ItineraryMapper {
             String provider,
             boolean estimated,
             String polylineJson,
-            boolean locked
+            boolean locked,
+            BigDecimal estimatedCost,
+            String providerRouteId,
+            Instant calculatedAt,
+            boolean stale
     ) {
     }
 

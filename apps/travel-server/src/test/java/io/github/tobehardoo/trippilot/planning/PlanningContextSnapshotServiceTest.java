@@ -57,7 +57,7 @@ class PlanningContextSnapshotServiceTest {
         TripService.TripResponse trip = new TripService.TripResponse(
                 UUID.randomUUID(), "Trip", "Guangzhou",
                 LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 2),
-                "DRAFT", 0, null, Instant.now(), Instant.now()
+                "DRAFT", 0, null, Instant.now(), Instant.now(), null
         );
 
         PlanningContextSnapshotService.PlanningContextSnapshot snapshot = service.freeze(

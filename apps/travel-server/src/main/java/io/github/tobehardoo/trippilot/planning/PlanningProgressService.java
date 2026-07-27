@@ -1,6 +1,7 @@
 package io.github.tobehardoo.trippilot.planning;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -18,17 +19,20 @@ public class PlanningProgressService implements PlanningProgressHandler {
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
+    private final PlanningMetrics metrics;
 
     public PlanningProgressService(PlanningTaskMapper taskMapper,
                                    PlanningTaskEventMapper eventMapper,
                                    ObjectMapper objectMapper,
                                    Clock clock,
-                                   ApplicationEventPublisher eventPublisher) {
+                                   ApplicationEventPublisher eventPublisher,
+                                   PlanningMetrics metrics) {
         this.taskMapper = taskMapper;
         this.eventMapper = eventMapper;
         this.objectMapper = objectMapper;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
+        this.metrics = metrics;
     }
 
     @Transactional
@@ -50,6 +54,7 @@ public class PlanningProgressService implements PlanningProgressHandler {
         if (!"QUEUED".equals(task.status()) && !"RUNNING".equals(task.status())) {
             throw rejected("Planning task cannot accept progress in status " + task.status());
         }
+        var latestProgress = eventMapper.findLatestProgress(task.id());
         int latestSequence = eventMapper.findLatestProgressSequence(task.id());
         if (event.payload().sequence() <= latestSequence) {
             throw rejected("Planning progress sequence must increase monotonically");
@@ -71,6 +76,10 @@ public class PlanningProgressService implements PlanningProgressHandler {
         PlanningTaskEventRecord persisted = eventMapper.findByEventId(event.eventId())
                 .orElseThrow(() -> new IllegalStateException("Progress event could not be read"));
         eventPublisher.publishEvent(new PlanningTaskEventCreated(persisted));
+        metrics.progressObserved(event.payload().stage());
+        latestProgress.ifPresent(previous -> metrics.stageDuration(
+                previous.stage(), Duration.between(previous.createdAt(), now)
+        ));
     }
 
     private String writeJson(Object value) {

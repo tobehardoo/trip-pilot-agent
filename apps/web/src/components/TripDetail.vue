@@ -36,6 +36,7 @@ import {
   type ItineraryEditPreview,
   type ItineraryTransitLeg,
   type ItineraryReplanInput,
+  type ItineraryShareStatus,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
   type PlanningProgressUpdate,
@@ -45,8 +46,9 @@ import {
 } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
 import { cn } from '../lib/utils'
-import type { CommuteMode } from '../lib/transit'
+import type { CommuteMode, ConcreteCommuteMode } from '../lib/transit'
 import GuideIntelligencePanel from './GuideIntelligencePanel.vue'
+import ItineraryActionsPanel, { type CreatedItineraryShare } from './ItineraryActionsPanel.vue'
 import ItineraryVersionPanel from './ItineraryVersionPanel.vue'
 import PlanningProgress from './PlanningProgress.vue'
 import TripMap from './TripMap.vue'
@@ -64,6 +66,7 @@ const props = withDefaults(defineProps<{
   itineraryBusy: boolean
   itineraryError: string | null
   itineraryVersions?: ItineraryVersionSummary[]
+  itineraryShares?: ItineraryShareStatus[]
   versionBusy?: boolean
   versionError?: string | null
   getItineraryVersionDiff?: (
@@ -75,6 +78,9 @@ const props = withDefaults(defineProps<{
     expectedCurrentVersionId: string,
     idempotencyKey: string,
   ) => Promise<void>
+  createItineraryShare?: (versionId: string, expiresAt?: string) => Promise<CreatedItineraryShare>
+  revokeItineraryShare?: (shareId: string) => Promise<void>
+  downloadItineraryExport?: (versionId: string, format: 'ics' | 'pdf') => Promise<void>
   planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'
   planningError: string | null
   planningProgress?: PlanningProgressUpdate | null
@@ -96,12 +102,18 @@ const props = withDefaults(defineProps<{
   planningProgress: null,
   planningProgressHistory: () => [],
   itineraryVersions: () => [],
+  itineraryShares: () => [],
   versionBusy: false,
   versionError: null,
   getItineraryVersionDiff: async () => {
     throw new Error('Itinerary version diff is unavailable')
   },
   rollbackItinerary: async () => {},
+  createItineraryShare: async () => {
+    throw new Error('Itinerary sharing is unavailable')
+  },
+  revokeItineraryShare: async () => {},
+  downloadItineraryExport: async () => {},
   guideBusy: false,
   guideError: null,
   importGuide: async () => {},
@@ -211,8 +223,8 @@ async function updateTransitLeg(
   }
 }
 
-async function selectTransitMode(leg: ItineraryTransitLeg, mode: CommuteMode) {
-  if (transitLockedFor(leg) || (mode !== 'WALKING' && mode !== 'DRIVING')) return
+async function selectTransitMode(leg: ItineraryTransitLeg, mode: ConcreteCommuteMode) {
+  if (transitLockedFor(leg)) return
   const previousMode = selectedTransitModes[leg.id]
   selectedTransitModes[leg.id] = mode
   try {
@@ -781,6 +793,7 @@ watch(() => props.itinerary, (nextItinerary) => {
             <Button
               :variant="itinerary ? 'outline' : 'primary'"
               size="sm"
+              data-testid="start-planning"
               :disabled="planningState === 'queued'"
               @click="startPlanning"
             >
@@ -1142,6 +1155,16 @@ watch(() => props.itinerary, (nextItinerary) => {
             :error="versionError"
             :get-diff="getItineraryVersionDiff"
             :rollback="rollbackItinerary"
+          />
+        </div>
+
+        <div v-if="itinerary" class="mt-8">
+          <ItineraryActionsPanel
+            :version-id="itinerary.versionId"
+            :shares="itineraryShares"
+            :create-share="createItineraryShare"
+            :revoke-share="revokeItineraryShare"
+            :download="downloadItineraryExport"
           />
         </div>
 

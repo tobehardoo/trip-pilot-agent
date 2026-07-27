@@ -3,14 +3,19 @@ import { afterEach, expect, test, vi } from 'vitest'
 import {
   ApiError,
   applyItineraryEdit,
+  archiveTrip,
   cancelPlanningTask,
   createGuideImport,
   createItineraryReplan,
   createPlanningTask,
   createTrip,
+  downloadItineraryExport,
+  getSharedItinerary,
   listGuideImports,
   logoutSession,
   refreshSession,
+  restoreTrip,
+  searchTrips,
   previewItineraryEdit,
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
@@ -19,6 +24,60 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
+
+test('releases an export blob only after triggering the browser download', async () => {
+  vi.useFakeTimers()
+  const createObjectUrl = vi.fn(() => 'blob:trip-pilot-export')
+  const revokeObjectUrl = vi.fn()
+  vi.stubGlobal('URL', { createObjectURL: createObjectUrl, revokeObjectURL: revokeObjectUrl })
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'Content-Disposition': "attachment; filename*=UTF-8''trip.ics" }),
+    blob: async () => new Blob(['calendar']),
+  } as Response)))
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+
+  await downloadItineraryExport('access-token', 'trip-1', 'version-1', 'ics')
+
+  expect(createObjectUrl).toHaveBeenCalledOnce()
+  expect(revokeObjectUrl).not.toHaveBeenCalled()
+  await vi.runAllTimersAsync()
+  expect(revokeObjectUrl).toHaveBeenCalledWith('blob:trip-pilot-export')
+})
+
+test('searches, archives, and restores trips with bearer authentication', async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [], page: 0, size: 100, totalElements: 0, totalPages: 0 }),
+    } as Response)
+    .mockResolvedValue({ ok: true, status: 204, json: async () => ({}) } as Response)
+  vi.stubGlobal('fetch', fetchMock)
+
+  await searchTrips('access-token', { destination: 'Guangzhou', includeArchived: true, size: 100 })
+  await archiveTrip('access-token', 'trip-1')
+  await restoreTrip('access-token', 'trip-1')
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    '/api/trips/search?destination=Guangzhou&includeArchived=true&page=0&size=100',
+    expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer access-token' }) }),
+  )
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    '/api/trips/trip-1/archive',
+    expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer access-token' }) }),
+  )
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    '/api/trips/trip-1/restore',
+    expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer access-token' }) }),
+  )
 })
 
 test('refreshes and logs out with the HttpOnly cookie and no token request body', async () => {
@@ -68,6 +127,21 @@ test('turns an empty unauthorized response into a structured API error', async (
   await expect(createTrip('expired-token', input)).rejects.toEqual(
     new ApiError(401, 'REQUEST_FAILED', '请求失败'),
   )
+})
+
+test('loads a public shared itinerary without attaching an access token', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ title: 'Shared itinerary', days: [], sources: [] }),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+
+  await getSharedItinerary('secure-token')
+
+  expect(fetchMock).toHaveBeenCalledWith('/api/shares/secure-token', expect.objectContaining({
+    headers: expect.not.objectContaining({ Authorization: expect.any(String) }),
+  }))
 })
 
 test('creates a planning task with bearer authentication and an idempotency key', async () => {

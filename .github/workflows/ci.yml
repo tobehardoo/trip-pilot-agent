@@ -60,6 +60,7 @@ jobs:
           connection.commit(); connection.close()"
       - run: uv run ruff check .
       - run: uv run pytest --cov=trip_agent.retrieval --cov=trip_agent.acquisition --cov-report=term --cov-fail-under=80
+      - run: uv run pytest
 
   web:
     runs-on: ubuntu-latest
@@ -100,7 +101,7 @@ jobs:
           REDIS_PASSWORD: ci-redis-password
           RABBITMQ_PASSWORD: ci-rabbitmq-password
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
-        run: docker compose -f compose.prod.yaml build postgres travel-server agent-service web
+        run: docker compose -f compose.prod.yaml build postgres travel-server agent-service web prometheus
 
   repository-safety:
     runs-on: ubuntu-latest

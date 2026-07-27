@@ -33,7 +33,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  select: [mode: CommuteMode]
+  select: [mode: ConcreteCommuteMode]
   lock: [locked: boolean]
 }>()
 
@@ -63,9 +63,15 @@ function optionFor(mode: ConcreteCommuteMode): CommuteEstimate {
 }
 
 function selectMode(mode: CommuteMode) {
-  if (props.locked) return
+  if (props.locked || modeHasConflict(mode)) return
   activeMode.value = mode
-  emit('select', mode)
+  emit('select', mode === 'AUTO' ? recommendedMode.value : mode)
+}
+
+function modeHasConflict(mode: CommuteMode) {
+  if (props.availableSeconds === undefined) return false
+  const concreteMode = mode === 'AUTO' ? recommendedMode.value : mode
+  return optionFor(concreteMode).durationSeconds > props.availableSeconds
 }
 
 function modeLabel(mode: ConcreteCommuteMode) {
@@ -151,8 +157,7 @@ function deltaText() {
             : 'bg-surface-50 border-surface-200 text-surface-500 hover:bg-surface-100 hover:text-surface-700'"
           type="button"
           :aria-pressed="activeMode === mode"
-          :disabled="(locked && activeMode !== mode) || (mode !== 'AUTO' && mode !== 'WALKING' && mode !== 'DRIVING')"
-          :title="mode === 'TRANSIT' || mode === 'TAXI' ? '当前仅提供估算，暂不写回行程' : undefined"
+          :disabled="(locked && activeMode !== mode) || (activeMode !== mode && modeHasConflict(mode))"
           :data-testid="`transit-option-${mode}`"
           @click="selectMode(mode)"
         >

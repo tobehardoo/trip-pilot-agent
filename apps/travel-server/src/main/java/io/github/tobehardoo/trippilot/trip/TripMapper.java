@@ -36,7 +36,8 @@ public interface TripMapper {
     int insertConstraint(TripConstraintRecord constraint);
 
     @Select("""
-            SELECT id, owner_id, title, destination, start_date, end_date, status, version, created_at, updated_at
+            SELECT id, owner_id, title, destination, start_date, end_date, status, version,
+                   created_at, updated_at, archived_at
             FROM business.trip
             WHERE id = #{id} AND owner_id = #{ownerId}
             """)
@@ -44,7 +45,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at
+                   created_at, updated_at, archived_at
             FROM business.trip
             WHERE id = #{id}
             """)
@@ -53,7 +54,7 @@ public interface TripMapper {
     @Select("""
             SELECT trip.id, trip.owner_id, trip.title, trip.destination,
                    trip.start_date, trip.end_date, trip.status, trip.version,
-                   trip.created_at, trip.updated_at,
+                   trip.created_at, trip.updated_at, trip.archived_at,
                    trip_constraint.budget_amount, trip_constraint.travelers,
                    trip_constraint.traveler_type, trip_constraint.pace,
                    trip_constraint.preferences::text AS preferences_json,
@@ -75,12 +76,58 @@ public interface TripMapper {
     );
 
     @Select("""
-            SELECT id, owner_id, title, destination, start_date, end_date, status, version, created_at, updated_at
+            SELECT id, owner_id, title, destination, start_date, end_date, status, version,
+                   created_at, updated_at, archived_at
             FROM business.trip
-            WHERE owner_id = #{ownerId}
+            WHERE owner_id = #{ownerId} AND archived_at IS NULL
             ORDER BY updated_at DESC, id
             """)
     List<TripRecord> findAllOwned(UUID ownerId);
+
+    @Select("""
+            SELECT id, owner_id, title, destination, start_date, end_date, status, version,
+                   created_at, updated_at, archived_at
+            FROM business.trip
+            WHERE owner_id = #{ownerId}
+              AND (CAST(#{includeArchived} AS BOOLEAN) OR archived_at IS NULL)
+              AND (CAST(#{destination} AS TEXT) IS NULL
+                   OR destination ILIKE CONCAT('%', CAST(#{destination} AS TEXT), '%'))
+              AND (CAST(#{status} AS TEXT) IS NULL OR status = CAST(#{status} AS TEXT))
+              AND (CAST(#{startDate} AS DATE) IS NULL OR end_date >= CAST(#{startDate} AS DATE))
+              AND (CAST(#{endDate} AS DATE) IS NULL OR start_date <= CAST(#{endDate} AS DATE))
+            ORDER BY updated_at DESC, id
+            LIMIT #{limit} OFFSET #{offset}
+            """)
+    List<TripRecord> searchOwned(
+            @Param("ownerId") UUID ownerId,
+            @Param("destination") String destination,
+            @Param("status") String status,
+            @Param("startDate") java.time.LocalDate startDate,
+            @Param("endDate") java.time.LocalDate endDate,
+            @Param("includeArchived") boolean includeArchived,
+            @Param("limit") int limit,
+            @Param("offset") int offset
+    );
+
+    @Select("""
+            SELECT COUNT(*)
+            FROM business.trip
+            WHERE owner_id = #{ownerId}
+              AND (CAST(#{includeArchived} AS BOOLEAN) OR archived_at IS NULL)
+              AND (CAST(#{destination} AS TEXT) IS NULL
+                   OR destination ILIKE CONCAT('%', CAST(#{destination} AS TEXT), '%'))
+              AND (CAST(#{status} AS TEXT) IS NULL OR status = CAST(#{status} AS TEXT))
+              AND (CAST(#{startDate} AS DATE) IS NULL OR end_date >= CAST(#{startDate} AS DATE))
+              AND (CAST(#{endDate} AS DATE) IS NULL OR start_date <= CAST(#{endDate} AS DATE))
+            """)
+    long countSearchOwned(
+            @Param("ownerId") UUID ownerId,
+            @Param("destination") String destination,
+            @Param("status") String status,
+            @Param("startDate") java.time.LocalDate startDate,
+            @Param("endDate") java.time.LocalDate endDate,
+            @Param("includeArchived") boolean includeArchived
+    );
 
     @Select("""
             SELECT trip_id, budget_amount, travelers, traveler_type, pace,
@@ -124,4 +171,18 @@ public interface TripMapper {
             WHERE trip_id = #{tripId}
             """)
     int updateConstraint(TripConstraintRecord constraint);
+
+    @Update("""
+            UPDATE business.trip
+            SET archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND owner_id = #{ownerId} AND archived_at IS NULL
+            """)
+    int archiveOwned(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
+
+    @Update("""
+            UPDATE business.trip
+            SET archived_at = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND owner_id = #{ownerId} AND archived_at IS NOT NULL
+            """)
+    int restoreOwned(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
 }

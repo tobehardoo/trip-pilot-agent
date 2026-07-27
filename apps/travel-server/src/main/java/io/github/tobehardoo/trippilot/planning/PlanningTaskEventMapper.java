@@ -48,4 +48,16 @@ public interface PlanningTaskEventMapper {
             WHERE task_id = #{taskId} AND event_type = 'PLANNING_PROGRESS'
             """)
     int findLatestProgressSequence(UUID taskId);
+
+    @Select("""
+            SELECT payload ->> 'stage' AS stage, created_at
+            FROM business.planning_task_event
+            WHERE task_id = #{taskId} AND event_type = 'PLANNING_PROGRESS'
+            ORDER BY id DESC
+            LIMIT 1
+            """)
+    Optional<LatestProgressRecord> findLatestProgress(UUID taskId);
+
+    record LatestProgressRecord(String stage, java.time.Instant createdAt) {
+    }
 }

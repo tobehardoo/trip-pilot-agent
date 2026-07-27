@@ -1,5 +1,6 @@
 package io.github.tobehardoo.trippilot.planning;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -130,4 +131,50 @@ public interface PlanningTaskMapper {
             )
             """)
     boolean existsActiveByTripId(@Param("tripId") UUID tripId);
+
+    @Select("""
+            SELECT planning_task.id AS task_id, planning_task.trip_id, planning_task.task_type,
+                   planning_task.status, progress.payload ->> 'stage' AS last_stage,
+                   planning_task.error_code, planning_task.error_message,
+                   planning_task.retry_count, planning_task.trace_id, planning_task.updated_at
+            FROM business.planning_task
+            LEFT JOIN LATERAL (
+                SELECT payload
+                FROM business.planning_task_event
+                WHERE task_id = planning_task.id AND event_type = 'PLANNING_PROGRESS'
+                ORDER BY id DESC
+                LIMIT 1
+            ) progress ON TRUE
+            WHERE planning_task.status IN ('FAILED', 'STALE')
+            ORDER BY planning_task.updated_at DESC, planning_task.id
+            LIMIT #{limit}
+            """)
+    List<FailedTaskDiagnostic> findRecentFailures(@Param("limit") int limit);
+
+    @Select("""
+            SELECT planning_task.id AS task_id, planning_task.trip_id, trip.owner_id
+            FROM business.planning_task
+            JOIN business.trip ON trip.id = planning_task.trip_id
+            WHERE planning_task.id = #{taskId}
+              AND planning_task.task_type = 'CREATE'
+              AND planning_task.status = 'FAILED'
+            """)
+    Optional<RetryableFailedTask> findRetryableFailedCreate(@Param("taskId") UUID taskId);
+
+    record FailedTaskDiagnostic(
+            UUID taskId,
+            UUID tripId,
+            String taskType,
+            String status,
+            String lastStage,
+            String errorCode,
+            String errorMessage,
+            int retryCount,
+            UUID traceId,
+            java.time.Instant updatedAt
+    ) {
+    }
+
+    record RetryableFailedTask(UUID taskId, UUID tripId, UUID ownerId) {
+    }
 }

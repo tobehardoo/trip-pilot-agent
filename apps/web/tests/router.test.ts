@@ -1,9 +1,10 @@
 import { createMemoryHistory } from 'vue-router'
 import { describe, expect, test } from 'vitest'
 
+import { createTripPilotRouter } from '../src/app/router'
+
 describe('TripPilot router', () => {
   test('resolves the V2 application routes with stable route names', async () => {
-    const { createTripPilotRouter } = await import('../src/app/router')
     const router = createTripPilotRouter(createMemoryHistory())
 
     await router.push('/trips')

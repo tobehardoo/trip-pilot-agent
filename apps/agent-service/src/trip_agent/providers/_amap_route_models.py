@@ -12,6 +12,8 @@ class AmapCost(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     duration: str
+    toll_distance: str | None = None
+    toll_cost: str | None = None
 
 
 class AmapWalkingStep(BaseModel):

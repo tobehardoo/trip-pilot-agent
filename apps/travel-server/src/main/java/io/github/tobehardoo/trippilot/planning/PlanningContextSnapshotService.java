@@ -112,17 +112,23 @@ public class PlanningContextSnapshotService {
         boolean stale = facts.stream().anyMatch(PlanningFact::stale)
                 || refresh == null
                 || !Set.of("SUCCEEDED", "PARTIAL").contains(refresh.status());
-        List<Diagnostic> diagnostics = refresh == null
-                ? List.of(new Diagnostic(
-                        "CITY_INTELLIGENCE_MISSING",
-                        "No city intelligence refresh exists",
-                        null
-                ))
-                : List.of(new Diagnostic(
-                        refresh.errorCode(),
-                        refresh.errorMessage(),
-                        refresh.status()
-                ));
+        List<Diagnostic> diagnostics;
+        if (refresh == null) {
+            diagnostics = List.of(new Diagnostic(
+                    "CITY_INTELLIGENCE_MISSING",
+                    "No city intelligence refresh exists",
+                    null
+            ));
+        } else if (refresh.errorCode() != null || refresh.errorMessage() != null
+                || !Set.of("SUCCEEDED", "PARTIAL").contains(refresh.status())) {
+            diagnostics = List.of(new Diagnostic(
+                    refresh.errorCode(),
+                    refresh.errorMessage(),
+                    refresh.status()
+            ));
+        } else {
+            diagnostics = List.of();
+        }
 
         PlanningContextSnapshot snapshot = new PlanningContextSnapshot(
                 UUID.randomUUID(),

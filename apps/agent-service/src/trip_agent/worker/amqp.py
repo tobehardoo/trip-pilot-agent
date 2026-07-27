@@ -29,6 +29,7 @@ from trip_agent.domain.planning.protocols import (
 from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider
 from trip_agent.infrastructure.demo.knowledge_provider import DemoKnowledgeEvidenceProvider
 from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
+from trip_agent.platform_util import run_async
 from trip_agent.providers.map import AmapMapProvider, JsonCache
 from trip_agent.providers.redis_cache import RedisJsonCache
 from trip_agent.providers.route import AmapRouteProvider
@@ -122,7 +123,7 @@ class PlanningProgressPublisher:
         "CONSTRAINTS_SOLVING",
         "KNOWLEDGE_RETRIEVING",
         "RESULT_EXPLAINING",
-        "RESULT_PERSISTING",
+        "RESULT_PUBLISHING",
     )
     _stage_progress = {
         "TASK_ACCEPTED": 5,
@@ -134,7 +135,7 @@ class PlanningProgressPublisher:
         "CONSTRAINTS_SOLVING": 65,
         "KNOWLEDGE_RETRIEVING": 75,
         "RESULT_EXPLAINING": 85,
-        "RESULT_PERSISTING": 95,
+        "RESULT_PUBLISHING": 95,
     }
 
     async def report(
@@ -197,20 +198,40 @@ class PlanningProgressPublisher:
 
 
 class PsycopgCancellationOracle:
+    """Checks cancellation status via a persistent database connection.
+
+    Uses a single long-lived async connection instead of opening a new
+    connection per check, avoiding connection-storm under load.
+    """
+
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
+        self._connection: psycopg.AsyncConnection | None = None
+
+    async def _ensure_connection(self) -> psycopg.AsyncConnection:
+        if self._connection is None or self._connection.closed:
+            self._connection = await psycopg.AsyncConnection.connect(self._database_url)
+        return self._connection
 
     async def is_cancelled(self, task_id: UUID) -> bool:
-        async with (
-            await psycopg.AsyncConnection.connect(self._database_url) as connection,
-            connection.cursor() as cursor,
-        ):
-            await cursor.execute(
-                "SELECT status FROM business.planning_task WHERE id = %s",
-                (task_id,),
-            )
-            row = await cursor.fetchone()
+        try:
+            connection = await self._ensure_connection()
+            async with connection.cursor() as cursor:
+                await cursor.execute(
+                    "SELECT status FROM business.planning_task WHERE id = %s",
+                    (task_id,),
+                )
+                row = await cursor.fetchone()
+        except psycopg.Error:
+            # Connection may have dropped — reset and let the next call
+            # re-establish it.
+            self._connection = None
+            raise
         return row is not None and row[0] == "CANCELLED"
+
+    async def close(self) -> None:
+        if self._connection is not None and not self._connection.closed:
+            await self._connection.close()
 
 
 class CancellationRegistry:
@@ -513,7 +534,7 @@ async def handle_delivery(
                 await message.ack()
                 return
             await progress_publisher.report(
-                "RESULT_PERSISTING",
+                "RESULT_PUBLISHING",
                 "Preparing the itinerary for persistence",
             )
             outgoing = aio_pika.Message(
@@ -714,7 +735,7 @@ async def _handle_cancel_incoming(
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(run_worker(WorkerSettings()))
+    run_async(run_worker(WorkerSettings()))
 
 
 if __name__ == "__main__":

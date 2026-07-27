@@ -105,7 +105,15 @@ public class ItineraryService {
     }
 
     @Transactional
-    public ItineraryResponse applyEdit(UUID ownerId, UUID tripId, ItineraryEditRequest request) {
+    public ItineraryResponse applyEdit(
+            UUID ownerId, UUID tripId, UUID idempotencyKey, ItineraryEditRequest request) {
+        // Idempotency guard (J09): a retry of a successfully-applied edit
+        // returns the current version without creating a duplicate.
+        UUID previousResult = itineraryMapper.findEditIdempotencyResult(tripId, idempotencyKey);
+        if (previousResult != null) {
+            return getCurrent(ownerId, tripId);
+        }
+
         ItineraryMapper.EditableCurrentVersion version = itineraryMapper
                 .findCurrentVersionOwnedForEditForUpdate(tripId, ownerId)
                 .orElseThrow(this::itineraryNotFound);
@@ -124,7 +132,8 @@ public class ItineraryService {
         }
 
         apply(itinerary, request, evaluation.operation());
-        persistEditedVersion(version, itinerary);
+        UUID resultVersionId = persistEditedVersion(version, itinerary);
+        itineraryMapper.insertEditIdempotency(tripId, idempotencyKey, resultVersionId);
         return getCurrent(ownerId, tripId);
     }
 
@@ -257,8 +266,9 @@ public class ItineraryService {
                         "The selected transit mode does not fit between its activities");
             }
             BigDecimal updatedCost = estimatedTransitCost(request.transitMode(), location.leg().distanceMeters());
+            BigDecimal existingLegCost = location.leg().estimatedCost();
             BigDecimal totalCost = itinerary.totalCost()
-                    .subtract(location.leg().estimatedCost())
+                    .subtract(existingLegCost == null ? BigDecimal.ZERO : existingLegCost)
                     .add(updatedCost);
             if (budgetAmount != null && totalCost.compareTo(budgetAmount) > 0) {
                 return EditEvaluation.blocked("ITINERARY_BUDGET_CONFLICT",
@@ -442,7 +452,7 @@ public class ItineraryService {
         }
     }
 
-    private void persistEditedVersion(
+    private UUID persistEditedVersion(
             ItineraryMapper.EditableCurrentVersion sourceVersion, EditableItinerary itinerary) {
         UUID versionId = UUID.randomUUID();
         BigDecimal totalCost = itinerary.days().stream()
@@ -451,7 +461,8 @@ public class ItineraryService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .add(itinerary.days().stream()
                         .flatMap(day -> day.transitLegs().stream())
-                        .map(ItineraryMapper.StoredTransitLeg::estimatedCost)
+                        .map(leg -> leg.estimatedCost() == null
+                                ? BigDecimal.ZERO : leg.estimatedCost())
                         .reduce(BigDecimal.ZERO, BigDecimal::add));
         requireOne(itineraryMapper.insertVersion(new ItineraryMapper.VersionWrite(
                 versionId, sourceVersion.itineraryId(), sourceVersion.versionNumber() + 1,
@@ -484,6 +495,7 @@ public class ItineraryService {
         }
         requireOne(itineraryMapper.updateCurrentVersion(sourceVersion.itineraryId(), versionId),
                 "current itinerary version");
+        return versionId;
     }
 
     private void copyTransitLegs(
@@ -787,7 +799,8 @@ public class ItineraryService {
                     .reduce(BigDecimal.ZERO, BigDecimal::add)
                     .add(days.stream()
                             .flatMap(day -> day.transitLegs().stream())
-                            .map(ItineraryMapper.StoredTransitLeg::estimatedCost)
+                            .map(leg -> leg.estimatedCost() == null
+                                    ? BigDecimal.ZERO : leg.estimatedCost())
                             .reduce(BigDecimal.ZERO, BigDecimal::add));
         }
 
@@ -1085,7 +1098,8 @@ public class ItineraryService {
                                     leg.durationSeconds(), leg.provider(),
                                     leg.estimated(),
                                     writeJson(leg.polyline()), false,
-                                    BigDecimal.ZERO, null, Instant.now(), false
+                                    leg.estimatedCost(),
+                                    null, Instant.now(), false
                             )
                     ),
                     "itinerary transit leg"
@@ -1150,7 +1164,7 @@ public class ItineraryService {
                                     writeJson(leg.polyline()),
                                     index < sourceLegs.size()
                                             && sourceLegs.get(index).locked(),
-                                    BigDecimal.ZERO, null, Instant.now(), false
+                                    leg.estimatedCost(), null, Instant.now(), false
                             )
                     ),
                     "local replan transit leg"

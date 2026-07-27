@@ -1,7 +1,6 @@
 """CLI for validating controlled official knowledge sources."""
 
 import argparse
-import asyncio
 import json
 from collections.abc import Sequence
 from pathlib import Path
@@ -14,6 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from trip_agent.acquisition.freshness import FreshnessReportService, render_freshness_report
 from trip_agent.acquisition.registry import SourceCatalog
 from trip_agent.acquisition.repository import PsycopgAcquisitionRepository
+from trip_agent.platform_util import run_async
 
 
 class AcquisitionSettings(BaseSettings):
@@ -60,7 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         catalog = SourceCatalog.load_directory(args.directory)
         if args.command == "freshness":
             repository = PsycopgAcquisitionRepository(AcquisitionSettings().database_url())
-            report = asyncio.run(FreshnessReportService(repository=repository).generate(catalog))
+            report = run_async(FreshnessReportService(repository=repository).generate(catalog))
             print(render_freshness_report(report))
             return 0
         if args.command != "validate":

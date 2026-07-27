@@ -3,6 +3,8 @@
 Extracted from ``worker/processor.py``.
 """
 
+from decimal import Decimal
+
 from trip_agent.domain.planning.protocols import (
     PlanningInfeasibleError,
     PlanningProviderError,
@@ -113,6 +115,10 @@ class LocalReplanningProvider:
                     destination_poi_id=destination.provider_poi_id,
                 )
             )
+            leg_cost = Decimal("0.00") if route.data.mode == "WALKING" else None
+            cost_source = "RULE_ESTIMATE" if route.data.mode == "WALKING" else (
+                "DEMO" if route.provider == "DEMO" else "UNKNOWN"
+            )
             legs.append(
                 TransitLeg(
                     from_activity_index=index,
@@ -129,6 +135,8 @@ class LocalReplanningProvider:
                         )
                         for point in route.data.polyline
                     ),
+                    estimated_cost=leg_cost,
+                    cost_source=cost_source,
                 )
             )
         return ItineraryDay(

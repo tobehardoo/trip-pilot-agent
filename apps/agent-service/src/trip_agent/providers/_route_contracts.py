@@ -49,6 +49,7 @@ class RoutePlan(ProviderModel):
     duration_seconds: int = Field(strict=True, ge=0, le=MAX_ROUTE_DURATION_SECONDS)
     steps: tuple[RouteStep, ...] = Field(min_length=1, max_length=1_000)
     polyline: tuple[Coordinates, ...] = Field(min_length=1, max_length=5_000)
+    estimated_cost: float | None = Field(default=None, ge=0)
 
 
 type RouteResult = ProviderSuccess[RoutePlan] | ProviderFailure

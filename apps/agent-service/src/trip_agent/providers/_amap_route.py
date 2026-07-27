@@ -196,12 +196,20 @@ class AmapRouteProvider:
             for point in step.polyline:
                 if not polyline or point != polyline[-1]:
                     polyline.append(point)
+        # Walking is always free; driving toll cost comes from AMap if available.
+        if mode == "WALKING":
+            estimated_cost: float | None = 0.0
+        elif path.cost.toll_cost is not None:
+            estimated_cost = float(path.cost.toll_cost)
+        else:
+            estimated_cost = None
         return RoutePlan(
             mode=mode,
             distance_meters=int(path.distance),
             duration_seconds=int(path.cost.duration),
             steps=steps,
             polyline=tuple(polyline),
+            estimated_cost=estimated_cost,
         )
 
     @staticmethod

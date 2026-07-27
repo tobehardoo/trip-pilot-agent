@@ -461,4 +461,31 @@ public interface ItineraryMapper {
             double similarity
     ) {
     }
+
+    // ── Itinerary edit idempotency (V27 / J09) ────────────────────────
+
+    @Select("""
+            SELECT result_version_id
+            FROM business.itinerary_edit_idempotency
+            WHERE trip_id = #{tripId} AND idempotency_key = #{idempotencyKey}
+              AND status = 'COMPLETED'
+            """)
+    UUID findEditIdempotencyResult(
+            @Param("tripId") UUID tripId,
+            @Param("idempotencyKey") UUID idempotencyKey
+    );
+
+    @Insert("""
+            INSERT INTO business.itinerary_edit_idempotency(
+                trip_id, idempotency_key, request_hash, result_version_id, status
+            ) VALUES (
+                #{tripId}, #{idempotencyKey}, '', #{resultVersionId}, 'COMPLETED'
+            )
+            ON CONFLICT (trip_id, idempotency_key) DO NOTHING
+            """)
+    int insertEditIdempotency(
+            @Param("tripId") UUID tripId,
+            @Param("idempotencyKey") UUID idempotencyKey,
+            @Param("resultVersionId") UUID resultVersionId
+    );
 }

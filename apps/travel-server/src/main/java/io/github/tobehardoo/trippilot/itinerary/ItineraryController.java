@@ -95,7 +95,9 @@ public class ItineraryController {
     ItineraryService.ItineraryResponse applyEdit(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID tripId,
+            @RequestHeader("Idempotency-Key") UUID idempotencyKey,
             @RequestBody ItineraryService.ItineraryEditRequest request) {
-        return itineraryService.applyEdit(UUID.fromString(jwt.getSubject()), tripId, request);
+        return itineraryService.applyEdit(
+                UUID.fromString(jwt.getSubject()), tripId, idempotencyKey, request);
     }
 }

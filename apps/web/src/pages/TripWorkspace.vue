@@ -540,7 +540,9 @@ async function handlePreviewItineraryEdit(input: ItineraryEditInput): Promise<It
 async function handleApplyItineraryEdit(input: ItineraryEditInput) {
   if (!selectedTrip.value) throw new Error('No trip is selected')
   const tripId = selectedTrip.value.id
-  const updated = await withAccessToken((token) => applyItineraryEdit(token, tripId, input))
+  const idempotencyKey = input.idempotencyKey ?? crypto.randomUUID()
+  const updated = await withAccessToken(
+      (token) => applyItineraryEdit(token, tripId, input, idempotencyKey))
   if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
     itinerary.value = updated
     itineraryError.value = null
@@ -683,6 +685,7 @@ const planningProgressStages: PlanningProgressStage[] = [
   'CONSTRAINTS_SOLVING',
   'KNOWLEDGE_RETRIEVING',
   'RESULT_EXPLAINING',
+  'RESULT_PUBLISHING',
   'RESULT_PERSISTING',
 ]
 
@@ -698,6 +701,7 @@ function toPlanningProgressUpdate(event: PlanningTaskEvent): PlanningProgressUpd
     Number.isSafeInteger(value) && value >= 0
   )))
   return {
+    eventId: event.eventId,
     stage: stage as PlanningProgressStage,
     sequence,
     progress,
@@ -751,7 +755,16 @@ async function runPlanningTask(
           return
         }
         planningProgress.value = update
-        planningProgressHistory.value = [...planningProgressHistory.value, update]
+        // Deduplicate by eventId to allow same-stage multiple updates (B3 fix).
+        // Cap history to prevent unbounded growth on SSE reconnection replay.
+        const MAX_HISTORY = 100
+        const seenIds = new Set(planningProgressHistory.value.map((h) => h.eventId))
+        if (!seenIds.has(update.eventId)) {
+          planningProgressHistory.value = [
+            ...planningProgressHistory.value.slice(-(MAX_HISTORY - 1)),
+            update,
+          ]
+        }
       } else if (event.eventType === 'PLANNING_COMPLETED') {
         terminal = true
         planningState.value = 'succeeded'
@@ -782,7 +795,9 @@ async function runPlanningTask(
           { lastEventId, signal: controller.signal },
         ))
       } catch (cause) {
-        if (!(cause instanceof TypeError) || attempt === 2) throw cause
+        const retriable = cause instanceof TypeError
+          || (cause instanceof ApiError && cause.status >= 500 && cause.status < 600)
+        if (!retriable || attempt === 2) throw cause
       }
     }
     if (itineraryReload) await itineraryReload
@@ -835,14 +850,14 @@ async function handleCancelPlanning() {
 }
 
 async function logout() {
-  clearLocalSession()
   error.value = null
-  await router.replace({ name: 'login' })
   try {
     await logoutSession()
   } catch {
     // Local logout must still complete when the server is unavailable.
   }
+  clearLocalSession()
+  await router.replace({ name: 'login' })
 }
 
 onMounted(() => {

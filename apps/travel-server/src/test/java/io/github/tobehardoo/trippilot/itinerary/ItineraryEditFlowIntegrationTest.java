@@ -27,6 +27,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
+    private static UUID nextIdempotencyKey() {
+        return UUID.randomUUID();
+    }
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -51,6 +55,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "DELETE_ACTIVITY", activityId, null)))
                 .andExpect(status().isOk())
@@ -74,6 +79,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "DELETE_ACTIVITY", activityId, null)))
                 .andExpect(status().isOk())
@@ -104,6 +110,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(
                                 initialVersionId,
@@ -182,6 +189,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(
                                 UUID.fromString(rollbackVersionId),
@@ -234,6 +242,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(
                                 initialVersionId,
@@ -268,6 +277,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         MvcResult lockResult = mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "LOCK_ACTIVITY", activityId, null)))
                 .andExpect(status().isOk())
@@ -287,6 +297,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(lockedVersionId, "MOVE_ACTIVITY", lockedActivityId, move)))
                 .andExpect(status().isOk())
@@ -296,6 +307,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(lockedVersionId, "MOVE_ACTIVITY", lockedActivityId, move)))
                 .andExpect(status().isConflict())
@@ -303,6 +315,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(lockedVersionId, "DELETE_ACTIVITY", lockedActivityId, null)))
                 .andExpect(status().isOk())
@@ -311,6 +324,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(lockedVersionId, "DELETE_ACTIVITY", lockedActivityId, null)))
                 .andExpect(status().isConflict())
@@ -329,6 +343,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transitEditJson(versionId, legId, "TRANSIT", true)))
                 .andExpect(status().isOk())
@@ -392,6 +407,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transitEditJson(versionId, legId, "TRANSIT", false)))
                 .andExpect(status().isUnprocessableEntity())
@@ -407,6 +423,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "LOCK_ACTIVITY", activityId, null)))
                 .andExpect(status().isOk());
@@ -434,6 +451,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         MvcResult movedResult = mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "MOVE_ACTIVITY", activityId, validMove)))
                 .andExpect(status().isOk())
@@ -455,6 +473,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(movedVersionId, "MOVE_ACTIVITY", movedActivityId, overlappingMove)))
                 .andExpect(status().isOk())
@@ -463,6 +482,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(movedVersionId, "MOVE_ACTIVITY", movedActivityId, overlappingMove)))
                 .andExpect(status().isUnprocessableEntity())
@@ -478,12 +498,14 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "LOCK_ACTIVITY", activityId, null)))
                 .andExpect(status().isOk());
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "DELETE_ACTIVITY", activityId, null)))
                 .andExpect(status().isConflict())
@@ -504,6 +526,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "DELETE_ACTIVITY", activityId, null)))
                 .andExpect(status().isOk())
@@ -512,6 +535,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "DELETE_ACTIVITY", activityId, null)))
                 .andExpect(status().isConflict())
@@ -525,6 +549,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID secondDayActivityId = uuid(current.at("/days/1/activities/0"), "id");
         JsonNode locked = json(mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(uuid(current, "versionId"), "LOCK_ACTIVITY", secondDayActivityId, null)))
                 .andExpect(status().isOk())
@@ -539,6 +564,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 """;
         JsonNode edited = json(mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(uuid(locked, "versionId"), "MOVE_ACTIVITY", activityToMove, move)))
                 .andExpect(status().isOk())
@@ -592,6 +618,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID activityId = uuid(baseline.at("/days/1/activities/0"), "id");
         JsonNode newer = json(mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(uuid(baseline, "versionId"), "LOCK_ACTIVITY", activityId, null)))
                 .andExpect(status().isOk())

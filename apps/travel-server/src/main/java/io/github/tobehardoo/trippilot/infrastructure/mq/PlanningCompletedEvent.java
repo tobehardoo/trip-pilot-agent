@@ -68,10 +68,13 @@ public record PlanningCompletedEvent(
             int durationSeconds,
             String provider,
             boolean estimated,
-            List<Coordinates> polyline
+            List<Coordinates> polyline,
+            BigDecimal estimatedCost,
+            String costSource
     ) {
         public TransitLeg {
             polyline = polyline == null ? List.of() : List.copyOf(polyline);
+            costSource = costSource == null || costSource.isBlank() ? "UNKNOWN" : costSource;
         }
     }
 

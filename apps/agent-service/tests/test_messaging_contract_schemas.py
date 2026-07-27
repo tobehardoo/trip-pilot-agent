@@ -17,10 +17,38 @@ ACTIVE_SCHEMA_FILES = (
     "planning-cancel-command-v1.schema.json",
     "planning-completed-event-v4.schema.json",
     "planning-completed-event-v5.schema.json",
+    "planning-completed-event-v6.schema.json",
     "planning-create-command-v2.schema.json",
+    "planning-create-command-v3.schema.json",
     "planning-failed-event-v1.schema.json",
     "planning-replan-command-v1.schema.json",
 )
+
+
+def test_v3_planning_create_contract_accepts_the_frozen_context_shape() -> None:
+    from test_planning_context_v3 import _v3_command
+
+    schema = _load_schema("planning-create-command-v3.schema.json")
+    Draft202012Validator(schema).validate(_v3_command())
+
+
+def test_v6_completed_event_contract_accepts_worker_output() -> None:
+    import asyncio
+    from copy import deepcopy
+
+    from test_planning_context_v3 import _v3_command
+    from trip_agent.worker.contracts import PlanningCreateCommand
+    from trip_agent.worker.processor import DemoPlanningProvider, process_planning_create
+
+    payload = deepcopy(_v3_command())
+    payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []
+    command = PlanningCreateCommand.model_validate(payload)
+    event = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
+    schema = _load_schema("planning-completed-event-v6.schema.json")
+
+    Draft202012Validator(schema).validate(
+        event.model_dump(mode="json", by_alias=True, exclude_none=True)
+    )
 
 
 def _load_schema(file_name: str) -> dict[str, object]:

@@ -225,7 +225,84 @@ export interface Itinerary {
     transitLegs: ItineraryTransitLeg[]
   }>
   knowledge: ItineraryKnowledge
+  factImpacts?: ItineraryFactImpact[]
+  rollbackFromVersionId?: string | null
   createdAt: string
+}
+
+export interface ItineraryFactImpact {
+  factId: string
+  category: string
+  date: string | null
+  effect: string
+  targetPoiId: string | null
+  targetName: string | null
+  reason: string
+  sourceName: string
+  sourceType: string
+  sourceUrl: string | null
+  reliabilityLevel: string
+  checkedAt: string
+  evidence: string
+  stale: boolean
+  conflicted: boolean
+  refreshFailed: boolean
+}
+
+export interface ItineraryVersionSummary {
+  versionId: string
+  versionNumber: number
+  parentVersionId: string | null
+  planningTaskId: string | null
+  versionSource: 'PLANNING_TASK' | 'USER_EDIT' | 'LOCAL_REPLAN' | 'ROLLBACK'
+  title: string
+  estimatedTotalCost: number
+  provider: 'AMAP' | 'DEMO'
+  rollbackFromVersionId: string | null
+  createdAt: string
+  current: boolean
+}
+
+export interface ItineraryVersionDiff {
+  fromVersionId: string
+  toVersionId: string
+  addedActivities: Array<{ key: string; title: string; date: string }>
+  removedActivities: Array<{ key: string; title: string; date: string }>
+  changedActivities: Array<{
+    before: { key: string; title: string; date: string }
+    after: { key: string; title: string; date: string }
+    changes: string[]
+  }>
+  addedTransitLegs: ItineraryTransitDiff[]
+  removedTransitLegs: ItineraryTransitDiff[]
+  changedTransitLegs: Array<{
+    before: ItineraryTransitDiff
+    after: ItineraryTransitDiff
+    changes: string[]
+  }>
+  addedFactImpacts: ItineraryFactImpact[]
+  removedFactImpacts: ItineraryFactImpact[]
+  changedFactImpacts: Array<{
+    before: ItineraryFactImpact
+    after: ItineraryFactImpact
+    changes: string[]
+  }>
+  fromTotalCost: number
+  toTotalCost: number
+  budgetChange: number
+}
+
+export interface ItineraryTransitDiff {
+  key: string
+  date: string
+  fromTitle: string
+  toTitle: string
+  mode: string
+  distanceMeters: number
+  durationSeconds: number
+  provider: string
+  estimated: boolean
+  locked: boolean
 }
 
 export type ItineraryEditOperation =
@@ -416,6 +493,41 @@ export function cancelPlanningTask(accessToken: string, taskId: string): Promise
 
 export function getCurrentItinerary(accessToken: string, tripId: string): Promise<Itinerary> {
   return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary`, {}, accessToken)
+}
+
+export function listItineraryVersions(
+  accessToken: string,
+  tripId: string,
+): Promise<ItineraryVersionSummary[]> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/versions`, {}, accessToken)
+}
+
+export function diffItineraryVersions(
+  accessToken: string,
+  tripId: string,
+  fromVersionId: string,
+  toVersionId: string,
+): Promise<ItineraryVersionDiff> {
+  const query = new URLSearchParams({ from: fromVersionId, to: toVersionId })
+  return request(
+    `/api/trips/${encodeURIComponent(tripId)}/itinerary/versions/diff?${query}`,
+    {},
+    accessToken,
+  )
+}
+
+export function rollbackItinerary(
+  accessToken: string,
+  tripId: string,
+  sourceVersionId: string,
+  expectedCurrentVersionId: string,
+  idempotencyKey: string = crypto.randomUUID(),
+): Promise<Itinerary> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/rollbacks`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ sourceVersionId, expectedCurrentVersionId }),
+  }, accessToken)
 }
 
 export function previewItineraryEdit(

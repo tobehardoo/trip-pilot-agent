@@ -51,7 +51,12 @@ _FACT_CATEGORIES = frozenset(
 )
 _OFFICIAL_RELIABILITY = frozenset({"OFFICIAL_ATTRACTION", "OFFICIAL_TOURISM"})
 _OFFICIAL_SOURCE_TYPES = frozenset(
-    {"OFFICIAL_ATTRACTION_HTML", "OFFICIAL_TOURISM_HTML"}
+    {
+        "OFFICIAL_ATTRACTION",
+        "OFFICIAL_ATTRACTION_HTML",
+        "OFFICIAL_TOURISM",
+        "OFFICIAL_TOURISM_HTML",
+    }
 )
 _STRONG_FACTS = frozenset(
     {
@@ -94,6 +99,19 @@ _COORDINATES = re.compile(
     r"\s*[,，]\s*(?P<latitude>-?\d{1,2}(?:\.\d+)?)"
 )
 _DATE = re.compile(r"(?P<date>20\d{2})[-年/](?P<month>\d{1,2})[-月/](?P<day>\d{1,2})日?")
+_POI_SPECIFIC_CATEGORIES = frozenset(
+    {
+        "ADDRESS",
+        "COORDINATES",
+        "OPENING_HOURS",
+        "TEMPORARY_CLOSURE",
+        "TICKET_PRICE",
+        "REFERENCE_SPEND",
+        "RESERVATION_REQUIREMENT",
+        "RESERVATION_ENTRY",
+        "VENUE_ENVIRONMENT",
+    }
+)
 _TTL_BY_CATEGORY: dict[str, timedelta] = {
     "ADDRESS": timedelta(days=90),
     "COORDINATES": timedelta(days=90),
@@ -372,6 +390,12 @@ class RuleFactExtractor:
         _require_aware(checked_at, "checked_at")
         candidates: list[CandidateFact] = []
         cursor = 0
+        current_poi_name = (
+            document.source_name
+            if document.source_type
+            in {"OFFICIAL_ATTRACTION", "OFFICIAL_ATTRACTION_HTML"}
+            else None
+        )
         for sentence in _sentences(document.content):
             start = document.content.find(sentence, cursor)
             if start < 0:
@@ -380,6 +404,9 @@ class RuleFactExtractor:
             effective_date = _effective_date(sentence)
             matches: list[tuple[str, Mapping[str, object], float]] = []
             if address := _ADDRESS.search(sentence):
+                inferred_name = sentence[: address.start()].strip(" ：:，,。.;；")
+                if 1 < len(inferred_name) <= 40:
+                    current_poi_name = inferred_name
                 matches.append(
                     ("ADDRESS", {"address": address.group("address").strip()}, 0.9)
                 )
@@ -443,11 +470,14 @@ class RuleFactExtractor:
                 environment = "INDOOR" if "室内" in sentence else "OUTDOOR"
                 matches.append(("VENUE_ENVIRONMENT", {"environment": environment}, 0.86))
             for category, normalized_value, confidence in matches:
+                value = dict(normalized_value)
+                if current_poi_name and category in _POI_SPECIFIC_CATEGORIES:
+                    value["poiName"] = current_poi_name
                 candidates.append(
                     CandidateFact(
                         category=category,
                         statement=sentence,
-                        normalized_value=normalized_value,
+                        normalized_value=value,
                         evidence=sentence,
                         evidence_start=start,
                         evidence_end=start + len(sentence),

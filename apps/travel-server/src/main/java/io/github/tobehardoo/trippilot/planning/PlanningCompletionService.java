@@ -24,6 +24,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     private final PlanningTaskMapper taskMapper;
     private final PlanningTaskEventMapper taskEventMapper;
     private final ItineraryService itineraryService;
+    private final PlanningFactImpactMapper factImpactMapper;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
@@ -31,12 +32,14 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     public PlanningCompletionService(PlanningTaskMapper taskMapper,
                                      PlanningTaskEventMapper taskEventMapper,
                                      ItineraryService itineraryService,
+                                     PlanningFactImpactMapper factImpactMapper,
                                      ObjectMapper objectMapper,
                                      Clock clock,
                                      ApplicationEventPublisher eventPublisher) {
         this.taskMapper = taskMapper;
         this.taskEventMapper = taskEventMapper;
         this.itineraryService = itineraryService;
+        this.factImpactMapper = factImpactMapper;
         this.objectMapper = objectMapper;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
@@ -89,11 +92,43 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                 itineraryService.createInitialItinerary(
                         task.tripId(), event, task.id(),
                         task.constraintSnapshotJson(), clock);
+        persistFactImpacts(event, result.versionId());
         updateTaskToSucceeded(
                 event, task, result, "PLANNING_COMPLETED",
                 writeJson(new CompletionPayload(SUCCEEDED, event.runId(),
                         result.versionId(), result.versionNumber(),
                         result.provider())));
+    }
+
+    private void persistFactImpacts(
+            PlanningCompletedEvent event,
+            UUID itineraryVersionId
+    ) {
+        for (PlanningCompletedEvent.FactImpact impact : event.payload().factImpacts()) {
+            requireOne(factImpactMapper.insert(
+                    new PlanningFactImpactMapper.PlanningFactImpactRecord(
+                            UUID.randomUUID(),
+                            itineraryVersionId,
+                            event.taskId(),
+                            impact.factId(),
+                            impact.category(),
+                            impact.date(),
+                            impact.effect(),
+                            impact.targetPoiId(),
+                            impact.targetName(),
+                            impact.reason(),
+                            impact.sourceName(),
+                            impact.sourceType(),
+                            impact.sourceUrl(),
+                            impact.reliabilityLevel(),
+                            impact.checkedAt().toInstant(),
+                            impact.evidence(),
+                            impact.stale(),
+                            impact.conflicted(),
+                            impact.refreshFailed()
+                    )
+            ), "planning fact impact");
+        }
     }
 
     private void validateIdentity(PlanningCompletedEvent event, PlanningTaskCompletionRecord task) {

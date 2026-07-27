@@ -139,7 +139,7 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(repeatedTaskId).isEqualTo(firstTaskId);
         assertThat(count("business.planning_task")).isEqualTo(1);
-        assertThat(count("business.outbox_event")).isEqualTo(1);
+        assertThat(countPlanningOutbox()).isEqualTo(1);
     }
 
     @Test
@@ -154,7 +154,7 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.code").value("PLANNING_TASK_ACTIVE"));
 
         assertThat(count("business.planning_task")).isEqualTo(1);
-        assertThat(count("business.outbox_event")).isEqualTo(1);
+        assertThat(countPlanningOutbox()).isEqualTo(1);
     }
 
     @Test
@@ -168,7 +168,7 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.code").value("TRIP_NOT_FOUND"));
 
         assertThat(count("business.planning_task")).isZero();
-        assertThat(count("business.outbox_event")).isZero();
+        assertThat(countPlanningOutbox()).isZero();
     }
 
     @Test
@@ -195,7 +195,7 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.code").value("TRIP_DURATION_UNSUPPORTED"));
 
         assertThat(count("business.planning_task")).isZero();
-        assertThat(count("business.outbox_event")).isZero();
+        assertThat(countPlanningOutbox()).isZero();
     }
 
     @Test
@@ -230,7 +230,7 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
         assertThat(failure).isNotNull();
         assertThat(rootCause(failure)).hasMessageContaining("forced outbox failure");
         assertThat(count("business.planning_task")).isZero();
-        assertThat(count("business.outbox_event")).isZero();
+        assertThat(countPlanningOutbox()).isZero();
     }
 
     @Test
@@ -257,7 +257,7 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                     .isEqualTo(second.get(10, TimeUnit.SECONDS).taskId());
         }
         assertThat(count("business.planning_task")).isEqualTo(1);
-        assertThat(count("business.outbox_event")).isEqualTo(1);
+        assertThat(countPlanningOutbox()).isEqualTo(1);
     }
 
     @Test
@@ -279,7 +279,7 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                     .containsExactlyInAnyOrder("ACCEPTED", "PLANNING_TASK_ACTIVE");
         }
         assertThat(count("business.planning_task")).isEqualTo(1);
-        assertThat(count("business.outbox_event")).isEqualTo(1);
+        assertThat(countPlanningOutbox()).isEqualTo(1);
     }
 
     @Test
@@ -346,21 +346,34 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isAccepted());
 
         Map<String, Object> snapshot = jdbcTemplate.queryForMap("""
-                SELECT payload #>> '{schemaVersion}' AS schema_version,
-                       payload #>> '{payload,guideEvidence,facts,0,statement}' AS statement,
-                       jsonb_array_length(payload #> '{payload,guideEvidence,facts}') AS fact_count,
-                       (
-                         SELECT guide_evidence_snapshot #>> '{facts,0,statement}'
-                         FROM business.planning_task
-                         WHERE id = outbox_event.aggregate_id
-                       ) AS durable_statement
+                 SELECT payload #>> '{schemaVersion}' AS schema_version,
+                        payload #>> '{payload,guideEvidence,facts,0,statement}' AS statement,
+                        jsonb_array_length(payload #> '{payload,guideEvidence,facts}') AS fact_count,
+                        payload #>> '{payload,planningContext,schemaVersion}'
+                            AS context_schema_version,
+                        payload #>> '{payload,planningContext,facts,0,statement}'
+                            AS context_statement,
+                        (
+                          SELECT guide_evidence_snapshot #>> '{facts,0,statement}'
+                          FROM business.planning_task
+                          WHERE id = outbox_event.aggregate_id
+                        ) AS durable_statement,
+                        (
+                          SELECT facts #>> '{0,statement}'
+                          FROM business.planning_context_snapshot
+                          WHERE planning_task_id = outbox_event.aggregate_id
+                        ) AS durable_context_statement
                 FROM business.outbox_event
                 WHERE event_type = 'PLANNING_CREATE_REQUESTED'
                 """);
-        assertThat(snapshot.get("schema_version")).isEqualTo("2");
+        assertThat(snapshot.get("schema_version")).isEqualTo("3");
+        assertThat(snapshot.get("context_schema_version")).isEqualTo("3");
         assertThat(snapshot.get("statement")).isEqualTo("新鲜事实");
+        assertThat(snapshot.get("context_statement")).isEqualTo("新鲜事实");
         assertThat(snapshot.get("fact_count")).isEqualTo(1);
         assertThat(snapshot.get("durable_statement")).isEqualTo(snapshot.get("statement"));
+        assertThat(snapshot.get("durable_context_statement"))
+                .isEqualTo(snapshot.get("context_statement"));
 
         jdbcTemplate.update(
                 "UPDATE business.guide_fact SET statement = 'changed after task' "
@@ -372,10 +385,58 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                         + "WHERE event_type = 'PLANNING_CREATE_REQUESTED'"
         );
         String retainedStatement = jdbcTemplate.queryForObject("""
-                SELECT guide_evidence_snapshot #>> '{facts,0,statement}'
-                FROM business.planning_task
+                SELECT facts #>> '{0,statement}'
+                FROM business.planning_context_snapshot
                 """, String.class);
         assertThat(retainedStatement).isEqualTo(snapshot.get("statement"));
+    }
+
+    @Test
+    void planningPreflightRequeuesFailedCityIntelligenceAndFreezesStaleFallback()
+            throws Exception {
+        String accessToken = registerAndGetAccessToken("planning-refresh@example.com");
+        UUID tripId = UUID.fromString(createTrip(accessToken));
+        jdbcTemplate.update("""
+                UPDATE business.city_intelligence_refresh
+                SET status = 'FAILED', completed_at = CURRENT_TIMESTAMP,
+                    error_code = 'CITY_INTELLIGENCE_PROVIDER_FAILED',
+                    error_message = 'provider unavailable'
+                WHERE trip_id = ?
+                """, tripId);
+
+        createPlanningTask(accessToken, tripId.toString(), UUID.randomUUID())
+                .andExpect(status().isAccepted());
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM business.city_intelligence_refresh
+                WHERE trip_id = ?
+                """, Integer.class, tripId)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT stale FROM business.planning_context_snapshot
+                WHERE trip_id = ?
+                """, Boolean.class, tripId)).isTrue();
+    }
+
+    @Test
+    void planningPreflightRefreshesACompletedSnapshotWhenRequiredFactsAreMissing()
+            throws Exception {
+        String accessToken = registerAndGetAccessToken(
+                "planning-missing-facts@example.com"
+        );
+        UUID tripId = UUID.fromString(createTrip(accessToken));
+        jdbcTemplate.update("""
+                UPDATE business.city_intelligence_refresh
+                SET status = 'SUCCEEDED', completed_at = CURRENT_TIMESTAMP
+                WHERE trip_id = ?
+                """, tripId);
+
+        createPlanningTask(accessToken, tripId.toString(), UUID.randomUUID())
+                .andExpect(status().isAccepted());
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM business.city_intelligence_refresh
+                WHERE trip_id = ?
+                """, Integer.class, tripId)).isEqualTo(2);
     }
 
     private void insertGuideImport(UUID id, UUID tripId, String suffix, boolean enabled) {
@@ -462,6 +523,15 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
 
     private int count(String table) {
         Integer count = jdbcTemplate.queryForObject("SELECT count(*) FROM " + table, Integer.class);
+        return count == null ? 0 : count;
+    }
+
+    private int countPlanningOutbox() {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM business.outbox_event"
+                        + " WHERE aggregate_type = 'PLANNING_TASK'",
+                Integer.class
+        );
         return count == null ? 0 : count;
     }
 

@@ -68,6 +68,7 @@ services:
       REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE:-true}
       AGENT_SERVICE_BASE_URL: http://agent-api:8090
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-${JWT_SECRET:?JWT_SECRET is required}}
+      CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT: ${CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT:-PT2S}
     depends_on:
       postgres:
         condition: service_healthy
@@ -119,6 +120,14 @@ services:
         condition: service_healthy
       knowledge-init:
         condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          tr '\0' ' ' </proc/1/cmdline | grep -q trip-agent-worker
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   agent-api:
     image: trip-pilot-agent-service:${IMAGE_TAG:-local}
@@ -193,6 +202,11 @@ services:
     depends_on:
       travel-server:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/ | grep -q '<div id=\"app\"></div>'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   prometheus:
     image: prom/prometheus:v3.5.0

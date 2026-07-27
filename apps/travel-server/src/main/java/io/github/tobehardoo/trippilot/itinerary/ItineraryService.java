@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.planning.PlanningEventRejectedException;
+import io.github.tobehardoo.trippilot.planning.PlanningFactImpactMapper;
 import io.github.tobehardoo.trippilot.planning.PlanningTaskCompletionRecord;
 import io.github.tobehardoo.trippilot.planning.PlanningTaskService;
 import org.springframework.context.annotation.Lazy;
@@ -40,22 +41,33 @@ public class ItineraryService {
     private final ItineraryVersionPersister versionPersister;
     private final ObjectMapper objectMapper;
     private final PlanningTaskService planningTaskService;
+    private final PlanningFactImpactMapper factImpactMapper;
 
     public ItineraryService(
             ItineraryMapper itineraryMapper,
             ItineraryVersionPersister versionPersister,
             ObjectMapper objectMapper,
-            @Lazy PlanningTaskService planningTaskService
+            @Lazy PlanningTaskService planningTaskService,
+            PlanningFactImpactMapper factImpactMapper
     ) {
         this.itineraryMapper = itineraryMapper;
         this.versionPersister = versionPersister;
         this.objectMapper = objectMapper;
         this.planningTaskService = planningTaskService;
+        this.factImpactMapper = factImpactMapper;
     }
 
     @Transactional(readOnly = true)
     public ItineraryResponse getCurrent(UUID ownerId, UUID tripId) {
         ItineraryMapper.CurrentVersion version = itineraryMapper.findCurrentVersionOwned(tripId, ownerId)
+                .orElseThrow(this::itineraryNotFound);
+        return toItineraryResponse(version);
+    }
+
+    @Transactional(readOnly = true)
+    public ItineraryResponse getVersion(UUID ownerId, UUID tripId, UUID versionId) {
+        ItineraryMapper.CurrentVersion version = itineraryMapper
+                .findVersionOwned(tripId, versionId, ownerId)
                 .orElseThrow(this::itineraryNotFound);
         return toItineraryResponse(version);
     }
@@ -124,7 +136,19 @@ public class ItineraryService {
         return new ItineraryResponse(
                 version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
                 version.estimatedTotalCost(), version.provider(), days,
-                toKnowledgeResponse(version.id()), version.createdAt()
+                toKnowledgeResponse(version.id()),
+                factImpactMapper.findByVersion(version.id()).stream()
+                        .map(impact -> new FactImpactResponse(
+                                impact.factId(), impact.category(),
+                                impact.applicableDate(), impact.effect(),
+                                impact.targetPoiId(), impact.targetName(), impact.reason(),
+                                impact.sourceName(), impact.sourceType(),
+                                impact.sourceUrl(), impact.reliabilityLevel(),
+                                impact.checkedAt(), impact.evidence(), impact.stale(),
+                                impact.conflicted(), impact.refreshFailed()
+                        ))
+                        .toList(),
+                version.createdAt(), version.rollbackFromVersionId()
         );
     }
 
@@ -364,6 +388,7 @@ public class ItineraryService {
                 sourceVersion.provider(), sourceVersion.constraintSnapshotJson(), Instant.now()
         )), "itinerary edit version");
         versionPersister.copyKnowledge(sourceVersion.versionId(), versionId, "itinerary edit knowledge");
+        factImpactMapper.copyToVersion(sourceVersion.versionId(), versionId);
 
         for (int dayIndex = 0; dayIndex < itinerary.days().size(); dayIndex++) {
             EditableDay day = itinerary.days().get(dayIndex);
@@ -508,7 +533,29 @@ public class ItineraryService {
             String provider,
             List<DayResponse> days,
             KnowledgeResponse knowledge,
-            Instant createdAt
+            List<FactImpactResponse> factImpacts,
+            Instant createdAt,
+            UUID rollbackFromVersionId
+    ) {
+    }
+
+    public record FactImpactResponse(
+            String factId,
+            String category,
+            LocalDate date,
+            String effect,
+            String targetPoiId,
+            String targetName,
+            String reason,
+            String sourceName,
+            String sourceType,
+            String sourceUrl,
+            String reliabilityLevel,
+            Instant checkedAt,
+            String evidence,
+            boolean stale,
+            boolean conflicted,
+            boolean refreshFailed
     ) {
     }
 
@@ -852,6 +899,7 @@ public class ItineraryService {
         );
         versionPersister.copyKnowledge(
                 source.id(), versionId, "local replan knowledge");
+        factImpactMapper.copyToVersion(source.id(), versionId);
 
         for (ItineraryMapper.StoredDay sourceDay : sourceDays) {
             PlanningCompletedEvent.Day resultDay =

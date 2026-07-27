@@ -201,6 +201,34 @@ public interface GuideImportMapper {
     List<TrustedFactRecord> findTrustedFacts(UUID guideImportId);
 
     @Select("""
+            SELECT trusted_fact.guide_import_id, trusted_fact.fact_id,
+                   trusted_fact.document_id, trusted_fact.city, trusted_fact.category,
+                   trusted_fact.statement,
+                   trusted_fact.normalized_value::text AS normalized_value_json,
+                   trusted_fact.evidence, trusted_fact.evidence_start,
+                   trusted_fact.evidence_end, trusted_fact.confidence,
+                   trusted_fact.effective_date, trusted_fact.checked_at,
+                   trusted_fact.expires_at, trusted_fact.source_type,
+                   trusted_fact.source_name, trusted_fact.source_url,
+                   trusted_fact.reliability_level, trusted_fact.source_reviewed,
+                   trusted_fact.hard_constraint_eligible
+            FROM business.trusted_fact
+            JOIN business.guide_import
+              ON guide_import.id = trusted_fact.guide_import_id
+            JOIN business.trip ON trip.id = guide_import.trip_id
+            WHERE guide_import.trip_id = #{tripId}
+              AND trip.owner_id = #{ownerId}
+              AND guide_import.enabled = TRUE
+              AND trusted_fact.active = TRUE
+            ORDER BY trusted_fact.checked_at DESC, trusted_fact.fact_id
+            LIMIT 200
+            """)
+    List<TrustedFactRecord> findActivePlanningTrustedFacts(
+            @Param("tripId") UUID tripId,
+            @Param("ownerId") UUID ownerId
+    );
+
+    @Select("""
             SELECT id, guide_import_id, selected_fact_id,
                    conflict_fact_ids::text AS conflict_fact_ids_json,
                    downgraded_fact_ids::text AS downgraded_fact_ids_json,
@@ -210,6 +238,30 @@ public interface GuideImportMapper {
             ORDER BY created_at, id
             """)
     List<FactMergeDecisionRecord> findFactMergeDecisions(UUID guideImportId);
+
+    @Select("""
+            SELECT fact_merge_decision.id, fact_merge_decision.guide_import_id,
+                   fact_merge_decision.selected_fact_id,
+                   fact_merge_decision.conflict_fact_ids::text
+                       AS conflict_fact_ids_json,
+                   fact_merge_decision.downgraded_fact_ids::text
+                       AS downgraded_fact_ids_json,
+                   fact_merge_decision.decision_reason,
+                   fact_merge_decision.needs_manual_review
+            FROM business.fact_merge_decision
+            JOIN business.guide_import
+              ON guide_import.id = fact_merge_decision.guide_import_id
+            JOIN business.trip ON trip.id = guide_import.trip_id
+            WHERE guide_import.trip_id = #{tripId}
+              AND trip.owner_id = #{ownerId}
+              AND guide_import.enabled = TRUE
+            ORDER BY fact_merge_decision.created_at, fact_merge_decision.id
+            LIMIT 200
+            """)
+    List<FactMergeDecisionRecord> findPlanningMergeDecisions(
+            @Param("tripId") UUID tripId,
+            @Param("ownerId") UUID ownerId
+    );
 
     @Select("""
             SELECT id, guide_import_id, category, statement,

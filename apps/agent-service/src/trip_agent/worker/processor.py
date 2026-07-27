@@ -6,6 +6,7 @@ live in ``infrastructure/``, domain protocols in ``domain/planning/``,
 and workflow composition in ``workflow/``.
 """
 
+from dataclasses import asdict
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -38,6 +39,7 @@ from trip_agent.infrastructure.demo.knowledge_provider import (
     DemoKnowledgeEvidenceProvider,  # noqa: F811
 )
 from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider  # noqa: F811
+from trip_agent.planning.trusted_context import planning_fact_impacts
 from trip_agent.worker.contracts import (
     KnowledgeCitationSnapshot,
     KnowledgeEvidence,
@@ -46,6 +48,7 @@ from trip_agent.worker.contracts import (
     PlanningCompletedPayload,
     PlanningConflict,
     PlanningCreateCommand,
+    PlanningFactImpact,
     PlanningFailedEvent,
     PlanningFailedPayload,
     PlanningRelaxation,
@@ -100,7 +103,7 @@ async def process_planning_create(
     )
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
-        schema_version=5,
+        schema_version=6,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -111,6 +114,7 @@ async def process_planning_create(
             provider=result.provider,
             itinerary=result.itinerary,
             knowledge=knowledge,
+            fact_impacts=_fact_impacts(effective_command, result),
         ),
     )
 
@@ -125,7 +129,7 @@ async def process_planning_replan(
     result = await provider.replan(command)
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
-        schema_version=5,
+        schema_version=6,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -136,6 +140,7 @@ async def process_planning_replan(
             provider=result.provider,
             itinerary=result.itinerary,
             knowledge=command.payload.knowledge,
+            fact_impacts=(),
         ),
     )
 
@@ -250,4 +255,22 @@ def _merge_guide_evidence(
         query=knowledge.query,
         citations=citations,
         freshness=freshness,
+    )
+
+
+def _fact_impacts(
+    command: PlanningCreateCommand,
+    result: PlanningResult,
+) -> tuple[PlanningFactImpact, ...]:
+    context = command.payload.planning_context
+    if context is None:
+        return ()
+    scheduled = tuple(
+        (day.date, activity.title)
+        for day in result.itinerary.days
+        for activity in day.activities
+    )
+    return tuple(
+        PlanningFactImpact.model_validate(asdict(impact))
+        for impact in planning_fact_impacts(context, scheduled)
     )

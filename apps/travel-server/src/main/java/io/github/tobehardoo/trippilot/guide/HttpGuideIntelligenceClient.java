@@ -33,6 +33,15 @@ public class HttpGuideIntelligenceClient implements GuideIntelligenceClient {
 
     @Override
     public FetchedGuide fetch(GuideImportRequest request) {
+        return post(request);
+    }
+
+    @Override
+    public FetchedGuide fetchRegisteredSource(RegisteredSourceRequest request) {
+        return post(request);
+    }
+
+    private FetchedGuide post(Object request) {
         try {
             FetchedGuide response = restClient.post()
                     .uri("/internal/v1/guide-imports")

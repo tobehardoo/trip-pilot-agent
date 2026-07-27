@@ -49,6 +49,17 @@ curl http://127.0.0.1:8080/api/health
 
 `knowledge-init` 容器在 Worker 启动前自动执行数据库迁移和广州语料导入。
 
+Windows 的动态/系统保留端口段可能覆盖 RabbitMQ 默认宿主机端口。若 `5672` 或 `15672`
+不可绑定，可只调整宿主机映射后启动：
+
+```powershell
+$env:RABBITMQ_PORT='6672'
+$env:RABBITMQ_MANAGEMENT_PORT='16672'
+docker compose -f compose.yaml -f compose.prod.yaml up -d
+```
+
+容器间仍使用 `rabbitmq:5672`，无需修改服务连接配置。
+
 ### 环境变量要点
 
 | 变量 | 说明 |
@@ -61,6 +72,7 @@ curl http://127.0.0.1:8080/api/health
 | `STRUCTURED_MODEL_ENDPOINT` | 可选的 HTTPS 结构化输出端点；留空时规则抽取继续运行 |
 | `STRUCTURED_MODEL_API_KEY` | 仅注入 Agent API 的模型密钥，不进入 Web 或日志 |
 | `STRUCTURED_MODEL_NAME` | 模型 Provider 上支持严格 JSON Schema 的模型名 |
+| `CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT` | 规划前等待必要情报刷新的上限，默认 `PT2S` |
 | `DEMO_MODE` | `true` 时不依赖高德 Key，使用 Demo Provider |
 | `REFRESH_COOKIE_SECURE` | 生产 HTTPS 环境必须为 `true`；本机 HTTP 可设 `false` |
 

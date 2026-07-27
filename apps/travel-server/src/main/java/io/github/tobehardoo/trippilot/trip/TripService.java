@@ -8,6 +8,7 @@ import java.util.UUID;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.tobehardoo.trippilot.cityintelligence.CityIntelligencePrewarmService;
 import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.trip.TripRequests.ConstraintInput;
 import io.github.tobehardoo.trippilot.trip.TripRequests.CreateTripRequest;
@@ -30,15 +31,18 @@ public class TripService {
     private final TripMapper tripMapper;
     private final ObjectMapper objectMapper;
     private final TripConstraintValidator validator;
+    private final CityIntelligencePrewarmService cityIntelligencePrewarmService;
 
     public TripService(
             TripMapper tripMapper,
             ObjectMapper objectMapper,
-            TripConstraintValidator validator
+            TripConstraintValidator validator,
+            CityIntelligencePrewarmService cityIntelligencePrewarmService
     ) {
         this.tripMapper = tripMapper;
         this.objectMapper = objectMapper;
         this.validator = validator;
+        this.cityIntelligencePrewarmService = cityIntelligencePrewarmService;
     }
 
     @Transactional
@@ -53,6 +57,12 @@ public class TripService {
         );
         tripMapper.insertTrip(trip);
         tripMapper.insertConstraint(toRecord(tripId, request.constraints()));
+        cityIntelligencePrewarmService.request(
+                tripId,
+                trip.destination(),
+                trip.startDate(),
+                trip.endDate()
+        );
         return get(ownerId, tripId);
     }
 

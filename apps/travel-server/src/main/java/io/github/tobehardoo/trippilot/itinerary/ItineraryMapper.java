@@ -114,7 +114,8 @@ public interface ItineraryMapper {
             SELECT itinerary_version.id, itinerary_version.version_number,
                    itinerary_version.parent_version_id, itinerary_version.title,
                    itinerary_version.estimated_total_cost, itinerary_version.provider,
-                   itinerary_version.created_at
+                   itinerary_version.created_at,
+                   itinerary_version.rollback_from_version_id
             FROM business.itinerary
             JOIN business.trip ON trip.id = itinerary.trip_id
             JOIN business.itinerary_version
@@ -123,6 +124,26 @@ public interface ItineraryMapper {
             """)
     Optional<CurrentVersion> findCurrentVersionOwned(
             @Param("tripId") UUID tripId, @Param("ownerId") UUID ownerId
+    );
+
+    @Select("""
+            SELECT itinerary_version.id, itinerary_version.version_number,
+                   itinerary_version.parent_version_id, itinerary_version.title,
+                   itinerary_version.estimated_total_cost, itinerary_version.provider,
+                   itinerary_version.created_at,
+                   itinerary_version.rollback_from_version_id
+            FROM business.itinerary_version
+            JOIN business.itinerary
+              ON itinerary.id = itinerary_version.itinerary_id
+            JOIN business.trip ON trip.id = itinerary.trip_id
+            WHERE itinerary.trip_id = #{tripId}
+              AND itinerary_version.id = #{versionId}
+              AND trip.owner_id = #{ownerId}
+            """)
+    Optional<CurrentVersion> findVersionOwned(
+            @Param("tripId") UUID tripId,
+            @Param("versionId") UUID versionId,
+            @Param("ownerId") UUID ownerId
     );
 
     @Select("""
@@ -340,7 +361,8 @@ public interface ItineraryMapper {
             String title,
             BigDecimal estimatedTotalCost,
             String provider,
-            Instant createdAt
+            Instant createdAt,
+            UUID rollbackFromVersionId
     ) {
     }
 

@@ -3,6 +3,7 @@ package io.github.tobehardoo.trippilot.infrastructure.mq;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
+import java.util.List;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -67,6 +68,7 @@ public class PlanningCompletedEventParser {
             throw invalid("payload field types do not match the JSON Schema");
         }
         validateKnowledgeTypes(payload, schemaVersion);
+        validateFactImpactTypes(payload, schemaVersion);
         for (JsonNode day : days) {
             JsonNode activities = day.path("activities");
             if (!day.isObject() || !day.path("date").isTextual() || !activities.isArray()) {
@@ -83,6 +85,43 @@ public class PlanningCompletedEventParser {
                 validateActivityMetadataTypes(activity);
             }
             validateTransitLegTypes(day, schemaVersion);
+        }
+    }
+
+    private void validateFactImpactTypes(JsonNode payload, int schemaVersion) {
+        if (schemaVersion < 6) {
+            if (payload.has("factImpacts")) {
+                throw invalid("fact impacts are only supported in schema v6");
+            }
+            return;
+        }
+        JsonNode impacts = payload.path("factImpacts");
+        if (!impacts.isArray() || impacts.size() > 500) {
+            throw invalid("v6 factImpacts must be a bounded array");
+        }
+        for (JsonNode impact : impacts) {
+            if (!impact.isObject()
+                    || !impact.path("factId").isTextual()
+                    || !impact.path("category").isTextual()
+                    || !impact.path("effect").isTextual()
+                    || !impact.path("reason").isTextual()
+                    || !impact.path("sourceName").isTextual()
+                    || !impact.path("sourceType").isTextual()
+                    || !impact.path("reliabilityLevel").isTextual()
+                    || !impact.path("checkedAt").isTextual()
+                    || !impact.path("evidence").isTextual()
+                    || !impact.path("stale").isBoolean()
+                    || !impact.path("conflicted").isBoolean()
+                    || !impact.path("refreshFailed").isBoolean()
+                    || impact.has("date") && !impact.path("date").isTextual()
+                    || impact.has("targetPoiId")
+                        && !impact.path("targetPoiId").isTextual()
+                    || impact.has("targetName")
+                        && !impact.path("targetName").isTextual()
+                    || impact.has("sourceUrl")
+                        && !impact.path("sourceUrl").isTextual()) {
+                throw invalid("fact impact field types do not match the JSON Schema");
+            }
         }
     }
 
@@ -180,7 +219,8 @@ public class PlanningCompletedEventParser {
                 && event.schemaVersion() != 2
                 && event.schemaVersion() != 3
                 && event.schemaVersion() != 4
-                && event.schemaVersion() != 5)) {
+                && event.schemaVersion() != 5
+                && event.schemaVersion() != 6)) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (event.eventId() == null || event.traceId() == null || event.taskId() == null
@@ -208,6 +248,43 @@ public class PlanningCompletedEventParser {
             validateDay(day, event.schemaVersion(), event.payload().provider());
         }
         validateKnowledge(event.schemaVersion(), event.payload().knowledge());
+        validateFactImpacts(event.schemaVersion(), event.payload().factImpacts());
+    }
+
+    private void validateFactImpacts(
+            int schemaVersion,
+            List<PlanningCompletedEvent.FactImpact> impacts
+    ) {
+        if (schemaVersion < 6) {
+            if (!impacts.isEmpty()) {
+                throw invalid("older schemas must not contain fact impacts");
+            }
+            return;
+        }
+        if (impacts.size() > 500) {
+            throw invalid("fact impacts exceed the supported limit");
+        }
+        for (PlanningCompletedEvent.FactImpact impact : impacts) {
+            if (impact == null
+                    || !validText(impact.factId(), 80)
+                    || !validText(impact.category(), 60)
+                    || !validText(impact.effect(), 60)
+                    || !validText(impact.reason(), 300)
+                    || !validText(impact.sourceName(), 120)
+                    || !validText(impact.sourceType(), 60)
+                    || impact.sourceUrl() != null
+                        && !validHttpUrl(impact.sourceUrl())
+                    || !validText(impact.reliabilityLevel(), 60)
+                    || impact.checkedAt() == null
+                    || !validText(impact.evidence(), 2000)
+                    || impact.date() != null && schemaVersion < 6
+                    || impact.targetPoiId() != null
+                        && !validText(impact.targetPoiId(), 100)
+                    || impact.targetName() != null
+                        && !validText(impact.targetName(), 120)) {
+                throw invalid("fact impact is invalid");
+            }
+        }
     }
 
     private void validateKnowledge(int schemaVersion,

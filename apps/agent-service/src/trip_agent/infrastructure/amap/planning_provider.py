@@ -8,7 +8,6 @@ OR‑Tools for daily schedule optimisation.
 from datetime import date, datetime, time, timedelta
 from itertools import combinations
 from math import ceil
-from typing import TYPE_CHECKING
 
 from trip_agent.domain.planning.protocols import (
     PlanningInfeasibleError,
@@ -38,6 +37,7 @@ from trip_agent.planning.optimization import (
     RelaxationSuggestion,
     TimeBlock,
 )
+from trip_agent.planning.trusted_context import hard_closed_fact
 from trip_agent.providers._demo_route import DemoRouteProvider
 from trip_agent.providers.map import (
     MapProvider,
@@ -56,9 +56,6 @@ from trip_agent.worker.contracts import (
     PlanningReplanCommand,
     TransitLeg,
 )
-
-if TYPE_CHECKING:
-    pass  # All runtime types are imported above.
 
 
 def _non_weather_guide_statements(
@@ -273,8 +270,15 @@ class AmapPlanningProvider:
                     return None
                 return list(days), selected
             ranked_remaining = remaining
+            trip_date = trip.start_date + timedelta(days=offset)
+            context = command.payload.planning_context
+            if context is not None:
+                ranked_remaining = tuple(
+                    poi
+                    for poi in ranked_remaining
+                    if hard_closed_fact(context, trip_date, poi.name) is None
+                )
             if use_guide_evidence:
-                trip_date = trip.start_date + timedelta(days=offset)
                 ranking = self._candidate_ranker.rank(
                     remaining,
                     destination=trip.destination,

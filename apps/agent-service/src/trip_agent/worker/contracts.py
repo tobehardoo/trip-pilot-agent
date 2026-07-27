@@ -1,5 +1,8 @@
 """Typed message contracts for the planning worker."""
 
+from __future__ import annotations
+
+import datetime as dt
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal, Self
@@ -10,6 +13,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     PlainSerializer,
     StringConstraints,
     field_validator,
@@ -215,6 +219,149 @@ class GuideEvidenceSnapshot(InboundMessageModel):
     facts: tuple[GuideFactEvidence, ...] = Field(default=(), max_length=100)
 
 
+class PlanningContextSource(InboundMessageModel):
+    source_name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
+    ]
+    source_type: ShortText
+    source_url: AnyHttpUrl | None = None
+    reliability_level: ShortText
+
+
+class PlanningContextFact(InboundMessageModel):
+    fact_id: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+    ]
+    category: Literal[
+        "ADDRESS",
+        "COORDINATES",
+        "OPENING_HOURS",
+        "TEMPORARY_CLOSURE",
+        "TICKET_PRICE",
+        "REFERENCE_SPEND",
+        "RESERVATION_REQUIREMENT",
+        "RESERVATION_ENTRY",
+        "TRANSPORT_ADVICE",
+        "WEATHER",
+        "VENUE_ENVIRONMENT",
+        "ATTRACTION_IDENTITY",
+        "ATTRACTION",
+        "DINING",
+        "TRANSPORT",
+        "TIMING",
+        "COST",
+        "QUEUE",
+        "RESERVATION",
+        "LOCATION",
+        "TIP",
+    ]
+    statement: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)
+    ]
+    normalized_value: dict[str, JsonValue] | None = None
+    evidence: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)
+    ]
+    effective_date: date | None = None
+    checked_at: datetime
+    expires_at: datetime
+    stale: bool
+    source_name: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)
+    ]
+    source_type: ShortText
+    source_url: AnyHttpUrl | None = None
+    reliability_level: ShortText
+    source_reviewed: bool
+    hard_constraint_eligible: bool
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> Self:
+        if self.checked_at.utcoffset() is None or self.expires_at.utcoffset() is None:
+            raise ValueError("planning fact timestamps must include a timezone")
+        if self.expires_at <= self.checked_at:
+            raise ValueError("planning fact expiresAt must be after checkedAt")
+        if self.stale and self.hard_constraint_eligible:
+            raise ValueError("stale planning facts cannot form hard constraints")
+        if self.hard_constraint_eligible and (
+            not self.source_reviewed
+            or self.reliability_level
+            not in {"OFFICIAL_ATTRACTION", "OFFICIAL_TOURISM"}
+        ):
+            raise ValueError("hard constraints require a reviewed official source")
+        return self
+
+
+class PlanningContextConflict(InboundMessageModel):
+    selected_fact_id: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+    ]
+    conflict_fact_ids: tuple[str, ...] = Field(default=(), max_length=100)
+    downgraded_fact_ids: tuple[str, ...] = Field(default=(), max_length=100)
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1_000)
+    ]
+    needs_manual_review: bool
+
+
+class PlanningContextExcludedFact(InboundMessageModel):
+    fact_id: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+    ]
+    category: ShortText
+    statement: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)
+    ]
+    reason: ShortText
+
+
+class PlanningContextDiagnostic(InboundMessageModel):
+    code: Annotated[
+        str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+    ] = None
+    message: Annotated[
+        str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)
+    ] = None
+    refresh_status: Literal["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED"] | None = None
+
+
+class PlanningContextSnapshot(InboundMessageModel):
+    snapshot_id: UUID
+    schema_version: Literal[3]
+    trip_id: UUID
+    planning_task_id: UUID
+    city: NameText
+    travel_start_date: date
+    travel_end_date: date
+    generated_at: datetime
+    stale: bool
+    sources: tuple[PlanningContextSource, ...] = Field(default=(), max_length=100)
+    facts: tuple[PlanningContextFact, ...] = Field(default=(), max_length=200)
+    conflicts: tuple[PlanningContextConflict, ...] = Field(default=(), max_length=200)
+    excluded_facts: tuple[PlanningContextExcludedFact, ...] = Field(
+        default=(), max_length=200
+    )
+    diagnostics: tuple[PlanningContextDiagnostic, ...] = Field(default=(), max_length=50)
+
+    @model_validator(mode="after")
+    def validate_snapshot(self) -> Self:
+        if self.generated_at.utcoffset() is None:
+            raise ValueError("planning context generatedAt must include a timezone")
+        if self.travel_end_date < self.travel_start_date:
+            raise ValueError("planning context dates are invalid")
+        if any(
+            fact.effective_date is not None
+            and not self.travel_start_date
+            <= fact.effective_date
+            <= self.travel_end_date
+            for fact in self.facts
+        ):
+            raise ValueError("planning facts must apply to the trip date range")
+        if any(fact.stale for fact in self.facts) and not self.stale:
+            raise ValueError("a context containing stale facts must be stale")
+        return self
+
+
 class TripSnapshot(InboundMessageModel):
     title: NameText
     destination: NameText
@@ -255,6 +402,7 @@ class PlanningCreatePayload(InboundMessageModel):
     idempotency_key: UUID
     trip: TripSnapshot
     guide_evidence: GuideEvidenceSnapshot = GuideEvidenceSnapshot()
+    planning_context: PlanningContextSnapshot | None = None
 
     @model_validator(mode="after")
     def validate_baseline_version(self) -> Self:
@@ -265,7 +413,7 @@ class PlanningCreatePayload(InboundMessageModel):
 
 class PlanningCreateCommand(InboundMessageModel):
     event_type: Literal["PLANNING_CREATE_REQUESTED"]
-    schema_version: Literal[1, 2]
+    schema_version: Literal[1, 2, 3]
     event_id: UUID
     trace_id: UUID
     task_id: UUID
@@ -278,8 +426,8 @@ class PlanningCreateCommand(InboundMessageModel):
         if self.occurred_at.utcoffset() is None:
             raise ValueError("occurredAt must include a timezone")
         constraints = self.payload.trip.constraints
-        if constraints.schema_version != self.schema_version:
-            raise ValueError("command and constraint schemaVersion must match")
+        if constraints.schema_version != min(self.schema_version, 2):
+            raise ValueError("command and constraint schemaVersion are incompatible")
         if self.schema_version == 1 and (
             constraints.arrival is not None
             or constraints.departure is not None
@@ -296,6 +444,22 @@ class PlanningCreateCommand(InboundMessageModel):
             for fact in self.payload.guide_evidence.facts
         ):
             raise ValueError("guide evidence must be fresh at command occurredAt")
+        context = self.payload.planning_context
+        if self.schema_version < 3 and context is not None:
+            raise ValueError("planning context requires schemaVersion 3")
+        if self.schema_version == 3:
+            if context is None:
+                raise ValueError("schemaVersion 3 requires a planning context")
+            if (
+                context.trip_id != self.trip_id
+                or context.planning_task_id != self.task_id
+                or context.city != self.payload.trip.destination
+                or context.travel_start_date != self.payload.trip.start_date
+                or context.travel_end_date != self.payload.trip.end_date
+            ):
+                raise ValueError("planning context identity must match the command")
+            if context.generated_at > self.occurred_at:
+                raise ValueError("planning context cannot be generated after the command")
         return self
 
 
@@ -537,10 +701,40 @@ class PlanningReplanCommand(InboundMessageModel):
         return self
 
 
+class PlanningFactImpact(MessageModel):
+    fact_id: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
+    ]
+    category: ShortText
+    date: dt.date | None = None
+    effect: ShortText
+    target_poi_id: ProviderPoiId | None = None
+    target_name: NameText | None = None
+    reason: KnowledgeMessage
+    source_name: NameText
+    source_type: ShortText
+    source_url: AnyHttpUrl | None = None
+    reliability_level: ShortText
+    checked_at: datetime
+    evidence: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)
+    ]
+    stale: bool
+    conflicted: bool
+    refresh_failed: bool
+
+    @model_validator(mode="after")
+    def validate_checked_at(self) -> Self:
+        if self.checked_at.utcoffset() is None:
+            raise ValueError("fact impact checkedAt must include a timezone")
+        return self
+
+
 class PlanningCompletedPayload(MessageModel):
     provider: Literal["AMAP", "DEMO"]
     itinerary: Itinerary
     knowledge: KnowledgeEvidence
+    fact_impacts: tuple[PlanningFactImpact, ...] = Field(default=(), max_length=500)
 
     @model_validator(mode="after")
     def validate_activity_sources(self) -> Self:
@@ -555,7 +749,7 @@ class PlanningCompletedPayload(MessageModel):
 
 class PlanningCompletedEvent(MessageModel):
     event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[5]
+    schema_version: Literal[6]
     event_id: UUID
     trace_id: UUID
     task_id: UUID

@@ -18,6 +18,8 @@ type GuideSourceType = Literal[
     "TEXT_FILE",
     "XIAOHONGSHU_SHARED_TEXT",
     "CITY_INTELLIGENCE",
+    "OFFICIAL_TOURISM",
+    "OFFICIAL_ATTRACTION",
 ]
 
 type FactCategory = Literal[

@@ -43,6 +43,14 @@ public interface TripMapper {
     Optional<TripRecord> findOwnedById(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
 
     @Select("""
+            SELECT id, owner_id, title, destination, start_date, end_date, status, version,
+                   created_at, updated_at
+            FROM business.trip
+            WHERE id = #{id}
+            """)
+    Optional<TripRecord> findById(UUID id);
+
+    @Select("""
             SELECT trip.id, trip.owner_id, trip.title, trip.destination,
                    trip.start_date, trip.end_date, trip.status, trip.version,
                    trip.created_at, trip.updated_at,

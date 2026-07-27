@@ -11,17 +11,21 @@ import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.tobehardoo.trippilot.cityintelligence.CityIntelligencePlanningPreflightService;
 import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.guide.GuideImportService;
 import io.github.tobehardoo.trippilot.itinerary.ItineraryMapper;
 import io.github.tobehardoo.trippilot.itinerary.ItineraryService;
 import io.github.tobehardoo.trippilot.infrastructure.mq.OutboxEventRecord;
 import io.github.tobehardoo.trippilot.infrastructure.mq.OutboxMapper;
+import io.github.tobehardoo.trippilot.planning.PlanningContextSnapshotService.PlanningContextSnapshot;
 import io.github.tobehardoo.trippilot.trip.TripService;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class PlanningTaskService {
@@ -43,9 +47,12 @@ public class PlanningTaskService {
     private final PlanningTaskEventMapper planningTaskEventMapper;
     private final OutboxMapper outboxMapper;
     private final TripService tripService;
+    private final CityIntelligencePlanningPreflightService cityIntelligencePlanningPreflightService;
     private final GuideImportService guideImportService;
+    private final PlanningContextSnapshotService planningContextSnapshotService;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
     public PlanningTaskService(PlanningTaskMapper planningTaskMapper,
                                ItineraryMapper itineraryMapper,
@@ -53,36 +60,63 @@ public class PlanningTaskService {
                                PlanningTaskEventMapper planningTaskEventMapper,
                                OutboxMapper outboxMapper,
                                TripService tripService,
+                               CityIntelligencePlanningPreflightService
+                                       cityIntelligencePlanningPreflightService,
                                GuideImportService guideImportService,
+                               PlanningContextSnapshotService planningContextSnapshotService,
                                ObjectMapper objectMapper,
-                               ApplicationEventPublisher eventPublisher) {
+                               ApplicationEventPublisher eventPublisher,
+                               PlatformTransactionManager transactionManager) {
         this.planningTaskMapper = planningTaskMapper;
         this.itineraryMapper = itineraryMapper;
         this.itineraryService = itineraryService;
         this.planningTaskEventMapper = planningTaskEventMapper;
         this.outboxMapper = outboxMapper;
         this.tripService = tripService;
+        this.cityIntelligencePlanningPreflightService =
+                cityIntelligencePlanningPreflightService;
         this.guideImportService = guideImportService;
+        this.planningContextSnapshotService = planningContextSnapshotService;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    @Transactional
     public PlanningTaskResponse create(UUID ownerId, UUID tripId, UUID idempotencyKey) {
-        TripService.TripResponse trip = tripService.get(ownerId, tripId);
         var existing = planningTaskMapper.findOwnedByIdempotencyKey(tripId, idempotencyKey, ownerId);
         if (existing.isPresent()) {
             PlanningTaskIdempotency.requireCreateMatch(existing.get());
             return toResponse(existing.get());
         }
-        if (ChronoUnit.DAYS.between(trip.startDate(), trip.endDate()) + 1 > MAX_TRIP_DAYS) {
-            throw new ApiException(
-                    HttpStatus.BAD_REQUEST,
-                    "TRIP_DURATION_UNSUPPORTED",
-                    "Planning supports trips up to 7 days; shorten the trip dates and retry"
-            );
-        }
+        TripService.TripResponse trip = tripService.get(ownerId, tripId);
+        validateTripDuration(trip);
+        cityIntelligencePlanningPreflightService.prepare(trip);
 
+        PlanningTaskResponse response = transactionTemplate.execute(
+                ignored -> createTransactional(ownerId, tripId, idempotencyKey)
+        );
+        if (response == null) {
+            throw new IllegalStateException("Planning transaction returned no response");
+        }
+        return response;
+    }
+
+    private PlanningTaskResponse createTransactional(
+            UUID ownerId,
+            UUID tripId,
+            UUID idempotencyKey
+    ) {
+        TripService.TripResponse trip = tripService.get(ownerId, tripId);
+        var existing = planningTaskMapper.findOwnedByIdempotencyKey(
+                tripId,
+                idempotencyKey,
+                ownerId
+        );
+        if (existing.isPresent()) {
+            PlanningTaskIdempotency.requireCreateMatch(existing.get());
+            return toResponse(existing.get());
+        }
+        validateTripDuration(trip);
         Instant now = Instant.now();
         itineraryMapper.findStateForUpdate(tripId);
         if (itineraryMapper.hasLockedItineraryElements(tripId)) {
@@ -114,6 +148,13 @@ public class PlanningTaskService {
                             "This trip already has an active planning task"
                     ));
         }
+        PlanningContextSnapshot planningContext = planningContextSnapshotService.freeze(
+                ownerId,
+                task.id(),
+                trip,
+                guideFacts,
+                now
+        );
 
         int insertedEventCount = planningTaskEventMapper.insert(new PlanningTaskEventRecord(
                 null, UUID.randomUUID(), task.id(), "PLANNING_QUEUED", 1,
@@ -125,7 +166,7 @@ public class PlanningTaskService {
 
         UUID eventId = UUID.randomUUID();
         PlanningCreateCommand command = new PlanningCreateCommand(
-                COMMAND_TYPE, 2, eventId, task.traceId(), task.id(), tripId, now,
+                COMMAND_TYPE, 3, eventId, task.traceId(), task.id(), tripId, now,
                 new PlanningCreatePayload(
                         CREATE_TASK_TYPE,
                         trip.version(),
@@ -134,7 +175,8 @@ public class PlanningTaskService {
                                 trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
                                 trip.status(), trip.version(), trip.constraints()
                         ),
-                        guideEvidenceSnapshot
+                        guideEvidenceSnapshot,
+                        planningContext
                 )
         );
         outboxMapper.insert(new OutboxEventRecord(
@@ -142,6 +184,16 @@ public class PlanningTaskService {
                 writeJson(command), "PENDING", 0, now, null, now, null
         ));
         return toResponse(task);
+    }
+
+    private void validateTripDuration(TripService.TripResponse trip) {
+        if (ChronoUnit.DAYS.between(trip.startDate(), trip.endDate()) + 1 > MAX_TRIP_DAYS) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "TRIP_DURATION_UNSUPPORTED",
+                    "Planning supports trips up to 7 days; shorten the trip dates and retry"
+            );
+        }
     }
 
     @Transactional
@@ -360,7 +412,8 @@ public class PlanningTaskService {
             int baselineTripVersion,
             UUID idempotencyKey,
             TripSnapshot trip,
-            GuideEvidenceSnapshot guideEvidence
+            GuideEvidenceSnapshot guideEvidence,
+            PlanningContextSnapshot planningContext
     ) {
     }
 

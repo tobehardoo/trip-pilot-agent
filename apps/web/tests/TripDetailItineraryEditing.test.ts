@@ -366,3 +366,52 @@ test('shows a visible error when the edit preview fails', async () => {
   expect(view.getByRole('dialog', { name: '确认行程修改' })).toBeTruthy()
   expect(view.getByRole('alert').textContent).toContain('无法预览本次修改')
 })
+
+test('explains stale conflicted facts with evidence and a safe source link', async () => {
+  const itineraryWithEvidence: Itinerary = {
+    ...itinerary,
+    factImpacts: [{
+      factId: 'fact-weather-1',
+      category: 'WEATHER',
+      date: '2026-08-01',
+      effect: 'OUTDOOR_POI_DOWNRANKED',
+      targetPoiId: null,
+      targetName: '广州塔',
+      reason: '对应日期预计降雨，露天候选降低优先级',
+      sourceName: '高德天气',
+      sourceType: 'WEATHER_PROVIDER',
+      sourceUrl: 'https://restapi.amap.com/',
+      reliabilityLevel: 'PROVIDER',
+      checkedAt: '2026-07-26T08:30:00Z',
+      evidence: '8 月 1 日预计有雨',
+      stale: true,
+      conflicted: true,
+      refreshFailed: true,
+    }],
+  }
+  const view = render(TripDetail, {
+    props: {
+      user,
+      trip,
+      busy: false,
+      error: null,
+      itinerary: itineraryWithEvidence,
+      itineraryBusy: false,
+      itineraryError: null,
+      planningState: 'idle',
+      planningError: null,
+      startPlanning: async () => {},
+      cancelPlanning: async () => {},
+      updateConstraints: async () => {},
+      reloadTrip: async () => true,
+    },
+  })
+
+  expect(view.getByText('1 条天气影响')).toBeTruthy()
+  expect(view.getByText('1 条有冲突')).toBeTruthy()
+  expect(view.getByText('1 条刷新失败降级')).toBeTruthy()
+  await fireEvent.click(view.getByText('查看来源与核验信息'))
+  expect(view.getByText('原句证据：8 月 1 日预计有雨')).toBeTruthy()
+  expect(view.getByRole('link', { name: '查看安全来源' }).getAttribute('href'))
+    .toBe('https://restapi.amap.com/')
+})

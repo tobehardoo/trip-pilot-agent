@@ -24,6 +24,7 @@ public class RabbitMessagingConfiguration {
     static final String PROGRESS_QUEUE = "planning.progress.queue";
     static final String COMPLETED_QUEUE = "planning.completed.queue";
     static final String FAILED_QUEUE = "planning.failed.queue";
+    static final String CITY_REFRESH_QUEUE = "city-intelligence.refresh.queue";
     static final String DEAD_LETTER_QUEUE = "planning.dead-letter.queue";
 
     @Bean
@@ -67,6 +68,14 @@ public class RabbitMessagingConfiguration {
     }
 
     @Bean
+    Queue cityIntelligenceRefreshQueue() {
+        return durableQueue(
+                CITY_REFRESH_QUEUE,
+                "city-intelligence.refresh.dead"
+        );
+    }
+
+    @Bean
     Queue planningDeadLetterQueue() {
         return QueueBuilder.durable(DEAD_LETTER_QUEUE).build();
     }
@@ -97,11 +106,31 @@ public class RabbitMessagingConfiguration {
     }
 
     @Bean
+    Binding cityIntelligenceRefreshBinding(
+            Queue cityIntelligenceRefreshQueue,
+            DirectExchange planningCommandExchange
+    ) {
+        return BindingBuilder.bind(cityIntelligenceRefreshQueue)
+                .to(planningCommandExchange)
+                .with("city-intelligence.refresh");
+    }
+
+    @Bean
     Binding planningDeadLetterBinding(Queue planningDeadLetterQueue,
                                       TopicExchange planningDeadLetterExchange) {
         return BindingBuilder.bind(planningDeadLetterQueue)
                 .to(planningDeadLetterExchange)
                 .with("planning.#");
+    }
+
+    @Bean
+    Binding cityIntelligenceDeadLetterBinding(
+            Queue planningDeadLetterQueue,
+            TopicExchange planningDeadLetterExchange
+    ) {
+        return BindingBuilder.bind(planningDeadLetterQueue)
+                .to(planningDeadLetterExchange)
+                .with("city-intelligence.#");
     }
 
     @Bean

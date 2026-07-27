@@ -100,6 +100,45 @@ class PlanningCompletedEventParserTest {
     }
 
     @Test
+    void parsesV6FactImpactsWithTraceableLifecycleFields() throws Exception {
+        ObjectNode event = amapV4Event();
+        event.put("schemaVersion", 6);
+        ArrayNode impacts = objectMapper.createArrayNode();
+        impacts.addObject()
+                .put("factId", "fact_0123456789abcdef0123456789abcdef")
+                .put("category", "WEATHER")
+                .put("date", "2026-08-01")
+                .put("effect", "OUTDOOR_POI_DOWNRANKED")
+                .put("targetName", "广州塔")
+                .put("reason", "对应日期预计降雨，露天候选降低优先级")
+                .put("sourceName", "高德天气")
+                .put("sourceType", "WEATHER_PROVIDER")
+                .put("sourceUrl", "https://restapi.amap.com/")
+                .put("reliabilityLevel", "PROVIDER")
+                .put("checkedAt", "2026-07-26T08:30:00Z")
+                .put("evidence", "8 月 1 日预计有雨")
+                .put("stale", false)
+                .put("conflicted", false)
+                .put("refreshFailed", false);
+        ((ObjectNode) event.path("payload")).set("factImpacts", impacts);
+
+        PlanningCompletedEvent parsed = parser.parse(
+                objectMapper.writeValueAsBytes(event)
+        );
+
+        assertThat(parsed.payload().factImpacts()).singleElement()
+                .satisfies(impact -> {
+                    assertThat(impact.category()).isEqualTo("WEATHER");
+                    assertThat(impact.date()).isEqualTo(
+                            java.time.LocalDate.of(2026, 8, 1)
+                    );
+                    assertThat(impact.stale()).isFalse();
+                    assertThat(impact.evidence()).contains("预计有雨");
+                    assertThat(impact.sourceUrl()).startsWith("https://");
+                });
+    }
+
+    @Test
     void rejectsV3TransitLegsThatDoNotConnectEveryAdjacentActivity() throws Exception {
         ObjectNode wrongIndex = amapV3Event();
         ((ObjectNode) wrongIndex.at(

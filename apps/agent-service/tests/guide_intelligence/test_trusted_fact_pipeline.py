@@ -114,9 +114,17 @@ def test_rule_extractor_emits_normalized_candidates_with_exact_evidence_spans() 
         assert document.content[fact.evidence_start : fact.evidence_end] == fact.evidence
         assert fact.expires_at > fact.checked_at
     ticket = next(fact for fact in candidates if fact.category == "TICKET_PRICE")
-    assert ticket.normalized_value == {"amount": 10.0, "currency": "CNY"}
+    assert ticket.normalized_value == {
+        "amount": 10.0,
+        "currency": "CNY",
+        "poiName": "陈家祠",
+    }
     opening = next(fact for fact in candidates if fact.category == "OPENING_HOURS")
-    assert opening.normalized_value == {"openTime": "09:00", "closeTime": "17:30"}
+    assert opening.normalized_value == {
+        "openTime": "09:00",
+        "closeTime": "17:30",
+        "poiName": "陈家祠",
+    }
 
 
 def test_validator_rejects_missing_evidence_bad_spans_time_money_coordinates_and_expiry() -> None:

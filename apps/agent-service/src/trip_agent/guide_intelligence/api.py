@@ -23,7 +23,10 @@ class GuideImportRequest(BaseModel):
         "TEXT_FILE",
         "XIAOHONGSHU_SHARED_TEXT",
         "CITY_INTELLIGENCE",
+        "OFFICIAL_TOURISM",
+        "OFFICIAL_ATTRACTION",
     ] = "PUBLIC_GUIDE_URL"
+    sourceName: str | None = Field(default=None, min_length=1, max_length=300)
     title: str | None = Field(default=None, min_length=1, max_length=300)
     content: str | None = Field(default=None, min_length=1, max_length=100_000)
     city: str | None = Field(default=None, min_length=1, max_length=60)
@@ -35,23 +38,43 @@ class GuideImportRequest(BaseModel):
         has_url = self.sourceUrl is not None and bool(self.sourceUrl.strip())
         has_content = self.content is not None and bool(self.content.strip())
         has_city = self.city is not None and bool(self.city.strip())
-        if sum((has_url, has_content, has_city)) != 1:
-            raise ValueError("provide exactly one of sourceUrl, content, or city")
-        if has_url and self.sourceType != "PUBLIC_GUIDE_URL":
-            raise ValueError("sourceUrl requires PUBLIC_GUIDE_URL sourceType")
-        if has_content and (
-            self.sourceType == "PUBLIC_GUIDE_URL"
+        if self.sourceType in {"OFFICIAL_TOURISM", "OFFICIAL_ATTRACTION"}:
+            if (
+                not has_url
+                or not has_city
+                or self.sourceName is None
+                or not self.sourceName.strip()
+                or has_content
+                or self.startDate is not None
+                or self.endDate is not None
+            ):
+                raise ValueError(
+                    "registered official sources require sourceUrl, sourceName, and city"
+                )
+            return self
+        if self.sourceType == "PUBLIC_GUIDE_URL":
+            if not has_url or has_content or has_city:
+                raise ValueError("public guide imports require only sourceUrl")
+            return self
+        if self.sourceType == "CITY_INTELLIGENCE":
+            if (
+                not has_city
+                or has_url
+                or has_content
+                or self.startDate is None
+                or self.endDate is None
+                or self.endDate < self.startDate
+            ):
+                raise ValueError("city intelligence requires a valid city and date range")
+            return self
+        if (
+            not has_content
+            or has_url
+            or has_city
             or self.title is None
             or not self.title.strip()
         ):
             raise ValueError("text imports require sourceType and title")
-        if has_city and (
-            self.sourceType != "CITY_INTELLIGENCE"
-            or self.startDate is None
-            or self.endDate is None
-            or self.endDate < self.startDate
-        ):
-            raise ValueError("city intelligence requires a valid city and date range")
         return self
 
 
@@ -173,6 +196,21 @@ async def import_guide(
                 city=request.city,
                 start_date=request.startDate,
                 end_date=request.endDate,
+            )
+        elif request.sourceType in {"OFFICIAL_TOURISM", "OFFICIAL_ATTRACTION"}:
+            if (
+                request.sourceUrl is None
+                or request.sourceName is None
+                or request.city is None
+            ):
+                raise ValueError(
+                    "registered official sources require URL, name, and city"
+                )
+            result = await service.import_registered_source(
+                source_url=request.sourceUrl,
+                source_name=request.sourceName,
+                source_type=request.sourceType,
+                city=request.city,
             )
         elif request.sourceUrl is not None:
             result = await service.import_url(request.sourceUrl)

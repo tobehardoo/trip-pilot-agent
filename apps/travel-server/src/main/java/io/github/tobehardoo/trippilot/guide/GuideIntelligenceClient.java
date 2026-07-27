@@ -9,6 +9,18 @@ public interface GuideIntelligenceClient {
 
     FetchedGuide fetch(GuideImportRequest request);
 
+    default FetchedGuide fetchRegisteredSource(RegisteredSourceRequest request) {
+        throw new UnsupportedOperationException("Registered source import is not supported");
+    }
+
+    record RegisteredSourceRequest(
+            String sourceUrl,
+            String sourceType,
+            String sourceName,
+            String city
+    ) {
+    }
+
     record FetchedGuide(
             String sourceType,
             String sourceUrl,

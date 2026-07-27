@@ -84,6 +84,49 @@ def test_import_text_does_not_fetch_and_returns_a_traceable_local_source() -> No
         "RESERVATION",
     }
 
+def test_imports_a_registered_official_source_as_reviewed_evidence() -> None:
+    fetched_at = datetime(2026, 7, 26, 8, 0, tzinfo=UTC)
+    url = "https://museum.example/visit"
+    final_url = "https://museum.example/visit/current"
+    fetcher = StubFetcher(
+        ResourceFetched(
+            status="FETCHED",
+            requested_url=url,
+            final_url=final_url,
+            fetched_at=fetched_at,
+            content=(
+                "<html><title>参观须知</title><article>"
+                "广州博物馆开放时间：09:00-17:00，需提前预约。"
+                "</article></html>"
+            ).encode(),
+            content_type="text/html; charset=utf-8",
+            validators=FetchValidators(),
+        )
+    )
+
+    result = asyncio.run(
+        GuideImportService(fetcher=fetcher).import_registered_source(
+            source_url=url,
+            source_name="广州博物馆",
+            source_type="OFFICIAL_ATTRACTION",
+            city="广州",
+        )
+    )
+
+    assert result.source_type == "OFFICIAL_ATTRACTION"
+    assert result.normalized_document is not None
+    assert result.final_url == final_url
+    assert result.normalized_document.source_url == url
+    assert result.normalized_document.metadata["finalUrl"] == final_url
+    assert result.normalized_document.source_reviewed is True
+    assert result.normalized_document.reliability_level == "OFFICIAL_ATTRACTION"
+    assert result.trusted_facts
+    assert all(fact.source_reviewed for fact in result.trusted_facts)
+    assert all(
+        fact.normalized_value["poiName"] == "广州博物馆"
+        for fact in result.trusted_facts
+    )
+
 
 @pytest.mark.parametrize(
     "url",

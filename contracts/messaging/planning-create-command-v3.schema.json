@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-create-command-v3.schema.json",
+  "title": "Planning Create Command v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType", "schemaVersion", "eventId", "traceId", "taskId",
+    "tripId", "occurredAt", "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_CREATE_REQUESTED"},
+    "schemaVersion": {"const": 3},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskType", "baselineTripVersion", "idempotencyKey", "trip",
+        "guideEvidence", "planningContext"
+      ],
+      "properties": {
+        "taskType": {"const": "CREATE"},
+        "baselineTripVersion": {"type": "integer", "minimum": 0},
+        "idempotencyKey": {"type": "string", "format": "uuid"},
+        "trip": {"$ref": "#/$defs/trip"},
+        "guideEvidence": {"$ref": "#/$defs/guideEvidence"},
+        "planningContext": {"$ref": "#/$defs/planningContext"}
+      }
+    },
+    "trip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title", "destination", "startDate", "endDate", "status",
+        "version", "constraints"
+      ],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 120},
+        "destination": {"type": "string", "minLength": 1, "maxLength": 120},
+        "startDate": {"type": "string", "format": "date"},
+        "endDate": {"type": "string", "format": "date"},
+        "status": {"const": "DRAFT"},
+        "version": {"type": "integer", "minimum": 0},
+        "constraints": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "guideEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["facts"],
+      "properties": {
+        "facts": {"type": "array", "maxItems": 100, "items": {"type": "object"}}
+      }
+    },
+    "planningContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshotId", "schemaVersion", "tripId", "planningTaskId", "city",
+        "travelStartDate", "travelEndDate", "generatedAt", "stale", "sources",
+        "facts", "conflicts", "excludedFacts", "diagnostics"
+      ],
+      "properties": {
+        "snapshotId": {"type": "string", "format": "uuid"},
+        "schemaVersion": {"const": 3},
+        "tripId": {"type": "string", "format": "uuid"},
+        "planningTaskId": {"type": "string", "format": "uuid"},
+        "city": {"type": "string", "minLength": 1, "maxLength": 120},
+        "travelStartDate": {"type": "string", "format": "date"},
+        "travelEndDate": {"type": "string", "format": "date"},
+        "generatedAt": {"type": "string", "format": "date-time"},
+        "stale": {"type": "boolean"},
+        "sources": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/source"}},
+        "facts": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/fact"}},
+        "conflicts": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/conflict"}},
+        "excludedFacts": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/excludedFact"}},
+        "diagnostics": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/diagnostic"}}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceName", "sourceType", "sourceUrl", "reliabilityLevel"],
+      "properties": {
+        "sourceName": {"type": "string", "minLength": 1, "maxLength": 300},
+        "sourceType": {"type": "string", "minLength": 1, "maxLength": 60},
+        "sourceUrl": {"type": ["string", "null"], "format": "uri"},
+        "reliabilityLevel": {"type": "string", "minLength": 1, "maxLength": 60}
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "factId", "category", "statement", "evidence", "checkedAt", "expiresAt",
+        "stale", "sourceName", "sourceType", "sourceUrl", "reliabilityLevel",
+        "sourceReviewed", "hardConstraintEligible"
+      ],
+      "properties": {
+        "factId": {"type": "string", "minLength": 1, "maxLength": 80},
+        "category": {"type": "string", "minLength": 1, "maxLength": 60},
+        "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "normalizedValue": {"type": ["object", "null"]},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "effectiveDate": {"type": ["string", "null"], "format": "date"},
+        "checkedAt": {"type": "string", "format": "date-time"},
+        "expiresAt": {"type": "string", "format": "date-time"},
+        "stale": {"type": "boolean"},
+        "sourceName": {"type": "string", "minLength": 1, "maxLength": 300},
+        "sourceType": {"type": "string", "minLength": 1, "maxLength": 60},
+        "sourceUrl": {"type": ["string", "null"], "format": "uri"},
+        "reliabilityLevel": {"type": "string", "minLength": 1, "maxLength": 60},
+        "sourceReviewed": {"type": "boolean"},
+        "hardConstraintEligible": {"type": "boolean"}
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectedFactId", "conflictFactIds", "downgradedFactIds", "reason", "needsManualReview"],
+      "properties": {
+        "selectedFactId": {"type": "string", "minLength": 1, "maxLength": 80},
+        "conflictFactIds": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+        "downgradedFactIds": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "needsManualReview": {"type": "boolean"}
+      }
+    },
+    "excludedFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["factId", "category", "statement", "reason"],
+      "properties": {
+        "factId": {"type": "string", "minLength": 1, "maxLength": 80},
+        "category": {"type": "string", "minLength": 1, "maxLength": 60},
+        "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 200}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {"type": ["string", "null"], "minLength": 1, "maxLength": 80},
+        "message": {"type": ["string", "null"], "minLength": 1, "maxLength": 500},
+        "refreshStatus": {"enum": ["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", null]}
+      }
+    }
+  }
+}

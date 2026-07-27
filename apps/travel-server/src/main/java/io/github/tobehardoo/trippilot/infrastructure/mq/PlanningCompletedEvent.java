@@ -17,7 +17,23 @@ public record PlanningCompletedEvent(
         OffsetDateTime occurredAt,
         Payload payload
 ) {
-    public record Payload(String provider, Itinerary itinerary, KnowledgeEvidence knowledge) {
+    public record Payload(
+            String provider,
+            Itinerary itinerary,
+            KnowledgeEvidence knowledge,
+            List<FactImpact> factImpacts
+    ) {
+        public Payload(
+                String provider,
+                Itinerary itinerary,
+                KnowledgeEvidence knowledge
+        ) {
+            this(provider, itinerary, knowledge, List.of());
+        }
+
+        public Payload {
+            factImpacts = factImpacts == null ? List.of() : List.copyOf(factImpacts);
+        }
     }
 
     public record Itinerary(String title, List<Day> days, BigDecimal estimatedTotalCost) {
@@ -89,6 +105,26 @@ public record PlanningCompletedEvent(
             String status,
             OffsetDateTime checkedAt,
             String staleReason
+    ) {
+    }
+
+    public record FactImpact(
+            String factId,
+            String category,
+            LocalDate date,
+            String effect,
+            String targetPoiId,
+            String targetName,
+            String reason,
+            String sourceName,
+            String sourceType,
+            String sourceUrl,
+            String reliabilityLevel,
+            OffsetDateTime checkedAt,
+            String evidence,
+            boolean stale,
+            boolean conflicted,
+            boolean refreshFailed
     ) {
     }
 }

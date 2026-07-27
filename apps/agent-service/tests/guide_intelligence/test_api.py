@@ -71,6 +71,27 @@ class StubImportService:
             facts=(),
         )
 
+    async def import_registered_source(
+        self,
+        *,
+        source_url: str,
+        source_name: str,
+        source_type: str,
+        city: str,
+    ) -> GuideImportResult:
+        fetched_at = datetime(2026, 7, 26, 8, 0, tzinfo=UTC)
+        return GuideImportResult(
+            source_type=source_type,
+            source_url=source_url,
+            final_url=source_url,
+            source_host="museum.example",
+            title=source_name,
+            excerpt=f"{city}官方参观须知",
+            content_hash="d" * 64,
+            fetched_at=fetched_at,
+            facts=(),
+        )
+
 
 def test_internal_token_is_required(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_INTERNAL_TOKEN", "test-internal-token")
@@ -202,3 +223,26 @@ def test_accepts_city_intelligence_sync_request(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["sourceType"] == "CITY_INTELLIGENCE"
     assert response.json()["sourceHost"] == "高德城市情报"
+
+
+def test_accepts_registered_official_source_request(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_INTERNAL_TOKEN", "test-internal-token")
+    monkeypatch.setattr(
+        "trip_agent.guide_intelligence.api.GuideImportService",
+        StubImportService,
+    )
+
+    response = TestClient(app).post(
+        "/internal/v1/guide-imports",
+        headers={"X-Internal-Token": "test-internal-token"},
+        json={
+            "sourceUrl": "https://museum.example/visit",
+            "sourceType": "OFFICIAL_ATTRACTION",
+            "sourceName": "广州博物馆",
+            "city": "广州",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["sourceType"] == "OFFICIAL_ATTRACTION"
+    assert response.json()["title"] == "广州博物馆"

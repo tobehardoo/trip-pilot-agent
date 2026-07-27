@@ -12,15 +12,18 @@ import {
   createItineraryReplan,
   createPlanningTask,
   createTrip,
+  diffItineraryVersions,
   getCurrentItinerary,
   getTrip,
   listTrips,
   listGuideImports,
+  listItineraryVersions,
   login,
   logoutSession,
   previewItineraryEdit,
   refreshSession,
   register,
+  rollbackItinerary,
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
   updateTripConstraints,
@@ -32,6 +35,8 @@ import {
   type ItineraryEditInput,
   type ItineraryEditPreview,
   type ItineraryReplanInput,
+  type ItineraryVersionDiff,
+  type ItineraryVersionSummary,
   type PlanningTask,
   type PlanningTaskEvent,
   type Trip,
@@ -57,6 +62,9 @@ const detailError = ref<string | null>(null)
 const itinerary = ref<Itinerary | null>(null)
 const itineraryBusy = ref(false)
 const itineraryError = ref<string | null>(null)
+const itineraryVersions = ref<ItineraryVersionSummary[]>([])
+const versionBusy = ref(false)
+const versionError = ref<string | null>(null)
 const planningState = ref<'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'>('idle')
 const planningError = ref<string | null>(null)
 const guideImports = ref<GuideImport[]>([])
@@ -66,6 +74,7 @@ const activePlanningTaskId = ref<string | null>(null)
 let sessionGeneration = 0
 let detailRequestSequence = 0
 let itineraryRequestSequence = 0
+let versionRequestSequence = 0
 let listRequestSequence = 0
 let busyRequestSequence = 0
 let planningRequestSequence = 0
@@ -107,6 +116,7 @@ function clearLocalSession() {
   sessionGeneration += 1
   detailRequestSequence += 1
   itineraryRequestSequence += 1
+  versionRequestSequence += 1
   listRequestSequence += 1
   busyRequestSequence += 1
   refreshInFlight = null
@@ -121,6 +131,9 @@ function clearLocalSession() {
   itinerary.value = null
   itineraryBusy.value = false
   itineraryError.value = null
+  itineraryVersions.value = []
+  versionBusy.value = false
+  versionError.value = null
   guideImports.value = []
   guideBusy.value = false
   guideError.value = null
@@ -157,6 +170,8 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
     selectedTrip.value = null
     itinerary.value = null
     itineraryError.value = null
+    itineraryVersions.value = []
+    versionError.value = null
     guideImports.value = []
     guideError.value = null
   }
@@ -165,7 +180,11 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
     if (!isCurrentDetailRequest(requestSequence, tripId)) return false
     selectedTrip.value = loadedTrip
     syncTripInList(loadedTrip)
-    await Promise.all([loadItinerary(tripId), loadGuideImportsForTrip(tripId)])
+    await Promise.all([
+      loadItinerary(tripId),
+      loadGuideImportsForTrip(tripId),
+      loadItineraryVersionsForTrip(tripId),
+    ])
     return true
   } catch (cause) {
     if (!isCurrentDetailRequest(requestSequence, tripId)) return false
@@ -174,6 +193,30 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
   } finally {
     if (requestSequence === detailRequestSequence) detailBusy.value = false
   }
+}
+
+async function loadItineraryVersionsForTrip(tripId: string): Promise<boolean> {
+  const requestSequence = ++versionRequestSequence
+  versionBusy.value = true
+  versionError.value = null
+  try {
+    const loaded = await withAccessToken((token) => listItineraryVersions(token, tripId))
+    if (!isCurrentVersionRequest(requestSequence, tripId)) return false
+    itineraryVersions.value = loaded
+    return true
+  } catch (cause) {
+    if (!isCurrentVersionRequest(requestSequence, tripId)) return false
+    versionError.value = errorMessage(cause)
+    return false
+  } finally {
+    if (requestSequence === versionRequestSequence) versionBusy.value = false
+  }
+}
+
+function isCurrentVersionRequest(requestSequence: number, tripId: string) {
+  return requestSequence === versionRequestSequence
+    && route.value.name === 'trip-detail'
+    && route.value.tripId === tripId
 }
 
 async function loadGuideImportsForTrip(tripId: string): Promise<boolean> {
@@ -415,6 +458,39 @@ async function handleApplyItineraryEdit(input: ItineraryEditInput) {
   if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
     itinerary.value = updated
     itineraryError.value = null
+    await loadItineraryVersionsForTrip(tripId)
+  }
+}
+
+async function handleGetItineraryVersionDiff(
+  fromVersionId: string,
+  toVersionId: string,
+): Promise<ItineraryVersionDiff> {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  const tripId = selectedTrip.value.id
+  return withAccessToken((token) => (
+    diffItineraryVersions(token, tripId, fromVersionId, toVersionId)
+  ))
+}
+
+async function handleRollbackItinerary(
+  sourceVersionId: string,
+  expectedCurrentVersionId: string,
+  idempotencyKey: string,
+) {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  const tripId = selectedTrip.value.id
+  const rolledBack = await withAccessToken((token) => rollbackItinerary(
+    token,
+    tripId,
+    sourceVersionId,
+    expectedCurrentVersionId,
+    idempotencyKey,
+  ))
+  if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
+    itinerary.value = rolledBack
+    itineraryError.value = null
+    await loadItineraryVersionsForTrip(tripId)
   }
 }
 
@@ -525,7 +601,10 @@ async function runPlanningTask(
         terminal = true
         planningState.value = 'succeeded'
         activePlanningTaskId.value = null
-        itineraryReload = loadItinerary(tripId)
+        itineraryReload = Promise.all([
+          loadItinerary(tripId),
+          loadItineraryVersionsForTrip(tripId),
+        ]).then(([loaded]) => loaded)
       } else if (event.eventType === 'PLANNING_FAILED') {
         terminal = true
         planningState.value = 'failed'
@@ -648,6 +727,11 @@ onUnmounted(() => {
       :itinerary="itinerary"
       :itinerary-busy="itineraryBusy"
       :itinerary-error="itineraryError"
+      :itinerary-versions="itineraryVersions"
+      :version-busy="versionBusy"
+      :version-error="versionError"
+      :get-itinerary-version-diff="handleGetItineraryVersionDiff"
+      :rollback-itinerary="handleRollbackItinerary"
       :planning-state="planningState"
       :planning-error="planningError"
       :guide-imports="guideImports"

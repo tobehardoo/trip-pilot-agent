@@ -115,6 +115,71 @@ class GuideImportService:
         )
         return await self._enrich(result, document)
 
+    async def import_registered_source(
+        self,
+        *,
+        source_url: str,
+        source_name: str,
+        source_type: GuideSourceType,
+        city: str,
+    ) -> GuideImportResult:
+        if source_type not in {"OFFICIAL_TOURISM", "OFFICIAL_ATTRACTION"}:
+            raise ValueError("registered source type must be official")
+        host = _candidate_host(source_url)
+        normalized_url = validate_source_url(source_url, allowed_domains=(host,))
+        source = KnowledgeSource(
+            source_id=f"registered-{hashlib.sha256(normalized_url.encode()).hexdigest()[:16]}",
+            city=city.strip(),
+            source_name=source_name.strip(),
+            reliability_level="OFFICIAL",
+            allowed_domains=(host,),
+            resource_urls=(normalized_url,),
+            min_request_interval_seconds=1.0,
+            request_timeout_seconds=12.0,
+            max_response_bytes=2_000_000,
+        )
+        resource = DiscoveredResource(
+            source_id=source.source_id,
+            city=source.city,
+            url=normalized_url,
+        )
+        fetched = _require_fetched(
+            await self._fetcher.fetch(source=source, resource=resource)
+        )
+        extracted = self._extractor.extract(
+            content=fetched.content,
+            content_type=fetched.content_type,
+            fetched_at=fetched.fetched_at,
+        )
+        content_hash = hashlib.sha256(extracted.content.encode()).hexdigest()
+        result = GuideImportResult(
+            source_type=source_type,
+            source_url=normalized_url,
+            final_url=fetched.final_url,
+            source_host=urlsplit(fetched.final_url).hostname or host,
+            title=extracted.title,
+            excerpt=extracted.content[:800],
+            content_hash=content_hash,
+            fetched_at=fetched.fetched_at,
+            facts=extracted.facts,
+        )
+        document = self._normalizer.normalize_html(
+            source_type=source_type,
+            source_name=source.source_name,
+            source_url=normalized_url,
+            city=source.city,
+            content=fetched.content,
+            content_type=fetched.content_type,
+            fetched_at=fetched.fetched_at,
+            reliability_level=source_type,
+            source_reviewed=True,
+            metadata={
+                "registryManaged": True,
+                "finalUrl": fetched.final_url,
+            },
+        )
+        return await self._enrich(result, document)
+
     def import_text(
         self,
         *,
@@ -123,7 +188,12 @@ class GuideImportService:
         content: str,
         observed_at: datetime | None = None,
     ) -> GuideImportResult:
-        if source_type in {"PUBLIC_GUIDE_URL", "CITY_INTELLIGENCE"}:
+        if source_type in {
+            "PUBLIC_GUIDE_URL",
+            "CITY_INTELLIGENCE",
+            "OFFICIAL_TOURISM",
+            "OFFICIAL_ATTRACTION",
+        }:
             raise ValueError("this source type cannot be imported as user text")
         fetched_at = observed_at or datetime.now(UTC)
         extracted = self._extractor.extract_text(

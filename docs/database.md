@@ -84,7 +84,7 @@ trip_constraint (
 | `city_intelligence_refresh` | `UNIQUE(trip_id, idempotency_key)` | 预热与规划前刷新幂等 |
 | `guide_fact` | `(city_code, category, effective_date, expires_at)` | TTL、日期适用性与合并查询 |
 | `planning_context_snapshot` | `UNIQUE(planning_task_id)` | 一个任务只冻结一个输入快照 |
-| `itinerary_rollback_record` | `UNIQUE(trip_id, idempotency_key)` | 重复回滚返回同一新版本 |
+| `itinerary_rollback` | `UNIQUE(itinerary_id, idempotency_key)` | 重复回滚返回同一新版本 |
 | `planning_fact_impact` | `(itinerary_version_id, day_date)` | 结果页按版本与日期读取解释 |
 | `knowledge_chunk` | `(document_id, chunk_index)` | 文档加载后按序取片段 |
 | `knowledge_chunk_embedding` | `(embedding_model, embedding_dimensions, chunk_id)` | 先限定模型与维度，再做精确向量距离排序；当前未创建近似向量索引 |
@@ -106,7 +106,7 @@ V1.2 最新迁移为 V19；V1.3 从 V20 继续编号，不修改已发布文件�
   数据和唯一索引。
 - `V21__add_trusted_fact_lifecycle.sql`：规范化文档、刷新状态、事实可靠性/证据跨度/
   结构化值、合并决策、规划上下文快照和 TTL 查询索引。
-- `V22__add_itinerary_version_recovery.sql`：版本原因/摘要、回滚来源、回滚幂等与审计、
+- `V22__add_fact_impacts_and_itinerary_rollback.sql`：回滚来源、回滚幂等与审计、
   规划事实影响。
 
 迁移先增加可空列并回填现有 `guide_import/guide_fact`：已有用户导入统一标为

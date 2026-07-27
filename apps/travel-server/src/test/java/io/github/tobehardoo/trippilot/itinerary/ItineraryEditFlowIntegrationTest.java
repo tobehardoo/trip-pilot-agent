@@ -94,6 +94,172 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void listsDiffsAndIdempotentlyRollsBackByCreatingANewVersion() throws Exception {
+        PlanningContext context = completedItinerary("version-rollback@example.com");
+        JsonNode initial = currentItinerary(context);
+        UUID initialVersionId = uuid(initial, "versionId");
+        UUID activityId = uuid(initial.at("/days/0/activities/0"), "id");
+        JsonNode edited = json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits",
+                                context.tripId()
+                        )
+                        .header("Authorization", bearer(context.accessToken()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(
+                                initialVersionId,
+                                "DELETE_ACTIVITY",
+                                activityId,
+                                null
+                        )))
+                .andExpect(status().isOk())
+                .andReturn());
+        UUID editedVersionId = uuid(edited, "versionId");
+
+        mockMvc.perform(get(
+                                "/api/trips/{tripId}/itinerary/versions",
+                                context.tripId()
+                        )
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].versionNumber").value(2))
+                .andExpect(jsonPath("$[0].current").value(true))
+                .andExpect(jsonPath("$[0].versionSource").value("USER_EDIT"));
+
+        mockMvc.perform(get(
+                                "/api/trips/{tripId}/itinerary/versions/{versionId}",
+                                context.tripId(),
+                                initialVersionId
+                        )
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionId")
+                        .value(initialVersionId.toString()))
+                .andExpect(jsonPath("$.days[0].activities.length()").value(2));
+
+        mockMvc.perform(get(
+                                "/api/trips/{tripId}/itinerary/versions/diff",
+                                context.tripId()
+                        )
+                        .queryParam("from", initialVersionId.toString())
+                        .queryParam("to", editedVersionId.toString())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.removedActivities.length()").value(1))
+                .andExpect(jsonPath("$.addedActivities").isEmpty())
+                .andExpect(jsonPath("$.addedFactImpacts").isEmpty())
+                .andExpect(jsonPath("$.removedFactImpacts").isEmpty())
+                .andExpect(jsonPath("$.changedFactImpacts").isEmpty());
+
+        UUID idempotencyKey = UUID.randomUUID();
+        String rollbackBody = """
+                {
+                  "sourceVersionId": "%s",
+                  "expectedCurrentVersionId": "%s"
+                }
+                """.formatted(initialVersionId, editedVersionId);
+        MvcResult firstRollback = mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/rollbacks",
+                                context.tripId()
+                        )
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(rollbackBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionNumber").value(3))
+                .andExpect(jsonPath("$.rollbackFromVersionId")
+                        .value(initialVersionId.toString()))
+                .andExpect(jsonPath("$.days[0].activities.length()").value(2))
+                .andReturn();
+        String rollbackVersionId = json(firstRollback).get("versionId").asText();
+        UUID rollbackActivityId = uuid(
+                json(firstRollback).at("/days/0/activities/0"),
+                "id"
+        );
+        mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits",
+                                context.tripId()
+                        )
+                        .header("Authorization", bearer(context.accessToken()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(
+                                UUID.fromString(rollbackVersionId),
+                                "LOCK_ACTIVITY",
+                                rollbackActivityId,
+                                null
+                        )))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionNumber").value(4));
+
+        mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/rollbacks",
+                                context.tripId()
+                        )
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(rollbackBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionId").value(rollbackVersionId))
+                .andExpect(jsonPath("$.versionNumber").value(3))
+                .andExpect(jsonPath("$.rollbackFromVersionId")
+                        .value(initialVersionId.toString()));
+
+        assertThat(count("business.itinerary_version")).isEqualTo(4);
+        assertThat(count("business.itinerary_rollback")).isEqualTo(1);
+    }
+
+    @Test
+    void keepsRepeatedVisitsDistinctWhenCalculatingVersionDiffs() throws Exception {
+        PlanningContext context = completedItinerary("version-duplicate-poi@example.com");
+        JsonNode initial = currentItinerary(context);
+        UUID initialVersionId = uuid(initial, "versionId");
+        UUID firstActivityId = uuid(initial.at("/days/0/activities/0"), "id");
+        UUID secondActivityId = uuid(initial.at("/days/0/activities/1"), "id");
+        String firstTitle = initial.at("/days/0/activities/0/title").asText();
+        String firstProviderPoiId = jdbcTemplate.queryForObject("""
+                SELECT provider_poi_id
+                FROM business.activity
+                WHERE id = ?
+                """, String.class, firstActivityId);
+        jdbcTemplate.update("""
+                UPDATE business.activity
+                SET title = ?, provider_poi_id = ?
+                WHERE id = ?
+                """, firstTitle, firstProviderPoiId, secondActivityId);
+
+        JsonNode edited = json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits",
+                                context.tripId()
+                        )
+                        .header("Authorization", bearer(context.accessToken()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(
+                                initialVersionId,
+                                "DELETE_ACTIVITY",
+                                firstActivityId,
+                                null
+                        )))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        mockMvc.perform(get(
+                                "/api/trips/{tripId}/itinerary/versions/diff",
+                                context.tripId()
+                        )
+                        .queryParam("from", initialVersionId.toString())
+                        .queryParam("to", uuid(edited, "versionId").toString())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.removedActivities.length()").value(1))
+                .andExpect(jsonPath("$.addedActivities").isEmpty())
+                .andExpect(jsonPath("$.changedActivities.length()").value(1))
+                .andExpect(jsonPath("$.changedActivities[0].changes[0]")
+                        .value("MOVED"));
+    }
+
+    @Test
     void locksAnActivityAndRejectsMovingItWithAnExplanation() throws Exception {
         PlanningContext context = completedItinerary("edit-lock@example.com");
         JsonNode current = currentItinerary(context);
@@ -158,7 +324,10 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID versionId = uuid(current, "versionId");
         UUID legId = uuid(current.at("/days/0/transitLegs/0"), "id");
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        MvcResult transitEdit = mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits",
+                                context.tripId()
+                        )
                         .header("Authorization", bearer(context.accessToken()))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transitEditJson(versionId, legId, "DRIVING", true)))
@@ -168,7 +337,23 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.days[0].transitLegs[0].provider").value("DEMO"))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].estimated").value(true))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].polyline").isEmpty())
-                .andExpect(jsonPath("$.days[0].transitLegs[0].locked").value(true));
+                .andExpect(jsonPath("$.days[0].transitLegs[0].locked").value(true))
+                .andReturn();
+        UUID editedVersionId = uuid(json(transitEdit), "versionId");
+
+        mockMvc.perform(get(
+                                "/api/trips/{tripId}/itinerary/versions/diff",
+                                context.tripId()
+                        )
+                        .queryParam("from", versionId.toString())
+                        .queryParam("to", editedVersionId.toString())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.changedTransitLegs.length()").value(1))
+                .andExpect(jsonPath("$.changedTransitLegs[0].changes")
+                        .value(org.hamcrest.Matchers.hasItems(
+                                "MODE_CHANGED", "LOCK_CHANGED"
+                        )));
 
         JsonNode persisted = currentItinerary(context);
         assertThat(persisted.at("/days/0/transitLegs/0/mode").asText()).isEqualTo("DRIVING");

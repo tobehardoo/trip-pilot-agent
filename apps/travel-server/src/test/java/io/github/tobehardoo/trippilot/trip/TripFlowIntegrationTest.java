@@ -12,6 +12,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -28,6 +29,9 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void createsTripWithStructuredConstraintsAndReadsIt() throws Exception {
@@ -47,6 +51,83 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("广州四日慢游"))
                 .andExpect(jsonPath("$.constraints.fixedSchedules[0].placeName").value("广州塔"));
+    }
+
+    @Test
+    void createsTripAndAtomicallyQueuesIdempotentCityIntelligencePrewarm() throws Exception {
+        String accessToken = registerAndGetAccessToken("prewarm-owner@example.com");
+        String tripId = json(createTrip(accessToken)
+                .andExpect(status().isCreated())
+                .andReturn()).get("id").asText();
+
+        java.util.Map<String, Object> refresh = jdbcTemplate.queryForMap("""
+                SELECT status, city_code, attempt_count
+                FROM business.city_intelligence_refresh
+                WHERE trip_id = ?::uuid
+                """, tripId);
+        java.util.Map<String, Object> outbox = jdbcTemplate.queryForMap("""
+                SELECT event_type, routing_key, payload #>> '{payload,city}' AS city,
+                       payload #>> '{payload,startDate}' AS start_date
+                FROM business.outbox_event
+                WHERE aggregate_id = ?::uuid
+                  AND event_type = 'CITY_INTELLIGENCE_REFRESH_REQUESTED'
+                """, tripId);
+
+        org.assertj.core.api.Assertions.assertThat(refresh)
+                .containsEntry("status", "QUEUED")
+                .containsEntry("city_code", "CN-GD-GZ")
+                .containsEntry("attempt_count", 0);
+        org.assertj.core.api.Assertions.assertThat(outbox)
+                .containsEntry("event_type", "CITY_INTELLIGENCE_REFRESH_REQUESTED")
+                .containsEntry("routing_key", "city-intelligence.refresh")
+                .containsEntry("city", "广州")
+                .containsEntry("start_date", "2026-08-01");
+
+        mockMvc.perform(get("/api/trips/{tripId}/city-intelligence", tripId)
+                        .header("Authorization", bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tripId").value(tripId))
+                .andExpect(jsonPath("$.status").value("QUEUED"))
+                .andExpect(jsonPath("$.cityCode").value("CN-GD-GZ"))
+                .andExpect(jsonPath("$.stale").value(true))
+                .andExpect(jsonPath("$.providerDiagnostics").isArray());
+    }
+
+    @Test
+    void manuallyRefreshingWithTheSameIdempotencyKeyReusesTheActiveRefresh() throws Exception {
+        String accessToken = registerAndGetAccessToken("manual-refresh-owner@example.com");
+        String tripId = json(createTrip(accessToken)
+                .andExpect(status().isCreated())
+                .andReturn()).get("id").asText();
+        String idempotencyKey = "85787716-2922-43c7-a25f-17387aff90e0";
+
+        MvcResult first = mockMvc.perform(post(
+                                "/api/trips/{tripId}/city-intelligence/refreshes",
+                                tripId
+                        )
+                        .header("Authorization", bearer(accessToken))
+                        .header("Idempotency-Key", idempotencyKey))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("QUEUED"))
+                .andReturn();
+        MvcResult second = mockMvc.perform(post(
+                                "/api/trips/{tripId}/city-intelligence/refreshes",
+                                tripId
+                        )
+                        .header("Authorization", bearer(accessToken))
+                        .header("Idempotency-Key", idempotencyKey))
+                .andExpect(status().isAccepted())
+                .andReturn();
+
+        org.assertj.core.api.Assertions.assertThat(json(first).get("refreshId").asText())
+                .isEqualTo(json(second).get("refreshId").asText());
+        Integer refreshCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM business.city_intelligence_refresh"
+                        + " WHERE trip_id = ?::uuid",
+                Integer.class,
+                tripId
+        );
+        org.assertj.core.api.Assertions.assertThat(refreshCount).isEqualTo(1);
     }
 
     @Test

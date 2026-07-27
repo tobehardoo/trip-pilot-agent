@@ -13,6 +13,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.common.ApiException;
+import io.github.tobehardoo.trippilot.cityintelligence.CitySourceRecord;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedMergeDecision;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedModelExtraction;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedNormalizedDocument;
@@ -39,7 +40,8 @@ public class GuideImportService {
     );
     private static final Set<String> SOURCE_TYPES = Set.of(
             "PUBLIC_GUIDE_URL", "PASTED_TEXT", "TEXT_FILE",
-            "XIAOHONGSHU_SHARED_TEXT", "CITY_INTELLIGENCE"
+            "XIAOHONGSHU_SHARED_TEXT", "CITY_INTELLIGENCE",
+            "OFFICIAL_ATTRACTION", "OFFICIAL_TOURISM"
     );
     private static final Set<String> TRUSTED_FACT_CATEGORIES = Set.of(
             "ADDRESS", "COORDINATES", "OPENING_HOURS", "TEMPORARY_CLOSURE",
@@ -111,8 +113,43 @@ public class GuideImportService {
             );
         }
         FetchedGuide fetched = intelligenceClient.fetch(normalizedRequest);
-        validateFetchedGuide(fetched);
+        return persistFetched(ownerId, tripId, fetched);
+    }
 
+    public GuideImportResponse createRegisteredSource(
+            UUID ownerId,
+            UUID tripId,
+            CitySourceRecord source
+    ) {
+        tripService.get(ownerId, tripId);
+        if (!source.enabled()
+                || !"APPROVED".equals(source.reviewStatus())
+                || !Set.of("OFFICIAL_ATTRACTION", "OFFICIAL_TOURISM")
+                        .contains(source.sourceType())) {
+            throw new IllegalArgumentException(
+                    "Only approved, enabled official registry sources can be imported"
+            );
+        }
+        FetchedGuide fetched = intelligenceClient.fetchRegisteredSource(
+                new GuideIntelligenceClient.RegisteredSourceRequest(
+                        validateSourceUrl(source.sourceUrl()),
+                        source.sourceType(),
+                        source.sourceName(),
+                        source.cityName()
+                )
+        );
+        if (fetched == null || !source.sourceType().equals(fetched.sourceType())) {
+            throw invalidServiceResponse();
+        }
+        return persistFetched(ownerId, tripId, fetched);
+    }
+
+    private GuideImportResponse persistFetched(
+            UUID ownerId,
+            UUID tripId,
+            FetchedGuide fetched
+    ) {
+        validateFetchedGuide(fetched);
         GuideImportRecord candidate = new GuideImportRecord(
                 UUID.randomUUID(),
                 tripId,

@@ -36,6 +36,8 @@ import {
   type ItineraryEditPreview,
   type ItineraryTransitLeg,
   type ItineraryReplanInput,
+  type ItineraryVersionDiff,
+  type ItineraryVersionSummary,
   type Trip,
   type UpdateTripConstraintsInput,
   type User,
@@ -44,6 +46,7 @@ import { useModalFocus } from '../lib/modal'
 import { cn } from '../lib/utils'
 import type { CommuteMode } from '../lib/transit'
 import GuideIntelligencePanel from './GuideIntelligencePanel.vue'
+import ItineraryVersionPanel from './ItineraryVersionPanel.vue'
 import PlanningProgress from './PlanningProgress.vue'
 import TripMap from './TripMap.vue'
 import TransitLegControl from './TransitLegControl.vue'
@@ -59,6 +62,18 @@ const props = withDefaults(defineProps<{
   itinerary: Itinerary | null
   itineraryBusy: boolean
   itineraryError: string | null
+  itineraryVersions?: ItineraryVersionSummary[]
+  versionBusy?: boolean
+  versionError?: string | null
+  getItineraryVersionDiff?: (
+    fromVersionId: string,
+    toVersionId: string,
+  ) => Promise<ItineraryVersionDiff>
+  rollbackItinerary?: (
+    sourceVersionId: string,
+    expectedCurrentVersionId: string,
+    idempotencyKey: string,
+  ) => Promise<void>
   planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'
   planningError: string | null
   guideImports?: GuideImport[]
@@ -75,6 +90,13 @@ const props = withDefaults(defineProps<{
   reloadTrip: () => Promise<boolean>
 }>(), {
   guideImports: () => [],
+  itineraryVersions: () => [],
+  versionBusy: false,
+  versionError: null,
+  getItineraryVersionDiff: async () => {
+    throw new Error('Itinerary version diff is unavailable')
+  },
+  rollbackItinerary: async () => {},
   guideBusy: false,
   guideError: null,
   importGuide: async () => {},
@@ -531,6 +553,34 @@ function transitSummary(leg: ItineraryTransitLeg): string {
 const totalPlaces = computed(() =>
   props.itinerary?.days.reduce((sum, day) => sum + day.activities.length, 0) ?? 0
 )
+const factImpacts = computed(() => props.itinerary?.factImpacts ?? [])
+const officialFactCount = computed(() => factImpacts.value.filter(impact =>
+  impact.reliabilityLevel.startsWith('OFFICIAL')).length)
+const communityFactCount = computed(() => factImpacts.value.length - officialFactCount.value)
+const weatherFactCount = computed(() => factImpacts.value.filter(
+  impact => impact.category === 'WEATHER',
+).length)
+const staleFactCount = computed(() => factImpacts.value.filter(impact => impact.stale).length)
+const conflictedFactCount = computed(() => factImpacts.value.filter(
+  impact => impact.conflicted,
+).length)
+const refreshFailedCount = computed(() => factImpacts.value.filter(
+  impact => impact.refreshFailed,
+).length)
+
+function factEffectLabel(effect: string) {
+  const labels: Record<string, string> = {
+    OUTDOOR_POI_DOWNRANKED: '露天景点降权',
+    INDOOR_POI_UPRANKED: '室内景点优先',
+    OFFICIAL_CLOSURE_APPLIED: '官方关闭约束已应用',
+    RESERVATION_REQUIRED: '需要预约',
+    OPENING_HOURS_APPLIED: '已核验开放时间',
+    OFFICIAL_TICKET_BUDGET_APPLIED: '官方门票计入预算',
+    COMMUNITY_GUIDE_SOFT_SIGNAL: '社区攻略软排序',
+    STALE_FACT_WARNING: '过期事实提示',
+  }
+  return labels[effect] ?? effect
+}
 
 const totalWalkDistance = computed(() => {
   if (!props.itinerary) return 0
@@ -983,8 +1033,67 @@ watch(() => props.itinerary, (nextItinerary) => {
             </section>
           </div>
 
+          <section class="mt-10" aria-labelledby="planning-evidence-title">
+            <Card>
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <h3 id="planning-evidence-title" class="text-base font-semibold text-surface-800">本次规划依据</h3>
+                <div class="flex flex-wrap gap-2 text-xs">
+                  <Badge variant="secondary">{{ factImpacts.length }} 条实际影响</Badge>
+                  <Badge variant="success">{{ officialFactCount }} 条官方事实</Badge>
+                  <Badge variant="secondary">{{ communityFactCount }} 条社区 / Provider 事实</Badge>
+                  <Badge v-if="weatherFactCount" variant="secondary">{{ weatherFactCount }} 条天气影响</Badge>
+                  <Badge v-if="staleFactCount" variant="warning">{{ staleFactCount }} 条已过期</Badge>
+                  <Badge v-if="conflictedFactCount" variant="warning">{{ conflictedFactCount }} 条有冲突</Badge>
+                  <Badge v-if="refreshFailedCount" variant="warning">{{ refreshFailedCount }} 条刷新失败降级</Badge>
+                </div>
+              </div>
+              <p v-if="!factImpacts.length" class="mt-3 text-sm text-surface-400">
+                本次结果没有记录到改变排序或约束的城市事实。
+              </p>
+              <ul v-else class="mt-4 space-y-3">
+                <li
+                  v-for="impact in factImpacts"
+                  :key="`${impact.factId}-${impact.effect}-${impact.date}`"
+                  class="rounded-xl bg-surface-50 px-4 py-3"
+                >
+                  <div class="flex flex-wrap items-center gap-2">
+                    <strong class="text-sm text-surface-800">{{ factEffectLabel(impact.effect) }}</strong>
+                    <Badge :variant="impact.reliabilityLevel.startsWith('OFFICIAL') ? 'success' : 'secondary'">
+                      {{ impact.reliabilityLevel.startsWith('OFFICIAL') ? '官方' : '社区 / Provider' }}
+                    </Badge>
+                    <Badge v-if="impact.stale" variant="warning">已过期，仅提示</Badge>
+                    <Badge v-if="impact.conflicted" variant="warning">存在来源冲突</Badge>
+                    <Badge v-if="impact.refreshFailed" variant="warning">刷新失败，沿用快照</Badge>
+                  </div>
+                  <p class="mt-2 text-sm text-surface-600">{{ impact.reason }}</p>
+                  <details class="mt-2 text-xs text-surface-500">
+                    <summary class="cursor-pointer select-none">查看来源与核验信息</summary>
+                    <div class="mt-2 grid gap-1 sm:grid-cols-2">
+                      <p>来源：{{ impact.sourceName }}</p>
+                      <p>来源类型：{{ impact.sourceType }}</p>
+                      <p>核验：{{ formatCollectedAt(impact.checkedAt) }}</p>
+                      <p v-if="impact.date">适用日期：{{ impact.date }}</p>
+                      <p v-if="impact.targetName">影响对象：{{ impact.targetName }}</p>
+                      <p class="sm:col-span-2">原句证据：{{ impact.evidence }}</p>
+                      <p v-if="impact.sourceUrl" class="sm:col-span-2">
+                        <a
+                          :href="impact.sourceUrl"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="font-semibold text-primary-600 hover:underline"
+                        >
+                          查看安全来源
+                        </a>
+                      </p>
+                    </div>
+                  </details>
+                </li>
+              </ul>
+            </Card>
+          </section>
+
           <!-- Knowledge Evidence Section -->
-          <section class="mt-10" aria-labelledby="knowledge-title">
+          <section class="mt-6" aria-labelledby="knowledge-title">
             <Card>
               <div class="flex items-center justify-between gap-4 mb-4">
                 <div class="flex items-center gap-2">
@@ -1017,6 +1126,17 @@ watch(() => props.itinerary, (nextItinerary) => {
             </Card>
           </section>
         </template>
+
+        <div v-if="itinerary" class="mt-8">
+          <ItineraryVersionPanel
+            :versions="itineraryVersions"
+            :current-version-id="itinerary.versionId"
+            :busy="versionBusy"
+            :error="versionError"
+            :get-diff="getItineraryVersionDiff"
+            :rollback="rollbackItinerary"
+          />
+        </div>
 
         <!-- Guide Intelligence Panel -->
         <div class="mt-8">

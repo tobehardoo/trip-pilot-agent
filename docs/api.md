@@ -60,8 +60,8 @@ Access Token 过期后，前端用 Refresh Cookie 调用 `/api/auth/refresh` 获
 调用方不得在 CREATE 与 REPLAN 之间复用同一幂等键。服务端会校验任务类型；REPLAN
 还会校验基线版本与规范化后的日期集合，不一致时返回 `409 IDEMPOTENCY_KEY_REUSED`。
 
-回滚请求同样要求 `Idempotency-Key`，并在请求体携带 `baseVersionId` 与
-`targetVersionId`。同一键重复提交返回第一次创建的新版本；键相同但目标不同返回
+回滚请求同样要求 `Idempotency-Key`，并在请求体携带 `sourceVersionId` 与
+`expectedCurrentVersionId`。同一键重复提交返回第一次创建的新版本；键相同但目标不同返回
 `409 IDEMPOTENCY_KEY_REUSED`。当前版本已变化时返回 `409 ITINERARY_VERSION_CONFLICT`。
 
 ## MQ 消息契约
@@ -92,7 +92,7 @@ city-intelligence.refresh
 ```
 trip.event.exchange
 ├── planning.completed  (routing key)
-│   契约: planning-completed-event-v5.schema.json
+│   契约: planning-completed-event-v6.schema.json
 │   版本演进:
 │     v1: Demo 行程（无坐标）
 │     v2: AMAP 行程（含 providerPoiId, coordinates）

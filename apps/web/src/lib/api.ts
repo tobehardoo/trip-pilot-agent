@@ -101,9 +101,11 @@ export type PlanningProgressStage =
   | 'CONSTRAINTS_SOLVING'
   | 'KNOWLEDGE_RETRIEVING'
   | 'RESULT_EXPLAINING'
+  | 'RESULT_PUBLISHING'
   | 'RESULT_PERSISTING'
 
 export interface PlanningProgressUpdate {
+  eventId: number
   stage: PlanningProgressStage
   sequence: number
   progress: number
@@ -375,6 +377,8 @@ export interface ItineraryEditInput {
   targetEndTime?: string
   transitMode?: 'WALKING' | 'TRANSIT' | 'DRIVING' | 'TAXI'
   transitLocked?: boolean
+  /** Client-generated UUID for idempotency.  Reused on retry, regenerated on re-edit. */
+  idempotencyKey?: string
 }
 
 export interface ItineraryEditPreview {
@@ -661,9 +665,11 @@ export function applyItineraryEdit(
   accessToken: string,
   tripId: string,
   input: ItineraryEditInput,
+  idempotencyKey: string,
 ): Promise<Itinerary> {
   return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/edits`, {
     method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify(input),
   }, accessToken)
 }

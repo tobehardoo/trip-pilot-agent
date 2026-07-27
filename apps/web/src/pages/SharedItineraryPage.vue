@@ -29,13 +29,17 @@ watch(shareToken, async (token) => {
 }, { immediate: true })
 
 function dateLabel(date: string) {
-  return new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })
-    .format(new Date(`${date}T00:00:00`))
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'long', day: 'numeric', weekday: 'short',
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(`${date}T00:00:00+08:00`))
 }
 
 function timeLabel(value: string) {
-  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-    .format(new Date(value))
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit', minute: '2-digit', hour12: false,
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(value))
 }
 
 function minutes(seconds: number) {

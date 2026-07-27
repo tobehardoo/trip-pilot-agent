@@ -181,8 +181,10 @@ function transitLegFor(day: Itinerary['days'][number], activityIndex: number): I
   const fromActivity = day.activities[activityIndex]
   const toActivity = day.activities[activityIndex + 1]
   if (!fromActivity || !toActivity) return null
+  // Only return the exact leg matching the activity pair — positional
+  // fallback would silently display wrong transit data when activities
+  // have been reordered or edited.
   return day.transitLegs.find((leg) => leg.fromActivityId === fromActivity.id && leg.toActivityId === toActivity.id)
-    ?? day.transitLegs[activityIndex]
     ?? null
 }
 

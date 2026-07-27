@@ -1,109 +1,48 @@
 # TripPilot 智能旅行规划
 
-TripPilot 是一个面向国内自由行的约束驱动型旅行规划平台。它把用户的日期、预算、兴趣、必去地点、固定安排和交通偏好转换为结构化约束，再结合真实 POI、路线与城市知识生成可执行、可解释的多日行程。
+TripPilot 是一个面向国内自由行的约束驱动型旅行规划平台。它把日期、预算、兴趣、必去地点、固定安排和交通偏好转换为结构化约束，再结合 POI、路线与城市情报生成可执行、可解释的多日行程。
 
-> 发布基线：V1.2 发布候选；当前开发目标：V1.3“可信城市情报与可恢复版本”。默认提供
-> 无需外部 API Key 的确定性 Demo 模式，也支持接入高德、语义 Embedding 与公开攻略
-> 情报导入。V1.3 实际状态与证据见[验收清单](docs/release-checklist.md)。
+> 当前基线：V2.0 本地 Demo/Compose 验收已形成证据，日期为 2026-07-27。生产发布仍需要部署者补齐 HTTPS、真实 Provider Key、域名白名单和高德 Web JS 底图验收。详见 [V2.0 发布状态](docs/release.md)。
 
-## What：这是一个什么项目
-
-普通旅行攻略通常只给出地点清单，难以回答“时间是否来得及”“预算是否超限”“固定预约能否保留”等问题。TripPilot 将旅行规划建模为一条可验证的异步工作流：
-
-1. 用户创建旅行并提交日期、预算、同行类型、兴趣和固定安排。
-2. Java 服务持久化规划任务与 Outbox 事件。
-3. Python Worker 检索候选 POI、路线和城市知识。
-4. 候选地点经过过滤、去重、偏好评分和稳定排序。
-5. OR-Tools CP-SAT 在时间、交通、预算与固定安排的硬约束下求解。
-6. 结果以不可变行程版本保存，并通过 SSE 实时推送给网页端。
-7. 无法满足约束时返回明确冲突与最小放宽建议，而不是静默生成错误结果。
-
-### 核心功能
+## 核心能力
 
 - 用户注册、登录、会话恢复和 HttpOnly Refresh Cookie 轮换。
-- 创建旅行、维护结构化约束、乐观锁更新和用户数据隔离。
-- 异步规划任务、实时 SSE 进度、断线补发和任务取消。
-- 高德 POI/步行路线 Provider、Redis 缓存及无密钥 Demo 降级。
-- 候选 POI 过滤、近似去重、偏好评分和确定性排序。
-- OR-Tools 时间窗、交通、预算、必去地点和固定安排约束优化。
+- 旅行创建、约束维护、乐观锁更新、归档/恢复、分页筛选和用户数据隔离。
+- 异步规划任务、真实阶段进度、SSE 断线补发、重复事件抑制和任务取消。
+- 高德 POI/路线 Provider、Redis 缓存，以及无需外部 Key 的确定性 Demo 模式。
+- 候选 POI 过滤、近似去重、偏好评分、确定性排序和 OR-Tools 约束求解。
 - 不可行规划的结构化冲突原因和放宽建议。
-- 广州城市知识导入、pgvector 检索、版本化引用和新鲜度标记。
-- 行程级多来源攻略导入：公开链接、粘贴正文、TXT/Markdown、小红书分享正文；自动提取
-  景点、地址、天气、吃饭、交通、费用、时间、排队和预约事实。
-- 可手动按目的地同步高德当前/预报天气与景点详情；事实进入下一次规划快照，天气只影响
-  对应旅行日期的候选排序。
-  室内候选。
-- 每条攻略事实保留来源标识、采集时间、置信度与有效期；公开 URL 额外保留原文链接，
-  并与用户行程隔离。
-- 地图 Marker、步行路线、时间轴联动及无地图凭据降级视图。
-- 不可变行程版本、活动与交通段持久化。
-- Prometheus 指标、健康检查、死信队列、数据库备份和恢复工具。
+- 广州城市知识、用户攻略导入、可信城市情报、事实新鲜度和规划快照。
+- 不可变行程版本、版本差异、回滚、活动编辑和通勤段写回。
+- 匿名只读分享链接、ICS 日历导出和支持中文字体的 PDF 导出。
+- Prometheus 指标、健康检查、死信队列、受保护诊断入口、备份和恢复工具。
 
-### 技术栈
-
-| 层级 | 技术 |
-| --- | --- |
-| Web | Vue 3、TypeScript、Vite、Vitest、Nginx |
-| 业务后端 | Java 21、Spring Boot、Spring Security、MyBatis、Flyway、Maven |
-| 规划服务 | Python 3.12、FastAPI、Pydantic、aio-pika、OR-Tools、uv |
-| 数据与检索 | PostgreSQL 16、PostGIS、pgvector、Redis |
-| 异步通信 | RabbitMQ、Transactional Outbox、版本化 JSON Schema |
-| 运维 | Docker Compose、Prometheus、GitHub Actions |
-
-## Why：为什么开发 TripPilot
-
-自由行规划的难点不是“推荐几个热门景点”，而是让地点、时间、交通、预算和用户偏好同时成立。纯文本生成很容易忽略通勤成本、重复地点、预约时间或硬预算，也很难解释为什么某个方案不可行。
-
-TripPilot 的目标是把推荐能力与确定性约束结合起来：
-
-- 外部数据与知识检索负责提供候选事实和来源。
-- 可测试的规则负责过滤无效、重复或不匹配的候选项。
-- OR-Tools 负责验证时间线和硬约束。
-- 版本化事件与持久化模型保证异步链路可追踪、可重放。
-- 失败结果同样是产品输出，用户可以根据冲突原因调整条件。
-
-这种设计让生成结果从“看起来合理的攻略”变为“能够被系统校验并解释的计划”。
-
-## How：系统如何工作
+## 系统结构
 
 ```mermaid
 flowchart LR
-    U["用户浏览器"] --> W["Vue 3 + Nginx"]
+    U["浏览器"] --> W["Vue 3 Web"]
     W --> J["Spring Boot 业务后端"]
-    J --> P[("PostgreSQL / pgvector")]
+    J --> P[("PostgreSQL / PostGIS / pgvector")]
+    J --> R[("Redis")]
     J --> Q["RabbitMQ"]
     J --> S["SSE 事件流"]
-    Q --> A["Python Planning Worker"]
-    A --> R[("Redis")]
+    Q --> A["Python Agent Service / Worker"]
     A --> P
+    A --> R
     A --> M["地图 / 路线 Provider"]
-    A --> K["城市知识库"]
-    J --> G["受保护的攻略抽取 API"]
-    G --> X["用户提交的公开 HTTPS 页面"]
+    A --> K["知识库与攻略抽取"]
     S --> W
 ```
 
-### 服务职责
+- `apps/web`：旅行工作台、规划进度、地图、版本、分享和导出体验。
+- `apps/travel-server`：用户、旅行、任务、行程版本、安全、Outbox、SSE 和诊断。
+- `apps/agent-service`：候选生成、知识检索、路线获取、约束求解和消息消费。
+- `contracts`：跨 Java、Python、TypeScript 的消息契约。
+- `knowledge`：城市知识文档、来源注册和固定评测语料。
+- `infra`：数据库扩展、监控和生产运行配置。
 
-- `apps/web`：登录、旅行工作台、规划进度、地图与时间轴展示。
-- `apps/travel-server`：用户、旅行、任务、行程版本、安全、Outbox 与 SSE。
-- `apps/agent-service`：候选生成、知识检索、路线获取、约束求解与消息消费。
-- `contracts`：跨服务消息契约。
-- `knowledge`：城市知识、来源注册表与固定评测集。
-- `infra`：数据库扩展、监控与生产运行配置。
-
-### 可靠性与安全设计
-
-- 规划命令通过 Transactional Outbox 与 RabbitMQ 至少一次投递。
-- 消费端执行幂等校验，避免重复消息生成重复行程版本。
-- 任务取消同时经过消息控制面和数据库权威状态校验。
-- Refresh Token 仅通过 HttpOnly Cookie 传输，不进入 JavaScript。
-- Nginx 提供 CSP、安全响应头、可信代理解析和限流。
-- 外部知识采集包含域名白名单、DNS 公网地址校验、响应大小限制和审核发布流程。
-- 用户提交的攻略链接只允许公开 HTTPS 页面，并经过 DNS 公网校验、同域重定向和大小限制。
-- 攻略抽取 API 只在 Compose 私有网络开放，并使用服务间令牌；不会登录站点、绕过验证码或批量爬取账号。
-
-## 快速部署
+## 快速启动
 
 ### 环境要求
 
@@ -123,7 +62,7 @@ Linux/macOS：
 cp .env.example .env
 ```
 
-编辑 `.env`，至少替换以下值：
+至少替换以下值：
 
 ```dotenv
 POSTGRES_PASSWORD=your-local-postgres-password
@@ -131,9 +70,10 @@ REDIS_PASSWORD=your-local-redis-password
 RABBITMQ_PASSWORD=your-local-rabbitmq-password
 JWT_SECRET=your-random-secret-at-least-32-bytes
 AGENT_INTERNAL_TOKEN=your-distinct-random-internal-token
+INTERNAL_DIAGNOSTICS_TOKEN=your-distinct-random-diagnostics-token
 ```
 
-本机使用纯 HTTP 访问时设置：
+本机 HTTP 演示可使用：
 
 ```dotenv
 DEMO_MODE=true
@@ -150,7 +90,7 @@ docker compose -f compose.prod.yaml --env-file .env up -d
 docker compose -f compose.prod.yaml --env-file .env ps
 ```
 
-知识初始化容器会自动执行数据库迁移并导入随仓库提供的广州语料，成功后再启动规划 Worker。
+知识初始化容器会执行数据库迁移并导入随仓库提供的广州语料，成功后再启动规划 Worker。
 
 ### 3. 访问服务
 
@@ -158,23 +98,18 @@ docker compose -f compose.prod.yaml --env-file .env ps
 - 健康检查：<http://127.0.0.1:8080/api/health>
 - Prometheus：<http://127.0.0.1:9090>
 
-打开 Web 后，注册账号并创建旅行。在“攻略情报”中可粘贴无需登录即可访问的公开攻略链接，
-系统会把提取到的新鲜事实保存到当前旅行，并把启用的证据快照交给规划任务。攻略事实只能
-影响候选排序和软建议，不会绕过 OR-Tools 的硬约束或把未经授权 Provider 核验的信息当作
-实时闭馆、票价或预约结论。
+打开 Web 后注册账号并创建旅行。Demo 模式不依赖外部 LLM 或地图 Key；真实 Provider 失败时必须显示明确的降级或过期标记，不能伪装成实时成功。
 
-### 4. 查看日志或停止服务
+### 4. 停止服务
 
 ```powershell
 docker compose -f compose.prod.yaml --env-file .env logs -f
 docker compose -f compose.prod.yaml --env-file .env down
 ```
 
-数据默认保存在 Docker Volume 中。若需要同时删除本地演示数据，可显式执行 `docker compose -f compose.prod.yaml --env-file .env down -v`。
+数据默认保存在 Docker Volume 中。需要删除本地演示数据时，显式执行 `docker compose -f compose.prod.yaml --env-file .env down -v`。
 
 ## 接入真实 Provider
-
-Demo 模式不依赖外部 LLM 或地图 Key。若需要真实 POI、路线和地图展示：
 
 ```dotenv
 DEMO_MODE=false
@@ -183,9 +118,9 @@ VITE_AMAP_WEB_JS_KEY=your-browser-amap-key
 VITE_AMAP_SECURITY_CODE=your-browser-security-code
 ```
 
-本地开发可将两个 `VITE_AMAP_*` 变量放在仓库根 `.env` 或 `apps/web/.env.local`；Web 本地文件优先，修改后需要重启 Vite。
+浏览器 Key 与服务端 Web Service Key 必须分开使用。高德 Web JS Key、安全密钥和域名白名单需要在最终浏览器域名中验收；Demo 模式证据不能替代真实底图验收。
 
-浏览器 Key 与服务端 Web Service Key 必须分开使用。语义 Embedding 可通过 `KNOWLEDGE_EMBEDDING_PROVIDER` 和对应服务凭据配置；启用前应先运行固定检索评测集。
+语义 Embedding 可通过 `KNOWLEDGE_EMBEDDING_PROVIDER` 和对应服务凭据配置；启用前应先运行固定检索评测集。
 
 ## 测试
 
@@ -204,36 +139,27 @@ Set-Location ../web
 corepack enable
 pnpm install --frozen-lockfile
 pnpm test
+pnpm typecheck
 pnpm build
 ```
 
-质量不使用容易过期的固定测试数量描述。CI 以以下门禁为准：
-
-- Java：`mvn --batch-mode verify`，JaCoCo 行覆盖率门禁 80%。
-- Python：Ruff、全量 Pytest，以及检索/采集模块覆盖率门禁 80%。
-- Web：Vitest 覆盖率、TypeScript 类型检查和生产构建。
-- 基础设施：Compose 配置、生产镜像构建与敏感信息扫描。
+质量门禁以 CI 和发布证据为准，不在 README 中维护易过期的测试数量。
 
 ## 文档
 
-- [系统架构设计](docs/architecture.md) — 为什么选择模块化单体、异步任务模型、Transactional Outbox
-- [领域模型](docs/domain.md) — 核心领域划分、聚合关系、数据所有权
-- [规划算法与 Agent](docs/planning.md) — 三段式 Pipeline、约束求解、Provider 设计
-- [数据库设计](docs/database.md) — Schema 分治、版本不可变、JSONB 边界、索引策略
-- [接口与消息契约](docs/api.md) — REST API、MQ 契约版本化、SSE 协议
-- [部署](docs/deployment.md) — Docker Compose、环境变量、备份恢复
-- [产品路线图](docs/roadmap.md) — 当前发布范围、生产 V1 退出条件、后续计划
-- [当前系统状态与 V1.3 实施基线](docs/28-current-system-status-and-v1-4-plan.md) — 真实能力、差异、风险和实施切片
-- [V1.3 发布验收清单](docs/release-checklist.md) — 当前目标的范围、证据与完成定义
-- [技术决策记录](docs/decision-record.md) — 关键 ADR 及取舍理由
-- [产品完整度与需求基线](docs/27-product-completeness-and-requirements-baseline.md) — 详细需求清单和评分
+- [文档入口](docs/README.md)：当前维护文档与归档规则。
+- [产品与范围](docs/product.md)：当前能力、边界和下一步。
+- [系统架构](docs/architecture.md)：服务职责、领域、数据和可靠性模型。
+- [接口与契约](docs/api.md)：REST、MQ、SSE 和错误语义。
+- [部署与运维](docs/deployment.md)：配置、启动、测试、备份和发布检查。
+- [技术决策](docs/decision-record.md)：关键 ADR 的当前摘要。
+- [发布状态](docs/release.md)：V2.0 验收证据、外部阻塞和已知风险。
+- [历史归档](docs/archive/README.md)：旧路线图、V1.3 验收、V2 执行清单和审查报告。
 
 ## 已知边界
 
-- V1 重点支持单城市自由行，不提供机票、火车票、酒店预订或支付。
-- Demo 费用属于明确标记的估算值，不代表供应商实时报价。
-- 静态知识会显示来源与新鲜度，但出发前仍应核验营业时间、预约和票价。
-- 公开攻略导入不会绕过登录、验证码或反自动化限制；受限页面可改用用户主动提供的
-  分享正文或 TXT/Markdown。
-- 当前城市同步使用高德天气与 POI 数据；官网票价、预约、临时闭馆自动核验及模型生成/
-  修复循环仍需在来源审核和固定评测门禁通过后启用。
+- V2.0 仍聚焦单城市自由行，不提供机票、火车票、酒店预订或支付。
+- Demo 费用和路线属于明确标记的估算值，不代表供应商实时结果。
+- 静态知识和社区攻略会显示来源与新鲜度；出发前仍应核验营业时间、预约和票价。
+- 公开攻略导入不会绕过登录、验证码或反自动化限制；受限页面应改用用户主动提供的正文或文件。
+- 真实生产发布必须补齐 HTTPS、Cookie 安全配置、真实 Provider 凭据、域名/IP 白名单和日志脱敏复核。

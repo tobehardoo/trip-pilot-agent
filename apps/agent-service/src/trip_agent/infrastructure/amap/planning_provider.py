@@ -6,8 +6,10 @@ OR‑Tools for daily schedule optimisation.
 """
 
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from itertools import combinations
 from math import ceil
+from typing import Literal
 
 from trip_agent.domain.planning.protocols import (
     PlanningInfeasibleError,
@@ -288,33 +290,36 @@ class AmapPlanningProvider:
                 if unmatched_must_visits:
                     return None
                 return list(days), selected
-            ranked_remaining = remaining
             trip_date = trip.start_date + timedelta(days=offset)
             context = command.payload.planning_context
+            # Always apply user preference ranking; guide evidence provides
+            # additional boosting signals when available (P06 fix).
+            guide_statements = (
+                _non_weather_guide_statements(command.payload.guide_evidence.facts)
+                if use_guide_evidence else ()
+            )
+            weather_statements = (
+                weather_statements_for_date(command.payload.guide_evidence.facts, trip_date)
+                if use_guide_evidence else ()
+            )
+            ranking = self._candidate_ranker.rank(
+                remaining,
+                destination=trip.destination,
+                preferences=trip.constraints.preferences,
+                traveler_type=trip.constraints.traveler_type,
+                limit=len(remaining),
+                must_visit_places=trip.constraints.must_visit_places,
+                avoid_places=trip.constraints.avoid_places,
+                guide_statements=guide_statements,
+                weather_statements=weather_statements,
+            )
+            ranked_remaining = tuple(item.poi for item in ranking.selected)
             if context is not None:
                 ranked_remaining = tuple(
                     poi
                     for poi in ranked_remaining
                     if hard_closed_fact(context, trip_date, poi.name) is None
                 )
-            if use_guide_evidence:
-                ranking = self._candidate_ranker.rank(
-                    remaining,
-                    destination=trip.destination,
-                    preferences=trip.constraints.preferences,
-                    traveler_type=trip.constraints.traveler_type,
-                    limit=len(remaining),
-                    must_visit_places=trip.constraints.must_visit_places,
-                    avoid_places=trip.constraints.avoid_places,
-                    guide_statements=_non_weather_guide_statements(
-                        command.payload.guide_evidence.facts
-                    ),
-                    weather_statements=weather_statements_for_date(
-                        command.payload.guide_evidence.facts,
-                        trip_date,
-                    ),
-                )
-                ranked_remaining = tuple(item.poi for item in ranking.selected)
             pairs = list(combinations(range(len(ranked_remaining)), 2))
             pairs.sort(
                 key=lambda pair: (
@@ -517,6 +522,32 @@ class AmapPlanningProvider:
                 return tuple(candidates)
         return tuple(candidates)
 
+    @staticmethod
+    def _transit_cost(plan: RoutePlan) -> Decimal | None:
+        """Extract monetary cost from a route plan.
+
+        Walking is always free (0).  Driving cost comes from the provider
+        (AMap toll estimate) when available; otherwise ``None`` signals
+        that the cost could not be determined.
+        """
+        if plan.mode == "WALKING":
+            return Decimal("0.00")
+        if plan.estimated_cost is not None:
+            return Decimal(str(round(plan.estimated_cost, 2)))
+        return None
+
+    @staticmethod
+    def _transit_cost_source(
+        route: ProviderSuccess[RoutePlan],
+    ) -> Literal["PROVIDER", "RULE_ESTIMATE", "DEMO", "UNKNOWN"]:
+        if route.provider == "DEMO":
+            return "DEMO"
+        if route.data.mode == "WALKING":
+            return "RULE_ESTIMATE"
+        if route.data.estimated_cost is not None:
+            return "PROVIDER"
+        return "UNKNOWN"
+
     async def _day(
         self,
         command: PlanningCreateCommand,
@@ -700,6 +731,8 @@ class AmapPlanningProvider:
                         )
                         for point in route.data.polyline
                     ),
+                    estimated_cost=self._transit_cost(route.data),
+                    cost_source=self._transit_cost_source(route),
                 ),
             ),
         )

@@ -523,6 +523,16 @@ class TransitLeg(MessageModel):
     provider: Literal["AMAP", "DEMO"]
     estimated: bool = Field(strict=True)
     polyline: tuple[ActivityCoordinates, ...] = Field(min_length=1, max_length=5_000)
+    estimated_cost: JsonDecimal | None = Field(default=None)
+    cost_source: Literal["PROVIDER", "RULE_ESTIMATE", "DEMO", "UNKNOWN"] = "UNKNOWN"
+
+    @model_validator(mode="after")
+    def validate_cost(self) -> Self:
+        if self.estimated_cost is not None and self.estimated_cost < 0:
+            raise ValueError("transit leg estimated cost must not be negative")
+        if self.provider == "DEMO" and self.estimated_cost is None:
+            raise ValueError("DEMO transit leg must provide an estimated cost")
+        return self
 
     @model_validator(mode="after")
     def validate_provider_estimate(self) -> Self:
@@ -679,7 +689,7 @@ class PlanningReplanPayload(InboundMessageModel):
             raise ValueError("impactedDates must fall within the itinerary")
         impacted = set(self.impacted_dates)
         for day in self.itinerary.days:
-            if day.date not in impacted or day.transit_legs:
+            if day.date not in impacted and day.transit_legs:
                 day.to_itinerary_day()
         return self
 
@@ -800,7 +810,7 @@ type PlanningProgressStage = Literal[
     "CONSTRAINTS_SOLVING",
     "KNOWLEDGE_RETRIEVING",
     "RESULT_EXPLAINING",
-    "RESULT_PERSISTING",
+    "RESULT_PUBLISHING",
 ]
 type ProgressStatistic = Annotated[
     int,

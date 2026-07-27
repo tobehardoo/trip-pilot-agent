@@ -40,6 +40,7 @@ class DemoRouteProvider:
                 ),
             ),
             polyline=polyline,
+            estimated_cost=0.0 if request.mode == "WALKING" else None,
         )
         return ProviderSuccess(
             data=plan,

@@ -1,7 +1,6 @@
 """Operator-facing import and search commands for the city knowledge store."""
 
 import argparse
-import asyncio
 import json
 from collections.abc import Iterable
 from pathlib import Path
@@ -12,6 +11,7 @@ import psycopg
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from trip_agent.platform_util import run_async
 from trip_agent.retrieval.embeddings import (
     DashScopeEmbeddingProvider,
     EmbeddingProvider,
@@ -208,7 +208,7 @@ async def run_command(args: argparse.Namespace, settings: KnowledgeSettings | No
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        output = asyncio.run(run_command(args))
+        output = run_async(run_command(args))
     except ValueError as error:
         print(json.dumps({"message": str(error), "status": "error"}, ensure_ascii=False))
         return 2

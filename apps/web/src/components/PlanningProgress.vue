@@ -27,6 +27,7 @@ const steps: PipelineStep[] = [
   { stage: 'CONSTRAINTS_SOLVING', label: 'Constraint solving' },
   { stage: 'KNOWLEDGE_RETRIEVING', label: 'Knowledge retrieval' },
   { stage: 'RESULT_EXPLAINING', label: 'Result explanation' },
+  { stage: 'RESULT_PUBLISHING', label: 'Publishing result' },
   { stage: 'RESULT_PERSISTING', label: 'Result persistence' },
 ]
 

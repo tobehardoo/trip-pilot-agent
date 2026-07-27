@@ -149,7 +149,7 @@ def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
         "CONSTRAINTS_SOLVING",
         "KNOWLEDGE_RETRIEVING",
         "RESULT_EXPLAINING",
-        "RESULT_PERSISTING",
+        "RESULT_PUBLISHING",
     ]
     assert [event["payload"]["sequence"] for event in progress_events] == list(range(1, 8))
     assert [event["payload"]["progress"] for event in progress_events] == [

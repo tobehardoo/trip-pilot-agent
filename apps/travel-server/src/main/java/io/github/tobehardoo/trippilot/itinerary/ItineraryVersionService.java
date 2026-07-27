@@ -395,7 +395,7 @@ public class ItineraryVersionService {
                 || before.durationSeconds() != after.durationSeconds()) {
             changes.add("ROUTE_CHANGED");
         }
-        if (before.estimatedCost().compareTo(after.estimatedCost()) != 0) {
+        if (!Objects.equals(before.estimatedCost(), after.estimatedCost())) {
             changes.add("COST_CHANGED");
         }
         if (before.locked() != after.locked()) {

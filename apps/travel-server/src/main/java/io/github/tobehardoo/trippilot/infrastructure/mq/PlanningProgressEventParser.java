@@ -23,6 +23,7 @@ public class PlanningProgressEventParser {
             "CONSTRAINTS_SOLVING",
             "KNOWLEDGE_RETRIEVING",
             "RESULT_EXPLAINING",
+            "RESULT_PUBLISHING",
             "RESULT_PERSISTING"
     );
 

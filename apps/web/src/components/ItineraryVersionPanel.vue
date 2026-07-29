@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { GitCompareArrows, History, LoaderCircle, RotateCcw } from 'lucide-vue-next'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import type { ItineraryVersionDiff, ItineraryVersionSummary } from '../lib/api'
 
@@ -21,6 +21,8 @@ const selectedDiff = ref<ItineraryVersionDiff | null>(null)
 const pendingRollback = ref<ItineraryVersionSummary | null>(null)
 const actionBusy = ref(false)
 const actionError = ref<string | null>(null)
+const expanded = ref(false)
+const visibleVersions = computed(() => expanded.value ? props.versions : props.versions.slice(0, 3))
 
 const sourceLabels: Record<ItineraryVersionSummary['versionSource'], string> = {
   PLANNING_TASK: '智能规划',
@@ -103,7 +105,7 @@ async function confirmRollback() {
 
     <ol v-else class="m-0 grid list-none gap-3 p-0">
       <li
-        v-for="version in versions"
+        v-for="version in visibleVersions"
         :key="version.versionId"
         class="rounded-xl border border-surface-200 bg-surface-50 px-4 py-3"
       >
@@ -143,6 +145,15 @@ async function confirmRollback() {
         </div>
       </li>
     </ol>
+    <button
+      v-if="versions.length > 3"
+      type="button"
+      class="mt-3 text-sm font-semibold text-primary-600 hover:text-primary-700"
+      :aria-expanded="expanded"
+      @click="expanded = !expanded"
+    >
+      {{ expanded ? '收起较早版本' : `查看其余 ${versions.length - 3} 个较早版本` }}
+    </button>
 
     <div v-if="selectedDiff" class="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-4">
       <h3 class="m-0 text-sm font-bold text-primary-900">与当前版本的差异</h3>

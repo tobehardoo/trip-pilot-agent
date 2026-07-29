@@ -100,6 +100,36 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void savesMultipleReviewedDraftEditsAsOneImmutableVersion() throws Exception {
+        PlanningContext context = completedItinerary("edit-draft@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID versionId = uuid(current, "versionId");
+        UUID firstActivityId = uuid(current.at("/days/0/activities/0"), "id");
+        UUID secondActivityId = uuid(current.at("/days/0/activities/1"), "id");
+        String draft = """
+                {
+                  "baseVersionId":"%s",
+                  "edits":[
+                    {"baseVersionId":"%s","operation":"DELETE_ACTIVITY","activityId":"%s"},
+                    {"baseVersionId":"%s","operation":"LOCK_ACTIVITY","activityId":"%s"}
+                  ]
+                }
+                """.formatted(versionId, versionId, firstActivityId, versionId, secondActivityId);
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(draft))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionNumber").value(2))
+                .andExpect(jsonPath("$.days[0].activities.length()").value(1))
+                .andExpect(jsonPath("$.days[0].activities[0].locked").value(true));
+
+        assertThat(count("business.itinerary_version")).isEqualTo(2);
+    }
+
+    @Test
     void listsDiffsAndIdempotentlyRollsBackByCreatingANewVersion() throws Exception {
         PlanningContext context = completedItinerary("version-rollback@example.com");
         JsonNode initial = currentItinerary(context);

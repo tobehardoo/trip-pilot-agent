@@ -52,6 +52,13 @@ const diff: ItineraryVersionDiff = {
   budgetChange: -200,
 }
 
+const fiveVersions: ItineraryVersionSummary[] = Array.from({ length: 5 }, (_, index) => ({
+  ...versions[0]!,
+  versionId: `version-${5 - index}`,
+  versionNumber: 5 - index,
+  current: index === 0,
+}))
+
 test('compares an old version with current and confirms an idempotent rollback', async () => {
   const getDiff = vi.fn(async () => diff)
   const rollback = vi.fn(async () => {})
@@ -81,4 +88,16 @@ test('compares an old version with current and confirms an idempotent rollback',
     'version-2',
     expect.stringMatching(/^[0-9a-f-]{36}$/),
   )
+})
+
+test('collapses older version records until explicitly expanded', async () => {
+  const view = render(ItineraryVersionPanel, {
+    props: {
+      versions: fiveVersions, currentVersionId: 'version-5', busy: false, error: null,
+      getDiff: async () => diff, rollback: async () => {},
+    },
+  })
+  expect(view.container.querySelectorAll('ol > li')).toHaveLength(3)
+  await fireEvent.click(screen.getByRole('button', { name: '查看其余 2 个较早版本' }))
+  expect(view.container.querySelectorAll('ol > li')).toHaveLength(5)
 })

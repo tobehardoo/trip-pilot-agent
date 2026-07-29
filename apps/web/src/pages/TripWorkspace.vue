@@ -10,6 +10,7 @@ import { useAuthStore } from '../app/stores/auth'
 import {
   ApiError,
   applyItineraryEdit,
+  commitItineraryEdits,
   archiveTrip,
   cancelPlanningTask,
   createGuideImport,
@@ -550,6 +551,19 @@ async function handleApplyItineraryEdit(input: ItineraryEditInput) {
   }
 }
 
+async function handleCommitItineraryEdits(baseVersionId: string, edits: ItineraryEditInput[]) {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  const tripId = selectedTrip.value.id
+  const updated = await withAccessToken((token) => commitItineraryEdits(
+    token, tripId, baseVersionId, edits, crypto.randomUUID(),
+  ))
+  if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
+    itinerary.value = updated
+    itineraryError.value = null
+    await loadItineraryVersionsForTrip(tripId)
+  }
+}
+
 async function handleGetItineraryVersionDiff(
   fromVersionId: string,
   toVersionId: string,
@@ -931,6 +945,7 @@ onUnmounted(() => {
       :set-guide-enabled="handleSetGuideEnabled"
       :preview-itinerary-edit="handlePreviewItineraryEdit"
       :apply-itinerary-edit="handleApplyItineraryEdit"
+      :commit-itinerary-edits="handleCommitItineraryEdits"
       :start-replanning="handleStartReplanning"
       :start-planning="handleStartPlanning"
       :cancel-planning="handleCancelPlanning"

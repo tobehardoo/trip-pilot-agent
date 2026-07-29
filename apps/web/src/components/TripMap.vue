@@ -25,14 +25,11 @@ const selectedActivity = computed(() => {
 })
 const hasCoordinates = computed(() => model.value.activities.length > 0)
 const hasAmapConfig = computed(() => Boolean(getAMapConfig()))
-const MAP_LOAD_TIMEOUT_MS = 8_000
 let map: AMapMap | null = null
 let amap: AMapNamespace | null = null
 let markers: AMapMarker[] = []
 let polylines: AMapPolyline[] = []
 let mapLoadSequence = 0
-let mapLoadTimer: ReturnType<typeof setTimeout> | null = null
-let mapBaseReady = false
 
 function selectActivity(activity: MapActivity) {
   emit('selectActivity', activity.id)
@@ -49,19 +46,11 @@ function clearOverlays() {
   polylines = []
 }
 
-function clearMapLoadTimer() {
-  if (mapLoadTimer === null) return
-  clearTimeout(mapLoadTimer)
-  mapLoadTimer = null
-}
-
 function destroyMap() {
-  clearMapLoadTimer()
   clearOverlays()
   map?.destroy?.()
   map = null
   amap = null
-  mapBaseReady = false
 }
 
 function markerContent(activity: MapActivity, index: number) {
@@ -99,16 +88,6 @@ function renderOverlays(namespace: AMapNamespace) {
   if (markers.length > 0 || polylines.length > 0) map.setFitView([...markers, ...polylines])
 }
 
-function startMapLoadTimeout(pendingMap: AMapMap) {
-  clearMapLoadTimer()
-  mapLoadTimer = setTimeout(() => {
-    if (map !== pendingMap || sdkState.value !== 'loading') return
-    destroyMap()
-    sdkState.value = 'error'
-    mapError.value = '高德底图未完成加载。请检查 Web JS Key 的域名白名单是否包含当前地址，并确认安全密钥与 Key 匹配；已切换为路线概览。'
-  }, MAP_LOAD_TIMEOUT_MS)
-}
-
 function renderAmap(namespace: AMapNamespace) {
   if (!mapElement.value) return
   if (!map) {
@@ -122,28 +101,6 @@ function renderAmap(namespace: AMapNamespace) {
       mapStyle: 'amap://styles/normal',
     })
     map = createdMap
-    if (createdMap.on) {
-      createdMap.on('complete', () => {
-        if (map !== createdMap) return
-        clearMapLoadTimer()
-        mapBaseReady = true
-        try {
-          renderOverlays(namespace)
-          sdkState.value = 'ready'
-        } catch {
-          destroyMap()
-          sdkState.value = 'error'
-          mapError.value = '高德地图暂时无法加载，已切换为路线概览'
-        }
-      })
-      if (!mapBaseReady) startMapLoadTimeout(createdMap)
-      return
-    }
-    mapBaseReady = true
-  }
-  if (!mapBaseReady) {
-    startMapLoadTimeout(map)
-    return
   }
   renderOverlays(namespace)
   sdkState.value = 'ready'

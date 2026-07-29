@@ -674,6 +674,20 @@ export function applyItineraryEdit(
   }, accessToken)
 }
 
+export function commitItineraryEdits(
+  accessToken: string,
+  tripId: string,
+  baseVersionId: string,
+  edits: ItineraryEditInput[],
+  idempotencyKey: string,
+): Promise<Itinerary> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/edits/commit`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ baseVersionId, edits }),
+  }, accessToken)
+}
+
 export function createItineraryReplan(
   accessToken: string,
   tripId: string,

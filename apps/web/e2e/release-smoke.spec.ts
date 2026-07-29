@@ -122,6 +122,22 @@ async function mockReleaseApi(page: Page) {
       await route.fulfill({ json: itinerary })
       return
     }
+    if (path === `/api/trips/${tripId}/itinerary/versions`) {
+      await route.fulfill({ json: [{
+        versionId: itinerary.versionId,
+        versionNumber: itinerary.versionNumber,
+        parentVersionId: itinerary.parentVersionId,
+        planningTaskId: null,
+        versionSource: 'USER_EDIT',
+        title: itinerary.title,
+        estimatedTotalCost: itinerary.estimatedTotalCost,
+        provider: itinerary.provider,
+        rollbackFromVersionId: null,
+        createdAt: itinerary.createdAt,
+        current: true,
+      }] })
+      return
+    }
     if (path === `/api/trips/${tripId}/guide-imports`) {
       await route.fulfill({ json: [] })
       return
@@ -137,6 +153,10 @@ async function mockReleaseApi(page: Page) {
           blockingReasons: [],
         },
       })
+      return
+    }
+    if (path === `/api/trips/${tripId}/itinerary/edits/commit` && request.method() === 'POST') {
+      await route.fulfill({ json: itinerary })
       return
     }
 
@@ -157,7 +177,7 @@ test('restores a session and opens the trip planning workspace', async ({ page }
 
   await expect(page).toHaveURL(`/trips/${tripId}`)
   await expect(page.getByRole('heading', { name: trip.title, level: 1 })).toBeVisible()
-  await expect(page.getByText('版本 2')).toBeVisible()
+  await expect(page.getByLabel('行程版本').getByText('版本 2')).toBeVisible()
   await expect(page.getByRole('button', { name: '选择活动 漫步沙面岛' })).toBeVisible()
 })
 
@@ -181,4 +201,16 @@ test('opens an itinerary edit preview before applying a mutation', async ({ page
   await expect(dialog.getByText('锁定活动')).toBeVisible()
   await expect(dialog.getByText('2026-08-01')).toBeVisible()
   await expect(dialog.getByRole('button', { name: '应用修改' })).toBeEnabled()
+})
+
+test('stores several traveller edits as a draft and commits them only after confirmation', async ({ page }) => {
+  await mockReleaseApi(page)
+  await page.goto('/trips')
+  await page.getByRole('button', { name: `打开 ${trip.title}` }).click()
+  await page.getByRole('button', { name: '锁定活动 漫步沙面岛' }).click()
+  await page.getByRole('button', { name: '应用修改' }).click()
+
+  await expect(page.getByTestId('save-itinerary-draft')).toBeVisible()
+  await page.getByTestId('save-itinerary-draft').click()
+  await expect(page.getByTestId('save-itinerary-draft')).toBeHidden()
 })

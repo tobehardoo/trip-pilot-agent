@@ -137,6 +137,48 @@ public class ItineraryService {
         return getCurrent(ownerId, tripId);
     }
 
+    /** Commits a user-reviewed draft as one immutable version. */
+    @Transactional
+    public ItineraryResponse applyEdits(
+            UUID ownerId, UUID tripId, UUID idempotencyKey,
+            ItineraryBatchEditRequest request) {
+        UUID previousResult = itineraryMapper.findEditIdempotencyResult(tripId, idempotencyKey);
+        if (previousResult != null) {
+            return getCurrent(ownerId, tripId);
+        }
+        ItineraryMapper.EditableCurrentVersion version = itineraryMapper
+                .findCurrentVersionOwnedForEditForUpdate(tripId, ownerId)
+                .orElseThrow(this::itineraryNotFound);
+        if (request == null || request.baseVersionId() == null
+                || !request.baseVersionId().equals(version.versionId())) {
+            throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                    "The itinerary was updated. Reload it before saving this draft");
+        }
+        if (request.edits() == null || request.edits().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "ITINERARY_EDIT_EMPTY",
+                    "At least one itinerary edit is required");
+        }
+        if (planningTaskService.hasActiveTask(tripId)) {
+            throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_PLANNING_ACTIVE", PLANNING_ACTIVE_MESSAGE);
+        }
+        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        for (ItineraryEditRequest edit : request.edits()) {
+            if (edit == null || edit.baseVersionId() == null
+                    || !edit.baseVersionId().equals(version.versionId())) {
+                throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                        "The itinerary draft does not match the current version");
+            }
+            EditEvaluation evaluation = evaluate(itinerary, edit, budgetFrom(version.constraintSnapshotJson()));
+            if (!evaluation.canApply()) {
+                throw evaluation.toApiException();
+            }
+            apply(itinerary, edit, evaluation.operation());
+        }
+        UUID resultVersionId = persistEditedVersion(version, itinerary);
+        itineraryMapper.insertEditIdempotency(tripId, idempotencyKey, resultVersionId);
+        return getCurrent(ownerId, tripId);
+    }
+
     private ItineraryEditPreviewResponse blockedPreview(
             ItineraryEditRequest request, String code, String message) {
         return new ItineraryEditPreviewResponse(
@@ -602,6 +644,12 @@ public class ItineraryService {
             List<UUID> impactedActivityIds,
             List<String> warnings,
             List<EditBlockingReason> blockingReasons
+    ) {
+    }
+
+    public record ItineraryBatchEditRequest(
+            UUID baseVersionId,
+            List<ItineraryEditRequest> edits
     ) {
     }
 

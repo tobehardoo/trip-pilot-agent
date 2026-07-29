@@ -137,7 +137,7 @@ test('previews an activity deletion before applying it', async () => {
     warnings: ['Transit routes will be refreshed'],
     blockingReasons: [],
   }))
-  const applyEdit = vi.fn(async () => {})
+  const commitEdits = vi.fn(async () => {})
   const view = render(TripDetail, {
     props: {
       user,
@@ -154,7 +154,7 @@ test('previews an activity deletion before applying it', async () => {
       updateConstraints: async () => {},
       reloadTrip: async () => true,
       previewItineraryEdit: previewEdit,
-      applyItineraryEdit: applyEdit,
+      commitItineraryEdits: commitEdits,
     },
   })
 
@@ -170,11 +170,14 @@ test('previews an activity deletion before applying it', async () => {
   expect(view.getByText('Transit routes will be refreshed')).toBeTruthy()
 
   await fireEvent.click(view.getByRole('button', { name: '应用修改' }))
-  expect(applyEdit).toHaveBeenCalledWith({
+  expect(commitEdits).not.toHaveBeenCalled()
+  expect(view.getByTestId('save-itinerary-draft')).toBeTruthy()
+  await fireEvent.click(view.getByTestId('save-itinerary-draft'))
+  expect(commitEdits).toHaveBeenCalledWith(itinerary.versionId, [{
     baseVersionId: itinerary.versionId,
     operation: 'DELETE_ACTIVITY',
     activityId: itinerary.days[0]!.activities[0]!.id,
-  })
+  }])
 })
 
 test('offers local replanning when a day has activities but no transit legs', async () => {
@@ -231,6 +234,36 @@ test('keeps a selected commute mode in the itinerary timeline', async () => {
   expect(view.getByTestId('transit-option-DRIVING').getAttribute('aria-pressed')).toBe('true')
 })
 
+test('stages the recommended transit as a reviewed default instead of retaining a 70-minute walk', async () => {
+  const longWalk = {
+    ...itineraryWithTransit,
+    days: [{
+      ...itineraryWithTransit.days[0]!,
+      transitLegs: [{ ...itineraryWithTransit.days[0]!.transitLegs[0]!, distanceMeters: 5250, durationSeconds: 70 * 60 }],
+    }],
+  }
+  const commitEdits = vi.fn(async () => {})
+  const view = render(TripDetail, {
+    props: {
+      user, trip, busy: false, error: null, itinerary: longWalk, itineraryBusy: false, itineraryError: null,
+      planningState: 'idle', planningError: null, startPlanning: async () => {}, cancelPlanning: async () => {},
+      updateConstraints: async () => {}, reloadTrip: async () => true, commitItineraryEdits: commitEdits,
+    },
+  })
+  await fireEvent.click(view.getByTestId('transit-leg-open-44444444-4444-4444-4444-444444444444'))
+  await waitFor(() => {
+    expect(view.getByTestId('transit-option-TRANSIT').getAttribute('aria-pressed')).toBe('true')
+    expect(view.getByTestId('save-itinerary-draft')).toBeTruthy()
+  })
+
+  await fireEvent.click(view.getByTestId('save-itinerary-draft'))
+  expect(commitEdits).toHaveBeenCalledWith(longWalk.versionId, [expect.objectContaining({
+    operation: 'UPDATE_TRANSIT_LEG',
+    transitLegId: '44444444-4444-4444-4444-444444444444',
+    transitMode: 'TRANSIT',
+  })])
+})
+
 test('moves an activity up by one position instead of moving it to the top', async () => {
   const previewEdit = vi.fn(async () => ({
     operation: 'MOVE_ACTIVITY' as const,
@@ -269,8 +302,8 @@ test('moves an activity up by one position instead of moving it to the top', asy
   }))
 })
 
-test('persists commute mode and lock changes through itinerary edits', async () => {
-  const applyEdit = vi.fn(async () => {})
+test('accumulates commute mode and lock changes until the user saves one draft version', async () => {
+  const commitEdits = vi.fn(async () => {})
   const view = render(TripDetail, {
     props: {
       user,
@@ -286,7 +319,7 @@ test('persists commute mode and lock changes through itinerary edits', async () 
       cancelPlanning: async () => {},
       updateConstraints: async () => {},
       reloadTrip: async () => true,
-      applyItineraryEdit: applyEdit,
+      commitItineraryEdits: commitEdits,
     },
   })
 
@@ -294,20 +327,18 @@ test('persists commute mode and lock changes through itinerary edits', async () 
   await fireEvent.click(view.getByTestId('transit-option-DRIVING'))
   await fireEvent.click(view.getByTestId('transit-lock-44444444-4444-4444-4444-444444444444'))
 
-  expect(applyEdit).toHaveBeenNthCalledWith(1, expect.objectContaining({
+  expect(commitEdits).not.toHaveBeenCalled()
+  await fireEvent.click(view.getByTestId('save-itinerary-draft'))
+  expect(commitEdits).toHaveBeenCalledWith(itinerary.versionId, [expect.objectContaining({
     operation: 'UPDATE_TRANSIT_LEG',
     transitLegId: '44444444-4444-4444-4444-444444444444',
     transitMode: 'DRIVING',
-  }))
-  expect(applyEdit).toHaveBeenNthCalledWith(2, expect.objectContaining({
-    operation: 'UPDATE_TRANSIT_LEG',
-    transitLegId: '44444444-4444-4444-4444-444444444444',
     transitLocked: true,
-  }))
+  })])
 })
 
-test('reverts a commute mode when persistence fails', async () => {
-  const applyEdit = vi.fn(async () => {
+test('keeps a draft visible when saving it fails', async () => {
+  const commitEdits = vi.fn(async () => {
     throw new Error('save failed')
   })
   const view = render(TripDetail, {
@@ -325,15 +356,17 @@ test('reverts a commute mode when persistence fails', async () => {
       cancelPlanning: async () => {},
       updateConstraints: async () => {},
       reloadTrip: async () => true,
-      applyItineraryEdit: applyEdit,
+      commitItineraryEdits: commitEdits,
     },
   })
 
   await fireEvent.click(view.getByTestId('transit-leg-open-44444444-4444-4444-4444-444444444444'))
   await fireEvent.click(view.getByTestId('transit-option-DRIVING'))
 
+  await fireEvent.click(view.getByTestId('save-itinerary-draft'))
   await waitFor(() => {
-    expect(view.getByTestId('transit-option-DRIVING').getAttribute('aria-pressed')).toBe('false')
+    expect(view.getByTestId('transit-option-DRIVING').getAttribute('aria-pressed')).toBe('true')
+    expect(view.getByTestId('save-itinerary-draft')).toBeTruthy()
     expect(view.getByRole('alert')).toBeTruthy()
   })
 })

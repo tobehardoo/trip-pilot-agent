@@ -46,7 +46,12 @@ import {
 } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
 import { cn } from '../lib/utils'
-import type { CommuteMode, ConcreteCommuteMode } from '../lib/transit'
+import {
+  estimateCommuteOptions,
+  recommendedCommuteMode,
+  type CommuteMode,
+  type ConcreteCommuteMode,
+} from '../lib/transit'
 import GuideIntelligencePanel from './GuideIntelligencePanel.vue'
 import ItineraryActionsPanel, { type CreatedItineraryShare } from './ItineraryActionsPanel.vue'
 import ItineraryVersionPanel from './ItineraryVersionPanel.vue'
@@ -92,6 +97,7 @@ const props = withDefaults(defineProps<{
   setGuideEnabled?: (guideImportId: string, enabled: boolean) => Promise<void>
   previewItineraryEdit?: (input: ItineraryEditInput) => Promise<ItineraryEditPreview>
   applyItineraryEdit?: (input: ItineraryEditInput) => Promise<void>
+  commitItineraryEdits?: (baseVersionId: string, edits: ItineraryEditInput[]) => Promise<void>
   startReplanning?: (input: ItineraryReplanInput) => Promise<void>
   startPlanning: () => Promise<void>
   cancelPlanning: () => Promise<void>
@@ -127,6 +133,7 @@ const props = withDefaults(defineProps<{
     blockingReasons: [{ code: 'ITINERARY_EDIT_UNAVAILABLE', message: 'Itinerary editing is unavailable' }],
   }),
   applyItineraryEdit: async () => {},
+  commitItineraryEdits: async () => {},
   startReplanning: async () => {},
 })
 
@@ -159,6 +166,7 @@ const versionConflict = ref(false)
 const selectedActivityId = ref<string | null>(null)
 const pendingItineraryEdit = ref<ItineraryEditInput | null>(null)
 const itineraryEditPreview = ref<ItineraryEditPreview | null>(null)
+const draftItineraryEdits = ref<ItineraryEditInput[]>([])
 const selectedTransitModes = reactive<Record<string, CommuteMode>>({})
 const lockedTransitLegs = reactive<Record<string, boolean>>({})
 const transitEditBusy = ref(false)
@@ -189,7 +197,8 @@ function transitLegFor(day: Itinerary['days'][number], activityIndex: number): I
 }
 
 function transitModeFor(leg: ItineraryTransitLeg): CommuteMode {
-  return selectedTransitModes[leg.id] ?? leg.mode
+  if (selectedTransitModes[leg.id]) return selectedTransitModes[leg.id]
+  return leg.mode
 }
 
 function transitLockedFor(leg: ItineraryTransitLeg): boolean {
@@ -212,7 +221,7 @@ async function updateTransitLeg(
   transitEditBusy.value = true
   transitEditError.value = null
   try {
-    await props.applyItineraryEdit({
+    queueItineraryEdit({
       baseVersionId: props.itinerary.versionId,
       operation: 'UPDATE_TRANSIT_LEG',
       transitLegId: leg.id,
@@ -222,6 +231,57 @@ async function updateTransitLeg(
     if (changes.transitLocked !== undefined) lockedTransitLegs[leg.id] = changes.transitLocked
   } finally {
     transitEditBusy.value = false
+  }
+}
+
+function queueItineraryEdit(input: ItineraryEditInput) {
+  if (input.operation === 'UPDATE_TRANSIT_LEG' && input.transitLegId) {
+    const index = draftItineraryEdits.value.findIndex((edit) => (
+      edit.operation === 'UPDATE_TRANSIT_LEG' && edit.transitLegId === input.transitLegId
+    ))
+    if (index >= 0) {
+      draftItineraryEdits.value[index] = { ...draftItineraryEdits.value[index]!, ...input }
+      return
+    }
+  }
+  draftItineraryEdits.value.push(input)
+}
+
+function queueRecommendedLongWalks(nextItinerary: Itinerary) {
+  for (const day of nextItinerary.days) {
+    for (const leg of day.transitLegs) {
+      if (leg.locked || leg.mode !== 'WALKING' || leg.durationSeconds <= 20 * 60) continue
+      const recommendedMode = recommendedCommuteMode(estimateCommuteOptions(leg))
+      if (recommendedMode === 'WALKING') continue
+      selectedTransitModes[leg.id] = recommendedMode
+      queueItineraryEdit({
+        baseVersionId: nextItinerary.versionId,
+        operation: 'UPDATE_TRANSIT_LEG',
+        transitLegId: leg.id,
+        transitMode: recommendedMode,
+      })
+    }
+  }
+}
+
+function discardItineraryDraft() {
+  draftItineraryEdits.value = []
+  Object.keys(selectedTransitModes).forEach((legId) => { delete selectedTransitModes[legId] })
+  Object.keys(lockedTransitLegs).forEach((legId) => { delete lockedTransitLegs[legId] })
+  transitEditError.value = null
+}
+
+async function saveItineraryDraft() {
+  if (!props.itinerary || draftItineraryEdits.value.length === 0 || itineraryEditBusy.value) return
+  itineraryEditBusy.value = true
+  itineraryEditError.value = null
+  try {
+    await props.commitItineraryEdits(props.itinerary.versionId, draftItineraryEdits.value)
+    draftItineraryEdits.value = []
+  } catch (cause) {
+    itineraryEditError.value = cause instanceof ApiError ? cause.message : '保存行程草稿失败，请稍后重试'
+  } finally {
+    itineraryEditBusy.value = false
   }
 }
 
@@ -492,7 +552,7 @@ async function confirmItineraryEdit() {
   itineraryEditBusy.value = true
   itineraryEditError.value = null
   try {
-    await props.applyItineraryEdit(pendingItineraryEdit.value)
+    queueItineraryEdit(pendingItineraryEdit.value)
     closeItineraryEdit()
   } catch (cause) {
     itineraryEditError.value = cause instanceof ApiError ? cause.message : '行程修改失败，请稍后重试'
@@ -643,6 +703,7 @@ watch(() => props.itinerary, (nextItinerary) => {
   if (!firstActivity || !nextItinerary?.days.flatMap((day) => day.activities).some((activity) => activity.id === selectedActivityId.value)) {
     selectedActivityId.value = firstActivity?.id ?? null
   }
+  if (nextItinerary) queueRecommendedLongWalks(nextItinerary)
 }, { immediate: true })
 </script>
 
@@ -1266,7 +1327,22 @@ watch(() => props.itinerary, (nextItinerary) => {
       </template>
     </main>
 
-    <!-- Itinerary Edit Dialog -->
+      <section
+        v-if="draftItineraryEdits.length"
+        class="fixed bottom-5 left-1/2 z-40 flex w-[min(94vw,42rem)] -translate-x-1/2 flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary-200 bg-white px-4 py-3 shadow-dialog"
+        aria-label="行程修改草稿"
+      >
+        <p class="m-0 text-sm font-semibold text-surface-700">已暂存 {{ draftItineraryEdits.length }} 处修改，尚未保存为版本。</p>
+        <p v-if="itineraryEditError" class="m-0 w-full text-sm text-red-700" role="alert">{{ itineraryEditError }}</p>
+        <div class="flex gap-2">
+          <Button variant="outline" size="sm" :disabled="itineraryEditBusy" @click="discardItineraryDraft">放弃草稿</Button>
+          <Button size="sm" :disabled="itineraryEditBusy" data-testid="save-itinerary-draft" @click="saveItineraryDraft">
+            <LoaderCircle v-if="itineraryEditBusy" class="animate-spin" :size="14" aria-hidden="true" />确认保存版本
+          </Button>
+        </div>
+      </section>
+
+      <!-- Itinerary Edit Dialog -->
     <div v-if="pendingItineraryEdit && (itineraryEditPreview || itineraryEditError)" class="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] sm:pt-[15vh]" @click.self="closeItineraryEdit">
       <div class="fixed inset-0 bg-surface-900/30 backdrop-blur-sm" aria-hidden="true" />
       <div class="relative mx-4 w-full max-w-md animate-scale-in rounded-3xl bg-white shadow-dialog ring-1 ring-black/5 overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="itinerary-edit-title">

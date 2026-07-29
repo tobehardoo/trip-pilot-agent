@@ -32,3 +32,8 @@ test('recommends the lowest-cost short walk while exposing faster alternatives',
   expect(options.find((option) => option.mode === 'TAXI')!.durationSeconds)
     .toBeLessThan(options.find((option) => option.mode === 'WALKING')!.durationSeconds)
 })
+
+test('does not recommend a long walk when public transit is available', () => {
+  const options = estimateCommuteOptions({ ...leg, distanceMeters: 5250, durationSeconds: 70 * 60 })
+  expect(recommendedCommuteMode(options)).toBe('TRANSIT')
+})

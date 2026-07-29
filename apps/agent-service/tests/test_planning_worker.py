@@ -461,6 +461,8 @@ def test_v3_day_contract_requires_one_ordered_leg_between_each_adjacent_activity
         "durationSeconds": 900,
         "provider": "DEMO",
         "estimated": True,
+        "estimatedCost": 0,
+        "costSource": "DEMO",
         "polyline": [
             {"longitude": 113.31, "latitude": 23.11},
             {"longitude": 113.32, "latitude": 23.12},

@@ -100,4 +100,14 @@ public class ItineraryController {
         return itineraryService.applyEdit(
                 UUID.fromString(jwt.getSubject()), tripId, idempotencyKey, request);
     }
+
+    @PostMapping("/edits/commit")
+    ItineraryService.ItineraryResponse commitEdits(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID tripId,
+            @RequestHeader("Idempotency-Key") UUID idempotencyKey,
+            @RequestBody ItineraryService.ItineraryBatchEditRequest request) {
+        return itineraryService.applyEdits(
+                UUID.fromString(jwt.getSubject()), tripId, idempotencyKey, request);
+    }
 }

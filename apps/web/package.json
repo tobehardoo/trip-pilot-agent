@@ -16,7 +16,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.42.2",
-    "lucide-vue-next": "^0.468.0",
+    "lucide-vue-next": "^1.0.0",
     "pinia": "3.0.3",
     "postcss": "^8.5.22",
     "radix-vue": "^1.9.17",

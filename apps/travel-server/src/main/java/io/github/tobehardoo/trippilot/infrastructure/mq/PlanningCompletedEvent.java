@@ -22,14 +22,15 @@ public record PlanningCompletedEvent(
             Itinerary itinerary,
             KnowledgeEvidence knowledge,
             List<FactImpact> factImpacts,
-            ProviderProvenance providerProvenance
+            ProviderProvenance providerProvenance,
+            PlanEvaluation evaluation
     ) {
         public Payload(
                 String provider,
                 Itinerary itinerary,
                 KnowledgeEvidence knowledge
         ) {
-            this(provider, itinerary, knowledge, List.of(), null);
+            this(provider, itinerary, knowledge, List.of(), null, null);
         }
 
         public Payload(
@@ -38,7 +39,17 @@ public record PlanningCompletedEvent(
                 KnowledgeEvidence knowledge,
                 List<FactImpact> factImpacts
         ) {
-            this(provider, itinerary, knowledge, factImpacts, null);
+            this(provider, itinerary, knowledge, factImpacts, null, null);
+        }
+
+        public Payload(
+                String provider,
+                Itinerary itinerary,
+                KnowledgeEvidence knowledge,
+                List<FactImpact> factImpacts,
+                ProviderProvenance providerProvenance
+        ) {
+            this(provider, itinerary, knowledge, factImpacts, providerProvenance, null);
         }
 
         public Payload {
@@ -143,6 +154,70 @@ public record PlanningCompletedEvent(
             ProviderErrorCategory errorCategory,
             String errorCode,
             int retryCount
+    ) {
+    }
+
+    public record PlanEvaluation(
+            int schemaVersion,
+            String evaluatorVersion,
+            boolean feasible,
+            int overallScore,
+            EvaluationDimensions dimensions,
+            List<EvaluationWarning> warnings,
+            List<DecisionExplanation> decisions,
+            String summary,
+            OffsetDateTime evaluatedAt
+    ) {
+        public PlanEvaluation {
+            warnings = warnings == null ? List.of() : List.copyOf(warnings);
+            decisions = decisions == null ? List.of() : List.copyOf(decisions);
+        }
+    }
+
+    public record EvaluationDimensions(
+            int constraintSatisfaction,
+            int timeFeasibility,
+            int budgetFit,
+            int routeEfficiency,
+            int interestMatch
+    ) {
+    }
+
+    public record EvaluationWarning(
+            String code,
+            String severity,
+            String message,
+            Integer dayIndex,
+            String entityType,
+            UUID entityId,
+            String metricKey,
+            Double actualValue,
+            Double threshold
+    ) {
+    }
+
+    public record DecisionExplanation(
+            String subjectType,
+            UUID subjectId,
+            String summary,
+            List<String> reasonCodes,
+            List<String> reasons,
+            List<UUID> constraintRefs,
+            List<EvaluationEvidence> evidence,
+            Integer dayIndex
+    ) {
+        public DecisionExplanation {
+            reasonCodes = reasonCodes == null ? List.of() : List.copyOf(reasonCodes);
+            reasons = reasons == null ? List.of() : List.copyOf(reasons);
+            constraintRefs = constraintRefs == null ? List.of() : List.copyOf(constraintRefs);
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        }
+    }
+
+    public record EvaluationEvidence(
+            String key,
+            String label,
+            String value
     ) {
     }
 

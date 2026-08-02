@@ -34,7 +34,8 @@
         "itinerary": {"$ref": "#/$defs/amapItinerary"},
         "knowledge": {"$ref": "#/$defs/knowledgeEvidence"},
         "factImpacts": {"$ref": "#/$defs/factImpacts"},
-        "providerProvenance": {"$ref": "#/$defs/providerProvenance"}
+        "providerProvenance": {"$ref": "#/$defs/providerProvenance"},
+        "evaluation": {"$ref": "#/$defs/planEvaluation"}
       }
     },
     "demoPayload": {
@@ -46,7 +47,8 @@
         "itinerary": {"$ref": "#/$defs/demoItinerary"},
         "knowledge": {"$ref": "#/$defs/knowledgeEvidence"},
         "factImpacts": {"$ref": "#/$defs/factImpacts"},
-        "providerProvenance": {"$ref": "#/$defs/providerProvenance"}
+        "providerProvenance": {"$ref": "#/$defs/providerProvenance"},
+        "evaluation": {"$ref": "#/$defs/planEvaluation"}
       }
     },
     "factImpacts": {
@@ -444,6 +446,107 @@
         }
       ]
     },
-    "money": {"type": "number", "minimum": 0, "maximum": 9999999999.99, "multipleOf": 0.01}
+    "money": {"type": "number", "minimum": 0, "maximum": 9999999999.99, "multipleOf": 0.01},
+    "planEvaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion", "evaluatorVersion", "feasible",
+        "overallScore", "dimensions", "warnings", "decisions",
+        "summary", "evaluatedAt"
+      ],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "evaluatorVersion": {"type": "string", "pattern": "^rule-v\\d+$"},
+        "feasible": {"const": true},
+        "overallScore": {"type": "integer", "minimum": 0, "maximum": 100},
+        "dimensions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "constraintSatisfaction", "timeFeasibility",
+            "budgetFit", "routeEfficiency", "interestMatch"
+          ],
+          "properties": {
+            "constraintSatisfaction": {"type": "integer", "minimum": 0, "maximum": 100},
+            "timeFeasibility": {"type": "integer", "minimum": 0, "maximum": 100},
+            "budgetFit": {"type": "integer", "minimum": 0, "maximum": 100},
+            "routeEfficiency": {"type": "integer", "minimum": 0, "maximum": 100},
+            "interestMatch": {"type": "integer", "minimum": 0, "maximum": 100}
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/evaluationWarning"}
+        },
+        "decisions": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/decisionExplanation"}
+        },
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "evaluatedAt": {"type": "string", "format": "date-time"}
+      }
+    },
+    "evaluationWarning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "severity", "message", "entityType"],
+      "properties": {
+        "code": {
+          "enum": [
+            "TIGHT_TRANSFER", "HIGH_DAILY_LOAD", "BUDGET_NEAR_LIMIT",
+            "LONG_WALKING", "LATE_DAY_END", "LOW_INTEREST_MATCH",
+            "PROVIDER_FALLBACK_USED", "ESTIMATED_TRANSIT", "LOW_TIME_BUFFER"
+          ]
+        },
+        "severity": {"enum": ["INFO", "WARNING", "CRITICAL"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 300},
+        "dayIndex": {"type": ["integer", "null"]},
+        "entityType": {"enum": ["PLAN", "DAY", "ACTIVITY", "TRANSIT"]},
+        "entityId": {"type": ["string", "null"], "format": "uuid"},
+        "metricKey": {"type": ["string", "null"]},
+        "actualValue": {"type": ["number", "null"]},
+        "threshold": {"type": ["number", "null"]}
+      }
+    },
+    "decisionExplanation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subjectType", "summary", "reasonCodes", "reasons"],
+      "properties": {
+        "subjectType": {"enum": ["PLAN", "DAY", "ACTIVITY", "TRANSIT"]},
+        "subjectId": {"type": ["string", "null"], "format": "uuid"},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 300},
+        "reasonCodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "FIXED_APPOINTMENT", "NEARBY_CLUSTER", "MUST_VISIT",
+              "TRANSIT_MODE", "SHORTEST_ROUTE", "PROVIDER_CONSTRAINT",
+              "TIME_OPTIMIZATION", "BUDGET_CONSTRAINT", "REGIONAL_GROUPING"
+            ]
+          }
+        },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1, "maxLength": 300}
+        },
+        "constraintRefs": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evaluationEvidence"}},
+        "dayIndex": {"type": ["integer", "null"]}
+      }
+    },
+    "evaluationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "value"],
+      "properties": {
+        "key": {"type": "string", "minLength": 1, "maxLength": 60},
+        "label": {"type": "string", "minLength": 1, "maxLength": 300},
+        "value": {"type": "string", "minLength": 1, "maxLength": 200}
+      }
+    }
   }
 }

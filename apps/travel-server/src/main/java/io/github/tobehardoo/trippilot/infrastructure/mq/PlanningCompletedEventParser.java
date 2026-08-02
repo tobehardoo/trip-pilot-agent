@@ -75,6 +75,7 @@ public class PlanningCompletedEventParser {
         validateKnowledgeTypes(payload, schemaVersion);
         validateFactImpactTypes(payload, schemaVersion);
         validateProviderProvenanceTypes(payload, schemaVersion);
+        validateEvaluationTypes(payload, schemaVersion);
         for (JsonNode day : days) {
             JsonNode activities = day.path("activities");
             if (!day.isObject() || !day.path("date").isTextual() || !activities.isArray()) {
@@ -312,6 +313,87 @@ public class PlanningCompletedEventParser {
         validateKnowledge(event.schemaVersion(), event.payload().knowledge());
         validateFactImpacts(event.schemaVersion(), event.payload().factImpacts());
         validateProviderProvenance(event);
+        validateEvaluation(event);
+    }
+
+    private void validateEvaluationTypes(JsonNode payload, int schemaVersion) {
+        if (!payload.has("evaluation") || payload.get("evaluation").isNull()) {
+            return;
+        }
+        if (schemaVersion != 6) {
+            throw invalid("evaluation is only supported in schema v6");
+        }
+        JsonNode evaluation = payload.path("evaluation");
+        if (!evaluation.isObject()
+                || !evaluation.path("schemaVersion").isInt()
+                || !evaluation.path("evaluatorVersion").isTextual()
+                || !evaluation.path("feasible").isBoolean()
+                || !evaluation.path("overallScore").isInt()
+                || !evaluation.path("dimensions").isObject()
+                || !evaluation.path("summary").isTextual()
+                || !evaluation.path("evaluatedAt").isTextual()) {
+            throw invalid("evaluation field types do not match the JSON Schema");
+        }
+    }
+
+    private void validateEvaluation(PlanningCompletedEvent event) {
+        PlanningCompletedEvent.PlanEvaluation evaluation = event.payload().evaluation();
+        if (evaluation == null) {
+            return;
+        }
+        if (event.schemaVersion() != 6 || evaluation.schemaVersion() != 1) {
+            throw invalid("evaluation schemaVersion must be 1");
+        }
+        if (evaluation.evaluatorVersion() == null
+                || !evaluation.evaluatorVersion().matches("^rule-v\\d+$")) {
+            throw invalid("evaluation evaluatorVersion is invalid");
+        }
+        if (!evaluation.feasible()) {
+            throw invalid("evaluation feasible must be true in completion");
+        }
+        if (evaluation.overallScore() < 0 || evaluation.overallScore() > 100) {
+            throw invalid("evaluation overallScore must be 0-100");
+        }
+        PlanningCompletedEvent.EvaluationDimensions dims = evaluation.dimensions();
+        if (dims == null
+                || dims.constraintSatisfaction() < 0 || dims.constraintSatisfaction() > 100
+                || dims.timeFeasibility() < 0 || dims.timeFeasibility() > 100
+                || dims.budgetFit() < 0 || dims.budgetFit() > 100
+                || dims.routeEfficiency() < 0 || dims.routeEfficiency() > 100
+                || dims.interestMatch() < 0 || dims.interestMatch() > 100) {
+            throw invalid("evaluation dimension scores must be 0-100");
+        }
+        int expectedOverall = (int) Math.round(
+                dims.constraintSatisfaction() * 0.30
+                + dims.timeFeasibility() * 0.25
+                + dims.budgetFit() * 0.15
+                + dims.routeEfficiency() * 0.15
+                + dims.interestMatch() * 0.15
+        );
+        if (evaluation.overallScore() != expectedOverall) {
+            throw invalid("evaluation overallScore must match weighted dimensions");
+        }
+        if (evaluation.warnings() != null) {
+            for (PlanningCompletedEvent.EvaluationWarning w : evaluation.warnings()) {
+                if (w == null || w.code() == null || w.severity() == null
+                        || w.message() == null || w.entityType() == null) {
+                    throw invalid("evaluation warning is invalid");
+                }
+            }
+        }
+        if (evaluation.decisions() != null) {
+            java.util.Set<String> seen = new java.util.HashSet<>();
+            for (PlanningCompletedEvent.DecisionExplanation d : evaluation.decisions()) {
+                if (d == null || d.subjectType() == null || d.summary() == null
+                        || d.reasonCodes() == null || d.reasonCodes().isEmpty()
+                        || d.reasons() == null || d.reasons().isEmpty()) {
+                    throw invalid("evaluation decision is invalid");
+                }
+                if (!seen.add(d.subjectType() + "|" + d.subjectId() + "|" + d.summary())) {
+                    throw invalid("evaluation decisions must contain unique entries");
+                }
+            }
+        }
     }
 
     private void validateProviderProvenance(PlanningCompletedEvent event) {

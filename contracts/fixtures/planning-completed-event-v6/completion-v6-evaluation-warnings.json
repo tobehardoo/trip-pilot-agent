@@ -1,0 +1,73 @@
+{
+  "eventType": "PLANNING_COMPLETED",
+  "schemaVersion": 6,
+  "eventId": "e1000000-0000-4000-8000-000000000002",
+  "traceId": "e2000000-0000-4000-8000-000000000002",
+  "taskId": "e3000000-0000-4000-8000-000000000002",
+  "tripId": "e4000000-0000-4000-8000-000000000002",
+  "runId": "e5000000-0000-4000-8000-000000000002",
+  "occurredAt": "2026-08-02T00:00:00Z",
+  "payload": {
+    "provider": "AMAP",
+    "itinerary": {
+      "title": "Warnings Evaluation Itinerary",
+      "days": [{
+        "date": "2026-08-02",
+        "activities": [
+          {"activityId": "ea000001-0000-4000-8000-000000000002", "title": "Stop A", "startTime": "2026-08-02T09:00:00+08:00", "endTime": "2026-08-02T10:00:00+08:00", "estimatedCost": 80, "source": "AMAP", "providerPoiId": "POI-WARN-1", "coordinates": {"longitude": 113.30, "latitude": 23.10}, "address": "Warn St 1"},
+          {"activityId": "ea000002-0000-4000-8000-000000000002", "title": "Stop B", "startTime": "2026-08-02T10:05:00+08:00", "endTime": "2026-08-02T11:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-WARN-2", "coordinates": {"longitude": 113.32, "latitude": 23.12}, "address": "Warn St 2"},
+          {"activityId": "ea000003-0000-4000-8000-000000000002", "title": "Stop C", "startTime": "2026-08-02T11:10:00+08:00", "endTime": "2026-08-02T12:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-WARN-3", "coordinates": {"longitude": 113.33, "latitude": 23.13}, "address": "Warn St 3"},
+          {"activityId": "ea000004-0000-4000-8000-000000000002", "title": "Stop D", "startTime": "2026-08-02T13:00:00+08:00", "endTime": "2026-08-02T14:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-WARN-4", "coordinates": {"longitude": 113.34, "latitude": 23.14}, "address": "Warn St 4"},
+          {"activityId": "ea000005-0000-4000-8000-000000000002", "title": "Stop E", "startTime": "2026-08-02T14:20:00+08:00", "endTime": "2026-08-02T15:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-WARN-5", "coordinates": {"longitude": 113.35, "latitude": 23.15}, "address": "Warn St 5"}
+        ],
+        "transitLegs": [
+          {"transitId": "et000001-0000-4000-8000-000000000002", "fromActivityIndex": 0, "toActivityIndex": 1, "mode": "WALKING", "distanceMeters": 2500, "durationSeconds": 2100, "provider": "AMAP", "estimated": false, "polyline": [{"longitude": 113.30, "latitude": 23.10}, {"longitude": 113.32, "latitude": 23.12}]},
+          {"transitId": "et000002-0000-4000-8000-000000000002", "fromActivityIndex": 1, "toActivityIndex": 2, "mode": "WALKING", "distanceMeters": 800, "durationSeconds": 480, "provider": "AMAP", "estimated": true, "polyline": [{"longitude": 113.32, "latitude": 23.12}, {"longitude": 113.33, "latitude": 23.13}]},
+          {"transitId": "et000003-0000-4000-8000-000000000002", "fromActivityIndex": 2, "toActivityIndex": 3, "mode": "DRIVING", "distanceMeters": 2000, "durationSeconds": 600, "provider": "AMAP", "estimated": false, "polyline": [{"longitude": 113.33, "latitude": 23.13}, {"longitude": 113.34, "latitude": 23.14}]},
+          {"transitId": "et000004-0000-4000-8000-000000000002", "fromActivityIndex": 3, "toActivityIndex": 4, "mode": "DRIVING", "distanceMeters": 1500, "durationSeconds": 400, "provider": "AMAP", "estimated": false, "polyline": [{"longitude": 113.34, "latitude": 23.14}, {"longitude": 113.35, "latitude": 23.15}]}
+        ]
+      }],
+      "estimatedTotalCost": 140
+    },
+    "knowledge": {"status": "UNAVAILABLE", "query": "evaluation warnings fixture", "citations": [], "freshness": {"status": "UNAVAILABLE"}, "message": "No knowledge for fixture"},
+    "factImpacts": [],
+    "providerProvenance": {
+      "requestedProviderMode": "REAL_WITH_EXPLICIT_FALLBACK",
+      "primaryProvider": "AMAP",
+      "actualProviders": ["AMAP"],
+      "fallbackAttempted": false,
+      "fallbackSucceeded": false,
+      "fallbackOperations": []
+    },
+    "evaluation": {
+      "schemaVersion": 1,
+      "evaluatorVersion": "rule-v1",
+      "feasible": true,
+      "overallScore": 68,
+      "dimensions": {
+        "constraintSatisfaction": 100,
+        "timeFeasibility": 67,
+        "budgetFit": 88,
+        "routeEfficiency": 65,
+        "interestMatch": 80
+      },
+      "warnings": [
+        {"code": "LONG_WALKING", "severity": "INFO", "message": "步行路段较长 (35 分钟, 2500m)", "dayIndex": 0, "entityType": "TRANSIT", "entityId": "et000001-0000-4000-8000-000000000002", "metricKey": "walk_duration_seconds", "actualValue": 2100, "threshold": 1800},
+        {"code": "HIGH_DAILY_LOAD", "severity": "WARNING", "message": "第 1 天有 5 个活动", "dayIndex": 0, "entityType": "DAY", "entityId": null, "metricKey": "activity_count", "actualValue": 5, "threshold": 5},
+        {"code": "BUDGET_NEAR_LIMIT", "severity": "WARNING", "message": "预估费用已达到预算的 93%", "entityType": "PLAN", "entityId": null, "metricKey": "budget_ratio", "actualValue": 0.933, "threshold": 0.85},
+        {"code": "ESTIMATED_TRANSIT", "severity": "INFO", "message": "此路段使用估算路线", "dayIndex": 0, "entityType": "TRANSIT", "entityId": "et000002-0000-4000-8000-000000000002", "metricKey": null, "actualValue": null, "threshold": null}
+      ],
+      "decisions": [{
+        "subjectType": "PLAN",
+        "subjectId": null,
+        "summary": "「Warnings Evaluation Itinerary」基于约束求解生成",
+        "reasonCodes": ["TIME_OPTIMIZATION"],
+        "reasons": ["基于时间优化安排活动顺序"],
+        "constraintRefs": [],
+        "evidence": [{"key": "provider", "label": "数据 Provider", "value": "AMAP"}]
+      }],
+      "summary": "行程整体质量 68/100。",
+      "evaluatedAt": "2026-08-02T00:00:00Z"
+    }
+  }
+}

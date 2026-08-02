@@ -19,6 +19,8 @@ import io.github.tobehardoo.trippilot.itinerary.ItineraryMapper;
 import io.github.tobehardoo.trippilot.itinerary.ItineraryService;
 import io.github.tobehardoo.trippilot.infrastructure.mq.OutboxEventRecord;
 import io.github.tobehardoo.trippilot.infrastructure.mq.OutboxMapper;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent.PlanEvaluation;
 import io.github.tobehardoo.trippilot.planning.PlanningContextSnapshotService.PlanningContextSnapshot;
 import io.github.tobehardoo.trippilot.trip.TripService;
 import org.springframework.http.HttpStatus;
@@ -401,7 +403,8 @@ public class PlanningTaskService {
                 metadata.safeMessage(), metadata.safeProviderCode(),
                 metadata.requestedProviderMode(), metadata.primaryProvider(),
                 metadata.actualProviders(), metadata.fallbackReason(),
-                metadata.fallbackOperations(), task.createdAt(), task.updatedAt()
+                metadata.fallbackOperations(), metadata.evaluation(),
+                task.createdAt(), task.updatedAt()
         );
     }
 
@@ -411,7 +414,7 @@ public class PlanningTaskService {
                 .orElseGet(() -> new TerminalMetadata(
                         task.errorCode(), null, null, null, null, null,
                         null, null, task.errorMessage(), null, null, null,
-                        List.of(), null, List.of()
+                        List.of(), null, List.of(), null
                 ));
     }
 
@@ -433,10 +436,23 @@ public class PlanningTaskService {
                     text(payload, "primaryProvider", null),
                     nullableStringList(payload, "actualProviders"),
                     text(payload, "fallbackReason", null),
-                    fallbackOperationList(payload, "fallbackOperations")
+                    fallbackOperationList(payload, "fallbackOperations"),
+                    parseEvaluation(payload)
             );
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("Planning task terminal event is invalid", exception);
+        }
+    }
+
+    private PlanEvaluation parseEvaluation(JsonNode payload) {
+        JsonNode evalNode = payload.get("evaluation");
+        if (evalNode == null || evalNode.isNull()) {
+            return null;
+        }
+        try {
+            return objectMapper.treeToValue(evalNode, PlanEvaluation.class);
+        } catch (JsonProcessingException e) {
+            return null;
         }
     }
 
@@ -539,6 +555,7 @@ public class PlanningTaskService {
             List<String> actualProviders,
             String fallbackReason,
             List<FallbackOperationResponse> fallbackOperations,
+            PlanEvaluation evaluation,
             Instant createdAt,
             Instant updatedAt
     ) {
@@ -559,7 +576,8 @@ public class PlanningTaskService {
             String primaryProvider,
             List<String> actualProviders,
             String fallbackReason,
-            List<FallbackOperationResponse> fallbackOperations
+            List<FallbackOperationResponse> fallbackOperations,
+            PlanEvaluation evaluation
     ) {
     }
 

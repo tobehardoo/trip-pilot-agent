@@ -16,6 +16,9 @@ describe('production nginx configuration', () => {
     )
 
     expect(directives['script-src']).toContain("'unsafe-eval'")
+    expect(directives['script-src']).toContain('https://restapi.amap.com')
+    expect(directives['script-src']).toContain('https://jsapi-service.amap.com')
+    expect(directives['worker-src']).toEqual(["'self'", 'blob:'])
     expect(directives['default-src']).toEqual(["'self'"])
   })
 })

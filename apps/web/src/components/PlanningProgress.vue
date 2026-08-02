@@ -18,18 +18,29 @@ interface PipelineStep {
 }
 
 const steps: PipelineStep[] = [
-  { stage: 'TASK_ACCEPTED', label: 'Task accepted' },
-  { stage: 'CONTEXT_VALIDATING', label: 'Context validation' },
-  { stage: 'CITY_FACTS_LOADING', label: 'City facts' },
-  { stage: 'POI_RECALLING', label: 'POI recall' },
-  { stage: 'CANDIDATES_RANKING', label: 'Candidate ranking' },
-  { stage: 'ROUTES_CALCULATING', label: 'Route calculation' },
-  { stage: 'CONSTRAINTS_SOLVING', label: 'Constraint solving' },
-  { stage: 'KNOWLEDGE_RETRIEVING', label: 'Knowledge retrieval' },
-  { stage: 'RESULT_EXPLAINING', label: 'Result explanation' },
-  { stage: 'RESULT_PUBLISHING', label: 'Publishing result' },
-  { stage: 'RESULT_PERSISTING', label: 'Result persistence' },
+  { stage: 'TASK_ACCEPTED', label: '已接收规划任务' },
+  { stage: 'CONTEXT_VALIDATING', label: '校验行程条件' },
+  { stage: 'CITY_FACTS_LOADING', label: '同步城市资料' },
+  { stage: 'POI_RECALLING', label: '检索候选地点' },
+  { stage: 'CANDIDATES_RANKING', label: '筛选地点优先级' },
+  { stage: 'ROUTES_CALCULATING', label: '计算交通路线' },
+  { stage: 'CONSTRAINTS_SOLVING', label: '协调时间、预算与偏好' },
+  { stage: 'KNOWLEDGE_RETRIEVING', label: '补充攻略与实时资料' },
+  { stage: 'RESULT_EXPLAINING', label: '生成行程说明' },
+  { stage: 'RESULT_PUBLISHING', label: '发布规划结果' },
+  { stage: 'RESULT_PERSISTING', label: '保存行程版本' },
 ]
+
+const stageMessages: Record<PlanningProgressStage, string> = Object.fromEntries(
+  steps.map((step) => [step.stage, `正在${step.label}`]),
+) as Record<PlanningProgressStage, string>
+
+const statusLabels = {
+  done: '已完成',
+  active: '进行中',
+  skipped: '未执行',
+  pending: '等待中',
+} as const
 
 const observedStages = computed(() => new Set((props.progressHistory ?? []).map((event) => event.stage)))
 const currentStepIndex = computed(() => {
@@ -38,11 +49,11 @@ const currentStepIndex = computed(() => {
 })
 
 const currentMessage = computed(() => {
-  if (props.progress) return props.progress.message
-  if (props.planningState === 'succeeded') return 'Itinerary planning completed'
-  if (props.planningState === 'failed') return 'Itinerary planning did not complete'
-  if (props.planningState === 'cancelled') return 'Itinerary planning was cancelled'
-  return 'Waiting for the worker to report progress'
+  if (props.progress) return stageMessages[props.progress.stage]
+  if (props.planningState === 'succeeded') return '行程规划已完成'
+  if (props.planningState === 'failed') return '行程规划未能完成'
+  if (props.planningState === 'cancelled') return '行程规划已取消'
+  return '正在等待规划服务响应'
 })
 
 function stepStatus(index: number): 'done' | 'active' | 'skipped' | 'pending' {
@@ -110,7 +121,7 @@ function stepStatus(index: number): 'done' | 'active' | 'skipped' | 'pending' {
             <span v-else class="text-[10px]">{{ index + 1 }}</span>
           </span>
           <span>{{ step.label }}</span>
-          <span class="ml-auto text-xs lowercase">{{ stepStatus(index) === 'skipped' ? 'not used' : stepStatus(index) }}</span>
+          <span class="ml-auto text-xs">{{ statusLabels[stepStatus(index)] }}</span>
         </li>
       </ol>
     </div>

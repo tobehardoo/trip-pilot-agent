@@ -39,9 +39,9 @@ test('renders the current planning stage from an SSE progress event', () => {
   })
 
   expect(view.getByTestId('planning-current-stage').textContent)
-    .toContain('Solving time, budget, and mobility constraints')
+    .toContain('正在协调时间、预算与偏好')
   expect(view.getByTestId('planning-stage-CONSTRAINTS_SOLVING').textContent)
-    .toContain('active')
+    .toContain('进行中')
   expect(view.getByTestId('planning-stage-POI_RECALLING').textContent)
-    .toContain('not used')
+    .toContain('未执行')
 })

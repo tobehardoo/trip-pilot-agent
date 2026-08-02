@@ -43,4 +43,6 @@ logs/
 output/*.log
 output/playwright/
 output/pytest-*/
+**/output/pytest-*/
+output/backups/
 .playwright-cli/

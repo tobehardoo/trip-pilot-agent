@@ -21,13 +21,13 @@ class _MockProvider:
     async def plan(self, _command):
         self.plan_calls += 1
         if self.should_fail:
-            raise PlanningProviderError("test failure")
+            raise PlanningProviderError("PROVIDER_TIMEOUT")
         return PlanningResult(provider=self.name, itinerary=[])
 
     async def replan(self, _command):
         self.replan_calls += 1
         if self.should_fail:
-            raise PlanningProviderError("test failure")
+            raise PlanningProviderError("PROVIDER_TIMEOUT")
         return PlanningResult(provider=self.name, itinerary=[])
 
 

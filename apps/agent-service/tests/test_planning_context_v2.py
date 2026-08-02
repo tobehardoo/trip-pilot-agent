@@ -568,6 +568,54 @@ def test_guide_fact_is_not_cited_when_it_does_not_change_the_baseline_plan() -> 
     assert result.guide_fact_ids == ()
 
 
+def test_guided_second_pass_does_not_hide_a_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _v2_command()
+    payload["payload"]["trip"]["endDate"] = "2026-08-01"
+    constraints = payload["payload"]["trip"]["constraints"]
+    constraints["arrival"] = None
+    constraints["departure"] = None
+    constraints["accommodation"] = None
+    constraints["mustVisitPlaces"] = []
+    constraints["avoidPlaces"] = []
+    constraints["mealWindows"] = []
+    constraints["preferences"] = []
+    command = PlanningCreateCommand.model_validate(payload)
+    candidates = (_poi("alpha", "Alpha"), _poi("beta", "Beta"))
+
+    class MapProvider:
+        async def search_pois(self, request: object):
+            del request
+            return ProviderSuccess(
+                data=candidates,
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 7, 14, tzinfo=UTC),
+                estimated=False,
+            )
+
+    class RouteProvider:
+        async def get_route(self, request: object):
+            return _route_success(request)
+
+    provider = AmapPlanningProvider(MapProvider(), RouteProvider())
+    original_build = provider._build_feasible_days
+
+    async def fail_guided_build(*args: object, **kwargs: object):
+        if kwargs.get("use_guide_evidence") is True:
+            raise PlanningProviderError("PROVIDER_AUTH_FAILED")
+        return await original_build(*args, **kwargs)
+
+    monkeypatch.setattr(provider, "_build_feasible_days", fail_guided_build)
+
+    with pytest.raises(PlanningProviderError) as failure:
+        asyncio.run(provider.plan(command))
+
+    assert failure.value.details.category.value == "AUTHENTICATION_ERROR"
+
+
 def test_multiday_planner_backtracks_when_first_feasible_pair_blocks_later_day() -> None:
     payload = _v2_command()
     constraints = payload["payload"]["trip"]["constraints"]

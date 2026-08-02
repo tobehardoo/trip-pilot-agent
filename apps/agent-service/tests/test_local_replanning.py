@@ -138,6 +138,42 @@ def test_replan_contract_accepts_an_incomplete_impacted_day_snapshot() -> None:
     assert command.payload.itinerary.days[0].transit_legs == ()
 
 
+def test_replan_contract_rejects_duplicate_present_transit_endpoints() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    invalid = deepcopy(REPLAN_COMMAND)
+    invalid["payload"]["itinerary"]["days"][0]["transitLegs"] = [
+        {
+            "fromActivityIndex": 0,
+            "toActivityIndex": 1,
+            "mode": "WALKING",
+            "distanceMeters": 900,
+            "durationSeconds": 600,
+            "provider": "AMAP",
+            "estimated": False,
+            "polyline": [
+                {"longitude": 113.31, "latitude": 23.11},
+                {"longitude": 113.32, "latitude": 23.12},
+            ],
+        },
+        {
+            "fromActivityIndex": 0,
+            "toActivityIndex": 1,
+            "mode": "DRIVING",
+            "distanceMeters": 900,
+            "durationSeconds": 600,
+            "provider": "AMAP",
+            "estimated": False,
+            "polyline": [
+                {"longitude": 113.31, "latitude": 23.11},
+                {"longitude": 113.32, "latitude": 23.12},
+            ],
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="unique adjacent activity endpoints"):
+        contracts.PlanningReplanCommand.model_validate(invalid)
+
+
 @pytest.mark.parametrize("mutation", ["outside_date", "duplicate_date", "version_mismatch"])
 def test_replan_contract_rejects_invalid_scope(mutation: str) -> None:
     contracts = import_module("trip_agent.worker.contracts")
@@ -264,3 +300,90 @@ def test_local_replanning_preserves_the_existing_transit_mode() -> None:
     )
 
     assert route_provider.requests[0].mode == "DRIVING"
+
+
+def test_local_replanning_matches_reordered_transit_legs_by_endpoints() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    route_contracts = import_module("trip_agent.providers.route")
+    processor = import_module("trip_agent.worker.processor")
+    command_data = deepcopy(REPLAN_COMMAND)
+    impacted_day = command_data["payload"]["itinerary"]["days"][0]
+    impacted_day["activities"].append(
+        {
+            "title": "Garden",
+            "startTime": "2026-08-01T17:00:00+08:00",
+            "endTime": "2026-08-01T19:00:00+08:00",
+            "estimatedCost": 0,
+            "source": "AMAP",
+            "providerPoiId": "garden",
+            "coordinates": {"longitude": 113.33, "latitude": 23.13},
+            "address": "Garden Road",
+        }
+    )
+    impacted_day["transitLegs"] = [
+        {
+            "fromActivityIndex": 1,
+            "toActivityIndex": 2,
+            "mode": "DRIVING",
+            "distanceMeters": 900,
+            "durationSeconds": 600,
+            "provider": "AMAP",
+            "estimated": False,
+            "polyline": [
+                {"longitude": 113.32, "latitude": 23.12},
+                {"longitude": 113.33, "latitude": 23.13},
+            ],
+        },
+        {
+            "fromActivityIndex": 0,
+            "toActivityIndex": 1,
+            "mode": "WALKING",
+            "distanceMeters": 900,
+            "durationSeconds": 600,
+            "provider": "AMAP",
+            "estimated": False,
+            "polyline": [
+                {"longitude": 113.31, "latitude": 23.11},
+                {"longitude": 113.32, "latitude": 23.12},
+            ],
+        },
+    ]
+    command = contracts.PlanningReplanCommand.model_validate(command_data)
+
+    class RouteProvider:
+        async def get_route(self, request: object):
+            return map_contracts.ProviderSuccess(
+                data=route_contracts.RoutePlan(
+                    mode=request.mode,
+                    distance_meters=777,
+                    duration_seconds=480,
+                    steps=(
+                        route_contracts.RouteStep(
+                            instruction="Route to the next activity",
+                            distance_meters=777,
+                            duration_seconds=480,
+                            polyline=(request.origin, request.destination),
+                        ),
+                    ),
+                    polyline=(request.origin, request.destination),
+                ),
+                provider="AMAP",
+                latency_ms=2,
+                cached=False,
+                fetched_at=datetime(2026, 7, 24, 4, 1, tzinfo=UTC),
+                estimated=False,
+            )
+
+    completed = asyncio.run(
+        processor.process_planning_replan(
+            command,
+            processor.LocalReplanningProvider(RouteProvider()),
+            occurred_at=datetime(2026, 7, 24, 4, 2, tzinfo=UTC),
+        )
+    )
+
+    assert [leg.mode for leg in completed.payload.itinerary.days[0].transit_legs] == [
+        "WALKING",
+        "DRIVING",
+    ]

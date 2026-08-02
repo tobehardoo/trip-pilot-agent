@@ -2,6 +2,11 @@ package io.github.tobehardoo.trippilot.itinerary;
 
 import java.util.UUID;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.tobehardoo.trippilot.common.ApiException;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,13 +24,19 @@ public class ItineraryController {
 
     private final ItineraryService itineraryService;
     private final ItineraryVersionService versionService;
+    private final ObjectMapper objectMapper;
+    private final EditRequestFingerprint editRequestFingerprint;
 
     public ItineraryController(
             ItineraryService itineraryService,
-            ItineraryVersionService versionService
+            ItineraryVersionService versionService,
+            ObjectMapper objectMapper,
+            EditRequestFingerprint editRequestFingerprint
     ) {
         this.itineraryService = itineraryService;
         this.versionService = versionService;
+        this.objectMapper = objectMapper;
+        this.editRequestFingerprint = editRequestFingerprint;
     }
 
     @GetMapping("/versions")
@@ -96,9 +107,11 @@ public class ItineraryController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID tripId,
             @RequestHeader("Idempotency-Key") UUID idempotencyKey,
-            @RequestBody ItineraryService.ItineraryEditRequest request) {
+            @RequestBody JsonNode request) {
         return itineraryService.applyEdit(
-                UUID.fromString(jwt.getSubject()), tripId, idempotencyKey, request);
+                UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
+                read(request, ItineraryService.ItineraryEditRequest.class),
+                editRequestFingerprint.forEdit(request));
     }
 
     @PostMapping("/edits/commit")
@@ -106,8 +119,18 @@ public class ItineraryController {
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID tripId,
             @RequestHeader("Idempotency-Key") UUID idempotencyKey,
-            @RequestBody ItineraryService.ItineraryBatchEditRequest request) {
+            @RequestBody JsonNode request) {
         return itineraryService.applyEdits(
-                UUID.fromString(jwt.getSubject()), tripId, idempotencyKey, request);
+                UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
+                read(request, ItineraryService.ItineraryBatchEditRequest.class),
+                editRequestFingerprint.forBatch(request));
+    }
+
+    private <T> T read(JsonNode request, Class<T> type) {
+        try {
+            return objectMapper.treeToValue(request, type);
+        } catch (JsonProcessingException exception) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "Request body is invalid");
+        }
     }
 }

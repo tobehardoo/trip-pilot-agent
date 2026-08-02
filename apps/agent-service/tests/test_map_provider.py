@@ -333,7 +333,7 @@ def test_amap_invalid_poi_coordinates_are_reported_as_schema_changes() -> None:
 
     assert isinstance(result, provider.ProviderFailure)
     assert result.error_code == "PROVIDER_SCHEMA_CHANGED"
-    assert result.retryable is False
+    assert result.retryable is True
 
 
 @pytest.mark.parametrize("missing_field", ["pois", "typecode", "address"])

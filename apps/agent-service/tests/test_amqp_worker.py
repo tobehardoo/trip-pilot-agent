@@ -176,6 +176,7 @@ def test_valid_replan_command_uses_the_completed_event_route() -> None:
     assert body["eventType"] == "PLANNING_COMPLETED"
     assert body["taskId"] == REPLAN_COMMAND["taskId"]
     assert body["payload"]["itinerary"]["days"][0]["transitLegs"][0]["distanceMeters"] > 0
+    assert "providerProvenance" not in body["payload"]
 
 
 def test_replan_without_activity_coordinates_publishes_failure_without_requeue() -> None:
@@ -200,6 +201,7 @@ def test_replan_without_activity_coordinates_publishes_failure_without_requeue()
     assert mandatory is True
     body = json.loads(published.body)
     assert body["payload"]["errorCode"] == "NO_FEASIBLE_ITINERARY"
+    assert body["payload"]["operation"] == "REPLANNING"
     assert body["payload"]["conflicts"][0]["code"] == "REPLAN_ACTIVITY_COORDINATES_MISSING"
 
 
@@ -450,10 +452,69 @@ def test_infeasible_plan_publishes_an_actionable_failure_and_acks() -> None:
     assert mandatory is True
     body = json.loads(published.body)
     assert body["eventType"] == "PLANNING_FAILED"
-    assert body["schemaVersion"] == 1
+    assert body["schemaVersion"] == 2
     assert body["payload"]["errorCode"] == "NO_FEASIBLE_ITINERARY"
+    assert body["payload"]["errorCategory"] == "PLANNING_INFEASIBLE"
     assert body["payload"]["conflicts"][0]["code"] == "INSUFFICIENT_DAY_CAPACITY"
     assert body["payload"]["relaxationSuggestions"][0]["code"] == ("REDUCE_OPTIONAL_ACTIVITIES")
+
+
+def test_provider_failure_publishes_v2_and_does_not_requeue() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    errors = import_module("trip_agent.providers.errors")
+    processor = import_module("trip_agent.worker.processor")
+    message = FakeIncomingMessage(json.dumps(COMMAND).encode())
+    exchange = FakeExchange()
+
+    class FailedProvider:
+        async def plan(self, command: object):
+            del command
+            raise processor.PlanningProviderError(
+                errors.ProviderFailureDetails(
+                    category=errors.ProviderErrorCategory.TIMEOUT,
+                    error_code="PROVIDER_TIMEOUT",
+                    provider="AMAP",
+                    operation=errors.ProviderOperation.POI_SEARCH,
+                    retryable=True,
+                    fallback_allowed=False,
+                    safe_provider_code="HTTP_408",
+                    safe_message="AMap request timed out",
+                    retry_count=2,
+                    cause_type="ReadTimeout",
+                    retry_exhausted=True,
+                )
+            )
+
+    asyncio.run(amqp.handle_delivery(message, exchange, provider=FailedProvider()))
+
+    body = json.loads(exchange.published[-1][0].body)
+    assert message.acked is True
+    assert message.nacked_with is None
+    assert body["schemaVersion"] == 2
+    assert body["payload"]["errorCategory"] == "TIMEOUT"
+    assert body["payload"]["retryCount"] == 2
+    assert body["payload"]["fallbackAttempted"] is False
+
+
+def test_internal_planner_error_becomes_terminal_v2_instead_of_poison_requeue() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    message = FakeIncomingMessage(json.dumps(COMMAND).encode())
+    exchange = FakeExchange()
+
+    class BrokenProvider:
+        async def plan(self, command: object):
+            del command
+            raise TypeError("unsafe implementation detail")
+
+    asyncio.run(amqp.handle_delivery(message, exchange, provider=BrokenProvider()))
+
+    body = json.loads(exchange.published[-1][0].body)
+    assert message.acked is True
+    assert message.nacked_with is None
+    assert body["payload"]["errorCode"] == "INTERNAL_PLANNING_FAILED"
+    assert body["payload"]["errorCategory"] == "INTERNAL_ERROR"
+    assert body["payload"]["causeType"] == "TypeError"
+    assert "unsafe implementation detail" not in json.dumps(body)
 
 
 def test_real_worker_settings_require_a_secret_amap_key_at_startup() -> None:
@@ -513,7 +574,7 @@ def test_business_database_url_never_uses_the_optional_knowledge_store_override(
     )
 
 
-def test_real_worker_provider_factory_builds_amap_v3_with_routes_and_demo_fallback() -> None:
+def test_legacy_false_worker_provider_factory_builds_strict_amap_v3_with_routes() -> None:
     amqp = import_module("trip_agent.worker.amqp")
     contracts = import_module("trip_agent.worker.contracts")
     processor = import_module("trip_agent.worker.processor")
@@ -673,7 +734,7 @@ def test_real_worker_runtime_owns_lazy_http_and_redis_resources() -> None:
 
     async def run_scenario() -> None:
         async with amqp.planning_provider_runtime(settings) as provider:
-            assert isinstance(provider, processor.FallbackPlanningProvider)
+            assert isinstance(provider, processor.AmapPlanningProvider)
             assert "p%40ss%20word" in settings.redis_connection_url()
 
     asyncio.run(run_scenario())

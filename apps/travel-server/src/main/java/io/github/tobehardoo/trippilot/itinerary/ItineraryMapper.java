@@ -465,12 +465,11 @@ public interface ItineraryMapper {
     // ── Itinerary edit idempotency (V27 / J09) ────────────────────────
 
     @Select("""
-            SELECT result_version_id
+            SELECT request_hash, result_version_id, status
             FROM business.itinerary_edit_idempotency
             WHERE trip_id = #{tripId} AND idempotency_key = #{idempotencyKey}
-              AND status = 'COMPLETED'
             """)
-    UUID findEditIdempotencyResult(
+    EditIdempotencyRecord findEditIdempotency(
             @Param("tripId") UUID tripId,
             @Param("idempotencyKey") UUID idempotencyKey
     );
@@ -479,13 +478,29 @@ public interface ItineraryMapper {
             INSERT INTO business.itinerary_edit_idempotency(
                 trip_id, idempotency_key, request_hash, result_version_id, status
             ) VALUES (
-                #{tripId}, #{idempotencyKey}, '', #{resultVersionId}, 'COMPLETED'
+                #{tripId}, #{idempotencyKey}, #{requestHash}, NULL, 'PROCESSING'
             )
             ON CONFLICT (trip_id, idempotency_key) DO NOTHING
             """)
-    int insertEditIdempotency(
+    int reserveEditIdempotency(
             @Param("tripId") UUID tripId,
             @Param("idempotencyKey") UUID idempotencyKey,
+            @Param("requestHash") String requestHash
+    );
+
+    @Update("""
+            UPDATE business.itinerary_edit_idempotency
+            SET result_version_id = #{resultVersionId}, status = 'COMPLETED'
+            WHERE trip_id = #{tripId} AND idempotency_key = #{idempotencyKey}
+              AND request_hash = #{requestHash} AND status = 'PROCESSING'
+            """)
+    int completeEditIdempotency(
+            @Param("tripId") UUID tripId,
+            @Param("idempotencyKey") UUID idempotencyKey,
+            @Param("requestHash") String requestHash,
             @Param("resultVersionId") UUID resultVersionId
     );
+
+    record EditIdempotencyRecord(String requestHash, UUID resultVersionId, String status) {
+    }
 }

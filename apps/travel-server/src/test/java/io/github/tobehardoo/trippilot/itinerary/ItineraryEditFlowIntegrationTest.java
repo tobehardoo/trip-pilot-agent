@@ -2,14 +2,21 @@ package io.github.tobehardoo.trippilot.itinerary;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEventParser;
 import io.github.tobehardoo.trippilot.planning.PlanningCompletionService;
+import io.github.tobehardoo.trippilot.planning.PlanningEventRejectedException;
 import io.github.tobehardoo.trippilot.support.PlanningCompletedEventFixture;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -20,6 +27,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -45,6 +53,12 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private PlanningCompletionService completionService;
+
+    @Autowired
+    private ItineraryService itineraryService;
+
+    @Autowired
+    private EditRequestFingerprint editRequestFingerprint;
 
     @Test
     void previewsDeletionWithoutChangingTheCurrentVersion() throws Exception {
@@ -100,6 +114,276 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void reusesTheOriginalEditResultAndRejectsASemanticallyDifferentRequestForTheSameKey() throws Exception {
+        PlanningContext context = completedItinerary("edit-idempotency-semantics@example.com");
+        JsonNode initial = currentItinerary(context);
+        UUID initialVersionId = uuid(initial, "versionId");
+        UUID deletedActivityId = uuid(initial.at("/days/0/activities/0"), "id");
+        UUID idempotencyKey = nextIdempotencyKey();
+        String originalRequest = editJson(initialVersionId, "DELETE_ACTIVITY", deletedActivityId, null);
+
+        MvcResult original = mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(originalRequest))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID originalResultVersionId = uuid(json(original), "versionId");
+        String storedRequestHash = jdbcTemplate.queryForObject("""
+                SELECT request_hash FROM business.itinerary_edit_idempotency
+                WHERE trip_id = ? AND idempotency_key = ?
+                """, String.class, context.tripId(), idempotencyKey);
+        assertThat(storedRequestHash.strip()).matches("[0-9a-f]{64}");
+
+        JsonNode changed = currentItinerary(context);
+        UUID remainingActivityId = uuid(changed.at("/days/0/activities/0"), "id");
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(uuid(changed, "versionId"), "LOCK_ACTIVITY", remainingActivityId, null)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(originalRequest))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionId").value(originalResultVersionId.toString()));
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(initialVersionId, "LOCK_ACTIVITY", deletedActivityId, null)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"));
+
+        assertThat(count("business.itinerary_version")).isEqualTo(3);
+    }
+
+    @Test
+    void concurrentRequestsWithTheSameKeyProduceOneVersionAndTheSameResult() throws Exception {
+        String email = "edit-idempotency-concurrent-same@example.com";
+        PlanningContext context = completedItinerary(email);
+        JsonNode current = currentItinerary(context);
+        ItineraryService.ItineraryEditRequest request = new ItineraryService.ItineraryEditRequest(
+                uuid(current, "versionId"), "LOCK_ACTIVITY",
+                uuid(current.at("/days/0/activities/0"), "id"), null,
+                null, null, null, null, null, null
+        );
+        UUID ownerId = jdbcTemplate.queryForObject(
+                "SELECT id FROM business.user_account WHERE email = ?", UUID.class, email);
+        UUID idempotencyKey = nextIdempotencyKey();
+        String requestHash = editRequestFingerprint.forEdit(objectMapper.valueToTree(request));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            Future<ItineraryService.ItineraryResponse> first = executor.submit(() -> {
+                barrier.await();
+                return itineraryService.applyEdit(ownerId, context.tripId(), idempotencyKey, request, requestHash);
+            });
+            Future<ItineraryService.ItineraryResponse> second = executor.submit(() -> {
+                barrier.await();
+                return itineraryService.applyEdit(ownerId, context.tripId(), idempotencyKey, request, requestHash);
+            });
+
+            assertThat(first.get().versionId()).isEqualTo(second.get().versionId());
+            assertThat(count("business.itinerary_version")).isEqualTo(2);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrentRequestsWithDifferentKeysLeaveOneSuccessfulVersionAndOneVersionConflict() throws Exception {
+        String email = "edit-idempotency-concurrent-different@example.com";
+        PlanningContext context = completedItinerary(email);
+        JsonNode current = currentItinerary(context);
+        ItineraryService.ItineraryEditRequest request = new ItineraryService.ItineraryEditRequest(
+                uuid(current, "versionId"), "LOCK_ACTIVITY",
+                uuid(current.at("/days/0/activities/0"), "id"), null,
+                null, null, null, null, null, null
+        );
+        UUID ownerId = jdbcTemplate.queryForObject(
+                "SELECT id FROM business.user_account WHERE email = ?", UUID.class, email);
+        String requestHash = editRequestFingerprint.forEdit(objectMapper.valueToTree(request));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            Future<ItineraryService.ItineraryResponse> first = executor.submit(() -> {
+                barrier.await();
+                return itineraryService.applyEdit(ownerId, context.tripId(), nextIdempotencyKey(), request, requestHash);
+            });
+            Future<ItineraryService.ItineraryResponse> second = executor.submit(() -> {
+                barrier.await();
+                return itineraryService.applyEdit(ownerId, context.tripId(), nextIdempotencyKey(), request, requestHash);
+            });
+
+            int successful = 0;
+            ApiException conflict = null;
+            for (Future<ItineraryService.ItineraryResponse> result : java.util.List.of(first, second)) {
+                try {
+                    result.get();
+                    successful++;
+                } catch (ExecutionException exception) {
+                    if (exception.getCause() instanceof ApiException apiException) {
+                        conflict = apiException;
+                    } else {
+                        throw exception;
+                    }
+                }
+            }
+            assertThat(successful).isEqualTo(1);
+            assertThat(conflict).isNotNull();
+            assertThat(conflict.code()).isEqualTo("ITINERARY_VERSION_CONFLICT");
+            assertThat(count("business.itinerary_version")).isEqualTo(2);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void rollsBackTheIdempotencyReservationWhenTheEditCannotBeApplied() throws Exception {
+        PlanningContext context = completedItinerary("edit-idempotency-rollback@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID idempotencyKey = nextIdempotencyKey();
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(uuid(current, "versionId"), "LOCK_ACTIVITY", UUID.randomUUID(), null)))
+                .andExpect(status().isUnprocessableEntity());
+
+        Integer reservations = jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_edit_idempotency
+                WHERE trip_id = ? AND idempotency_key = ?
+                """, Integer.class, context.tripId(), idempotencyKey);
+        assertThat(reservations).isZero();
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+    }
+
+    @Test
+    void rollsBackEveryWriteWhenTheDatabaseRejectsTheFirstActivityInsert() throws Exception {
+        PlanningContext context = completedItinerary("edit-db-failure-activity@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID ownerId = ownerId("edit-db-failure-activity@example.com");
+        ItineraryService.ItineraryEditRequest request = lockActivityRequest(current);
+        UUID idempotencyKey = nextIdempotencyKey();
+        String requestHash = editRequestFingerprint.forEdit(objectMapper.valueToTree(request));
+
+        installActivityInsertFailure();
+        try {
+            assertThatThrownBy(() -> itineraryService.applyEdit(
+                    ownerId, context.tripId(), idempotencyKey, request, requestHash))
+                    .isInstanceOf(RuntimeException.class);
+        } finally {
+            removeActivityInsertFailure();
+        }
+
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+        assertThat(count("business.itinerary_day")).isEqualTo(1);
+        assertThat(count("business.activity")).isEqualTo(2);
+        assertThat(count("business.transit_leg")).isEqualTo(1);
+        assertNoEditIdempotencyReservation(context.tripId(), idempotencyKey);
+        assertThat(itineraryService.getCurrent(ownerId, context.tripId()).versionId())
+                .isEqualTo(uuid(current, "versionId"));
+    }
+
+    @Test
+    void rollsBackPartialTransitWritesAndAllowsTheSameKeyToRetry() throws Exception {
+        PlanningContext context = completedItinerary("edit-db-failure-transit@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID sourceVersionId = uuid(current, "versionId");
+        UUID sourceDayId = jdbcTemplate.queryForObject("""
+                SELECT id FROM business.itinerary_day
+                WHERE itinerary_version_id = ? AND day_index = 0
+                """, UUID.class, sourceVersionId);
+        UUID secondActivityId = uuid(current.at("/days/0/activities/1"), "id");
+        UUID thirdActivityId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO business.activity(
+                    id, itinerary_day_id, activity_order, title, start_time, end_time,
+                    estimated_cost, source, provider_poi_id, longitude, latitude, address, locked
+                ) VALUES (?, ?, 2, 'Third stop', '2026-08-01T16:00:00+08:00',
+                    '2026-08-01T17:00:00+08:00', 0, 'AMAP', 'THIRD-STOP',
+                    113.3300000, 23.1000000, 'Third stop address', false)
+                """, thirdActivityId, sourceDayId);
+        jdbcTemplate.update("""
+                INSERT INTO business.transit_leg(
+                    id, itinerary_day_id, leg_order, from_activity_id, to_activity_id,
+                    mode, distance_meters, duration_seconds, provider, estimated, polyline,
+                    locked, estimated_cost, provider_route_id, calculated_at, stale
+                ) VALUES (?, ?, 1, ?, ?, 'WALKING', 900, 600, 'AMAP', false,
+                    CAST('[{"longitude":113.324553,"latitude":23.106414},
+                    {"longitude":113.330000,"latitude":23.100000}]' AS jsonb),
+                    false, 0, NULL, CURRENT_TIMESTAMP, false)
+                """, UUID.randomUUID(), sourceDayId, secondActivityId, thirdActivityId);
+        current = currentItinerary(context);
+        UUID ownerId = ownerId("edit-db-failure-transit@example.com");
+        ItineraryService.ItineraryEditRequest request = lockActivityRequest(current);
+        UUID idempotencyKey = nextIdempotencyKey();
+        String requestHash = editRequestFingerprint.forEdit(objectMapper.valueToTree(request));
+
+        installSecondTransitInsertFailure();
+        try {
+            assertThatThrownBy(() -> itineraryService.applyEdit(
+                    ownerId, context.tripId(), idempotencyKey, request, requestHash))
+                    .isInstanceOf(RuntimeException.class);
+        } finally {
+            removeSecondTransitInsertFailure();
+        }
+
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+        assertThat(count("business.itinerary_day")).isEqualTo(1);
+        assertThat(count("business.activity")).isEqualTo(3);
+        assertThat(count("business.transit_leg")).isEqualTo(2);
+        assertNoEditIdempotencyReservation(context.tripId(), idempotencyKey);
+
+        ItineraryService.ItineraryResponse retry = itineraryService.applyEdit(
+                ownerId, context.tripId(), idempotencyKey, request, requestHash);
+
+        assertThat(count("business.itinerary_version")).isEqualTo(2);
+        assertThat(retry.versionNumber()).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT status FROM business.itinerary_edit_idempotency
+                WHERE trip_id = ? AND idempotency_key = ?
+                """, String.class, context.tripId(), idempotencyKey)).isEqualTo("COMPLETED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT result_version_id FROM business.itinerary_edit_idempotency
+                WHERE trip_id = ? AND idempotency_key = ?
+                """, UUID.class, context.tripId(), idempotencyKey)).isEqualTo(retry.versionId());
+    }
+
+    @Test
+    void rejectsRetriesAgainstHistoricalBlankRequestHashes() throws Exception {
+        PlanningContext context = completedItinerary("edit-idempotency-historical@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID idempotencyKey = nextIdempotencyKey();
+        jdbcTemplate.update("""
+                INSERT INTO business.itinerary_edit_idempotency(
+                    trip_id, idempotency_key, request_hash, result_version_id, status
+                ) VALUES (?, ?, '', NULL, 'COMPLETED')
+                """, context.tripId(), idempotencyKey);
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(uuid(current, "versionId"), "LOCK_ACTIVITY",
+                                uuid(current.at("/days/0/activities/0"), "id"), null)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_CONFLICT"));
+
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+    }
+
+    @Test
     void savesMultipleReviewedDraftEditsAsOneImmutableVersion() throws Exception {
         PlanningContext context = completedItinerary("edit-draft@example.com");
         JsonNode current = currentItinerary(context);
@@ -115,16 +399,25 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                   ]
                 }
                 """.formatted(versionId, versionId, firstActivityId, versionId, secondActivityId);
+        UUID idempotencyKey = nextIdempotencyKey();
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
-                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .header("Idempotency-Key", idempotencyKey.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(draft))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.versionNumber").value(2))
                 .andExpect(jsonPath("$.days[0].activities.length()").value(1))
                 .andExpect(jsonPath("$.days[0].activities[0].locked").value(true));
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(draft))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionNumber").value(2));
 
         assertThat(count("business.itinerary_version")).isEqualTo(2);
     }
@@ -631,6 +924,103 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void keepsTransitLocksWithTheirActivityEndpointsWhenSourceTransitOrderDiffers() throws Exception {
+        PlanningContext context = completedItinerary("replan-transit-endpoint-locks@example.com");
+        JsonNode source = currentItinerary(context);
+        UUID sourceVersionId = uuid(source, "versionId");
+        UUID sourceDayId = jdbcTemplate.queryForObject("""
+                SELECT d.id FROM business.itinerary_day d
+                WHERE d.itinerary_version_id = ? AND d.day_index = 0
+                """, UUID.class, sourceVersionId);
+        UUID firstTransitLegId = uuid(source.at("/days/0/transitLegs/0"), "id");
+        UUID secondActivityId = uuid(source.at("/days/0/activities/1"), "id");
+        UUID thirdActivityId = UUID.randomUUID();
+        jdbcTemplate.update("""
+                INSERT INTO business.activity(
+                    id, itinerary_day_id, activity_order, title, start_time, end_time,
+                    estimated_cost, source, provider_poi_id, longitude, latitude, address, locked
+                ) VALUES (?, ?, 2, 'Third stop', '2026-08-01T16:00:00+08:00',
+                    '2026-08-01T17:00:00+08:00', 0, 'AMAP', 'THIRD-STOP',
+                    113.3300000, 23.1000000, 'Third stop address', false)
+                """, thirdActivityId, sourceDayId);
+        jdbcTemplate.update("UPDATE business.transit_leg SET leg_order = 2 WHERE id = ?", firstTransitLegId);
+        jdbcTemplate.update("""
+                INSERT INTO business.transit_leg(
+                    id, itinerary_day_id, leg_order, from_activity_id, to_activity_id,
+                    mode, distance_meters, duration_seconds, provider, estimated, polyline,
+                    locked, estimated_cost, provider_route_id, calculated_at, stale
+                ) VALUES (?, ?, 0, ?, ?, 'WALKING', 900, 600, 'AMAP', false,
+                    CAST('[{"longitude":113.324553,"latitude":23.106414},
+                    {"longitude":113.330000,"latitude":23.100000}]' AS jsonb),
+                    true, 0, NULL, CURRENT_TIMESTAMP, false)
+                """, UUID.randomUUID(), sourceDayId, secondActivityId, thirdActivityId);
+        jdbcTemplate.update("UPDATE business.transit_leg SET leg_order = 1 WHERE id = ?", firstTransitLegId);
+
+        MvcResult taskResult = mockMvc.perform(post("/api/trips/{tripId}/itinerary/replans", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(replanJson(sourceVersionId, "2026-08-01")))
+                .andExpect(status().isAccepted())
+                .andReturn();
+        UUID taskId = uuid(json(taskResult), "taskId");
+        JsonNode command = replanCommand(taskId);
+
+        completionService.handle(replanCompletedEventWithTwoTransitLegs(context.tripId(), taskId, command));
+
+        JsonNode replanned = currentItinerary(context);
+        JsonNode firstReturnedLeg = replanned.at("/days/0/transitLegs/0");
+        JsonNode secondReturnedLeg = replanned.at("/days/0/transitLegs/1");
+        assertThat(uuid(firstReturnedLeg, "fromActivityId"))
+                .isEqualTo(uuid(replanned.at("/days/0/activities/0"), "id"));
+        assertThat(uuid(secondReturnedLeg, "fromActivityId"))
+                .isEqualTo(uuid(replanned.at("/days/0/activities/1"), "id"));
+        assertThat(firstReturnedLeg.get("locked").asBoolean()).isFalse();
+        assertThat(secondReturnedLeg.get("locked").asBoolean()).isTrue();
+    }
+
+    @Test
+    void rejectsAReplanWhenPersistedSourceTransitEndpointsAreAmbiguous() throws Exception {
+        PlanningContext context = completedItinerary("replan-duplicate-transit-endpoints@example.com");
+        JsonNode source = currentItinerary(context);
+        UUID sourceVersionId = uuid(source, "versionId");
+        UUID sourceDayId = jdbcTemplate.queryForObject("""
+                SELECT d.id FROM business.itinerary_day d
+                WHERE d.itinerary_version_id = ? AND d.day_index = 0
+                """, UUID.class, sourceVersionId);
+        JsonNode existingLeg = source.at("/days/0/transitLegs/0");
+        jdbcTemplate.update("UPDATE business.transit_leg SET leg_order = 1 WHERE id = ?",
+                uuid(existingLeg, "id"));
+        jdbcTemplate.update("""
+                INSERT INTO business.transit_leg(
+                    id, itinerary_day_id, leg_order, from_activity_id, to_activity_id,
+                    mode, distance_meters, duration_seconds, provider, estimated, polyline,
+                    locked, estimated_cost, provider_route_id, calculated_at, stale
+                ) VALUES (?, ?, 0, ?, ?, 'DRIVING', 900, 600, 'AMAP', false,
+                    CAST('[{"longitude":113.319263,"latitude":23.109078},
+                    {"longitude":113.324553,"latitude":23.106414}]' AS jsonb),
+                    true, 0, NULL, CURRENT_TIMESTAMP, false)
+                """, UUID.randomUUID(), sourceDayId,
+                uuid(existingLeg, "fromActivityId"), uuid(existingLeg, "toActivityId"));
+
+        MvcResult taskResult = mockMvc.perform(post("/api/trips/{tripId}/itinerary/replans", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(replanJson(sourceVersionId, "2026-08-01")))
+                .andExpect(status().isAccepted())
+                .andReturn();
+        UUID taskId = uuid(json(taskResult), "taskId");
+        JsonNode command = replanCommand(taskId);
+
+        assertThatThrownBy(() -> completionService.handle(
+                replanCompletedEvent(context.tripId(), taskId, command, 777)))
+                .isInstanceOf(PlanningEventRejectedException.class)
+                .hasMessageContaining("duplicate transit endpoints");
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+    }
+
+    @Test
     void failsAReplanWhoseBaselineItineraryIsNoLongerCurrent() throws Exception {
         PlanningContext context = completedTwoDayItinerary("local-replan-stale@example.com");
         JsonNode baseline = currentItinerary(context);
@@ -793,6 +1183,50 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         return eventParser.parse(objectMapper.writeValueAsBytes(root));
     }
 
+    private PlanningCompletedEvent replanCompletedEventWithTwoTransitLegs(
+            UUID tripId, UUID taskId, JsonNode command) throws Exception {
+        ObjectNode itinerary = command.at("/payload/itinerary").deepCopy();
+        String provider = itinerary.remove("provider").asText();
+        ArrayNode activities = (ArrayNode) itinerary.at("/days/0/activities");
+        ArrayNode transitLegs = ((ObjectNode) itinerary.at("/days/0")).putArray("transitLegs");
+        transitLegs.add(replanTransitLeg(0, 1, activities));
+        transitLegs.add(replanTransitLeg(1, 2, activities));
+
+        UUID traceId = UUID.fromString(command.get("traceId").asText());
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("eventType", "PLANNING_COMPLETED");
+        root.put("schemaVersion", 5);
+        root.put("eventId", UUID.randomUUID().toString());
+        root.put("traceId", traceId.toString());
+        root.put("taskId", taskId.toString());
+        root.put("tripId", tripId.toString());
+        root.put("runId", UUID.randomUUID().toString());
+        root.put("occurredAt", "2026-07-24T05:00:00Z");
+        ObjectNode payload = root.putObject("payload");
+        payload.put("provider", provider);
+        ObjectNode knowledge = command.at("/payload/knowledge").deepCopy();
+        ((ObjectNode) knowledge.get("freshness")).remove("checkedAt");
+        ((ObjectNode) knowledge.get("freshness")).remove("staleReason");
+        payload.set("knowledge", knowledge);
+        payload.set("itinerary", itinerary);
+        return eventParser.parse(objectMapper.writeValueAsBytes(root));
+    }
+
+    private ObjectNode replanTransitLeg(int fromIndex, int toIndex, ArrayNode activities) {
+        ObjectNode transit = objectMapper.createObjectNode();
+        transit.put("fromActivityIndex", fromIndex);
+        transit.put("toActivityIndex", toIndex);
+        transit.put("mode", "WALKING");
+        transit.put("distanceMeters", 700);
+        transit.put("durationSeconds", 480);
+        transit.put("provider", "AMAP");
+        transit.put("estimated", false);
+        ArrayNode polyline = transit.putArray("polyline");
+        polyline.add(activities.get(fromIndex).get("coordinates"));
+        polyline.add(activities.get(toIndex).get("coordinates"));
+        return transit;
+    }
+
     private String registerAndGetAccessToken(String email) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -837,6 +1271,72 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                   "transitLocked": %s
                 }
                 """.formatted(versionId, legId, mode, locked);
+    }
+
+    private UUID ownerId(String email) {
+        return jdbcTemplate.queryForObject(
+                "SELECT id FROM business.user_account WHERE email = ?", UUID.class, email);
+    }
+
+    private ItineraryService.ItineraryEditRequest lockActivityRequest(JsonNode itinerary) {
+        return new ItineraryService.ItineraryEditRequest(
+                uuid(itinerary, "versionId"), "LOCK_ACTIVITY",
+                uuid(itinerary.at("/days/0/activities/0"), "id"), null,
+                null, null, null, null, null, null
+        );
+    }
+
+    private void assertNoEditIdempotencyReservation(UUID tripId, UUID idempotencyKey) {
+        Integer reservations = jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_edit_idempotency
+                WHERE trip_id = ? AND idempotency_key = ?
+                """, Integer.class, tripId, idempotencyKey);
+        assertThat(reservations).isZero();
+    }
+
+    private void installActivityInsertFailure() {
+        jdbcTemplate.execute("""
+                CREATE OR REPLACE FUNCTION business.trip_pilot_fail_activity_insert()
+                RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    RAISE EXCEPTION 'trip-pilot forced activity write failure';
+                END;
+                $$
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER trip_pilot_fail_activity_insert
+                BEFORE INSERT ON business.activity
+                FOR EACH ROW EXECUTE FUNCTION business.trip_pilot_fail_activity_insert()
+                """);
+    }
+
+    private void removeActivityInsertFailure() {
+        jdbcTemplate.execute("DROP TRIGGER IF EXISTS trip_pilot_fail_activity_insert ON business.activity");
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS business.trip_pilot_fail_activity_insert()");
+    }
+
+    private void installSecondTransitInsertFailure() {
+        jdbcTemplate.execute("""
+                CREATE OR REPLACE FUNCTION business.trip_pilot_fail_second_transit_insert()
+                RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.leg_order = 1 THEN
+                        RAISE EXCEPTION 'trip-pilot forced second transit write failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER trip_pilot_fail_second_transit_insert
+                BEFORE INSERT ON business.transit_leg
+                FOR EACH ROW EXECUTE FUNCTION business.trip_pilot_fail_second_transit_insert()
+                """);
+    }
+
+    private void removeSecondTransitInsertFailure() {
+        jdbcTemplate.execute("DROP TRIGGER IF EXISTS trip_pilot_fail_second_transit_insert ON business.transit_leg");
+        jdbcTemplate.execute("DROP FUNCTION IF EXISTS business.trip_pilot_fail_second_transit_insert()");
     }
 
     private int count(String table) {

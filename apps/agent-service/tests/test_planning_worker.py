@@ -654,11 +654,20 @@ def test_amap_planner_only_falls_back_for_classified_route_failures(
                 error_code="PROVIDER_TIMEOUT",
                 error_message="AMap route request timed out",
                 retryable=True,
+                retry_count=2,
+                retry_exhausted=True,
                 latency_ms=1,
                 fetched_at=datetime(2026, 7, 17, tzinfo=UTC),
             )
 
-    planner = processor.AmapPlanningProvider(MapProvider(), RouteProvider())
+    provider_errors = import_module("trip_agent.providers.errors")
+    demo_route = import_module("trip_agent.providers.route").DemoRouteProvider()
+    planner = processor.AmapPlanningProvider(
+        MapProvider(),
+        RouteProvider(),
+        route_fallback=demo_route,
+        provider_mode=provider_errors.ProviderExecutionMode.REAL_WITH_EXPLICIT_FALLBACK,
+    )
 
     if unexpected_exception:
         with pytest.raises(RuntimeError, match="unexpected route defect"):
@@ -671,6 +680,18 @@ def test_amap_planner_only_falls_back_for_classified_route_failures(
     assert result.provider == "AMAP"
     assert leg.provider == "DEMO"
     assert leg.estimated is True
+    assert result.actual_providers == ("AMAP", "DEMO")
+    assert result.fallback_attempted is True
+    assert result.fallback_succeeded is True
+    assert len(result.fallback_operations) == 1
+    operation = result.fallback_operations[0]
+    assert operation.operation == "ROUTE"
+    assert operation.transit_id == leg.transit_id
+    assert operation.from_activity_id == result.itinerary.days[0].activities[0].activity_id
+    assert operation.to_activity_id == result.itinerary.days[0].activities[1].activity_id
+    assert operation.error_category == "TIMEOUT"
+    assert operation.error_code == "PROVIDER_TIMEOUT"
+    assert operation.retry_count == 2
 
 
 def test_amap_planner_rejects_inconsistent_successful_route_metadata() -> None:
@@ -742,7 +763,7 @@ def test_amap_planner_rejects_inconsistent_successful_route_metadata() -> None:
         asyncio.run(planner.plan(command))
 
 
-def test_classified_amap_failure_falls_back_to_an_explicit_demo_v4_result() -> None:
+def test_authentication_failure_is_not_hidden_by_explicit_demo_fallback() -> None:
     contracts = import_module("trip_agent.worker.contracts")
     map_contracts = import_module("trip_agent.providers.map")
     processor = import_module("trip_agent.worker.processor")
@@ -768,15 +789,10 @@ def test_classified_amap_failure_falls_back_to_an_explicit_demo_v4_result() -> N
         processor.DemoPlanningProvider(),
     )
 
-    completed = asyncio.run(processor.process_planning_create(command, planner))
+    with pytest.raises(processor.PlanningProviderError) as failure:
+        asyncio.run(processor.process_planning_create(command, planner))
 
-    assert completed.schema_version == 6
-    assert completed.payload.provider == "DEMO"
-    assert all(
-        activity.source == "DEMO"
-        for day in completed.payload.itinerary.days
-        for activity in day.activities
-    )
+    assert failure.value.details.category.value == "AUTHENTICATION_ERROR"
 
 
 def test_unexpected_amap_exception_is_not_hidden_by_demo_fallback() -> None:
@@ -861,7 +877,7 @@ def test_amap_planner_collects_unique_pois_across_preference_queries() -> None:
     ]
 
 
-def test_amap_planner_caps_not_found_queries_before_demo_fallback() -> None:
+def test_amap_planner_caps_not_found_queries_without_demo_substitution() -> None:
     contracts = import_module("trip_agent.worker.contracts")
     map_contracts = import_module("trip_agent.providers.map")
     processor = import_module("trip_agent.worker.processor")
@@ -893,13 +909,14 @@ def test_amap_planner_caps_not_found_queries_before_demo_fallback() -> None:
         processor.DemoPlanningProvider(),
     )
 
-    result = asyncio.run(planner.plan(command))
+    with pytest.raises(processor.PlanningProviderError) as failure:
+        asyncio.run(planner.plan(command))
 
-    assert result.provider == "DEMO"
+    assert failure.value.details.category.value == "NO_RESULT"
     assert map_provider.keywords == [f"preference-{index}" for index in range(6)]
 
 
-def test_amap_planner_falls_back_when_unique_candidates_are_insufficient() -> None:
+def test_amap_planner_fails_when_unique_candidates_are_insufficient() -> None:
     contracts = import_module("trip_agent.worker.contracts")
     map_contracts = import_module("trip_agent.providers.map")
     processor = import_module("trip_agent.worker.processor")
@@ -943,9 +960,10 @@ def test_amap_planner_falls_back_when_unique_candidates_are_insufficient() -> No
         processor.DemoPlanningProvider(),
     )
 
-    result = asyncio.run(planner.plan(command))
+    with pytest.raises(processor.PlanningProviderError) as failure:
+        asyncio.run(planner.plan(command))
 
-    assert result.provider == "DEMO"
+    assert failure.value.details.category.value == "NO_RESULT"
     assert map_provider.query_count == processor.MAX_POI_QUERIES
 
 

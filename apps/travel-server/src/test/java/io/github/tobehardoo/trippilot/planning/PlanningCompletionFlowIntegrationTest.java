@@ -2,11 +2,14 @@ package io.github.tobehardoo.trippilot.planning;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEventParser;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEventParser;
@@ -101,6 +104,24 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void ignoresLateProgressAfterCompletionBecauseBrokerRoutesCanArriveOutOfOrder() throws Exception {
+        PlanningContext context = createPlanningContext("late-progress@example.com");
+        completionService.handle(completedEvent(UUID.randomUUID(), context));
+
+        progressService.handle(progressEvent(
+                UUID.randomUUID(), context, "RESULT_PUBLISHING", 10
+        ));
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT status FROM business.planning_task WHERE id = ?
+                """, String.class, context.taskId())).isEqualTo("SUCCEEDED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_PROGRESS'
+                """, Integer.class, context.taskId())).isZero();
+    }
+
+    @Test
     void persistsAnActionableInfeasibilityFailureIdempotently() throws Exception {
         PlanningContext context = createPlanningContext("planning-infeasible@example.com");
         UUID eventId = UUID.randomUUID();
@@ -129,6 +150,99 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .containsEntry("event_type", "PLANNING_FAILED")
                 .containsEntry("conflict_code", "INSUFFICIENT_DAY_CAPACITY");
         assertThat(count("business.itinerary_version")).isZero();
+    }
+
+    @Test
+    void persistsProviderFailureV2AndExposesSafeMetadataWithoutCreatingVersions()
+            throws Exception {
+        PlanningContext context = createPlanningContext("planning-provider-failure@example.com");
+        UUID eventId = UUID.randomUUID();
+        var event = failedEventParser.parse(bytes(providerFailureV2(eventId, context)));
+
+        failureService.handle(event);
+        failureService.handle(event);
+
+        Map<String, Object> stored = jdbcTemplate.queryForMap("""
+                SELECT planning_task.status, planning_task.error_code,
+                       planning_task.error_message,
+                       planning_task_event.schema_version,
+                       planning_task_event.payload ->> 'errorCategory' AS error_category,
+                       planning_task_event.payload ->> 'safeProviderCode' AS provider_code,
+                       planning_task_event.payload ->> 'retryCount' AS retry_count
+                FROM business.planning_task
+                JOIN business.planning_task_event
+                  ON planning_task_event.task_id = planning_task.id
+                 AND planning_task_event.event_id = ?
+                WHERE planning_task.id = ?
+                """, eventId, context.taskId());
+
+        assertThat(stored).containsEntry("status", "FAILED")
+                .containsEntry("error_code", "PROVIDER_AUTHENTICATION_FAILED")
+                .containsEntry("error_message", "AMap authentication failed")
+                .containsEntry("schema_version", 2)
+                .containsEntry("error_category", "AUTHENTICATION_ERROR")
+                .containsEntry("provider_code", "10001")
+                .containsEntry("retry_count", "0");
+        assertThat(count("business.itinerary_version")).isZero();
+        assertThat(count("business.activity")).isZero();
+        assertThat(count("business.transit_leg")).isZero();
+
+        mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("FAILED"))
+                .andExpect(jsonPath("$.errorCode")
+                        .value("PROVIDER_AUTHENTICATION_FAILED"))
+                .andExpect(jsonPath("$.errorCategory").value("AUTHENTICATION_ERROR"))
+                .andExpect(jsonPath("$.provider").value("AMAP"))
+                .andExpect(jsonPath("$.operation").value("POI_SEARCH"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.retryCount").value(0))
+                .andExpect(jsonPath("$.fallbackAttempted").value(false))
+                .andExpect(jsonPath("$.fallbackSucceeded").value(false))
+                .andExpect(jsonPath("$.safeMessage").value("AMap authentication failed"))
+                .andExpect(jsonPath("$.safeProviderCode").value("10001"));
+    }
+
+    @Test
+    void ignoresEquivalentV2FailureAfterV1AlreadyMadeTheTaskTerminal() throws Exception {
+        PlanningContext context = createPlanningContext("planning-failure-version-race@example.com");
+        UUID v1EventId = UUID.randomUUID();
+        String v1Body = PlanningFailedEventParserTest.json(v1EventId)
+                .replace("8f5ef9c2-c194-4292-b847-5b9dcfda978b", context.traceId().toString())
+                .replace("b0642d34-e24f-4b24-9ea7-82a68a4be781", context.taskId().toString())
+                .replace("08be9aca-fb30-4309-aa4b-93c240f19d75", context.tripId().toString());
+        failureService.handle(failedEventParser.parse(bytes(v1Body)));
+
+        String v2Body = providerFailureV2(UUID.randomUUID(), context)
+                .replace("PROVIDER_AUTHENTICATION_FAILED", "NO_FEASIBLE_ITINERARY")
+                .replace("AUTHENTICATION_ERROR", "PLANNING_INFEASIBLE")
+                .replace("\"provider\": \"AMAP\"", "\"provider\": \"PLANNER\"")
+                .replace("\"operation\": \"POI_SEARCH\"", "\"operation\": \"PLANNING\"")
+                .replace("\"safeProviderCode\": \"10001\",", "")
+                .replace("\"conflicts\": []", "\"conflicts\": [{\"code\":\"INSUFFICIENT_DAY_CAPACITY\",\"message\":\"No capacity\",\"affected\":[\"day\"]}]");
+        failureService.handle(failedEventParser.parse(bytes(v2Body)));
+
+        assertThat(taskStatus(context.taskId())).isEqualTo("FAILED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_FAILED'
+                """, Integer.class, context.taskId())).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsLateFailureWithoutOverwritingASuccessfulTask() throws Exception {
+        PlanningContext context = createPlanningContext("planning-late-failure@example.com");
+        completionService.handle(completedEvent(UUID.randomUUID(), context));
+        var lateFailure = failedEventParser.parse(bytes(
+                providerFailureV2(UUID.randomUUID(), context)
+        ));
+
+        assertThatThrownBy(() -> failureService.handle(lateFailure))
+                .isInstanceOf(PlanningEventRejectedException.class)
+                .hasMessageContaining("status SUCCEEDED");
+        assertThat(taskStatus(context.taskId())).isEqualTo("SUCCEEDED");
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
     }
 
     @Test
@@ -263,6 +377,227 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.days[0].transitLegs[0].provider").value("AMAP"))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].estimated").value(false))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].polyline.length()").value(2));
+    }
+
+    @Test
+    void persistsExplicitMixedProviderEvidenceWithStableTransitIdentity() throws Exception {
+        PlanningContext context = createPlanningContext("completion-mixed-provider@example.com");
+        UUID eventId = UUID.randomUUID();
+        long queuedEventId = latestTaskEventId(context.taskId());
+        PlanningCompletedEvent event = sharedV6Event(
+                "completion-v6-multi-transit-mixed.json", eventId, context);
+
+        completionService.handle(event);
+        completionService.handle(event);
+
+        Map<String, Object> taskEvent = jdbcTemplate.queryForMap("""
+                SELECT payload ->> 'provider' AS provider,
+                       payload ->> 'requestedProviderMode' AS requested_mode,
+                       payload ->> 'fallbackSucceeded' AS fallback_succeeded,
+                       payload -> 'actualProviders' AS actual_providers,
+                       payload #>> '{fallbackOperations,0,operation}' AS operation,
+                       payload #>> '{fallbackOperations,0,errorCategory}' AS error_category,
+                       payload #>> '{fallbackOperations,0,errorCode}' AS error_code,
+                       payload #>> '{fallbackOperations,0,retryCount}' AS retry_count,
+                       payload #>> '{fallbackOperations,0,transitId}' AS transit_id,
+                       payload #>> '{fallbackOperations,0,fromActivityId}' AS from_activity_id,
+                       payload #>> '{fallbackOperations,0,toActivityId}' AS to_activity_id
+                 FROM business.planning_task_event
+                 WHERE event_id = ?
+                 """, eventId);
+        assertThat(taskEvent).containsEntry("provider", "MIXED")
+                .containsEntry("requested_mode", "REAL_WITH_EXPLICIT_FALLBACK")
+                .containsEntry("fallback_succeeded", "true")
+                .containsEntry("operation", "ROUTE")
+                .containsEntry("error_category", "TIMEOUT")
+                .containsEntry("error_code", "PROVIDER_TIMEOUT")
+                .containsEntry("retry_count", "2");
+        assertThat(taskEvent.get("actual_providers").toString())
+                .contains("AMAP", "DEMO");
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+
+        List<Map<String, Object>> legs = jdbcTemplate.queryForList("""
+                SELECT transit_leg.id, transit_leg.leg_order, transit_leg.provider,
+                       transit_leg.estimated, transit_leg.mode, transit_leg.locked,
+                       transit_leg.polyline::text AS polyline,
+                       origin.id AS origin_id, origin.title AS origin_title,
+                       destination.id AS destination_id,
+                       destination.title AS destination_title,
+                       itinerary_version.provider AS version_provider
+                FROM business.transit_leg
+                JOIN business.activity AS origin
+                  ON origin.id = transit_leg.from_activity_id
+                JOIN business.activity AS destination
+                  ON destination.id = transit_leg.to_activity_id
+                JOIN business.itinerary_day
+                  ON itinerary_day.id = transit_leg.itinerary_day_id
+                JOIN business.itinerary_version
+                  ON itinerary_version.id = itinerary_day.itinerary_version_id
+                ORDER BY transit_leg.leg_order
+                """);
+        assertThat(legs).hasSize(3);
+        assertThat(legs).extracting(leg -> leg.get("origin_title"))
+                .containsExactly("Stop 1", "Stop 2", "Stop 3");
+        assertThat(legs).extracting(leg -> leg.get("destination_title"))
+                .containsExactly("Stop 2", "Stop 3", "Stop 4");
+        assertThat(legs).extracting(leg -> leg.get("version_provider"))
+                .containsOnly("MIXED");
+        assertThat(legs.get(1)).containsEntry("provider", "DEMO")
+                .containsEntry("estimated", true)
+                .containsEntry("mode", "WALKING")
+                .containsEntry("locked", false);
+        assertThat(taskEvent.get("transit_id"))
+                .isEqualTo(legs.get(1).get("id").toString());
+        assertThat(taskEvent.get("from_activity_id"))
+                .isEqualTo(legs.get(1).get("origin_id").toString());
+        assertThat(taskEvent.get("to_activity_id"))
+                .isEqualTo(legs.get(1).get("destination_id").toString());
+
+        mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("MIXED"))
+                .andExpect(jsonPath("$.requestedProviderMode")
+                        .value("REAL_WITH_EXPLICIT_FALLBACK"))
+                .andExpect(jsonPath("$.primaryProvider").value("AMAP"))
+                .andExpect(jsonPath("$.actualProviders[0]").value("AMAP"))
+                .andExpect(jsonPath("$.actualProviders[1]").value("DEMO"))
+                .andExpect(jsonPath("$.fallbackAttempted").value(true))
+                .andExpect(jsonPath("$.fallbackSucceeded").value(true))
+                .andExpect(jsonPath("$.fallbackOperations[0].operation").value("ROUTE"))
+                .andExpect(jsonPath("$.fallbackOperations[0].transitId")
+                        .value(taskEvent.get("transit_id")))
+                .andExpect(jsonPath("$.fallbackOperations[0].fromActivityId")
+                        .value(taskEvent.get("from_activity_id")))
+                .andExpect(jsonPath("$.fallbackOperations[0].toActivityId")
+                        .value(taskEvent.get("to_activity_id")))
+                .andExpect(jsonPath("$.fallbackOperations[0].errorCategory").value("TIMEOUT"))
+                .andExpect(jsonPath("$.fallbackOperations[0].errorCode")
+                        .value("PROVIDER_TIMEOUT"))
+                .andExpect(jsonPath("$.fallbackOperations[0].retryCount").value(2));
+
+        mockMvc.perform(get("/api/trips/{tripId}/itinerary", context.tripId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("MIXED"))
+                .andExpect(jsonPath("$.days[0].activities[0].source").value("AMAP"))
+                .andExpect(jsonPath("$.days[0].transitLegs[1].provider").value("DEMO"))
+                .andExpect(jsonPath("$.days[0].transitLegs[1].estimated").value(true));
+
+        MvcResult stream = mockMvc.perform(get(
+                        "/api/planning-tasks/{taskId}/events", context.taskId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Last-Event-ID", queuedEventId)
+                        .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        mockMvc.perform(asyncDispatch(stream))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"fallbackOperations\":[{")))
+                .andExpect(content().string(containsString("\"operation\":\"ROUTE\"")))
+                .andExpect(content().string(containsString(
+                        "\"transitId\":\"" + taskEvent.get("transit_id") + "\"")));
+    }
+
+    @Test
+    void leavesHistoricalCompletionV6ProviderProvenanceUnrecorded() throws Exception {
+        PlanningContext context = createPlanningContext("completion-v6-legacy@example.com");
+        PlanningCompletedEvent event = sharedV6Event(
+                "completion-v6-legacy-amap.json", UUID.randomUUID(), context);
+
+        completionService.handle(event);
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT provider FROM business.itinerary_version
+                """, String.class)).isEqualTo("AMAP");
+        mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("AMAP"))
+                .andExpect(jsonPath("$.requestedProviderMode").doesNotExist())
+                .andExpect(jsonPath("$.primaryProvider").doesNotExist())
+                .andExpect(jsonPath("$.actualProviders").doesNotExist())
+                .andExpect(jsonPath("$.fallbackAttempted").doesNotExist())
+                .andExpect(jsonPath("$.fallbackSucceeded").doesNotExist())
+                .andExpect(jsonPath("$.fallbackOperations").doesNotExist());
+    }
+
+    @Test
+    void persistsExplicitPureDemoAndPureAmapProviderProvenance() throws Exception {
+        String[][] cases = {
+                {"completion-v6-demo.json", "DEMO_ONLY", "DEMO"},
+                {"completion-v6-real-only-amap.json", "REAL_ONLY", "AMAP"}
+        };
+        for (String[] providerCase : cases) {
+            PlanningContext context = createPlanningContext(
+                    "completion-pure-" + providerCase[2].toLowerCase()
+                            + "@example.com");
+            PlanningCompletedEvent event = sharedV6Event(
+                    providerCase[0], UUID.randomUUID(), context);
+
+            completionService.handle(event);
+
+            assertThat(jdbcTemplate.queryForObject("""
+                    SELECT provider FROM business.itinerary_version
+                    WHERE planning_task_id = ?
+                    """, String.class, context.taskId())).isEqualTo(providerCase[2]);
+            mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
+                            .header("Authorization", bearer(context.accessToken())))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.provider").value(providerCase[2]))
+                    .andExpect(jsonPath("$.requestedProviderMode")
+                            .value(providerCase[1]))
+                    .andExpect(jsonPath("$.primaryProvider").value(providerCase[2]))
+                    .andExpect(jsonPath("$.actualProviders[0]")
+                            .value(providerCase[2]))
+                    .andExpect(jsonPath("$.fallbackAttempted").value(false))
+                    .andExpect(jsonPath("$.fallbackSucceeded").value(false))
+                    .andExpect(jsonPath("$.fallbackOperations.length()").value(0));
+        }
+    }
+
+    @Test
+    void preservesTwoRouteFallbackOperationsWithoutDependingOnTransitOrder() throws Exception {
+        PlanningContext context = createPlanningContext("completion-two-fallbacks@example.com");
+        UUID eventId = UUID.randomUUID();
+        ObjectNode fixture = sharedV6Fixture(
+                "completion-v6-multi-transit-mixed.json", eventId, context);
+        ArrayNode transitLegs = (ArrayNode) fixture.at(
+                "/payload/itinerary/days/0/transitLegs");
+        ((ObjectNode) transitLegs.get(0)).put("provider", "DEMO").put("estimated", true);
+        ArrayNode operations = (ArrayNode) fixture.at(
+                "/payload/providerProvenance/fallbackOperations");
+        ObjectNode secondOperation = operations.addObject();
+        secondOperation.put("operation", "ROUTE")
+                .put("transitId", "20000000-0000-4000-8000-000000000033")
+                .put("fromActivityId", "10000000-0000-4000-8000-000000000033")
+                .put("toActivityId", "10000000-0000-4000-8000-000000000034")
+                .put("requestedMode", "REAL_WITH_EXPLICIT_FALLBACK")
+                .put("actualProvider", "DEMO")
+                .put("errorCategory", "NETWORK_ERROR")
+                .put("errorCode", "PROVIDER_NETWORK_ERROR")
+                .put("retryCount", 1);
+
+        completionService.handle(eventParser.parse(bytes(
+                objectMapper.writeValueAsString(fixture))));
+
+        List<Map<String, Object>> operationsStored = jdbcTemplate.queryForList("""
+                SELECT operation ->> 'transitId' AS transit_id,
+                       operation ->> 'fromActivityId' AS from_activity_id,
+                       operation ->> 'toActivityId' AS to_activity_id
+                FROM business.planning_task_event,
+                     jsonb_array_elements(payload -> 'fallbackOperations') AS operation
+                WHERE event_id = ?
+                ORDER BY operation ->> 'transitId'
+                """, eventId);
+        assertThat(operationsStored).hasSize(2);
+        assertThat(operationsStored).extracting(operation -> operation.get("transit_id"))
+                .doesNotHaveDuplicates();
+        assertThat(operationsStored).allSatisfy(operation -> {
+            assertThat(operation.get("transit_id")).isNotNull();
+            assertThat(operation.get("from_activity_id")).isNotNull();
+            assertThat(operation.get("to_activity_id")).isNotNull();
+        });
     }
 
     @Test
@@ -559,6 +894,31 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void replaysProviderFailureMetadataThroughTheTerminalSseEvent() throws Exception {
+        PlanningContext context = createPlanningContext("sse-provider-failure@example.com");
+        long queuedEventId = latestTaskEventId(context.taskId());
+        failureService.handle(failedEventParser.parse(bytes(
+                providerFailureV2(UUID.randomUUID(), context)
+        )));
+
+        MvcResult stream = mockMvc.perform(get("/api/planning-tasks/{taskId}/events", context.taskId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Last-Event-ID", queuedEventId)
+                        .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        mockMvc.perform(asyncDispatch(stream))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("event:PLANNING_FAILED")))
+                .andExpect(content().string(containsString("\"errorCategory\":\"AUTHENTICATION_ERROR\"")))
+                .andExpect(content().string(containsString("\"provider\":\"AMAP\"")))
+                .andExpect(content().string(containsString("\"operation\":\"POI_SEARCH\"")))
+                .andExpect(content().string(containsString("\"retryCount\":0")))
+                .andExpect(content().string(containsString("\"safeProviderCode\":\"10001\"")));
+    }
+
+    @Test
     void streamsAQueuedEventAndTheRealTimeCompletionToAnExistingSubscriber() throws Exception {
         PlanningContext context = createPlanningContext("sse-live@example.com");
 
@@ -666,6 +1026,23 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
         )));
     }
 
+    private PlanningCompletedEvent sharedV6Event(
+            String fixtureName, UUID eventId, PlanningContext context) throws Exception {
+        return eventParser.parse(bytes(objectMapper.writeValueAsString(
+                sharedV6Fixture(fixtureName, eventId, context))));
+    }
+
+    private ObjectNode sharedV6Fixture(
+            String fixtureName, UUID eventId, PlanningContext context) throws Exception {
+        ObjectNode fixture = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedV6Fixture(fixtureName));
+        fixture.put("eventId", eventId.toString());
+        fixture.put("traceId", context.traceId().toString());
+        fixture.put("taskId", context.taskId().toString());
+        fixture.put("tripId", context.tripId().toString());
+        return fixture;
+    }
+
     private PlanningProgressEvent progressEvent(
             UUID eventId,
             PlanningContext context,
@@ -694,6 +1071,38 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 sequence * 10
         );
         return progressEventParser.parse(bytes(body));
+    }
+
+    private String providerFailureV2(UUID eventId, PlanningContext context) {
+        return """
+                {
+                  "eventType": "PLANNING_FAILED",
+                  "schemaVersion": 2,
+                  "eventId": "%s",
+                  "traceId": "%s",
+                  "taskId": "%s",
+                  "tripId": "%s",
+                  "runId": "3b85b6b6-9e42-433b-90ef-d94a3eb26e18",
+                  "occurredAt": "2026-07-31T00:00:00Z",
+                  "payload": {
+                    "status": "FAILED",
+                    "errorCode": "PROVIDER_AUTHENTICATION_FAILED",
+                    "errorCategory": "AUTHENTICATION_ERROR",
+                    "provider": "AMAP",
+                    "operation": "POI_SEARCH",
+                    "retryable": false,
+                    "retryCount": 0,
+                    "fallbackAttempted": false,
+                    "fallbackSucceeded": false,
+                    "safeMessage": "AMap authentication failed",
+                    "safeProviderCode": "10001",
+                    "conflicts": [],
+                    "relaxationSuggestions": []
+                  }
+                }
+                """.formatted(
+                eventId, context.traceId(), context.taskId(), context.tripId()
+        );
     }
 
     private String taskStatus(UUID taskId) {

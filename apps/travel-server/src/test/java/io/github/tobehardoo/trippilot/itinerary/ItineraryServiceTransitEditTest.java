@@ -75,4 +75,35 @@ class ItineraryServiceTransitEditTest {
         assertThat(taxi.provider()).isEqualTo("DEMO");
         assertThat(taxi.estimated()).isTrue();
     }
+
+    @Test
+    void lockingWithoutChangingModePreservesTheOriginalPolylineAndRouteMetadata() {
+        ItineraryMapper.StoredTransitLeg walking = new ItineraryMapper.StoredTransitLeg(
+                UUID.randomUUID(),
+                4,
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                "WALKING",
+                2_400,
+                1_920,
+                "AMAP",
+                false,
+                "[{\"latitude\":23.11,\"longitude\":113.31,\"unknown\":true}]",
+                false,
+                java.math.BigDecimal.valueOf(8.50),
+                "route-123",
+                java.time.Instant.parse("2026-07-30T00:00:00Z"),
+                true
+        );
+
+        ItineraryMapper.StoredTransitLeg locked = ItineraryService.applyTransitLegEdit(
+                walking, null, true
+        );
+
+        assertThat(locked.polylineJson()).isEqualTo(walking.polylineJson());
+        assertThat(locked.providerRouteId()).isEqualTo(walking.providerRouteId());
+        assertThat(locked.calculatedAt()).isEqualTo(walking.calculatedAt());
+        assertThat(locked.stale()).isEqualTo(walking.stale());
+        assertThat(locked.locked()).isTrue();
+    }
 }

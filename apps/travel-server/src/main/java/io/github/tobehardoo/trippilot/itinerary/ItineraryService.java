@@ -8,6 +8,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -106,17 +107,17 @@ public class ItineraryService {
 
     @Transactional
     public ItineraryResponse applyEdit(
-            UUID ownerId, UUID tripId, UUID idempotencyKey, ItineraryEditRequest request) {
-        // Idempotency guard (J09): a retry of a successfully-applied edit
-        // returns the current version without creating a duplicate.
-        UUID previousResult = itineraryMapper.findEditIdempotencyResult(tripId, idempotencyKey);
+            UUID ownerId, UUID tripId, UUID idempotencyKey, ItineraryEditRequest request,
+            String requestHash) {
+        ItineraryResponse previousResult = existingEditResult(ownerId, tripId, idempotencyKey, requestHash);
         if (previousResult != null) {
-            return getCurrent(ownerId, tripId);
+            return previousResult;
+        }
+        if (itineraryMapper.reserveEditIdempotency(tripId, idempotencyKey, requestHash) == 0) {
+            return requiredExistingEditResult(ownerId, tripId, idempotencyKey, requestHash);
         }
 
-        ItineraryMapper.EditableCurrentVersion version = itineraryMapper
-                .findCurrentVersionOwnedForEditForUpdate(tripId, ownerId)
-                .orElseThrow(this::itineraryNotFound);
+        ItineraryMapper.EditableCurrentVersion version = lockCurrentVersionForEdit(ownerId, tripId);
         if (request == null || request.baseVersionId() == null || !request.baseVersionId().equals(version.versionId())) {
             throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
                     "The itinerary was updated. Reload it before applying this edit");
@@ -133,22 +134,24 @@ public class ItineraryService {
 
         apply(itinerary, request, evaluation.operation());
         UUID resultVersionId = persistEditedVersion(version, itinerary);
-        itineraryMapper.insertEditIdempotency(tripId, idempotencyKey, resultVersionId);
-        return getCurrent(ownerId, tripId);
+        requireOne(itineraryMapper.completeEditIdempotency(
+                tripId, idempotencyKey, requestHash, resultVersionId), "itinerary edit idempotency");
+        return getVersion(ownerId, tripId, resultVersionId);
     }
 
     /** Commits a user-reviewed draft as one immutable version. */
     @Transactional
     public ItineraryResponse applyEdits(
             UUID ownerId, UUID tripId, UUID idempotencyKey,
-            ItineraryBatchEditRequest request) {
-        UUID previousResult = itineraryMapper.findEditIdempotencyResult(tripId, idempotencyKey);
+            ItineraryBatchEditRequest request, String requestHash) {
+        ItineraryResponse previousResult = existingEditResult(ownerId, tripId, idempotencyKey, requestHash);
         if (previousResult != null) {
-            return getCurrent(ownerId, tripId);
+            return previousResult;
         }
-        ItineraryMapper.EditableCurrentVersion version = itineraryMapper
-                .findCurrentVersionOwnedForEditForUpdate(tripId, ownerId)
-                .orElseThrow(this::itineraryNotFound);
+        if (itineraryMapper.reserveEditIdempotency(tripId, idempotencyKey, requestHash) == 0) {
+            return requiredExistingEditResult(ownerId, tripId, idempotencyKey, requestHash);
+        }
+        ItineraryMapper.EditableCurrentVersion version = lockCurrentVersionForEdit(ownerId, tripId);
         if (request == null || request.baseVersionId() == null
                 || !request.baseVersionId().equals(version.versionId())) {
             throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
@@ -175,8 +178,61 @@ public class ItineraryService {
             apply(itinerary, edit, evaluation.operation());
         }
         UUID resultVersionId = persistEditedVersion(version, itinerary);
-        itineraryMapper.insertEditIdempotency(tripId, idempotencyKey, resultVersionId);
-        return getCurrent(ownerId, tripId);
+        requireOne(itineraryMapper.completeEditIdempotency(
+                tripId, idempotencyKey, requestHash, resultVersionId), "itinerary edit idempotency");
+        return getVersion(ownerId, tripId, resultVersionId);
+    }
+
+    private ItineraryResponse existingEditResult(
+            UUID ownerId, UUID tripId, UUID idempotencyKey, String requestHash) {
+        ItineraryMapper.EditIdempotencyRecord record =
+                itineraryMapper.findEditIdempotency(tripId, idempotencyKey);
+        if (record == null) {
+            return null;
+        }
+        return resolveEditIdempotency(ownerId, tripId, idempotencyKey, requestHash, record);
+    }
+
+    private ItineraryResponse requiredExistingEditResult(
+            UUID ownerId, UUID tripId, UUID idempotencyKey, String requestHash) {
+        ItineraryMapper.EditIdempotencyRecord record =
+                itineraryMapper.findEditIdempotency(tripId, idempotencyKey);
+        if (record == null) {
+            throw new IllegalStateException("Itinerary edit idempotency record disappeared");
+        }
+        return resolveEditIdempotency(ownerId, tripId, idempotencyKey, requestHash, record);
+    }
+
+    private ItineraryResponse resolveEditIdempotency(
+            UUID ownerId, UUID tripId, UUID idempotencyKey, String requestHash,
+            ItineraryMapper.EditIdempotencyRecord record) {
+        if (record.requestHash() == null || record.requestHash().strip().isEmpty()
+                || !record.requestHash().equals(requestHash)) {
+            throw idempotencyConflict();
+        }
+        if (!"COMPLETED".equals(record.status()) || record.resultVersionId() == null) {
+            throw idempotencyConflict();
+        }
+        return getVersion(ownerId, tripId, record.resultVersionId());
+    }
+
+    private ApiException idempotencyConflict() {
+        return new ApiException(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_CONFLICT",
+                "Idempotency-Key was already used for a different or indeterminate itinerary edit");
+    }
+
+    private ItineraryMapper.EditableCurrentVersion lockCurrentVersionForEdit(UUID ownerId, UUID tripId) {
+        ItineraryMapper.EditableCurrentVersion version = itineraryMapper
+                .findCurrentVersionOwnedForEditForUpdate(tripId, ownerId)
+                .orElse(null);
+        if (version != null) {
+            return version;
+        }
+        if (itineraryMapper.findCurrentVersionOwned(tripId, ownerId).isPresent()) {
+            throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                    "The itinerary was updated. Reload it before applying this edit");
+        }
+        throw itineraryNotFound();
     }
 
     private ItineraryEditPreviewResponse blockedPreview(
@@ -200,8 +256,8 @@ public class ItineraryService {
                 ))
                 .toList();
         return new ItineraryResponse(
-                version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
-                version.estimatedTotalCost(), version.provider(), days,
+            version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
+                version.estimatedTotalCost(), responseProvider(version.provider(), days), days,
                 toKnowledgeResponse(version.id()),
                 factImpactMapper.findByVersion(version.id()).stream()
                         .map(impact -> new FactImpactResponse(
@@ -216,6 +272,17 @@ public class ItineraryService {
                         .toList(),
                 version.createdAt(), version.rollbackFromVersionId()
         );
+    }
+
+    private String responseProvider(String storedProvider, List<DayResponse> days) {
+        Set<String> providers = new HashSet<>();
+        providers.add(storedProvider);
+        days.forEach(day -> {
+            day.activities().forEach(activity -> providers.add(activity.source()));
+            day.transitLegs().forEach(leg -> providers.add(leg.provider()));
+        });
+        return providers.contains("AMAP") && providers.contains("DEMO")
+                ? "MIXED" : storedProvider;
     }
 
     private EditableItinerary readEditableItinerary(UUID versionId) {
@@ -964,12 +1031,13 @@ public class ItineraryService {
         UUID versionId = UUID.randomUUID();
         int versionNumber = itinerary.currentVersionNumber() + 1;
         PlanningCompletedEvent.Itinerary result = event.payload().itinerary();
+        String provider = completionProvider(event);
         requireOne(
                 itineraryMapper.insertVersion(new ItineraryMapper.VersionWrite(
                         versionId, itinerary.id(), versionNumber,
                         itinerary.currentVersionId(), planningTaskId,
                         "PLANNING_TASK", result.title().strip(),
-                        result.estimatedTotalCost(), event.payload().provider(),
+                        result.estimatedTotalCost(), provider,
                         constraintSnapshotJson, now
                 )),
                 "itinerary version"
@@ -978,15 +1046,17 @@ public class ItineraryService {
                 versionId, event.payload().knowledge(),
                 "itinerary knowledge evidence"
         );
+        List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (int dayIndex = 0; dayIndex < result.days().size(); dayIndex++) {
-            persistDay(versionId, dayIndex, result.days().get(dayIndex));
+            persistedTransit.addAll(persistDay(
+                    versionId, dayIndex, result.days().get(dayIndex)));
         }
         requireOne(
                 itineraryMapper.updateCurrentVersion(itinerary.id(), versionId),
                 "current version"
         );
         return new CreateItineraryResult(
-                versionId, versionNumber, event.payload().provider()
+                versionId, versionNumber, provider, persistedTransit
         );
     }
 
@@ -1035,12 +1105,13 @@ public class ItineraryService {
         }
         Instant now = clock.instant();
         UUID versionId = UUID.randomUUID();
+        String provider = completionProvider(event);
         requireOne(
                 itineraryMapper.insertVersion(new ItineraryMapper.VersionWrite(
                         versionId, source.itineraryId(),
                         source.versionNumber() + 1, source.id(), task.id(),
                         "LOCAL_REPLAN", source.title(),
-                        source.estimatedTotalCost(), source.provider(),
+                        source.estimatedTotalCost(), provider,
                         source.constraintSnapshotJson(), now
                 )),
                 "local replan itinerary version"
@@ -1049,6 +1120,7 @@ public class ItineraryService {
                 source.id(), versionId, "local replan knowledge");
         factImpactMapper.copyToVersion(source.id(), versionId);
 
+        List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (ItineraryMapper.StoredDay sourceDay : sourceDays) {
             PlanningCompletedEvent.Day resultDay =
                     resultDays.get(sourceDay.date());
@@ -1068,10 +1140,10 @@ public class ItineraryService {
             List<ItineraryMapper.StoredTransitLeg> sourceTransitLegs =
                     itineraryMapper.findTransitLegs(sourceDay.id());
             if (impactedDates.contains(sourceDay.date())) {
-                persistResultTransit(
+                persistedTransit.addAll(persistResultTransit(
                         targetDayId, activityIds,
-                        sourceTransitLegs, resultDay.transitLegs()
-                );
+                        activities, sourceTransitLegs, resultDay
+                ));
             } else {
                 copyTransitLegsFromSource(
                         targetDayId, activityIds,
@@ -1085,13 +1157,13 @@ public class ItineraryService {
                 "current itinerary version"
         );
         return new CreateItineraryResult(
-                versionId, source.versionNumber() + 1, source.provider()
+                versionId, source.versionNumber() + 1, provider, persistedTransit
         );
     }
 
     // ---- planning-completion helpers (moved from PlanningCompletionService) --
 
-    private void persistDay(
+    private List<PersistedTransitReference> persistDay(
             UUID versionId, int dayIndex, PlanningCompletedEvent.Day day) {
         UUID dayId = UUID.randomUUID();
         requireOne(
@@ -1131,17 +1203,24 @@ public class ItineraryService {
                     "itinerary activity"
             );
         }
-        for (int legIndex = 0;
-                legIndex < day.transitLegs().size();
-                legIndex++) {
-            PlanningCompletedEvent.TransitLeg leg =
-                    day.transitLegs().get(legIndex);
+        List<PlanningCompletedEvent.TransitLeg> orderedLegs = day.transitLegs()
+                .stream()
+                .sorted(Comparator.comparingInt(
+                                PlanningCompletedEvent.TransitLeg::fromActivityIndex)
+                        .thenComparingInt(
+                                PlanningCompletedEvent.TransitLeg::toActivityIndex))
+                .toList();
+        List<PersistedTransitReference> persistedTransit = new ArrayList<>();
+        for (int legIndex = 0; legIndex < orderedLegs.size(); legIndex++) {
+            PlanningCompletedEvent.TransitLeg leg = orderedLegs.get(legIndex);
+            UUID transitId = UUID.randomUUID();
+            UUID fromActivityId = activityIds.get(leg.fromActivityIndex());
+            UUID toActivityId = activityIds.get(leg.toActivityIndex());
             requireOne(
                     itineraryMapper.insertTransitLeg(
                             new ItineraryMapper.TransitLegWrite(
-                                    UUID.randomUUID(), dayId, legIndex,
-                                    activityIds.get(leg.fromActivityIndex()),
-                                    activityIds.get(leg.toActivityIndex()),
+                                    transitId, dayId, legIndex,
+                                    fromActivityId, toActivityId,
                                     leg.mode(), leg.distanceMeters(),
                                     leg.durationSeconds(), leg.provider(),
                                     leg.estimated(),
@@ -1152,7 +1231,14 @@ public class ItineraryService {
                     ),
                     "itinerary transit leg"
             );
+            persistedTransit.add(new PersistedTransitReference(
+                    leg.transitId(),
+                    day.activities().get(leg.fromActivityIndex()).activityId(),
+                    day.activities().get(leg.toActivityIndex()).activityId(),
+                    transitId, fromActivityId, toActivityId
+            ));
         }
+        return List.copyOf(persistedTransit);
     }
 
     private List<UUID> persistSourceActivities(
@@ -1185,14 +1271,24 @@ public class ItineraryService {
         return activityIds;
     }
 
-    private void persistResultTransit(
+    private List<PersistedTransitReference> persistResultTransit(
             UUID dayId,
             List<UUID> activityIds,
+            List<ItineraryMapper.StoredActivity> sourceActivities,
             List<ItineraryMapper.StoredTransitLeg> sourceLegs,
-            List<PlanningCompletedEvent.TransitLeg> legs) {
+            PlanningCompletedEvent.Day resultDay) {
+        List<PlanningCompletedEvent.TransitLeg> legs = resultDay.transitLegs()
+                .stream()
+                .sorted(Comparator.comparingInt(
+                                PlanningCompletedEvent.TransitLeg::fromActivityIndex)
+                        .thenComparingInt(
+                                PlanningCompletedEvent.TransitLeg::toActivityIndex))
+                .toList();
+        List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (int index = 0; index < legs.size(); index++) {
             PlanningCompletedEvent.TransitLeg leg = legs.get(index);
-            if (leg.fromActivityIndex() >= activityIds.size()
+            if (leg.fromActivityIndex() < 0 || leg.toActivityIndex() < 0
+                    || leg.fromActivityIndex() >= activityIds.size()
                     || leg.toActivityIndex() >= activityIds.size()) {
                 throw rejected(
                         "Local replanning returned an invalid transit leg");
@@ -1201,23 +1297,61 @@ public class ItineraryService {
                     activityIds.get(leg.fromActivityIndex());
             UUID toActivityId =
                     activityIds.get(leg.toActivityIndex());
+            UUID transitId = UUID.randomUUID();
             requireOne(
                     itineraryMapper.insertTransitLeg(
                             new ItineraryMapper.TransitLegWrite(
-                                    UUID.randomUUID(), dayId, index,
+                                    transitId, dayId, index,
                                     fromActivityId, toActivityId,
                                     leg.mode(), leg.distanceMeters(),
                                     leg.durationSeconds(), leg.provider(),
                                     leg.estimated(),
                                     writeJson(leg.polyline()),
-                                    index < sourceLegs.size()
-                                            && sourceLegs.get(index).locked(),
+                                    sourceTransitLocked(sourceActivities, sourceLegs, leg),
                                     leg.estimatedCost(), null, Instant.now(), false
                             )
                     ),
                     "local replan transit leg"
             );
+            persistedTransit.add(new PersistedTransitReference(
+                    leg.transitId(),
+                    resultDay.activities().get(leg.fromActivityIndex()).activityId(),
+                    resultDay.activities().get(leg.toActivityIndex()).activityId(),
+                    transitId, fromActivityId, toActivityId
+            ));
         }
+        return List.copyOf(persistedTransit);
+    }
+
+    private static String completionProvider(PlanningCompletedEvent event) {
+        PlanningCompletedEvent.ProviderProvenance provenance =
+                event.payload().providerProvenance();
+        if (provenance == null) {
+            return event.payload().provider();
+        }
+        if (provenance.actualProviders().contains(
+                PlanningCompletedEvent.ProviderSource.AMAP)
+                && provenance.actualProviders().contains(
+                        PlanningCompletedEvent.ProviderSource.DEMO)) {
+            return "MIXED";
+        }
+        return provenance.actualProviders().getFirst().name();
+    }
+
+    private static boolean sourceTransitLocked(
+            List<ItineraryMapper.StoredActivity> sourceActivities,
+            List<ItineraryMapper.StoredTransitLeg> sourceLegs,
+            PlanningCompletedEvent.TransitLeg resultLeg) {
+        UUID sourceFromActivityId = sourceActivities.get(resultLeg.fromActivityIndex()).id();
+        UUID sourceToActivityId = sourceActivities.get(resultLeg.toActivityIndex()).id();
+        List<ItineraryMapper.StoredTransitLeg> matchingLegs = sourceLegs.stream()
+                .filter(sourceLeg -> sourceLeg.fromActivityId().equals(sourceFromActivityId)
+                        && sourceLeg.toActivityId().equals(sourceToActivityId))
+                .toList();
+        if (matchingLegs.size() > 1) {
+            throw rejected("Current itinerary contains duplicate transit endpoints");
+        }
+        return matchingLegs.isEmpty() ? false : matchingLegs.get(0).locked();
     }
 
     private void copyTransitLegsFromSource(
@@ -1338,7 +1472,21 @@ public class ItineraryService {
     public record CreateItineraryResult(
             UUID versionId,
             int versionNumber,
-            String provider
+            String provider,
+            List<PersistedTransitReference> persistedTransit
+    ) {
+        public CreateItineraryResult {
+            persistedTransit = List.copyOf(persistedTransit);
+        }
+    }
+
+    public record PersistedTransitReference(
+            UUID sourceTransitId,
+            UUID sourceFromActivityId,
+            UUID sourceToActivityId,
+            UUID transitId,
+            UUID fromActivityId,
+            UUID toActivityId
     ) {
     }
 }

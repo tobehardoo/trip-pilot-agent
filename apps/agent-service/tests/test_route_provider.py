@@ -350,7 +350,7 @@ def test_amap_invalid_route_payload_is_reported_as_a_schema_change(case: str) ->
 
     assert isinstance(result, provider.ProviderFailure)
     assert result.error_code == "PROVIDER_SCHEMA_CHANGED"
-    assert result.retryable is False
+    assert result.retryable is True
 
 
 def test_amap_invalid_route_json_is_reported_as_a_schema_change() -> None:

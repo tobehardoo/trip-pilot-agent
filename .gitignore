@@ -31,6 +31,8 @@ apps/agent-service/.tmp/
 apps/web/vite.config.d.ts
 
 # IDE and OS
+.claude/
+.pnpm-store/
 .idea/
 .vscode/
 *.iml

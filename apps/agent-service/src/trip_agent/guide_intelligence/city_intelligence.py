@@ -1,6 +1,7 @@
 """AMap-backed city facts collected before a planning snapshot is frozen."""
 
 import asyncio
+import re
 from datetime import date, datetime, timedelta
 from typing import Annotated
 
@@ -21,6 +22,7 @@ class _District(_ResponseModel):
     name: str
     adcode: str
     level: str
+    center: str = ""
 
 
 class _DistrictResponse(_ResponseModel):
@@ -84,6 +86,15 @@ class _PoiResponse(_ResponseModel):
 
 
 CheckedAt = Annotated[datetime, Field()]
+_REPEATED_ADDRESS_SEGMENT = re.compile(
+    r"(?P<segment>[\u4e00-\u9fff]{2,16}?(?:街道|街|社区|大道|路|巷|区|镇|村))(?:(?P=segment))+"
+)
+
+
+def normalize_poi_address(district: str, address: str) -> str:
+    """Keep provider administrative labels once when an address repeats them."""
+    combined = f"{district.strip()}{address.strip()}"
+    return _REPEATED_ADDRESS_SEGMENT.sub(r"\g<segment>", combined)
 
 
 class AmapCityIntelligenceProvider:
@@ -98,6 +109,16 @@ class AmapCityIntelligenceProvider:
             raise ValueError("AMap API key cannot be empty")
         self._api_key = api_key.strip()
         self._http_client = http_client
+
+    async def resolve_city_location(self, city: str) -> str:
+        """Return a coordinate accepted by QWeather GeoAPI for a Chinese city name."""
+        normalized_city = city.strip()
+        if not normalized_city:
+            raise ValueError("city cannot be empty")
+        district = await self._district(normalized_city)
+        if not district.center:
+            raise ValueError(f"AMap did not provide a center for city: {city}")
+        return district.center
 
     async def collect(
         self,
@@ -167,7 +188,7 @@ class AmapCityIntelligenceProvider:
 
         for poi in pois.pois[:8]:
             base = (
-                f"{poi.name}：地址{poi.district}{poi.address}；"
+                f"{poi.name}：地址{normalize_poi_address(poi.district, poi.address)}；"
                 f"坐标{poi.location}"
             )
             details = []

@@ -3,8 +3,6 @@ package io.github.tobehardoo.trippilot.cityintelligence;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.UUID;
 
 import io.github.tobehardoo.trippilot.trip.TripService;
@@ -13,16 +11,6 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class CityIntelligencePlanningPreflightService {
-
-    private static final Set<String> REQUIRED_FACT_CATEGORIES = Set.of(
-            "WEATHER",
-            "ADDRESS",
-            "COORDINATES",
-            "OPENING_HOURS",
-            "TICKET_PRICE",
-            "RESERVATION_REQUIREMENT",
-            "TEMPORARY_CLOSURE"
-    );
 
     private final CityIntelligenceMapper mapper;
     private final CityIntelligencePrewarmService prewarmService;
@@ -43,48 +31,18 @@ public class CityIntelligencePlanningPreflightService {
         CityIntelligenceRefreshRecord refresh = mapper.findLatestRefresh(trip.id())
                 .orElse(null);
         UUID refreshId;
-        if (refresh == null) {
-            refreshId = prewarmService.request(
-                    trip.id(),
-                    trip.destination(),
-                    trip.startDate(),
-                    trip.endDate()
-            );
-        } else if (needsRetry(trip, refresh)) {
+        if (refresh == null || isTerminal(refresh.status())) {
             refreshId = prewarmService.request(
                     trip.id(),
                     trip.destination(),
                     trip.startDate(),
                     trip.endDate(),
-                    retryKey(trip.id(), refresh)
+                    refreshKey(trip.id(), refresh)
             );
-        } else if (isTerminal(refresh.status())) {
-            return;
         } else {
             refreshId = refresh.id();
         }
         awaitTerminal(refreshId);
-    }
-
-    private boolean needsRetry(
-            TripService.TripResponse trip,
-            CityIntelligenceRefreshRecord refresh
-    ) {
-        return "FAILED".equals(refresh.status())
-                || isSuccessful(refresh.status())
-                && !hasAllRequiredFactCategories(trip);
-    }
-
-    private boolean hasAllRequiredFactCategories(TripService.TripResponse trip) {
-        Set<String> freshCategories = new HashSet<>(
-                mapper.findFreshApplicableFactCategories(
-                        trip.id(),
-                        Instant.now(),
-                        trip.startDate(),
-                        trip.endDate()
-                )
-        );
-        return freshCategories.containsAll(REQUIRED_FACT_CATEGORIES);
     }
 
     private void awaitTerminal(UUID refreshId) {
@@ -115,11 +73,18 @@ public class CityIntelligencePlanningPreflightService {
         return "SUCCEEDED".equals(status) || "PARTIAL".equals(status);
     }
 
-    private UUID retryKey(UUID tripId, CityIntelligenceRefreshRecord refresh) {
+    private UUID refreshKey(UUID tripId, CityIntelligenceRefreshRecord refresh) {
+        if (refresh == null) {
+            return UUID.nameUUIDFromBytes(
+                    ("city-planning-refresh-v2:" + tripId + ":initial")
+                            .getBytes(StandardCharsets.UTF_8)
+            );
+        }
         return UUID.nameUUIDFromBytes(
-                ("city-planning-refresh-v1:"
+                ("city-planning-refresh-v2:"
                         + tripId + ":" + refresh.id() + ":" + refresh.version())
                         .getBytes(StandardCharsets.UTF_8)
         );
     }
+
 }

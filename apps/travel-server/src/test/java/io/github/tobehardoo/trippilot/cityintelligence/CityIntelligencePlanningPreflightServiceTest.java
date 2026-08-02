@@ -1,6 +1,7 @@
 package io.github.tobehardoo.trippilot.cityintelligence;
 
 import java.lang.reflect.Proxy;
+import java.util.ArrayList;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -88,7 +89,7 @@ class CityIntelligencePlanningPreflightServiceTest {
     }
 
     @Test
-    void keepsACompletedRefreshWhenEveryRequiredCategoryIsFresh() {
+    void refreshesBeforeEveryNewPlanningRunEvenWhenExistingFactsAreFresh() {
         UUID refreshId = UUID.randomUUID();
         CityIntelligenceRefreshRecord succeeded = refresh(refreshId, "SUCCEEDED");
         CityIntelligenceMapper mapper = (CityIntelligenceMapper) Proxy.newProxyInstance(
@@ -108,7 +109,7 @@ class CityIntelligencePlanningPreflightServiceTest {
                     default -> defaultValue(method.getReturnType());
                 }
         );
-        AtomicInteger requests = new AtomicInteger();
+        List<UUID> idempotencyKeys = new ArrayList<>();
         CityIntelligencePrewarmService prewarmService =
                 new CityIntelligencePrewarmService(null, null, null) {
                     @Override
@@ -119,7 +120,7 @@ class CityIntelligencePlanningPreflightServiceTest {
                             LocalDate endDate,
                             UUID idempotencyKey
                     ) {
-                        requests.incrementAndGet();
+                        idempotencyKeys.add(idempotencyKey);
                         return UUID.randomUUID();
                     }
                 };
@@ -130,9 +131,12 @@ class CityIntelligencePlanningPreflightServiceTest {
                         Duration.ZERO
                 );
 
-        service.prepare(trip());
+        TripService.TripResponse trip = trip();
+        service.prepare(trip);
+        service.prepare(trip);
 
-        assertThat(requests).hasValue(0);
+        assertThat(idempotencyKeys).hasSize(2);
+        assertThat(idempotencyKeys).containsOnly(idempotencyKeys.getFirst());
     }
 
     private TripService.TripResponse trip() {

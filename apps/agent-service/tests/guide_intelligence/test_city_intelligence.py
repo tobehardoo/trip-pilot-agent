@@ -3,7 +3,16 @@ from datetime import UTC, date, datetime
 
 import httpx
 
-from trip_agent.guide_intelligence.city_intelligence import AmapCityIntelligenceProvider
+from trip_agent.guide_intelligence.city_intelligence import (
+    AmapCityIntelligenceProvider,
+    normalize_poi_address,
+)
+
+
+def test_normalizes_repeated_administrative_address_segments() -> None:
+    assert normalize_poi_address("西湖区", "西湖街道西湖街道西湖街道杨公堤10号") == (
+        "西湖区西湖街道杨公堤10号"
+    )
 
 
 def test_collects_weather_and_attraction_details_as_traceable_facts() -> None:

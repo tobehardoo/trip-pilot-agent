@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/vue'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import GuideIntelligencePanel from '../src/components/GuideIntelligencePanel.vue'
@@ -186,4 +186,169 @@ test('lets the user disable a source before the next planning task', async () =>
     '11111111-1111-1111-1111-111111111111',
     false,
   )
+})
+
+test('keeps city intelligence concise until the user opens its detail drawer', async () => {
+  const setGuideEnabled = vi.fn(async () => {})
+  render(GuideIntelligencePanel, {
+    props: {
+      guideImports: [{
+        ...guideImports[0],
+        sourceType: 'CITY_INTELLIGENCE',
+        title: '杭州市城市实时情报',
+        facts: [{
+          ...guideImports[0].facts[0],
+          category: 'WEATHER',
+          statement: '杭州市当前天气：多云，29℃；坐标120.109486,30.095025。',
+        }],
+      }],
+      destination: '杭州',
+      startDate: '2026-08-01',
+      endDate: '2026-08-02',
+      busy: false,
+      error: null,
+      importGuide: vi.fn(),
+      setGuideEnabled,
+    },
+  })
+
+  expect(screen.getByRole('button', { name: '查看实时情报' })).toBeTruthy()
+  expect(screen.queryByText(/120\.109486/)).toBeNull()
+
+  await fireEvent.click(screen.getByRole('button', { name: '查看实时情报' }))
+
+  const drawer = screen.getByRole('dialog', { name: '杭州实时情报' })
+  expect(drawer).toBeTruthy()
+  expect(within(drawer).getByText(/暂无可整理的地点资料/)).toBeTruthy()
+  expect(within(drawer).queryByText(/杭州市当前天气/)).toBeNull()
+  expect(screen.queryByText(/120\.109486/)).toBeNull()
+
+  await fireEvent.click(within(drawer).getByRole('button', { name: '停用城市情报' }))
+  expect(setGuideEnabled).toHaveBeenCalledWith(
+    '11111111-1111-1111-1111-111111111111',
+    false,
+  )
+})
+
+test('uses only the newest enabled city intelligence import', async () => {
+  render(GuideIntelligencePanel, {
+    props: {
+      guideImports: [
+        {
+          ...guideImports[0],
+          id: 'new-disabled-city',
+          sourceType: 'CITY_INTELLIGENCE',
+          fetchedAt: '2026-08-02T08:00:00Z',
+          enabled: false,
+          facts: [{ ...guideImports[0].facts[0], statement: '新但已停用地点：地址天河路。' }],
+        },
+        {
+          ...guideImports[0],
+          id: 'old-enabled-city',
+          sourceType: 'CITY_INTELLIGENCE',
+          fetchedAt: '2026-08-01T08:00:00Z',
+          enabled: true,
+          facts: [{ ...guideImports[0].facts[0], statement: '旧地点：地址北京路。' }],
+        },
+      ],
+      destination: '广州',
+      startDate: '2026-08-01',
+      endDate: '2026-08-02',
+      busy: false,
+      error: null,
+      importGuide: vi.fn(),
+      setGuideEnabled: vi.fn(),
+    },
+  })
+
+  await fireEvent.click(screen.getByRole('button', { name: '查看实时情报' }))
+  const drawer = screen.getByRole('dialog', { name: '广州实时情报' })
+  expect(within(drawer).queryByText(/旧地点/)).toBeNull()
+  expect(within(drawer).queryByText(/新但已停用地点/)).toBeNull()
+  expect(within(drawer).getByRole('button', { name: '启用城市情报' })).toBeTruthy()
+})
+
+test('groups city intelligence into one place card with decision fields and excludes weather', async () => {
+  render(GuideIntelligencePanel, {
+    props: {
+      guideImports: [{
+        ...guideImports[0],
+        sourceType: 'CITY_INTELLIGENCE',
+        title: '杭州城市实时情报',
+        facts: [
+          {
+            ...guideImports[0].facts[0],
+            category: 'WEATHER',
+            statement: '杭州市当前天气：晴，34℃，湿度45%。',
+          },
+          {
+            ...guideImports[0].facts[0],
+            id: 'place-address',
+            category: 'LOCATION',
+            statement: '西湖文化广场：地址西湖区西湖街道西湖街道西湖街道杨公堤10号；营业信息09:00-17:30；门票10元；需提前预约。',
+          },
+          {
+            ...guideImports[0].facts[0],
+            id: 'place-tip',
+            category: 'TIP',
+            statement: '西湖文化广场：雨天路滑，入口停车位较少。',
+          },
+        ],
+      }],
+      destination: '杭州',
+      startDate: '2026-08-01',
+      endDate: '2026-08-02',
+      busy: false,
+      error: null,
+      importGuide: vi.fn(),
+    },
+  })
+
+  await fireEvent.click(screen.getByRole('button', { name: '查看实时情报' }))
+
+  const drawer = screen.getByRole('dialog', { name: '杭州实时情报' })
+  const card = within(drawer).getByRole('article', { name: '西湖文化广场' })
+  expect(card).toBeTruthy()
+  expect(within(card).getByText('地点位置')).toBeTruthy()
+  expect(within(card).getByText('西湖区西湖街道杨公堤10号')).toBeTruthy()
+  expect(within(card).queryByText(/西湖街道西湖街道/)).toBeNull()
+  expect(within(card).getByText('营业时间')).toBeTruthy()
+  expect(within(card).getByText('09:00-17:30')).toBeTruthy()
+  expect(within(card).getByText('门票')).toBeTruthy()
+  expect(within(card).getByText('10 元')).toBeTruthy()
+  expect(within(card).getByText('预约')).toBeTruthy()
+  expect(within(card).getByText('需要提前预约')).toBeTruthy()
+  expect(within(card).getByText('出行提示')).toBeTruthy()
+  expect(within(card).getByText(/雨天路滑/)).toBeTruthy()
+  expect(within(drawer).queryByText(/杭州市当前天气/)).toBeNull()
+})
+
+test('adds every itinerary place to the city intelligence drawer', async () => {
+  render(GuideIntelligencePanel, {
+    props: {
+      guideImports: [{ ...guideImports[0], sourceType: 'CITY_INTELLIGENCE', facts: [] }],
+      destination: '广州',
+      startDate: '2026-08-01',
+      endDate: '2026-08-01',
+      itinerary: {
+        days: [{
+          date: '2026-08-01',
+          activities: [{
+            id: 'itinerary-place', title: '三元宫', startTime: '2026-08-01T01:00:00Z', endTime: '2026-08-01T02:00:00Z',
+            estimatedCost: 0, source: 'DEMO', providerPoiId: null, coordinates: null, address: '越秀区应元路11号',
+          }],
+          transitLegs: [],
+        }],
+      },
+      busy: false,
+      error: null,
+      importGuide: vi.fn(),
+    },
+  })
+
+  await fireEvent.click(screen.getByRole('button', { name: '查看实时情报' }))
+  const drawer = screen.getByRole('dialog', { name: '广州实时情报' })
+  const card = within(drawer).getByRole('article', { name: '三元宫' })
+  expect(within(card).getByText('行程中')).toBeTruthy()
+  expect(within(card).getByText('越秀区应元路11号')).toBeTruthy()
 })

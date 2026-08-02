@@ -1,5 +1,7 @@
 # 下一阶段执行计划
 
+> 2026-08-02 起，PlanEvaluation 与天气/城市情报双线收口、组合验证和发布路线以 [2026-08-02 可执行路线图](roadmap-2026-08-02.md) 为当前事实来源。本文保留此前稳定性切片和历史执行上下文。
+
 ## 已完成：显式 Provider 模式与失败策略（2026-08-01）
 
 - [已验证] `DEMO_ONLY`、`REAL_ONLY`、`REAL_WITH_EXPLICIT_FALLBACK` 已进入 `WorkerSettings` 和 provider factory；production 默认 `REAL_ONLY`，旧 `DEMO_MODE=false` 不再隐含 Demo fallback。

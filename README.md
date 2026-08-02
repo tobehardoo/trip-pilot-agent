@@ -72,7 +72,7 @@ AGENT_INTERNAL_TOKEN=your-distinct-random-internal-token
 INTERNAL_DIAGNOSTICS_TOKEN=your-distinct-random-diagnostics-token
 
 # 本地 Demo
-DEMO_MODE=true
+PROVIDER_MODE=DEMO_ONLY
 REFRESH_COOKIE_SECURE=false
 ```
 
@@ -99,18 +99,20 @@ docker compose -f compose.prod.yaml --env-file .env down
 
 数据默认保留在 Docker Volume 中。仅在明确要清除本地演示数据时执行 `down -v`。
 
-## 使用真实高德 Provider
+## 使用真实 Provider
 
-本地 Demo 不依赖外部地图或模型凭据。要启用真实高德 Provider，请在部署环境中配置：
+本地 Demo 不依赖外部地图、天气或模型凭据。要启用真实高德规划和 QWeather 城市天气，请在部署环境中配置：
 
 ```dotenv
-DEMO_MODE=false
+PROVIDER_MODE=REAL_ONLY
 AMAP_WEB_SERVICE_KEY=your-server-side-amap-key
+QWEATHER_API_KEY=your-server-side-qweather-key
+QWEATHER_API_HOST=your-dedicated-qweather-api-host
 VITE_AMAP_WEB_JS_KEY=your-browser-amap-key
 VITE_AMAP_SECURITY_CODE=your-browser-security-code
 ```
 
-服务端 Web Service Key 与浏览器 Web JS Key 必须分开使用。生产环境还必须配置 HTTPS、`REFRESH_COOKIE_SECURE=true`，并在高德控制台为最终浏览器域名配置相应的 Key、安全密钥、配额和白名单。
+`PROVIDER_MODE` 是权威配置；`DEMO_MODE` 仅用于旧部署兼容，不要同时设置冲突值。服务端 Web Service Key 与浏览器 Web JS Key 必须分开使用。QWeather Host 必须使用控制台为账号分配的 HTTPS Host，不能把开发默认 Host 当作生产验收结果。生产环境还必须配置 HTTPS、`REFRESH_COOKIE_SECURE=true`，并在高德控制台为最终浏览器域名配置相应的 Key、安全密钥、配额和白名单。
 
 ## 测试
 

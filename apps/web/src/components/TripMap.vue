@@ -9,6 +9,7 @@ import { buildMapModel, projectMapCoordinate, type MapActivity, type MapModel } 
 const props = defineProps<{
   itinerary: Pick<Itinerary, 'days'>
   selectedActivityId: string | null
+  selectedDate?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -18,7 +19,12 @@ const emit = defineEmits<{
 const mapElement = ref<HTMLElement | null>(null)
 const sdkState = ref<'idle' | 'loading' | 'ready' | 'fallback' | 'error'>('idle')
 const mapError = ref<string | null>(null)
-const model = computed<MapModel>(() => buildMapModel(props.itinerary))
+const visibleItinerary = computed<Pick<Itinerary, 'days'>>(() => ({
+  days: props.selectedDate === null || props.selectedDate === undefined
+    ? props.itinerary.days
+    : props.itinerary.days.filter((day) => day.date === props.selectedDate),
+}))
+const model = computed<MapModel>(() => buildMapModel(visibleItinerary.value))
 const selectedActivity = computed(() => {
   if (props.selectedActivityId === null) return model.value.activities[0] ?? null
   return model.value.activities.find((activity) => activity.id === props.selectedActivityId) ?? null
@@ -142,7 +148,7 @@ function refreshSelectedMarker() {
   }
 }
 
-watch(() => props.itinerary, () => { void initialiseMap() }, { deep: true })
+watch([() => props.itinerary, () => props.selectedDate], () => { void initialiseMap() }, { deep: true })
 watch(() => props.selectedActivityId, refreshSelectedMarker)
 
 onMounted(() => { void initialiseMap() })

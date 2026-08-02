@@ -53,12 +53,14 @@ import {
   type CommuteMode,
   type ConcreteCommuteMode,
 } from '../lib/transit'
+import { useItineraryDraft } from '../composables/useItineraryDraft'
 import GuideIntelligencePanel from './GuideIntelligencePanel.vue'
 import ItineraryActionsPanel, { type CreatedItineraryShare } from './ItineraryActionsPanel.vue'
 import ItineraryVersionPanel from './ItineraryVersionPanel.vue'
 import PlanEvaluationPanel from './PlanEvaluationPanel.vue'
 import PlanningProgress from './PlanningProgress.vue'
 import TripMap from './TripMap.vue'
+import TripWeatherTimeline from './TripWeatherTimeline.vue'
 import TransitLegControl from './TransitLegControl.vue'
 import Badge from './ui/Badge.vue'
 import Button from './ui/Button.vue'
@@ -168,13 +170,24 @@ const submitting = ref(false)
 const formError = ref<string | null>(null)
 const versionConflict = ref(false)
 const selectedActivityId = ref<string | null>(null)
+const selectedMapDate = ref<string | null>(null)
 const pendingItineraryEdit = ref<ItineraryEditInput | null>(null)
 const itineraryEditPreview = ref<ItineraryEditPreview | null>(null)
-const draftItineraryEdits = ref<ItineraryEditInput[]>([])
 const selectedTransitModes = reactive<Record<string, CommuteMode>>({})
 const lockedTransitLegs = reactive<Record<string, boolean>>({})
 const transitEditBusy = ref(false)
 const transitEditError = ref<string | null>(null)
+const {
+  edits: draftItineraryEdits,
+  busy: draftItineraryBusy,
+  error: draftItineraryError,
+  queue: queueItineraryEdit,
+  discard: clearItineraryDraft,
+  commit: commitItineraryDraft,
+} = useItineraryDraft(
+  (baseVersionId, edits) => props.commitItineraryEdits(baseVersionId, edits),
+  (cause) => cause instanceof ApiError ? cause.message : '保存行程草稿失败，请稍后重试',
+)
 const datesNeedingTransitRefresh = computed(() => props.itinerary?.days
   .filter((day) => day.activities.length > 1 && day.transitLegs.length !== day.activities.length - 1)
   .map((day) => day.date) ?? [])
@@ -238,19 +251,6 @@ async function updateTransitLeg(
   }
 }
 
-function queueItineraryEdit(input: ItineraryEditInput) {
-  if (input.operation === 'UPDATE_TRANSIT_LEG' && input.transitLegId) {
-    const index = draftItineraryEdits.value.findIndex((edit) => (
-      edit.operation === 'UPDATE_TRANSIT_LEG' && edit.transitLegId === input.transitLegId
-    ))
-    if (index >= 0) {
-      draftItineraryEdits.value[index] = { ...draftItineraryEdits.value[index]!, ...input }
-      return
-    }
-  }
-  draftItineraryEdits.value.push(input)
-}
-
 function queueRecommendedLongWalks(nextItinerary: Itinerary) {
   for (const day of nextItinerary.days) {
     for (const leg of day.transitLegs) {
@@ -269,24 +269,15 @@ function queueRecommendedLongWalks(nextItinerary: Itinerary) {
 }
 
 function discardItineraryDraft() {
-  draftItineraryEdits.value = []
+  clearItineraryDraft()
   Object.keys(selectedTransitModes).forEach((legId) => { delete selectedTransitModes[legId] })
   Object.keys(lockedTransitLegs).forEach((legId) => { delete lockedTransitLegs[legId] })
   transitEditError.value = null
 }
 
 async function saveItineraryDraft() {
-  if (!props.itinerary || draftItineraryEdits.value.length === 0 || itineraryEditBusy.value) return
-  itineraryEditBusy.value = true
-  itineraryEditError.value = null
-  try {
-    await props.commitItineraryEdits(props.itinerary.versionId, draftItineraryEdits.value)
-    draftItineraryEdits.value = []
-  } catch (cause) {
-    itineraryEditError.value = cause instanceof ApiError ? cause.message : '保存行程草稿失败，请稍后重试'
-  } finally {
-    itineraryEditBusy.value = false
-  }
+  if (!props.itinerary) return
+  await commitItineraryDraft(props.itinerary.versionId)
 }
 
 async function selectTransitMode(leg: ItineraryTransitLeg, mode: ConcreteCommuteMode) {
@@ -311,6 +302,7 @@ async function setTransitLock(leg: ItineraryTransitLeg, locked: boolean) {
 }
 
 watch(() => props.itinerary?.versionId, () => {
+  clearItineraryDraft()
   Object.keys(selectedTransitModes).forEach((legId) => { delete selectedTransitModes[legId] })
   Object.keys(lockedTransitLegs).forEach((legId) => { delete lockedTransitLegs[legId] })
   transitEditError.value = null
@@ -508,6 +500,10 @@ function evidenceStatusLabel(status: Itinerary['knowledge']['status']) {
   return { REAL: '真实知识', DEMO: '演示知识', UNAVAILABLE: '知识不可用' }[status]
 }
 
+function providerLabel(provider: Itinerary['provider']) {
+  return { AMAP: '真实数据', DEMO: '演示数据', MIXED: '混合数据', PLANNER: '规划器数据' }[provider]
+}
+
 function formatDay(date: string) {
   const [, month, day] = date.split('-')
   return `${Number(month)}月${Number(day)}日`
@@ -528,6 +524,18 @@ function selectActivity(activityId: string) {
     const target = document.getElementById(`activity-${activityId}`)
     target?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
   })
+}
+
+function selectWeatherDate(date: string) {
+  selectedMapDate.value = date
+  const activity = props.itinerary?.days.find((day) => day.date === date)?.activities[0]
+  // Date cards filter the map only. Timeline scrolling is reserved for an
+  // explicit itinerary activity selection, not for changing map scope.
+  selectedActivityId.value = activity?.id ?? null
+}
+
+function showAllMapRoutes() {
+  selectedMapDate.value = null
 }
 
 async function openItineraryEdit(input: ItineraryEditInput, event?: Event) {
@@ -637,6 +645,14 @@ const totalPlaces = computed(() =>
   props.itinerary?.days.reduce((sum, day) => sum + day.activities.length, 0) ?? 0
 )
 const factImpacts = computed(() => props.itinerary?.factImpacts ?? [])
+const latestCityIntelligenceImport = computed(() => props.guideImports
+  .filter((guide) => guide.sourceType === 'CITY_INTELLIGENCE')
+  .sort((left, right) => Date.parse(right.fetchedAt) - Date.parse(left.fetchedAt))[0] ?? null)
+const cityWeatherFacts = computed(() => {
+  const cityImport = latestCityIntelligenceImport.value
+  if (!cityImport?.enabled) return []
+  return cityImport.facts.filter((fact) => fact.category === 'WEATHER')
+})
 const officialFactCount = computed(() => factImpacts.value.filter(impact =>
   impact.reliabilityLevel.startsWith('OFFICIAL')).length)
 const communityFactCount = computed(() => factImpacts.value.length - officialFactCount.value)
@@ -833,7 +849,7 @@ watch(() => props.itinerary, (nextItinerary) => {
                 </div>
               </div>
               <div class="flex items-center gap-1.5 ml-auto">
-                <span class="text-xs font-semibold uppercase px-2 py-1 rounded-lg bg-white/15 text-white/80">{{ itinerary.provider === 'DEMO' ? 'Demo 数据' : itinerary.provider }}</span>
+                <span class="text-xs font-semibold uppercase px-2 py-1 rounded-lg bg-white/15 text-white/80">{{ providerLabel(itinerary.provider) }}</span>
               </div>
             </div>
           </div>
@@ -924,12 +940,21 @@ watch(() => props.itinerary, (nextItinerary) => {
         <template v-else>
           <!-- Hidden itinerary heading for accessibility / test compatibility -->
           <h2 id="itinerary-title" class="sr-only">行程时间轴</h2>
-          <!-- Map Card -->
-          <Card class="mb-6 overflow-hidden" padding="none">
-            <div class="h-[380px] sm:h-[480px] w-full">
-              <TripMap
+            <!-- Map Card -->
+            <Card class="mb-6 overflow-hidden" padding="none">
+              <TripWeatherTimeline
+                :weather-facts="cityWeatherFacts"
+                :start-date="trip.startDate"
+                :end-date="trip.endDate"
+                :selected-date="selectedMapDate"
+                @select-date="selectWeatherDate"
+                @show-all="showAllMapRoutes"
+              />
+              <div class="h-[380px] sm:h-[480px] w-full">
+                <TripMap
                 :itinerary="itinerary"
                 :selected-activity-id="selectedActivityId"
+                :selected-date="selectedMapDate"
                 @select-activity="selectActivity"
               />
             </div>
@@ -1246,6 +1271,7 @@ watch(() => props.itinerary, (nextItinerary) => {
         <div class="mt-8">
           <GuideIntelligencePanel
             :guide-imports="guideImports"
+            :itinerary="itinerary"
             :destination="trip.destination"
             :start-date="trip.startDate"
             :end-date="trip.endDate"
@@ -1344,11 +1370,11 @@ watch(() => props.itinerary, (nextItinerary) => {
         aria-label="行程修改草稿"
       >
         <p class="m-0 text-sm font-semibold text-surface-700">已暂存 {{ draftItineraryEdits.length }} 处修改，尚未保存为版本。</p>
-        <p v-if="itineraryEditError" class="m-0 w-full text-sm text-red-700" role="alert">{{ itineraryEditError }}</p>
-        <div class="flex gap-2">
-          <Button variant="outline" size="sm" :disabled="itineraryEditBusy" @click="discardItineraryDraft">放弃草稿</Button>
-          <Button size="sm" :disabled="itineraryEditBusy" data-testid="save-itinerary-draft" @click="saveItineraryDraft">
-            <LoaderCircle v-if="itineraryEditBusy" class="animate-spin" :size="14" aria-hidden="true" />确认保存版本
+              <p v-if="draftItineraryError" class="m-0 w-full text-sm text-red-700" role="alert">{{ draftItineraryError }}</p>
+              <div class="flex gap-2">
+                <Button variant="outline" size="sm" :disabled="draftItineraryBusy" @click="discardItineraryDraft">放弃草稿</Button>
+                <Button size="sm" :disabled="draftItineraryBusy" data-testid="save-itinerary-draft" @click="saveItineraryDraft">
+                  <LoaderCircle v-if="draftItineraryBusy" class="animate-spin" :size="14" aria-hidden="true" />确认保存版本
           </Button>
         </div>
       </section>

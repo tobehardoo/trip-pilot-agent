@@ -23,6 +23,11 @@ TripPilot 使用 Docker Compose 作为默认运行方式。当前生产拓扑一
 | `INTERNAL_DIAGNOSTICS_TOKEN` | 受保护诊断入口令牌 |
 | `PROVIDER_MODE` | `DEMO_ONLY`、`REAL_ONLY` 或 `REAL_WITH_EXPLICIT_FALLBACK`；生产默认严格真实 |
 | `DEMO_MODE` | 旧配置兼容：`true -> DEMO_ONLY`、`false -> REAL_ONLY`；与新值冲突时启动失败 |
+| `PROVIDER_MAX_ATTEMPTS` | 规划 Provider 最大尝试次数，默认 3 |
+| `PROVIDER_RETRY_BASE_DELAY_SECONDS` | 规划 Provider 重试初始延迟 |
+| `PROVIDER_RETRY_MAX_DELAY_SECONDS` | 规划 Provider 单次最大重试延迟 |
+| `PROVIDER_RETRY_MAX_ELAPSED_SECONDS` | 规划 Provider 最大累计重试时间 |
+| `PROVIDER_RETRY_JITTER_RATIO` | 规划 Provider 重试抖动比例 |
 | `PROVIDER_FALLBACK_CATEGORIES` | JSON 数组；仅可显式增加 `QUOTA_EXCEEDED`、`MALFORMED_RESPONSE`，生产默认 `[]` |
 | `REFRESH_COOKIE_SECURE` | 生产 HTTPS 必须为 `true` |
 
@@ -31,6 +36,8 @@ TripPilot 使用 Docker Compose 作为默认运行方式。当前生产拓扑一
 | 变量 | 说明 |
 | --- | --- |
 | `AMAP_WEB_SERVICE_KEY` | 服务端 POI、路线、天气等 Web Service Key |
+| `QWEATHER_API_KEY` | 服务端 QWeather Key；只用于城市天气情报 |
+| `QWEATHER_API_HOST` | QWeather 控制台分配的专用 HTTPS Host；必须与 Key 成对配置 |
 | `VITE_AMAP_WEB_JS_KEY` | 浏览器高德 Web JS Key |
 | `VITE_AMAP_SECURITY_CODE` | 浏览器高德安全密钥 |
 | `KNOWLEDGE_EMBEDDING_PROVIDER` | 可选语义检索 Provider |
@@ -57,6 +64,8 @@ docker compose -f compose.prod.yaml --env-file .env ps
 
 - `PROVIDER_MODE=REAL_ONLY`；不要在 production 使用 `REAL_WITH_EXPLICIT_FALLBACK`。
 - 服务端和浏览器高德 Key 分离。
+- QWeather Key 和专用 Host 成对配置，并在有效套餐窗口验证当前、预报和近期历史天气。
+- 上述 `PROVIDER_RETRY_*` 和 `PROVIDER_FALLBACK_CATEGORIES` 约束规划 Provider；QWeather 城市情报失败使用独立的显式降级记录，不能误报为规划 Provider fallback。
 - Web JS Key、安全密钥和域名白名单属于同一高德应用。
 - 最终浏览器域名能加载真实底图，缺 Key 或失败时页面显示降级视图而非空白。
 - Provider Key、模型 Key、Cookie 和 Token 不进入日志。

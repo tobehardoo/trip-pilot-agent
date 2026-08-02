@@ -79,6 +79,7 @@ jobs:
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:coverage
+      - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
@@ -94,6 +95,7 @@ jobs:
           REDIS_PASSWORD: ci-redis-password
           RABBITMQ_PASSWORD: ci-rabbitmq-password
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
+          INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
         run: docker compose -f compose.prod.yaml config --quiet
       - name: Build production images
         env:
@@ -101,7 +103,28 @@ jobs:
           REDIS_PASSWORD: ci-redis-password
           RABBITMQ_PASSWORD: ci-rabbitmq-password
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
+          INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
         run: docker compose -f compose.prod.yaml build postgres travel-server agent-service web prometheus
+      - name: Smoke-test production Compose
+        env:
+          PROVIDER_MODE: DEMO_ONLY
+          POSTGRES_PASSWORD: ci-postgres-password
+          REDIS_PASSWORD: ci-redis-password
+          RABBITMQ_PASSWORD: ci-rabbitmq-password
+          JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
+          INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
+        run: |
+          docker compose -f compose.prod.yaml up -d --wait --wait-timeout 180
+          curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8080/
+      - name: Tear down production Compose smoke stack
+        if: always()
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          REDIS_PASSWORD: ci-redis-password
+          RABBITMQ_PASSWORD: ci-rabbitmq-password
+          JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
+          INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
+        run: docker compose -f compose.prod.yaml down -v --remove-orphans
 
   repository-safety:
     runs-on: ubuntu-latest

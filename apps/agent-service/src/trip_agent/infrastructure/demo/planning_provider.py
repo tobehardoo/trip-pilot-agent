@@ -30,7 +30,7 @@ from trip_agent.worker.progress import report_planning_progress
 class DemoPlanningProvider:
     """Generates a single placeholder activity per day — no real map data.
 
-    Used when no AMap key is configured (DEMO_MODE=true) or as a fallback
+    Used in PROVIDER_MODE=DEMO_ONLY or as an explicitly allowed fallback
     when the AMap provider fails with an expected error.
     """
 

@@ -1,6 +1,7 @@
 """Application service for importing one user-submitted public guide URL."""
 
 import hashlib
+import logging
 import os
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -15,7 +16,8 @@ from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource
 from trip_agent.acquisition.security import SourceSecurityError, validate_source_url
 from trip_agent.guide_intelligence.city_intelligence import AmapCityIntelligenceProvider
 from trip_agent.guide_intelligence.extraction import GenericGuideExtractor
-from trip_agent.guide_intelligence.models import GuideImportResult, GuideSourceType
+from trip_agent.guide_intelligence.models import ExtractedGuide, GuideImportResult, GuideSourceType
+from trip_agent.guide_intelligence.qweather import QWeatherWeatherProvider
 from trip_agent.guide_intelligence.structured_model import (
     ModelExtractionResult,
     StructuredModelFactExtractor,
@@ -33,9 +35,11 @@ _TEXT_SOURCE_LABELS: dict[GuideSourceType, str] = {
     "PASTED_TEXT": "用户粘贴文本",
     "TEXT_FILE": "用户文本文件",
     "XIAOHONGSHU_SHARED_TEXT": "小红书分享文本",
-    "CITY_INTELLIGENCE": "高德城市情报",
+    "CITY_INTELLIGENCE": "和风天气城市情报",
     "PUBLIC_GUIDE_URL": "公开攻略链接",
 }
+
+logger = logging.getLogger(__name__)
 
 
 class GuideFetcher(Protocol):
@@ -255,31 +259,129 @@ class GuideImportService:
         start_date: date,
         end_date: date,
     ) -> GuideImportResult:
-        api_key = os.getenv("AMAP_WEB_SERVICE_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("AMAP_WEB_SERVICE_KEY is required for city intelligence")
+        amap_api_key = os.getenv("AMAP_WEB_SERVICE_KEY", "").strip()
+        qweather_api_key = os.getenv("QWEATHER_API_KEY", "").strip()
+        qweather_api_host = os.getenv("QWEATHER_API_HOST", "").strip()
+        use_qweather = bool(qweather_api_key and qweather_api_host)
+        weather_provider = "QWEATHER" if use_qweather else "AMAP"
+        weather_fallback_reason: str | None = None
+        location_fallback_reason: str | None = None
+        poi_provider: str | None = None
+        poi_unavailable_reason: str | None = None
+        if not use_qweather and not amap_api_key:
+            raise RuntimeError(
+                "AMAP_WEB_SERVICE_KEY or both QWEATHER_API_KEY and QWEATHER_API_HOST are required"
+            )
         fetched_at = datetime.now(UTC)
         async with httpx.AsyncClient(timeout=httpx.Timeout(8.0)) as http_client:
-            extracted = await AmapCityIntelligenceProvider(
-                api_key=api_key,
-                http_client=http_client,
-            ).collect(
-                city=city,
-                start_date=start_date,
-                end_date=end_date,
-                checked_at=fetched_at,
+            amap_provider = (
+                AmapCityIntelligenceProvider(
+                    api_key=amap_api_key,
+                    http_client=http_client,
+                )
+                if amap_api_key
+                else None
             )
+            if use_qweather:
+                location_query = city
+                if amap_provider is not None:
+                    try:
+                        location_query = await amap_provider.resolve_city_location(city)
+                    except (RuntimeError, ValueError) as error:
+                        location_fallback_reason = str(error)
+                        logger.warning(
+                            "amap_location_enrichment_unavailable city=%s reason=%s",
+                            city,
+                            location_fallback_reason,
+                        )
+                try:
+                    weather = await QWeatherWeatherProvider(
+                        api_key=qweather_api_key,
+                        http_client=http_client,
+                        api_host=qweather_api_host,
+                    ).collect(
+                        city=city,
+                        start_date=start_date,
+                        end_date=end_date,
+                        checked_at=fetched_at,
+                        location_query=location_query,
+                    )
+                except (RuntimeError, ValueError) as error:
+                    if amap_provider is None:
+                        raise
+                    weather_fallback_reason = str(error)
+                    weather_provider = "AMAP"
+                    logger.warning(
+                        "qweather_city_import_fallback city=%s reason=%s",
+                        city,
+                        weather_fallback_reason,
+                    )
+                    weather = await amap_provider.collect(
+                        city=city,
+                        start_date=start_date,
+                        end_date=end_date,
+                        checked_at=fetched_at,
+                    )
+                    poi_provider = "AMAP"
+                extracted = weather
+                if amap_provider is not None and weather_provider == "QWEATHER":
+                    try:
+                        amap = await amap_provider.collect(
+                            city=city,
+                            start_date=start_date,
+                            end_date=end_date,
+                            checked_at=fetched_at,
+                        )
+                    except (RuntimeError, ValueError) as error:
+                        poi_unavailable_reason = str(error)
+                        logger.warning(
+                            "amap_city_enrichment_unavailable city=%s reason=%s",
+                            city,
+                            poi_unavailable_reason,
+                        )
+                    else:
+                        poi_provider = "AMAP"
+                        poi_facts = tuple(
+                            fact for fact in amap.facts if fact.category != "WEATHER"
+                        )
+                        extracted = ExtractedGuide(
+                            title=weather.title,
+                            content=f"{weather.content}\n{amap.content}",
+                            facts=(*weather.facts, *poi_facts),
+                        )
+            else:
+                if amap_provider is None:
+                    raise AssertionError("AMap provider must be configured for the fallback")
+                extracted = await amap_provider.collect(
+                    city=city,
+                    start_date=start_date,
+                    end_date=end_date,
+                    checked_at=fetched_at,
+                )
+                poi_provider = "AMAP"
         content_hash = hashlib.sha256(extracted.content.encode()).hexdigest()
         normalized_city = city.strip()
         source_url = (
-            "https://lbs.amap.com/api/webservice/guide/api/weatherinfo"
+            "https://dev.qweather.com/en/docs/api/"
+            f"#trip-pilot-city={normalized_city}"
+            if weather_provider == "QWEATHER"
+            else "https://lbs.amap.com/api/webservice/guide/api/weatherinfo"
             f"#trip-pilot-city={normalized_city}"
         )
+        if weather_provider == "QWEATHER" and poi_provider == "AMAP":
+            source_name = "和风天气（天气）+ 高德（城市地点）"
+        elif weather_provider == "QWEATHER":
+            source_name = "和风天气城市情报"
+        else:
+            source_name = "高德城市情报"
+        provider_sources = {"WEATHER": weather_provider}
+        if poi_provider is not None:
+            provider_sources["NON_WEATHER"] = poi_provider
         result = GuideImportResult(
             source_type="CITY_INTELLIGENCE",
             source_url=source_url,
             final_url=source_url,
-            source_host="高德城市情报",
+            source_host=source_name,
             title=extracted.title,
             excerpt=extracted.content[:800],
             content_hash=content_hash,
@@ -288,7 +390,7 @@ class GuideImportService:
         )
         document = self._normalizer.normalize_structured(
             source_type="CITY_INTELLIGENCE",
-            source_name="高德城市情报",
+            source_name=source_name,
             source_url=source_url,
             city=normalized_city,
             title=extracted.title,
@@ -296,7 +398,16 @@ class GuideImportService:
             fetched_at=fetched_at,
             reliability_level="WEATHER_PROVIDER",
             metadata={
-                "provider": "AMAP",
+                "weatherProvider": weather_provider,
+                "weatherFallbackReason": weather_fallback_reason,
+                "locationFallbackReason": location_fallback_reason,
+                "poiProvider": poi_provider,
+                "poiUnavailableReason": poi_unavailable_reason,
+                "providerSources": provider_sources,
+                "providerSourceUrls": {
+                    "QWEATHER": "https://dev.qweather.com/en/docs/api/",
+                    "AMAP": "https://lbs.amap.com/api/webservice/guide/api/search",
+                },
                 "startDate": start_date.isoformat(),
                 "endDate": end_date.isoformat(),
             },

@@ -46,7 +46,8 @@ Flyway 升级路径已从历史版本验证到 V25。
 
 - HTTPS 终止可用，且 `REFRESH_COOKIE_SECURE=true`。
 - `INTERNAL_DIAGNOSTICS_TOKEN` 使用强随机值，并区别于其他应用凭据。
-- `DEMO_MODE=false` 时提供真实 Provider Key 和对应域名/IP 白名单。
+- `PROVIDER_MODE=REAL_ONLY` 时提供真实 Provider Key 和对应域名/IP 白名单；旧 `DEMO_MODE` 只用于兼容。
+- QWeather Key 与控制台分配的真实 HTTPS Host 成对配置，并完成套餐范围内的真实天气验收。
 - 高德 Web JS Key、安全密钥和最终浏览器域名完成真实底图验收。
 - 日志脱敏复核通过，确认不会记录 Token、Cookie、Provider Key、模型 Key 或完整攻略正文。
 

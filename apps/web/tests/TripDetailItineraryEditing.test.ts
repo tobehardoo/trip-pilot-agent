@@ -4,7 +4,10 @@ import { afterEach, expect, test, vi } from 'vitest'
 import TripDetail from '../src/components/TripDetail.vue'
 import type { Itinerary, Trip, User } from '../src/lib/api'
 
-afterEach(() => cleanup())
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 const user: User = {
   id: 'user-1',
@@ -127,6 +130,81 @@ const itineraryWithThreeActivities: Itinerary = {
     transitLegs: [],
   }],
 }
+
+test.each([
+  ['AMAP', '真实数据'],
+  ['DEMO', '演示数据'],
+  ['MIXED', '混合数据'],
+] as const)('shows the %s itinerary provider as %s', (provider, label) => {
+  const view = render(TripDetail, {
+    props: {
+      user,
+      trip,
+      busy: false,
+      error: null,
+      itinerary: { ...itinerary, provider },
+      itineraryBusy: false,
+      itineraryError: null,
+      planningState: 'idle',
+      planningError: null,
+      startPlanning: async () => {},
+      cancelPlanning: async () => {},
+      updateConstraints: async () => {},
+      reloadTrip: async () => true,
+    },
+  })
+
+  expect(view.getByText(label)).toBeTruthy()
+})
+
+test('filters the map from a weather date without scrolling to the itinerary timeline', async () => {
+  const scrollIntoView = vi.fn()
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoView,
+  })
+  const view = render(TripDetail, {
+    props: {
+      user, trip, busy: false, error: null, itinerary, itineraryBusy: false, itineraryError: null,
+      planningState: 'idle', planningError: null, startPlanning: async () => {}, cancelPlanning: async () => {},
+      updateConstraints: async () => {}, reloadTrip: async () => true,
+      guideImports: [{
+        id: 'weather-guide', sourceType: 'CITY_INTELLIGENCE', sourceUrl: 'https://restapi.amap.com/',
+        finalUrl: 'https://restapi.amap.com/', sourceHost: 'amap.com', title: '广州城市实时情报', excerpt: '',
+        contentHash: 'a'.repeat(64), fetchedAt: '2026-08-01T01:00:00Z', enabled: true,
+        facts: [{
+          id: 'weather-fact', category: 'WEATHER', statement: '2026-08-01 广州市天气预报：白天晴 34℃，夜间多云 28℃。',
+          evidence: 'weather', confidence: 0.9, observedAt: '2026-08-01T01:00:00Z', expiresAt: '2026-08-02T01:00:00Z',
+        }],
+      }],
+    },
+  })
+
+  await fireEvent.click(view.getByRole('button', { name: '选择 2026-08-01 天气' }))
+
+  expect(scrollIntoView).not.toHaveBeenCalled()
+})
+
+test('does not render weather from a disabled latest city intelligence import', () => {
+  const view = render(TripDetail, {
+    props: {
+      user, trip, busy: false, error: null, itinerary, itineraryBusy: false, itineraryError: null,
+      planningState: 'idle', planningError: null, startPlanning: async () => {}, cancelPlanning: async () => {},
+      updateConstraints: async () => {}, reloadTrip: async () => true,
+      guideImports: [{
+        id: 'disabled-weather-guide', sourceType: 'CITY_INTELLIGENCE', sourceUrl: 'https://example.com/weather',
+        finalUrl: 'https://example.com/weather', sourceHost: 'weather', title: '已停用天气', excerpt: '',
+        contentHash: 'b'.repeat(64), fetchedAt: '2026-08-02T01:00:00Z', enabled: false,
+        facts: [{
+          id: 'disabled-weather-fact', category: 'WEATHER', statement: '2026-08-01 广州市天气预报：白天暴雪 34℃。',
+          evidence: 'weather', confidence: 0.9, observedAt: '2026-08-01T01:00:00Z', expiresAt: '2026-08-02T01:00:00Z',
+        }],
+      }],
+    },
+  })
+
+  expect(view.queryByText('暴雪')).toBeNull()
+})
 
 test('previews an activity deletion before applying it', async () => {
   const previewEdit = vi.fn(async () => ({

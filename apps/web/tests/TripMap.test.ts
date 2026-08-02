@@ -174,6 +174,29 @@ test('does not select an unrelated marker when the timeline activity has no coor
   expect(screen.getByRole('button', { name: '定位 早茶' }).getAttribute('aria-pressed')).toBe('false')
 })
 
+test('limits route markers to the weather-selected itinerary day', () => {
+  render(TripMap, {
+    props: {
+      itinerary: {
+        days: [
+          ...itinerary.days,
+          {
+            ...itinerary.days[0],
+            date: '2026-07-19',
+            activities: [{ ...itinerary.days[0].activities[0], id: 'day-two', title: '陈家祠' }],
+            transitLegs: [],
+          },
+        ],
+      },
+      selectedActivityId: 'day-two',
+      selectedDate: '2026-07-19',
+    },
+  })
+
+  expect(screen.getByRole('button', { name: '定位 陈家祠' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '定位 沙面' })).toBeNull()
+})
+
 test('destroys a partially initialized map when an overlay fails to render', async () => {
   vi.stubEnv('VITE_AMAP_WEB_JS_KEY', 'browser-js-key')
   vi.stubEnv('VITE_AMAP_SECURITY_CODE', 'browser-security-code')

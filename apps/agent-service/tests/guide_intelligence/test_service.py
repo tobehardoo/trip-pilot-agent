@@ -1,9 +1,15 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from trip_agent.acquisition.fetch_models import FetchValidators, ResourceFetched
+from trip_agent.guide_intelligence import service as service_module
+from trip_agent.guide_intelligence.models import (
+    ExtractedGuide,
+    FactCategory,
+    TravelFact,
+)
 from trip_agent.guide_intelligence.service import GuideImportService
 
 
@@ -17,6 +23,251 @@ class StubFetcher:
         self.source = source
         self.resource = resource
         return self.result
+
+
+def _fact(category: FactCategory, statement: str) -> TravelFact:
+    observed_at = datetime(2026, 8, 2, 8, 0, tzinfo=UTC)
+    return TravelFact(
+        category=category,
+        statement=statement,
+        evidence=statement,
+        confidence=0.9,
+        observed_at=observed_at,
+        expires_at=observed_at + timedelta(days=1),
+        effective_date=date(2026, 8, 2),
+    )
+
+
+class StubAmapCityProvider:
+    location_should_fail = False
+    collect_should_fail = False
+
+    def __init__(self, **_: object) -> None:
+        self.collect_calls = 0
+
+    async def resolve_city_location(self, city: str) -> str:
+        assert city == "广州"
+        if self.location_should_fail:
+            raise RuntimeError("AMap location lookup failed")
+        return "113.27,23.13"
+
+    async def collect(self, **_: object) -> ExtractedGuide:
+        if self.collect_should_fail:
+            raise RuntimeError("AMap city intelligence failed")
+        self.collect_calls += 1
+        return ExtractedGuide(
+            title="高德城市情报",
+            content="高德天气；陈家祠开放。",
+            facts=(
+                _fact("WEATHER", "高德天气"),
+                _fact("ATTRACTION", "陈家祠开放"),
+            ),
+        )
+
+
+class StubQWeatherProvider:
+    should_fail = False
+    last_location_query: str | None = None
+
+    def __init__(self, **_: object) -> None:
+        pass
+
+    async def collect(self, **kwargs: object) -> ExtractedGuide:
+        type(self).last_location_query = str(kwargs["location_query"])
+        if self.should_fail:
+            raise RuntimeError("QWeather request timed out")
+        return ExtractedGuide(
+            title="和风天气城市情报",
+            content="和风天气晴。",
+            facts=(_fact("WEATHER", "和风天气晴"),),
+        )
+
+
+def _configure_city_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    amap: bool,
+    qweather: bool,
+) -> None:
+    monkeypatch.setenv("AMAP_WEB_SERVICE_KEY", "amap-key" if amap else "")
+    monkeypatch.setenv("QWEATHER_API_KEY", "qweather-key" if qweather else "")
+    monkeypatch.setenv("QWEATHER_API_HOST", "weather.example.com" if qweather else "")
+    monkeypatch.setattr(
+        service_module,
+        "AmapCityIntelligenceProvider",
+        StubAmapCityProvider,
+    )
+    monkeypatch.setattr(
+        service_module,
+        "QWeatherWeatherProvider",
+        StubQWeatherProvider,
+    )
+    StubAmapCityProvider.location_should_fail = False
+    StubAmapCityProvider.collect_should_fail = False
+    StubQWeatherProvider.last_location_query = None
+
+
+def test_import_city_combines_qweather_with_amap_non_weather_facts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_city_providers(monkeypatch, amap=True, qweather=True)
+    StubQWeatherProvider.should_fail = False
+
+    result = asyncio.run(
+        GuideImportService().import_city(
+            city="广州",
+            start_date=date(2026, 8, 2),
+            end_date=date(2026, 8, 4),
+        )
+    )
+
+    assert [fact.statement for fact in result.facts] == [
+        "和风天气晴",
+        "陈家祠开放",
+    ]
+    assert result.normalized_document is not None
+    assert result.normalized_document.metadata["weatherProvider"] == "QWEATHER"
+    assert result.normalized_document.metadata["poiProvider"] == "AMAP"
+    assert result.source_host == "和风天气（天气）+ 高德（城市地点）"
+    assert result.normalized_document.metadata["providerSources"] == {
+        "WEATHER": "QWEATHER",
+        "NON_WEATHER": "AMAP",
+    }
+
+
+def test_import_city_keeps_qweather_when_amap_enrichment_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_city_providers(monkeypatch, amap=True, qweather=True)
+    StubAmapCityProvider.location_should_fail = True
+    StubAmapCityProvider.collect_should_fail = True
+    StubQWeatherProvider.should_fail = False
+
+    result = asyncio.run(
+        GuideImportService().import_city(
+            city="广州",
+            start_date=date(2026, 8, 2),
+            end_date=date(2026, 8, 4),
+        )
+    )
+
+    assert [fact.statement for fact in result.facts] == ["和风天气晴"]
+    assert result.source_host == "和风天气城市情报"
+    assert result.normalized_document is not None
+    assert result.normalized_document.metadata["weatherProvider"] == "QWEATHER"
+    assert result.normalized_document.metadata["poiProvider"] is None
+    assert result.normalized_document.metadata["poiUnavailableReason"] == (
+        "AMap city intelligence failed"
+    )
+
+
+def test_import_city_uses_qweather_city_lookup_when_amap_location_resolution_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_city_providers(monkeypatch, amap=True, qweather=True)
+    StubAmapCityProvider.location_should_fail = True
+    StubQWeatherProvider.should_fail = False
+
+    result = asyncio.run(
+        GuideImportService().import_city(
+            city="广州",
+            start_date=date(2026, 8, 2),
+            end_date=date(2026, 8, 4),
+        )
+    )
+
+    assert StubQWeatherProvider.last_location_query == "广州"
+    assert result.normalized_document is not None
+    assert result.normalized_document.metadata["weatherProvider"] == "QWEATHER"
+
+
+def test_import_city_uses_amap_when_qweather_is_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_city_providers(monkeypatch, amap=True, qweather=False)
+
+    result = asyncio.run(
+        GuideImportService().import_city(
+            city="广州",
+            start_date=date(2026, 8, 2),
+            end_date=date(2026, 8, 4),
+        )
+    )
+
+    assert {fact.statement for fact in result.facts} == {
+        "高德天气",
+        "陈家祠开放",
+    }
+    assert result.source_host == "高德城市情报"
+    assert result.normalized_document is not None
+    assert result.normalized_document.metadata["weatherProvider"] == "AMAP"
+
+
+def test_import_city_uses_qweather_without_amap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_city_providers(monkeypatch, amap=False, qweather=True)
+    StubQWeatherProvider.should_fail = False
+
+    result = asyncio.run(
+        GuideImportService().import_city(
+            city="广州",
+            start_date=date(2026, 8, 2),
+            end_date=date(2026, 8, 4),
+        )
+    )
+
+    assert [fact.statement for fact in result.facts] == ["和风天气晴"]
+    assert result.source_host == "和风天气城市情报"
+    assert result.normalized_document is not None
+    assert result.normalized_document.metadata["weatherProvider"] == "QWEATHER"
+    assert result.normalized_document.metadata["poiProvider"] is None
+
+
+def test_import_city_falls_back_to_amap_when_qweather_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_city_providers(monkeypatch, amap=True, qweather=True)
+    StubQWeatherProvider.should_fail = True
+
+    result = asyncio.run(
+        GuideImportService().import_city(
+            city="广州",
+            start_date=date(2026, 8, 2),
+            end_date=date(2026, 8, 4),
+        )
+    )
+
+    assert {fact.statement for fact in result.facts} == {
+        "高德天气",
+        "陈家祠开放",
+    }
+    assert result.source_host == "高德城市情报"
+    assert result.normalized_document is not None
+    assert result.normalized_document.metadata["weatherProvider"] == "AMAP"
+    assert result.normalized_document.metadata["weatherFallbackReason"] == (
+        "QWeather request timed out"
+    )
+
+
+def test_import_city_requires_complete_qweather_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AMAP_WEB_SERVICE_KEY", "")
+    monkeypatch.setenv("QWEATHER_API_KEY", "qweather-key")
+    monkeypatch.setenv("QWEATHER_API_HOST", "")
+
+    with pytest.raises(
+        RuntimeError,
+        match="AMAP_WEB_SERVICE_KEY or both QWEATHER_API_KEY and QWEATHER_API_HOST",
+    ):
+        asyncio.run(
+            GuideImportService().import_city(
+                city="广州",
+                start_date=date(2026, 8, 2),
+                end_date=date(2026, 8, 4),
+            )
+        )
 
 
 def test_import_uses_single_host_allowlist_and_returns_traceable_result() -> None:

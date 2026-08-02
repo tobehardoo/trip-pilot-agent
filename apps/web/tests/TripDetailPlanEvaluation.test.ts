@@ -76,7 +76,10 @@ const evaluation: PlanEvaluation = {
   evaluatedAt: '2026-08-02T00:00:00Z',
 }
 
-function props(planningState: 'succeeded' | 'failed', value?: PlanEvaluation | null) {
+function props(
+  planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled',
+  value?: PlanEvaluation | null,
+) {
   return {
     user,
     trip,
@@ -95,23 +98,30 @@ function props(planningState: 'succeeded' | 'failed', value?: PlanEvaluation | n
   }
 }
 
-test('shows evaluation for a succeeded task', () => {
-  const view = render(TripDetail, { props: props('succeeded', evaluation) })
+test('shows the current version evaluation after reopening an idle workspace', () => {
+  const view = render(TripDetail, { props: props('idle', evaluation) })
 
   expect(view.getByText('行程质量')).toBeTruthy()
   expect(view.getByText('97/100')).toBeTruthy()
   expect(view.queryByText('该版本生成时尚未启用质量评估')).toBeNull()
 })
 
-test('shows legacy compatibility copy for a succeeded task without evaluation', () => {
-  const view = render(TripDetail, { props: props('succeeded', null) })
+test('shows legacy compatibility copy for a linked legacy version after reopening', () => {
+  const view = render(TripDetail, { props: props('idle', null) })
 
   expect(view.getByText('该版本生成时尚未启用质量评估')).toBeTruthy()
 })
 
-test('does not show evaluation or legacy copy for a failed task', () => {
-  const view = render(TripDetail, { props: props('failed', evaluation) })
+test('does not show evaluation or legacy copy when the current version has no linked task', () => {
+  const view = render(TripDetail, { props: props('failed', undefined) })
 
   expect(view.queryByText('行程质量')).toBeNull()
   expect(view.queryByText('该版本生成时尚未启用质量评估')).toBeNull()
+})
+
+test('keeps the current version evaluation visible when a newer planning attempt fails', () => {
+  const view = render(TripDetail, { props: props('failed', evaluation) })
+
+  expect(view.getByText('97/100')).toBeTruthy()
+  expect(view.getByText('Planning failed')).toBeTruthy()
 })

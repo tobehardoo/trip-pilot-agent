@@ -133,6 +133,38 @@ const planningTaskResponse = {
   updatedAt: '2026-07-16T01:00:00Z',
 }
 
+const planningEvaluation = {
+  schemaVersion: 1,
+  evaluatorVersion: 'rule-v1',
+  feasible: true,
+  overallScore: 91,
+  dimensions: {
+    constraintSatisfaction: 100,
+    timeFeasibility: 88,
+    budgetFit: 94,
+    routeEfficiency: 86,
+    interestMatch: 87,
+  },
+  warnings: [],
+  decisions: [],
+  summary: '行程整体质量 91/100。',
+  evaluatedAt: '2026-08-02T00:00:00Z',
+}
+
+const currentPlanningVersion = {
+  versionId: itineraryResponse.versionId,
+  versionNumber: itineraryResponse.versionNumber,
+  parentVersionId: null,
+  planningTaskId: planningTaskResponse.taskId,
+  versionSource: 'PLANNING_TASK',
+  title: itineraryResponse.title,
+  estimatedTotalCost: itineraryResponse.estimatedTotalCost,
+  provider: itineraryResponse.provider,
+  rollbackFromVersionId: null,
+  createdAt: itineraryResponse.createdAt,
+  current: true,
+}
+
 function planningEvent(eventType: string, eventId: number, payload: Record<string, unknown>) {
   return `id: ${eventId}\nevent: ${eventType}\ndata: ${JSON.stringify({
     eventId,
@@ -503,6 +535,240 @@ describe('TripPilot application shell', () => {
     expect(screen.getByText('2 人 · 朋友同行')).toBeTruthy()
   })
 
+  test('restores the evaluation linked to the current itinerary version', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        return response([currentPlanningVersion])
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: tripResponse.title })
+    await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
+
+    expect(await screen.findByText('91/100')).toBeTruthy()
+    expect(screen.getByText('行程整体质量 91/100。')).toBeTruthy()
+    expect(
+      fetchMock.mock.calls.some(([input]) =>
+        urlOf(input as RequestInfo | URL).endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`),
+      ),
+    ).toBe(true)
+  })
+
+  test.each(['USER_EDIT', 'ROLLBACK'] as const)(
+    'does not inherit a planning evaluation for a current %s version',
+    async (versionSource) => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = urlOf(input)
+        if (url.endsWith('/api/auth/login')) return response(authResponse)
+        if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+          return response([{ ...currentPlanningVersion, planningTaskId: null, versionSource }])
+        }
+        if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+        if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
+        if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+        if (url.endsWith('/api/trips')) return response([tripResponse])
+        throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+      })
+
+      await signIn(fetchMock)
+      await screen.findByRole('heading', { name: tripResponse.title })
+      await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
+      await screen.findByRole('heading', { name: itineraryResponse.title })
+
+      expect(screen.queryByText('91/100')).toBeNull()
+      expect(screen.queryByText('该版本生成时尚未启用质量评估')).toBeNull()
+      expect(fetchMock.mock.calls.some(([input]) => urlOf(input).includes('/api/planning-tasks/'))).toBe(false)
+    },
+  )
+
+  test('keeps the new trip evaluation when an old trip version request finishes late', async () => {
+    const secondTrip = {
+      ...tripResponse,
+      id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      title: '北京城市三日',
+      destination: '北京',
+    }
+    const secondItinerary = {
+      ...itineraryResponse,
+      versionId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      title: '北京 Demo 行程',
+    }
+    const secondTaskId = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+    const secondVersion = {
+      ...currentPlanningVersion,
+      versionId: secondItinerary.versionId,
+      planningTaskId: secondTaskId,
+      title: secondItinerary.title,
+    }
+    let resolveFirstVersions!: (result: Response) => void
+    const firstVersions = new Promise<Response>((resolve) => {
+      resolveFirstVersions = resolve
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return firstVersions
+      if (url.endsWith(`/api/trips/${secondTrip.id}/itinerary/versions`)) return response([secondVersion])
+      if (url.endsWith('/itinerary/shares')) return response([])
+      if (url.endsWith(`/api/planning-tasks/${secondTaskId}`)) {
+        return response({
+          ...planningTaskResponse,
+          taskId: secondTaskId,
+          tripId: secondTrip.id,
+          status: 'SUCCEEDED',
+          evaluation: planningEvaluation,
+        })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
+      if (url.endsWith(`/api/trips/${secondTrip.id}/itinerary`)) return response(secondItinerary)
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith(`/api/trips/${secondTrip.id}`)) return response(secondTrip)
+      if (url.endsWith('/api/trips')) return response([tripResponse, secondTrip])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: tripResponse.title })
+    await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
+    await waitFor(() => expect(window.location.pathname).toBe(`/trips/${tripResponse.id}`))
+    window.history.pushState({}, '', '/trips')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await fireEvent.click(await screen.findByRole('button', { name: `打开 ${secondTrip.title}` }))
+
+    expect(await screen.findByText('91/100')).toBeTruthy()
+    resolveFirstVersions(response([currentPlanningVersion]))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(screen.getByRole('heading', { name: secondTrip.title, level: 1 })).toBeTruthy()
+    expect(screen.getByText('91/100')).toBeTruthy()
+  })
+
+  test('ignores an old edit response after leaving and reopening the same trip', async () => {
+    const secondTrip = {
+      ...tripResponse,
+      id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      title: '北京城市三日',
+      destination: '北京',
+    }
+    const secondItinerary = {
+      ...itineraryResponse,
+      versionId: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      title: '北京 Demo 行程',
+    }
+    const secondVersion = {
+      ...currentPlanningVersion,
+      versionId: secondItinerary.versionId,
+      planningTaskId: null,
+      versionSource: 'USER_EDIT',
+      title: secondItinerary.title,
+    }
+    let resolveOldEdit!: (result: Response) => void
+    const oldEdit = new Promise<Response>((resolve) => {
+      resolveOldEdit = resolve
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/edits/preview`)) {
+        return response({
+          operation: 'DELETE_ACTIVITY',
+          canApply: true,
+          impactedDates: [itineraryResponse.days[0]!.date],
+          impactedActivityIds: [itineraryResponse.days[0]!.activities[0]!.id],
+          warnings: [],
+          blockingReasons: [],
+        })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/edits/commit`)) return oldEdit
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        return response([currentPlanningVersion])
+      }
+      if (url.endsWith(`/api/trips/${secondTrip.id}/itinerary/versions`)) return response([secondVersion])
+      if (url.endsWith('/itinerary/shares')) return response([])
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
+      if (url.endsWith(`/api/trips/${secondTrip.id}/itinerary`)) return response(secondItinerary)
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith(`/api/trips/${secondTrip.id}`)) return response(secondTrip)
+      if (url.endsWith('/api/trips')) return response([tripResponse, secondTrip])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: tripResponse.title })
+    await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
+    expect(await screen.findByText('91/100')).toBeTruthy()
+    const deleteButton = screen.getAllByRole('button', { name: '删除活动 漫步沙面岛' }).at(-1)!
+    await waitFor(() => expect(deleteButton.disabled).toBe(false))
+    await fireEvent.click(deleteButton)
+    await fireEvent.click(await screen.findByRole('button', { name: '应用修改' }))
+    await fireEvent.click(screen.getByTestId('save-itinerary-draft'))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => (
+      urlOf(input).endsWith(`/api/trips/${tripResponse.id}/itinerary/edits/commit`)
+    ))).toBe(true))
+
+    window.history.pushState({}, '', '/trips')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await fireEvent.click(await screen.findByRole('button', { name: `打开 ${secondTrip.title}` }))
+    await screen.findByRole('heading', { name: secondTrip.title, level: 1 })
+    window.history.pushState({}, '', '/trips')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+    await fireEvent.click(await screen.findByRole('button', { name: `打开 ${tripResponse.title}` }))
+    expect(await screen.findByText('91/100')).toBeTruthy()
+
+    resolveOldEdit(response({ ...itineraryResponse, title: '迟到的旧编辑' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(screen.getByRole('heading', { name: itineraryResponse.title })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '迟到的旧编辑' })).toBeNull()
+    expect(screen.getByText('91/100')).toBeTruthy()
+  })
+
+  test('reports evaluation hydration failure and retries without reloading the trip', async () => {
+    let evaluationLoads = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        return response([currentPlanningVersion])
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
+        evaluationLoads += 1
+        return evaluationLoads === 1
+          ? response({ code: 'SERVICE_UNAVAILABLE', message: 'temporary failure' }, 503)
+          : response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: tripResponse.title })
+    await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('行程质量评估暂时无法加载')
+    await fireEvent.click(screen.getByRole('button', { name: '重试质量评估' }))
+
+    expect(await screen.findByText('91/100')).toBeTruthy()
+    expect(evaluationLoads).toBe(2)
+  })
+
   test('creates a planning task and renders the completed Demo itinerary from SSE', async () => {
     const encoder = new TextEncoder()
     let streamController!: ReadableStreamDefaultController<Uint8Array>
@@ -512,6 +778,7 @@ describe('TripPilot application shell', () => {
       },
     })
     let itineraryLoads = 0
+    let versionLoads = 0
     let planningCreateAttempts = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = urlOf(input)
@@ -539,6 +806,14 @@ describe('TripPilot application shell', () => {
       if (url.endsWith('/api/planning-tasks/33333333-3333-3333-3333-333333333333/events')) {
         return { ok: true, status: 200, body: eventStream } as Response
       }
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        versionLoads += 1
+        return response(versionLoads === 1 ? [] : [currentPlanningVersion])
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
       if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
         itineraryLoads += 1
         return itineraryLoads === 1
@@ -570,6 +845,7 @@ describe('TripPilot application shell', () => {
     streamController.close()
 
     expect(await screen.findByRole('heading', { name: '广州 Demo 行程' })).toBeTruthy()
+    expect(await screen.findByText('91/100')).toBeTruthy()
     expect(screen.getByRole('heading', { name: '行程时间轴' })).toBeTruthy()
     expect(screen.getAllByText('漫步沙面岛')).toHaveLength(2)
     expect(screen.getByRole('region', { name: '行程地图' })).toBeTruthy()

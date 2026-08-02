@@ -21,6 +21,7 @@ import {
   diffItineraryVersions,
   downloadItineraryExport,
   getCurrentItinerary,
+  getPlanningTask,
   getTrip,
   listTrips,
   searchTrips,
@@ -49,6 +50,7 @@ import {
   type ItineraryShareStatus,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
+  type PlanEvaluation,
   type PlanningTask,
   type PlanningTaskEvent,
   type PlanningProgressStage,
@@ -91,6 +93,9 @@ const itinerary = ref<Itinerary | null>(null)
 const itineraryBusy = ref(false)
 const itineraryError = ref<string | null>(null)
 const itineraryVersions = ref<ItineraryVersionSummary[]>([])
+const evaluation = ref<PlanEvaluation | null | undefined>(undefined)
+const evaluationBusy = ref(false)
+const evaluationError = ref<string | null>(null)
 const itineraryShares = ref<ItineraryShareStatus[]>([])
 const versionBusy = ref(false)
 const versionError = ref<string | null>(null)
@@ -106,6 +111,7 @@ let sessionGeneration = 0
 let detailRequestSequence = 0
 let itineraryRequestSequence = 0
 let versionRequestSequence = 0
+let evaluationRequestSequence = 0
 let shareRequestSequence = 0
 let listRequestSequence = 0
 let busyRequestSequence = 0
@@ -163,6 +169,10 @@ function clearLocalSession() {
   itineraryBusy.value = false
   itineraryError.value = null
   itineraryVersions.value = []
+  evaluationRequestSequence += 1
+  evaluation.value = undefined
+  evaluationBusy.value = false
+  evaluationError.value = null
   itineraryShares.value = []
   versionBusy.value = false
   versionError.value = null
@@ -208,6 +218,8 @@ async function loadTrips(forceSearch = false) {
 
 async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<boolean> {
   const requestSequence = ++detailRequestSequence
+  const generation = sessionGeneration
+  clearEvaluation()
   detailBusy.value = true
   detailError.value = null
   if (!preserveCurrentTrip) {
@@ -231,6 +243,8 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
       loadItineraryVersionsForTrip(tripId),
       loadItinerarySharesForTrip(tripId),
     ])
+    if (!isCurrentDetailRequest(requestSequence, tripId) || !isCurrentSession(generation)) return false
+    await loadEvaluationForCurrentVersion(tripId, requestSequence, generation)
     return true
   } catch (cause) {
     if (!isCurrentDetailRequest(requestSequence, tripId)) return false
@@ -278,6 +292,66 @@ function isCurrentVersionRequest(requestSequence: number, tripId: string) {
   return requestSequence === versionRequestSequence
     && route.value.name === 'trip-detail'
     && route.value.tripId === tripId
+}
+
+function clearEvaluation() {
+  evaluationRequestSequence += 1
+  evaluation.value = undefined
+  evaluationBusy.value = false
+  evaluationError.value = null
+}
+
+function isCurrentEvaluationOwner(tripId: string, detailSequence: number, generation: number) {
+  return detailSequence === detailRequestSequence
+    && isCurrentSession(generation)
+    && route.value.name === 'trip-detail'
+    && route.value.tripId === tripId
+}
+
+async function loadEvaluationForCurrentVersion(
+  tripId: string,
+  detailSequence = detailRequestSequence,
+  generation = sessionGeneration,
+): Promise<boolean> {
+  if (!isCurrentEvaluationOwner(tripId, detailSequence, generation)) return false
+  const requestSequence = ++evaluationRequestSequence
+  evaluation.value = undefined
+  evaluationBusy.value = false
+  evaluationError.value = null
+  const currentItinerary = itinerary.value
+  const currentVersion = itineraryVersions.value.find((version) => (
+    version.current && version.versionId === currentItinerary?.versionId
+  ))
+  if (!currentItinerary || !currentVersion?.planningTaskId) return true
+
+  const taskId = currentVersion.planningTaskId
+  evaluationBusy.value = true
+  try {
+    const task = await withAccessToken((token) => getPlanningTask(token, taskId))
+    if (requestSequence !== evaluationRequestSequence
+      || !isCurrentEvaluationOwner(tripId, detailSequence, generation)
+      || itinerary.value?.versionId !== currentVersion.versionId) return false
+    if (task.taskId !== taskId || task.tripId !== tripId) {
+      evaluationError.value = '行程质量评估暂时无法加载，请稍后重试'
+      return false
+    }
+    evaluation.value = task.status === 'SUCCEEDED' ? task.evaluation ?? null : undefined
+    return true
+  } catch {
+    if (requestSequence === evaluationRequestSequence
+      && isCurrentEvaluationOwner(tripId, detailSequence, generation)) {
+      evaluation.value = undefined
+      evaluationError.value = '行程质量评估暂时无法加载，请稍后重试'
+    }
+    return false
+  } finally {
+    if (requestSequence === evaluationRequestSequence) evaluationBusy.value = false
+  }
+}
+
+async function reloadCurrentEvaluation(): Promise<boolean> {
+  if (route.value.name !== 'trip-detail') return false
+  return loadEvaluationForCurrentVersion(route.value.tripId)
 }
 
 async function loadGuideImportsForTrip(tripId: string): Promise<boolean> {
@@ -541,26 +615,34 @@ async function handlePreviewItineraryEdit(input: ItineraryEditInput): Promise<It
 async function handleApplyItineraryEdit(input: ItineraryEditInput) {
   if (!selectedTrip.value) throw new Error('No trip is selected')
   const tripId = selectedTrip.value.id
+  const detailSequence = detailRequestSequence
+  const generation = sessionGeneration
   const idempotencyKey = input.idempotencyKey ?? crypto.randomUUID()
   const updated = await withAccessToken(
       (token) => applyItineraryEdit(token, tripId, input, idempotencyKey))
-  if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
+  if (isCurrentEvaluationOwner(tripId, detailSequence, generation)) {
+    clearEvaluation()
     itinerary.value = updated
     itineraryError.value = null
     await loadItineraryVersionsForTrip(tripId)
+    await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
   }
 }
 
 async function handleCommitItineraryEdits(baseVersionId: string, edits: ItineraryEditInput[]) {
   if (!selectedTrip.value) throw new Error('No trip is selected')
   const tripId = selectedTrip.value.id
+  const detailSequence = detailRequestSequence
+  const generation = sessionGeneration
   const updated = await withAccessToken((token) => commitItineraryEdits(
     token, tripId, baseVersionId, edits, crypto.randomUUID(),
   ))
-  if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
+  if (isCurrentEvaluationOwner(tripId, detailSequence, generation)) {
+    clearEvaluation()
     itinerary.value = updated
     itineraryError.value = null
     await loadItineraryVersionsForTrip(tripId)
+    await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
   }
 }
 
@@ -582,6 +664,8 @@ async function handleRollbackItinerary(
 ) {
   if (!selectedTrip.value) throw new Error('No trip is selected')
   const tripId = selectedTrip.value.id
+  const detailSequence = detailRequestSequence
+  const generation = sessionGeneration
   const rolledBack = await withAccessToken((token) => rollbackItinerary(
     token,
     tripId,
@@ -589,10 +673,12 @@ async function handleRollbackItinerary(
     expectedCurrentVersionId,
     idempotencyKey,
   ))
-  if (route.value.name === 'trip-detail' && route.value.tripId === tripId) {
+  if (isCurrentEvaluationOwner(tripId, detailSequence, generation)) {
+    clearEvaluation()
     itinerary.value = rolledBack
     itineraryError.value = null
     await loadItineraryVersionsForTrip(tripId)
+    await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
   }
 }
 
@@ -783,10 +869,15 @@ async function runPlanningTask(
         terminal = true
         planningState.value = 'succeeded'
         activePlanningTaskId.value = null
+        const detailSequence = detailRequestSequence
         itineraryReload = Promise.all([
           loadItinerary(tripId),
           loadItineraryVersionsForTrip(tripId),
-        ]).then(([loaded]) => loaded)
+        ]).then(async ([itineraryLoaded, versionsLoaded]) => (
+          itineraryLoaded
+          && versionsLoaded
+          && await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
+        ))
       } else if (event.eventType === 'PLANNING_FAILED') {
         terminal = true
         planningState.value = 'failed'
@@ -926,6 +1017,10 @@ onUnmounted(() => {
       :itinerary-busy="itineraryBusy"
       :itinerary-error="itineraryError"
       :itinerary-versions="itineraryVersions"
+      :evaluation="evaluation"
+      :evaluation-busy="evaluationBusy"
+      :evaluation-error="evaluationError"
+      :reload-evaluation="reloadCurrentEvaluation"
       :itinerary-shares="itineraryShares"
       :version-busy="versionBusy"
       :version-error="versionError"

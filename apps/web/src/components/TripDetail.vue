@@ -108,8 +108,14 @@ const props = withDefaults(defineProps<{
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
   reloadTrip: () => Promise<boolean>
   evaluation?: PlanEvaluation | null
+  evaluationBusy?: boolean
+  evaluationError?: string | null
+  reloadEvaluation?: () => Promise<boolean>
 }>(), {
   evaluation: undefined,
+  evaluationBusy: false,
+  evaluationError: null,
+  reloadEvaluation: async () => false,
   guideImports: () => [],
   planningProgress: null,
   planningProgressHistory: () => [],
@@ -857,10 +863,25 @@ watch(() => props.itinerary, (nextItinerary) => {
 
         <!-- Plan Evaluation -->
         <PlanEvaluationPanel
-          v-if="planningState === 'succeeded' && itinerary"
-          :evaluation="evaluation ?? null"
-          :show-legacy="evaluation === undefined || evaluation === null"
+          v-if="itinerary && evaluation !== undefined"
+          :evaluation="evaluation"
+          :show-legacy="evaluation === null"
         />
+        <div
+          v-else-if="itinerary && evaluationBusy"
+          class="mb-6 rounded-2xl border border-surface-200 bg-white px-5 py-4 text-sm text-surface-500"
+          role="status"
+        >
+          正在加载行程质量评估…
+        </div>
+        <div
+          v-else-if="itinerary && evaluationError"
+          class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900"
+          role="alert"
+        >
+          <span>{{ evaluationError }}</span>
+          <Button variant="outline" size="sm" @click="reloadEvaluation">重试质量评估</Button>
+        </div>
 
         <!-- Planning Actions -->
         <div class="mb-6 flex flex-wrap items-center gap-3">

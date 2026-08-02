@@ -84,6 +84,28 @@ test('keeps a past itinerary timeline bounded to its two-day buffer', () => {
   expect(screen.getAllByText('历史天气尚未同步').length).toBeGreaterThan(0)
 })
 
+test('uses the structured effective date before statement text or observation time', () => {
+  const structuredFact = {
+    ...weatherFacts[0],
+    id: 'weather-structured-date',
+    statement: '2026-08-01 广州市天气预报：白天小雨 31℃，夜间阴 26℃。',
+    effectiveDate: '2026-08-03',
+    observedAt: '2026-07-30T03:20:00Z',
+  }
+
+  render(TripWeatherTimeline, {
+    props: {
+      weatherFacts: [structuredFact],
+      startDate: '2026-08-03',
+      endDate: '2026-08-03',
+      referenceDate: '2026-07-30',
+    },
+  })
+
+  expect(screen.getByRole('button', { name: '选择 2026-08-03 天气' }).textContent)
+    .toContain('小雨')
+})
+
 test('exposes horizontal weather navigation when the timeline has more days than fit on screen', () => {
   render(TripWeatherTimeline, {
     props: {

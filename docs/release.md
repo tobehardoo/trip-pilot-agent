@@ -30,7 +30,7 @@
 | Python 测试 | `python -m pytest -q --basetemp=.pytest-temp-codex-audit-final` in `apps/agent-service` | 541 passed, 37 skipped |
 | Python 静态检查 | `python -m ruff check .` in `apps/agent-service` | 通过 |
 | PlanEvaluation 基准 | `python benchmarks/run_plan_evaluation.py` in `apps/agent-service` | 8 scenarios passed；重复运行结果一致 |
-| Web 单元测试与覆盖率 | `pnpm test:coverage` in `apps/web` | 124 passed across 24 files；语句/行 94.25%，分支 85.84%，函数 88.46% |
+| Web 单元测试与覆盖率 | `pnpm test:coverage` in `apps/web` | 126 passed across 24 files；语句/行 94.25%，分支 86.08%，函数 88.46% |
 | Web 类型和构建 | `pnpm typecheck` and `pnpm build` in `apps/web` | 通过 |
 | 浏览器验收 | `pnpm test:e2e` in `apps/web` | 6 passed；包含评估恢复、天气日期与地图过滤组合场景 |
 | Compose | 开发/生产 `config`、生产镜像构建、隔离冷启动与健康检查 | 通过；8 个运行服务健康，`knowledge-init` 退出码 0，Web/API HTTP 200 |

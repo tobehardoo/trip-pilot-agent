@@ -185,6 +185,51 @@ test('filters the map from a weather date without scrolling to the itinerary tim
   expect(scrollIntoView).not.toHaveBeenCalled()
 })
 
+test('clears a selected map date when a newer itinerary no longer contains that day', async () => {
+  const twoDayTrip = { ...trip, endDate: '2026-08-02' }
+  const dayOneActivity = {
+    ...itinerary.days[0]!.activities[0]!,
+    coordinates: { longitude: 113.26, latitude: 23.13 },
+  }
+  const dayTwoActivity = {
+    ...dayOneActivity,
+    id: '66666666-6666-6666-6666-666666666666',
+    title: 'Day two park',
+    startTime: '2026-08-02T09:00:00+08:00',
+    endTime: '2026-08-02T11:00:00+08:00',
+  }
+  const twoDayItinerary: Itinerary = {
+    ...itinerary,
+    days: [
+      { ...itinerary.days[0]!, activities: [dayOneActivity] },
+      { date: '2026-08-02', activities: [dayTwoActivity], transitLegs: [] },
+    ],
+  }
+  const newerItinerary: Itinerary = {
+    ...twoDayItinerary,
+    versionId: '77777777-7777-7777-7777-777777777777',
+    versionNumber: 2,
+    days: [twoDayItinerary.days[1]!],
+  }
+  const view = render(TripDetail, {
+    props: {
+      user, trip: twoDayTrip, busy: false, error: null, itinerary: twoDayItinerary,
+      itineraryBusy: false, itineraryError: null, planningState: 'idle', planningError: null,
+      startPlanning: async () => {}, cancelPlanning: async () => {}, updateConstraints: async () => {},
+      reloadTrip: async () => true,
+    },
+  })
+
+  await fireEvent.click(view.getByRole('button', { name: '选择 2026-08-01 天气' }))
+  expect(view.queryByRole('button', { name: '定位 Day two park' })).toBeNull()
+
+  await view.rerender({ itinerary: newerItinerary })
+
+  await waitFor(() => {
+    expect(view.getByRole('button', { name: '定位 Day two park' })).toBeTruthy()
+  })
+})
+
 test('does not render weather from a disabled latest city intelligence import', () => {
   const view = render(TripDetail, {
     props: {

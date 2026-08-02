@@ -729,6 +729,9 @@ watch(() => props.itinerary, (nextItinerary) => {
   if (!firstActivity || !nextItinerary?.days.flatMap((day) => day.activities).some((activity) => activity.id === selectedActivityId.value)) {
     selectedActivityId.value = firstActivity?.id ?? null
   }
+  if (selectedMapDate.value && !nextItinerary?.days.some((day) => day.date === selectedMapDate.value)) {
+    selectedMapDate.value = null
+  }
   if (nextItinerary) queueRecommendedLongWalks(nextItinerary)
 }, { immediate: true })
 </script>

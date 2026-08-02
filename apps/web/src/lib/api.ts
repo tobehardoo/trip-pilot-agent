@@ -308,6 +308,7 @@ export interface GuideFact {
   confidence: number
   observedAt: string
   expiresAt: string
+  effectiveDate?: string | null
 }
 
 export interface GuideImport {

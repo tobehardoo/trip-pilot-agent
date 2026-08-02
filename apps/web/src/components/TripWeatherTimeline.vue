@@ -39,9 +39,12 @@ function addDays(date: string, amount: number) {
   return value.toISOString().slice(0, 10)
 }
 
-function dateFromStatement(statement: string, observedAt: string) {
-  return statement.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1]
-    ?? observedAt.slice(0, 10)
+function dateFromFact(fact: GuideFact) {
+  if (fact.effectiveDate && /^20\d{2}-\d{2}-\d{2}$/.test(fact.effectiveDate)) {
+    return fact.effectiveDate
+  }
+  return fact.statement.match(/\b(20\d{2}-\d{2}-\d{2})\b/)?.[1]
+    ?? fact.observedAt.slice(0, 10)
 }
 
 function weatherSummary(fact: GuideFact): WeatherSummary {
@@ -56,7 +59,7 @@ function weatherSummary(fact: GuideFact): WeatherSummary {
     : temperatures.length === 1 ? `${temperatures[0]}°` : '—'
   const wind = statement.match(/(?:东北|东南|西北|西南|东|西|南|北)风[^，,；;。]*/)?.[0] ?? null
   return {
-    date: dateFromStatement(statement, fact.observedAt),
+    date: dateFromFact(fact),
     condition,
     temperature,
     wind,

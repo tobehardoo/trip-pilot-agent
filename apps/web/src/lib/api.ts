@@ -102,6 +102,7 @@ export interface PlanningTask {
   actualProviders?: ProviderSource[] | null
   fallbackReason?: string | null
   fallbackOperations?: ProviderFallbackOperation[] | null
+  evaluation?: PlanEvaluation | null
   createdAt: string
   updatedAt: string
 }
@@ -212,7 +213,57 @@ export interface PlanningTaskEvent {
     }>
     [key: string]: unknown
   }
+  evaluation?: PlanEvaluation | null
   createdAt: string
+}
+
+export interface PlanEvaluation {
+  schemaVersion: number
+  evaluatorVersion: string
+  feasible: boolean
+  overallScore: number
+  dimensions: EvaluationDimensions
+  warnings: EvaluationWarning[]
+  decisions: DecisionExplanation[]
+  summary: string
+  evaluatedAt: string
+}
+
+export interface EvaluationDimensions {
+  constraintSatisfaction: number
+  timeFeasibility: number
+  budgetFit: number
+  routeEfficiency: number
+  interestMatch: number
+}
+
+export interface EvaluationWarning {
+  code: string
+  severity: 'INFO' | 'WARNING' | 'CRITICAL'
+  message: string
+  dayIndex?: number | null
+  entityType: 'PLAN' | 'DAY' | 'ACTIVITY' | 'TRANSIT'
+  entityId?: string | null
+  metricKey?: string | null
+  actualValue?: number | null
+  threshold?: number | null
+}
+
+export interface DecisionExplanation {
+  subjectType: 'PLAN' | 'DAY' | 'ACTIVITY' | 'TRANSIT'
+  subjectId?: string | null
+  summary: string
+  reasonCodes: string[]
+  reasons: string[]
+  constraintRefs?: string[]
+  evidence?: EvaluationEvidence[]
+  dayIndex?: number | null
+}
+
+export interface EvaluationEvidence {
+  key: string
+  label: string
+  value: string
 }
 
 export type GuideSourceType =

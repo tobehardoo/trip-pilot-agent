@@ -39,6 +39,7 @@ import {
   type ItineraryShareStatus,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
+  type PlanEvaluation,
   type PlanningProgressUpdate,
   type Trip,
   type UpdateTripConstraintsInput,
@@ -55,6 +56,7 @@ import {
 import GuideIntelligencePanel from './GuideIntelligencePanel.vue'
 import ItineraryActionsPanel, { type CreatedItineraryShare } from './ItineraryActionsPanel.vue'
 import ItineraryVersionPanel from './ItineraryVersionPanel.vue'
+import PlanEvaluationPanel from './PlanEvaluationPanel.vue'
 import PlanningProgress from './PlanningProgress.vue'
 import TripMap from './TripMap.vue'
 import TransitLegControl from './TransitLegControl.vue'
@@ -103,7 +105,9 @@ const props = withDefaults(defineProps<{
   cancelPlanning: () => Promise<void>
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
   reloadTrip: () => Promise<boolean>
+  evaluation?: PlanEvaluation | null
 }>(), {
+  evaluation: undefined,
   guideImports: () => [],
   planningProgress: null,
   planningProgressHistory: () => [],
@@ -834,6 +838,13 @@ watch(() => props.itinerary, (nextItinerary) => {
             </div>
           </div>
         </Card>
+
+        <!-- Plan Evaluation -->
+        <PlanEvaluationPanel
+          v-if="planningState === 'succeeded' && itinerary"
+          :evaluation="evaluation ?? null"
+          :show-legacy="evaluation === undefined || evaluation === null"
+        />
 
         <!-- Planning Actions -->
         <div class="mb-6 flex flex-wrap items-center gap-3">

@@ -58,6 +58,17 @@ public interface PlanningTaskEventMapper {
             """)
     Optional<LatestProgressRecord> findLatestProgress(UUID taskId);
 
+    @Select("""
+            SELECT id, event_id, task_id, event_type, schema_version,
+                   payload::text AS payload_json, created_at
+            FROM business.planning_task_event
+            WHERE task_id = #{taskId}
+              AND event_type IN ('PLANNING_COMPLETED', 'PLANNING_FAILED')
+            ORDER BY id DESC
+            LIMIT 1
+            """)
+    Optional<PlanningTaskEventRecord> findLatestTerminal(UUID taskId);
+
     record LatestProgressRecord(String stage, java.time.Instant createdAt) {
     }
 }

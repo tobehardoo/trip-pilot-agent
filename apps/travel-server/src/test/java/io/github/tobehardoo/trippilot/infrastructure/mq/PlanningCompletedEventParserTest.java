@@ -15,6 +15,93 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PlanningCompletedEventParserTest {
 
+    @Test
+    void acceptsHistoricalV6WithoutInventingProviderProvenance() {
+        PlanningCompletedEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-legacy-amap.json"
+                )
+        ));
+
+        assertThat(event.schemaVersion()).isEqualTo(6);
+        assertThat(event.payload().providerProvenance()).isNull();
+    }
+
+    @Test
+    void parsesMultiTransitV6ProvenanceByStableTransitIdentity() {
+        PlanningCompletedEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-multi-transit-mixed.json"
+                )
+        ));
+
+        PlanningCompletedEvent.ProviderProvenance provenance =
+                event.payload().providerProvenance();
+        assertThat(provenance.requestedProviderMode())
+                .isEqualTo(PlanningCompletedEvent.ProviderExecutionMode.REAL_WITH_EXPLICIT_FALLBACK);
+        assertThat(provenance.actualProviders())
+                .containsExactly(
+                        PlanningCompletedEvent.ProviderSource.AMAP,
+                        PlanningCompletedEvent.ProviderSource.DEMO
+                );
+        assertThat(provenance.fallbackOperations()).singleElement().satisfies(operation -> {
+            assertThat(operation.transitId())
+                    .isEqualTo(UUID.fromString("20000000-0000-4000-8000-000000000032"));
+            assertThat(operation.fromActivityId())
+                    .isEqualTo(UUID.fromString("10000000-0000-4000-8000-000000000032"));
+            assertThat(operation.toActivityId())
+                    .isEqualTo(UUID.fromString("10000000-0000-4000-8000-000000000033"));
+            assertThat(operation.errorCategory())
+                    .isEqualTo(PlanningCompletedEvent.ProviderErrorCategory.TIMEOUT);
+            assertThat(operation.retryCount()).isEqualTo(2);
+        });
+    }
+
+    @Test
+    void rejectsFallbackOperationThatDoesNotMatchItsTransitIdentity() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-multi-transit-mixed.json"
+                )
+        );
+        ((ObjectNode) event.at("/payload/providerProvenance/fallbackOperations/0"))
+                .put("transitId", "20000000-0000-4000-8000-000000000031");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("fallback operation must match one transit identity");
+    }
+
+    @Test
+    void rejectsRealOnlyCompletionThatContainsDemoEvidence() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-multi-transit-mixed.json"
+                )
+        );
+        ((ObjectNode) event.at("/payload/providerProvenance"))
+                .put("requestedProviderMode", "REAL_ONLY");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("REAL_ONLY completion must only contain AMAP evidence");
+    }
+
+    @Test
+    void rejectsSuccessfulFallbackWithoutAnAttempt() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-multi-transit-mixed.json"
+                )
+        );
+        ((ObjectNode) event.at("/payload/providerProvenance"))
+                .put("fallbackAttempted", false);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("successful completion cannot contain a failed fallback");
+    }
+
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final PlanningCompletedEventParser parser = new PlanningCompletedEventParser(objectMapper);
 
@@ -139,6 +226,20 @@ class PlanningCompletedEventParserTest {
     }
 
     @Test
+    void rejectsTheUnreleasedV7CompletedEventContract() throws Exception {
+        ObjectNode event = amapV4Event();
+        event.put("schemaVersion", 7);
+        ((ObjectNode) event.at("/payload/itinerary/days/0/transitLegs/0"))
+                .put("mode", "TAXI")
+                .put("estimatedCost", 42.50)
+                .put("costSource", "PROVIDER");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("unsupported eventType or schemaVersion");
+    }
+
+    @Test
     void rejectsV3TransitLegsThatDoNotConnectEveryAdjacentActivity() throws Exception {
         ObjectNode wrongIndex = amapV3Event();
         ((ObjectNode) wrongIndex.at(
@@ -153,6 +254,43 @@ class PlanningCompletedEventParserTest {
         assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(missingLeg)))
                 .isInstanceOf(PlanningEventContractException.class)
                 .hasMessageContaining("connect every adjacent activity");
+    }
+
+    @Test
+    void acceptsOutOfOrderTransitLegsByTheirActivityEndpointsAndRejectsDuplicateEndpoints()
+            throws Exception {
+        ObjectNode reordered = amapV4Event();
+        reordered.put("schemaVersion", 5);
+        ArrayNode activities = (ArrayNode) reordered.at("/payload/itinerary/days/0/activities");
+        ObjectNode thirdActivity = activities.get(1).deepCopy();
+        thirdActivity.put("title", "Late stop");
+        thirdActivity.put("startTime", "2026-08-01T17:00:00+08:00");
+        thirdActivity.put("endTime", "2026-08-01T19:00:00+08:00");
+        activities.add(thirdActivity);
+        ArrayNode transitLegs = (ArrayNode) reordered.at("/payload/itinerary/days/0/transitLegs");
+        ObjectNode firstLeg = transitLegs.get(0).deepCopy();
+        ObjectNode secondLeg = firstLeg.deepCopy();
+        secondLeg.put("fromActivityIndex", 1);
+        secondLeg.put("toActivityIndex", 2);
+        secondLeg.put("mode", "DRIVING");
+        transitLegs.removeAll();
+        transitLegs.add(secondLeg);
+        transitLegs.add(firstLeg);
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(reordered));
+
+        assertThat(parsed.payload().itinerary().days().getFirst().transitLegs())
+                .extracting(PlanningCompletedEvent.TransitLeg::mode)
+                .containsExactly("DRIVING", "WALKING");
+
+        ObjectNode duplicateEndpoints = reordered.deepCopy();
+        ((ObjectNode) duplicateEndpoints.at("/payload/itinerary/days/0/transitLegs/0"))
+                .put("fromActivityIndex", 0)
+                .put("toActivityIndex", 1);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(duplicateEndpoints)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("unique adjacent activity endpoints");
     }
 
     @Test

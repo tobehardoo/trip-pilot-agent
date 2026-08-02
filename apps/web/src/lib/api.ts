@@ -87,8 +87,67 @@ export interface PlanningTask {
   status: string
   baselineTripVersion: number
   eventStreamUrl: string
+  errorCode?: string | null
+  errorCategory?: ProviderErrorCategory | null
+  provider?: ProviderSource | null
+  operation?: ProviderOperation | null
+  retryable?: boolean | null
+  retryCount?: number | null
+  fallbackAttempted?: boolean | null
+  fallbackSucceeded?: boolean | null
+  safeMessage?: string | null
+  safeProviderCode?: string | null
+  requestedProviderMode?: ProviderExecutionMode | null
+  primaryProvider?: ProviderSource | null
+  actualProviders?: ProviderSource[] | null
+  fallbackReason?: string | null
+  fallbackOperations?: ProviderFallbackOperation[] | null
   createdAt: string
   updatedAt: string
+}
+
+export type ProviderExecutionMode =
+  | 'DEMO_ONLY'
+  | 'REAL_ONLY'
+  | 'REAL_WITH_EXPLICIT_FALLBACK'
+
+export type ProviderSource = 'AMAP' | 'DEMO' | 'MIXED' | 'PLANNER'
+
+export type ProviderOperation =
+  | 'CONFIGURATION'
+  | 'PLANNING'
+  | 'REPLANNING'
+  | 'POI_SEARCH'
+  | 'ROUTE'
+
+export type ProviderErrorCategory =
+  | 'CONFIGURATION_ERROR'
+  | 'AUTHENTICATION_ERROR'
+  | 'PERMISSION_DENIED'
+  | 'QUOTA_EXCEEDED'
+  | 'RATE_LIMITED'
+  | 'TIMEOUT'
+  | 'NETWORK_ERROR'
+  | 'PROVIDER_UNAVAILABLE'
+  | 'INVALID_REQUEST'
+  | 'NO_RESULT'
+  | 'UNSUPPORTED_MODE'
+  | 'MALFORMED_RESPONSE'
+  | 'DATA_QUALITY_ERROR'
+  | 'PROVIDER_ADAPTER_ERROR'
+  | 'PLANNING_INFEASIBLE'
+  | 'INTERNAL_ERROR'
+
+export interface ProviderFallbackOperation {
+  operation: ProviderOperation
+  transitId: string | null
+  fromActivityId: string | null
+  toActivityId: string | null
+  requestedMode: ProviderExecutionMode
+  actualProvider: ProviderSource
+  errorCategory: ProviderErrorCategory
+  errorCode: string
+  retryCount: number
 }
 
 export type PlanningProgressStage =
@@ -126,6 +185,20 @@ export interface PlanningTaskEvent {
     progress?: number
     statistics?: Record<string, number>
     errorCode?: string
+    errorCategory?: ProviderErrorCategory
+    provider?: ProviderSource
+    operation?: ProviderOperation
+    retryable?: boolean
+    retryCount?: number
+    fallbackAttempted?: boolean
+    fallbackSucceeded?: boolean
+    safeMessage?: string
+    safeProviderCode?: string
+    requestedProviderMode?: ProviderExecutionMode
+    primaryProvider?: ProviderSource
+    actualProviders?: ProviderSource[] | null
+    fallbackReason?: string
+    fallbackOperations?: ProviderFallbackOperation[] | null
     errorMessage?: string
     message?: string
     conflicts?: Array<{
@@ -268,7 +341,7 @@ export interface Itinerary {
   parentVersionId: string | null
   title: string
   estimatedTotalCost: number
-  provider: 'AMAP' | 'DEMO'
+  provider: ProviderSource
   days: Array<{
     date: string
     activities: ItineraryActivity[]
@@ -609,6 +682,10 @@ export function cancelPlanningTask(accessToken: string, taskId: string): Promise
   return request(`/api/planning-tasks/${encodeURIComponent(taskId)}`, {
     method: 'DELETE',
   }, accessToken)
+}
+
+export function getPlanningTask(accessToken: string, taskId: string): Promise<PlanningTask> {
+  return request(`/api/planning-tasks/${encodeURIComponent(taskId)}`, {}, accessToken)
 }
 
 export function getCurrentItinerary(accessToken: string, tripId: string): Promise<Itinerary> {

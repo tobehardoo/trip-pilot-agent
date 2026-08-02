@@ -1,10 +1,31 @@
 package io.github.tobehardoo.trippilot.support;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.UUID;
 
 public final class PlanningCompletedEventFixture {
 
     private PlanningCompletedEventFixture() {
+    }
+
+    public static String sharedV6Fixture(String fixtureName) {
+        Path relative = Path.of(
+                "contracts", "fixtures", "planning-completed-event-v6", fixtureName
+        );
+        Path workingDirectory = Path.of("").toAbsolutePath();
+        Path fixture = workingDirectory.resolve(relative);
+        if (!Files.isRegularFile(fixture)) {
+            fixture = workingDirectory.resolve(Path.of("..", ".."))
+                    .resolve(relative).normalize();
+        }
+        try {
+            return Files.readString(fixture, StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Could not read shared completion v6 fixture", exception);
+        }
     }
 
     public static String completedEvent(UUID eventId, UUID traceId, UUID taskId, UUID tripId) {
@@ -183,6 +204,26 @@ public final class PlanningCompletedEventFixture {
                 },
                 """;
         return v3.replace("\"itinerary\": {", knowledge + "\"itinerary\": {");
+    }
+
+    public static String completedMixedEventV6(
+            UUID eventId, UUID traceId, UUID taskId, UUID tripId
+    ) {
+        return completedAmapEventV4(eventId, traceId, taskId, tripId)
+                .replace("\"schemaVersion\": 4", "\"schemaVersion\": 6")
+                .replace(
+                        "\"knowledge\": {",
+                        "\"factImpacts\": [],\n                    \"knowledge\": {"
+                )
+                .replace(
+                        "\"provider\": \"AMAP\"",
+                        "\"provider\": \"DEMO\""
+                )
+                .replaceFirst(
+                        "\"provider\": \"DEMO\"",
+                        "\"provider\": \"AMAP\""
+                )
+                .replace("\"estimated\": false", "\"estimated\": true");
     }
 
     public static String completedTwoDayAmapEventV3(

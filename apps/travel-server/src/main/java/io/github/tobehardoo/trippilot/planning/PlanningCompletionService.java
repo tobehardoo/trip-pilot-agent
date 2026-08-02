@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -86,9 +88,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                             task.tripId(), event, task, clock);
             updateTaskToSucceeded(
                     event, task, result, "PLANNING_COMPLETED",
-                    writeJson(new CompletionPayload(SUCCEEDED, event.runId(),
-                            result.versionId(), result.versionNumber(),
-                            result.provider())));
+                    writeJson(completionPayload(event, result)));
             return;
         }
         ItineraryService.CreateItineraryResult result =
@@ -98,9 +98,64 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         persistFactImpacts(event, result.versionId());
         updateTaskToSucceeded(
                 event, task, result, "PLANNING_COMPLETED",
-                writeJson(new CompletionPayload(SUCCEEDED, event.runId(),
-                        result.versionId(), result.versionNumber(),
-                        result.provider())));
+                writeJson(completionPayload(event, result)));
+    }
+
+    private CompletionPayload completionPayload(
+            PlanningCompletedEvent event,
+            ItineraryService.CreateItineraryResult result
+    ) {
+        PlanningCompletedEvent.ProviderProvenance provenance =
+                event.payload().providerProvenance();
+        if (provenance == null) {
+            return new CompletionPayload(
+                    SUCCEEDED, event.runId(), result.versionId(),
+                    result.versionNumber(), result.provider(), null, null,
+                    null, null, null, null, null
+            );
+        }
+        return new CompletionPayload(
+                SUCCEEDED, event.runId(), result.versionId(), result.versionNumber(),
+                result.provider(), provenance.requestedProviderMode(),
+                provenance.primaryProvider(), provenance.actualProviders(),
+                provenance.fallbackAttempted(), provenance.fallbackSucceeded(),
+                provenance.fallbackReason(), remapFallbackOperations(
+                        provenance.fallbackOperations(), result.persistedTransit())
+        );
+    }
+
+    private List<CompletionFallbackOperation> remapFallbackOperations(
+            List<PlanningCompletedEvent.FallbackOperation> operations,
+            List<ItineraryService.PersistedTransitReference> persistedTransit) {
+        return operations.stream()
+                .map(operation -> remapFallbackOperation(operation, persistedTransit))
+                .toList();
+    }
+
+    private CompletionFallbackOperation remapFallbackOperation(
+            PlanningCompletedEvent.FallbackOperation operation,
+            List<ItineraryService.PersistedTransitReference> persistedTransit) {
+        if (operation.operation() != PlanningCompletedEvent.ProviderOperation.ROUTE) {
+            return CompletionFallbackOperation.from(operation);
+        }
+        List<ItineraryService.PersistedTransitReference> matches = persistedTransit.stream()
+                .filter(reference -> Objects.equals(
+                                reference.sourceTransitId(), operation.transitId())
+                        && Objects.equals(reference.sourceFromActivityId(),
+                                operation.fromActivityId())
+                        && Objects.equals(reference.sourceToActivityId(),
+                                operation.toActivityId()))
+                .toList();
+        if (matches.size() != 1) {
+            throw rejected("Fallback operation could not be mapped to persisted transit identity");
+        }
+        ItineraryService.PersistedTransitReference match = matches.getFirst();
+        return new CompletionFallbackOperation(
+                operation.operation(), match.transitId(), match.fromActivityId(),
+                match.toActivityId(), operation.requestedMode(),
+                operation.actualProvider(), operation.errorCategory(),
+                operation.errorCode(), operation.retryCount()
+        );
     }
 
     private void persistFactImpacts(
@@ -235,8 +290,38 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
             UUID runId,
             UUID itineraryVersionId,
             int itineraryVersionNumber,
-            String provider
+            String provider,
+            PlanningCompletedEvent.ProviderExecutionMode requestedProviderMode,
+            PlanningCompletedEvent.ProviderSource primaryProvider,
+            List<PlanningCompletedEvent.ProviderSource> actualProviders,
+            Boolean fallbackAttempted,
+            Boolean fallbackSucceeded,
+            String fallbackReason,
+            List<CompletionFallbackOperation> fallbackOperations
     ) {
+    }
+
+    private record CompletionFallbackOperation(
+            PlanningCompletedEvent.ProviderOperation operation,
+            UUID transitId,
+            UUID fromActivityId,
+            UUID toActivityId,
+            PlanningCompletedEvent.ProviderExecutionMode requestedMode,
+            PlanningCompletedEvent.ProviderSource actualProvider,
+            PlanningCompletedEvent.ProviderErrorCategory errorCategory,
+            String errorCode,
+            int retryCount
+    ) {
+        private static CompletionFallbackOperation from(
+                PlanningCompletedEvent.FallbackOperation operation) {
+            return new CompletionFallbackOperation(
+                    operation.operation(), operation.transitId(),
+                    operation.fromActivityId(), operation.toActivityId(),
+                    operation.requestedMode(), operation.actualProvider(),
+                    operation.errorCategory(), operation.errorCode(),
+                    operation.retryCount()
+            );
+        }
     }
 
     private record FailurePayload(String status, String errorCode, String message) {

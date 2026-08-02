@@ -2,24 +2,41 @@ import asyncio
 import json
 from copy import deepcopy
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from jsonschema import Draft202012Validator
 from test_planning_context_v3 import _v3_command
 
 from trip_agent.worker.contracts import (
+    ActivityCoordinates,
+    Itinerary,
+    ItineraryActivity,
+    ItineraryDay,
+    KnowledgeEvidence,
+    KnowledgeFreshness,
+    PlanningCompletedEvent,
+    PlanningCompletedPayload,
     PlanningConflict,
     PlanningCreateCommand,
-    PlanningFailedEvent,
-    PlanningFailedPayload,
+    PlanningFailedEventV1,
+    PlanningFailedPayloadV1,
     PlanningProgressEvent,
     PlanningProgressPayload,
     PlanningRelaxation,
+    TransitLeg,
 )
 from trip_agent.worker.processor import DemoPlanningProvider, process_planning_create
 
 CONTRACT_DIRECTORY = Path(__file__).parents[3] / "contracts" / "messaging"
+COMPLETION_V6_FIXTURE_DIRECTORY = (
+    Path(__file__).parents[3]
+    / "contracts"
+    / "fixtures"
+    / "planning-completed-event-v6"
+)
 ACTIVE_SCHEMA_FILES = (
     "city-intelligence-refresh-command-v1.schema.json",
     "planning-cancel-command-v1.schema.json",
@@ -29,6 +46,7 @@ ACTIVE_SCHEMA_FILES = (
     "planning-create-command-v2.schema.json",
     "planning-create-command-v3.schema.json",
     "planning-failed-event-v1.schema.json",
+    "planning-failed-event-v2.schema.json",
     "planning-progress-event-v1.schema.json",
     "planning-replan-command-v1.schema.json",
 )
@@ -75,6 +93,124 @@ def test_v6_completed_event_contract_accepts_worker_output() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "fixture_name",
+    (
+        "completion-v6-legacy-amap.json",
+        "completion-v6-demo.json",
+        "completion-v6-real-only-amap.json",
+        "completion-v6-explicit-fallback-mixed.json",
+        "completion-v6-multi-transit-mixed.json",
+    ),
+)
+def test_completion_v6_shared_fixtures_match_the_active_schema(
+    fixture_name: str,
+) -> None:
+    fixture = json.loads(
+        (COMPLETION_V6_FIXTURE_DIRECTORY / fixture_name).read_text(encoding="utf-8")
+    )
+
+    Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).validate(
+        fixture
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("requestedProviderMode", "REAL_ONLY"),
+        ("actualProviders", []),
+        ("fallbackAttempted", False),
+        ("fallbackOperations", []),
+    ),
+)
+def test_completion_v6_schema_rejects_illegal_provenance_combinations(
+    field: str, value: object
+) -> None:
+    fixture = json.loads(
+        (
+            COMPLETION_V6_FIXTURE_DIRECTORY
+            / "completion-v6-explicit-fallback-mixed.json"
+        ).read_text(encoding="utf-8")
+    )
+    fixture["payload"]["providerProvenance"][field] = value
+
+    errors = list(
+        Draft202012Validator(
+            _load_schema("planning-completed-event-v6.schema.json")
+        ).iter_errors(fixture)
+    )
+
+    assert errors
+
+
+def test_v6_completed_event_contract_accepts_worker_output_with_a_transit_leg() -> None:
+    event = PlanningCompletedEvent(
+        event_type="PLANNING_COMPLETED",
+        schema_version=6,
+        event_id=UUID("5aa31052-2c21-53af-bddb-6a86614d801b"),
+        trace_id=UUID("ea930620-41a7-4fdc-b6d1-d298a850112a"),
+        task_id=UUID("dfb858fc-b910-4056-a375-2366dcaab690"),
+        trip_id=UUID("d209daf2-f004-42cc-8385-510825f40fe1"),
+        run_id=UUID("3b85b6b6-9e42-433b-90ef-d94a3eb26e18"),
+        occurred_at=datetime(2026, 7, 26, 8, 0, tzinfo=UTC),
+        payload=PlanningCompletedPayload(
+            provider="DEMO",
+            itinerary=Itinerary(
+                title="Demo itinerary",
+                estimated_total_cost=Decimal("0"),
+                days=(
+                    ItineraryDay(
+                        date=datetime(2026, 8, 1, tzinfo=UTC).date(),
+                        activities=(
+                            ItineraryActivity(
+                                title="Museum",
+                                start_time=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
+                                end_time=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
+                                estimated_cost=Decimal("0"),
+                                source="DEMO",
+                            ),
+                            ItineraryActivity(
+                                title="Park",
+                                start_time=datetime(2026, 8, 1, 11, 0, tzinfo=UTC),
+                                end_time=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+                                estimated_cost=Decimal("0"),
+                                source="DEMO",
+                            ),
+                        ),
+                        transit_legs=(
+                            TransitLeg(
+                                from_activity_index=0,
+                                to_activity_index=1,
+                                mode="WALKING",
+                                distance_meters=100,
+                                duration_seconds=300,
+                                provider="DEMO",
+                                estimated=True,
+                                polyline=(ActivityCoordinates(longitude=0, latitude=0),),
+                                estimated_cost=Decimal("0"),
+                                cost_source="DEMO",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            knowledge=KnowledgeEvidence(
+                status="UNAVAILABLE",
+                query="demo",
+                citations=(),
+                freshness=KnowledgeFreshness(status="UNAVAILABLE"),
+                message="No production knowledge was used",
+            ),
+            fact_impacts=(),
+        ),
+    )
+
+    Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).validate(
+        event.model_dump(mode="json", by_alias=True, exclude_none=True)
+    )
+
+
 def test_progress_event_model_matches_its_json_schema() -> None:
     event = PlanningProgressEvent(
         event_type="PLANNING_PROGRESS",
@@ -108,7 +244,7 @@ def test_every_active_messaging_schema_is_a_valid_draft_2020_12_schema() -> None
 
 
 def test_planning_failed_event_model_matches_its_json_schema() -> None:
-    event = PlanningFailedEvent(
+    event = PlanningFailedEventV1(
         event_type="PLANNING_FAILED",
         schema_version=1,
         event_id=UUID("38e10d2b-fd84-55ae-97dc-a1e00cac682b"),
@@ -117,7 +253,7 @@ def test_planning_failed_event_model_matches_its_json_schema() -> None:
         trip_id=UUID("d209daf2-f004-42cc-8385-510825f40fe1"),
         run_id=UUID("3b85b6b6-9e42-433b-90ef-d94a3eb26e18"),
         occurred_at=datetime(2026, 7, 26, 8, 0, tzinfo=UTC),
-        payload=PlanningFailedPayload(
+        payload=PlanningFailedPayloadV1(
             status="FAILED",
             error_code="NO_FEASIBLE_ITINERARY",
             message="时间、交通与固定安排无法同时满足",

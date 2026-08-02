@@ -21,14 +21,24 @@ public record PlanningCompletedEvent(
             String provider,
             Itinerary itinerary,
             KnowledgeEvidence knowledge,
-            List<FactImpact> factImpacts
+            List<FactImpact> factImpacts,
+            ProviderProvenance providerProvenance
     ) {
         public Payload(
                 String provider,
                 Itinerary itinerary,
                 KnowledgeEvidence knowledge
         ) {
-            this(provider, itinerary, knowledge, List.of());
+            this(provider, itinerary, knowledge, List.of(), null);
+        }
+
+        public Payload(
+                String provider,
+                Itinerary itinerary,
+                KnowledgeEvidence knowledge,
+                List<FactImpact> factImpacts
+        ) {
+            this(provider, itinerary, knowledge, factImpacts, null);
         }
 
         public Payload {
@@ -46,6 +56,7 @@ public record PlanningCompletedEvent(
     }
 
     public record Activity(
+            UUID activityId,
             String title,
             OffsetDateTime startTime,
             OffsetDateTime endTime,
@@ -61,6 +72,7 @@ public record PlanningCompletedEvent(
     }
 
     public record TransitLeg(
+            UUID transitId,
             int fromActivityIndex,
             int toActivityIndex,
             String mode,
@@ -76,6 +88,62 @@ public record PlanningCompletedEvent(
             polyline = polyline == null ? List.of() : List.copyOf(polyline);
             costSource = costSource == null || costSource.isBlank() ? "UNKNOWN" : costSource;
         }
+    }
+
+    public enum ProviderExecutionMode {
+        DEMO_ONLY,
+        REAL_ONLY,
+        REAL_WITH_EXPLICIT_FALLBACK
+    }
+
+    public enum ProviderSource {
+        AMAP,
+        DEMO
+    }
+
+    public enum ProviderOperation {
+        PLANNING,
+        REPLANNING,
+        ROUTE
+    }
+
+    public enum ProviderErrorCategory {
+        QUOTA_EXCEEDED,
+        RATE_LIMITED,
+        TIMEOUT,
+        NETWORK_ERROR,
+        PROVIDER_UNAVAILABLE,
+        MALFORMED_RESPONSE
+    }
+
+    public record ProviderProvenance(
+            ProviderExecutionMode requestedProviderMode,
+            ProviderSource primaryProvider,
+            List<ProviderSource> actualProviders,
+            boolean fallbackAttempted,
+            boolean fallbackSucceeded,
+            String fallbackReason,
+            List<FallbackOperation> fallbackOperations
+    ) {
+        public ProviderProvenance {
+            actualProviders = actualProviders == null
+                    ? List.of() : List.copyOf(actualProviders);
+            fallbackOperations = fallbackOperations == null
+                    ? List.of() : List.copyOf(fallbackOperations);
+        }
+    }
+
+    public record FallbackOperation(
+            ProviderOperation operation,
+            UUID transitId,
+            UUID fromActivityId,
+            UUID toActivityId,
+            ProviderExecutionMode requestedMode,
+            ProviderSource actualProvider,
+            ProviderErrorCategory errorCategory,
+            String errorCode,
+            int retryCount
+    ) {
     }
 
     public record KnowledgeEvidence(

@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.cityintelligence.CityIntelligencePlanningPreflightService;
 import io.github.tobehardoo.trippilot.common.ApiException;
@@ -102,6 +103,17 @@ public class PlanningTaskService {
             throw new IllegalStateException("Planning transaction returned no response");
         }
         return response;
+    }
+
+    @Transactional(readOnly = true)
+    public PlanningTaskResponse get(UUID ownerId, UUID taskId) {
+        return planningTaskMapper.findOwnedById(taskId, ownerId)
+                .map(this::toResponse)
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.NOT_FOUND,
+                        "PLANNING_TASK_NOT_FOUND",
+                        "Planning task was not found"
+                ));
     }
 
     private PlanningTaskResponse createTransactional(
@@ -322,8 +334,17 @@ public class PlanningTaskService {
             return new ReplanDaySnapshot(day.date(), activities, transitLegs);
         }).toList();
         return new ReplanItinerarySnapshot(
-                itinerary.title(), itinerary.provider(), days, itinerary.estimatedTotalCost()
+                itinerary.title(), planningProvider(itinerary), days,
+                itinerary.estimatedTotalCost()
         );
+    }
+
+    private String planningProvider(ItineraryService.ItineraryResponse itinerary) {
+        return itinerary.days().stream()
+                .flatMap(day -> day.activities().stream())
+                .map(ItineraryService.ActivityResponse::source)
+                .findFirst()
+                .orElse(itinerary.provider());
     }
 
     @Transactional
@@ -370,10 +391,117 @@ public class PlanningTaskService {
     }
 
     private PlanningTaskResponse toResponse(PlanningTaskRecord task) {
+        TerminalMetadata metadata = terminalMetadata(task);
         return new PlanningTaskResponse(
                 task.id(), task.tripId(), task.taskType(), task.status(), task.baselineTripVersion(),
-                "/api/planning-tasks/" + task.id() + "/events", task.createdAt(), task.updatedAt()
+                "/api/planning-tasks/" + task.id() + "/events",
+                metadata.errorCode(), metadata.errorCategory(), metadata.provider(),
+                metadata.operation(), metadata.retryable(), metadata.retryCount(),
+                metadata.fallbackAttempted(), metadata.fallbackSucceeded(),
+                metadata.safeMessage(), metadata.safeProviderCode(),
+                metadata.requestedProviderMode(), metadata.primaryProvider(),
+                metadata.actualProviders(), metadata.fallbackReason(),
+                metadata.fallbackOperations(), task.createdAt(), task.updatedAt()
         );
+    }
+
+    private TerminalMetadata terminalMetadata(PlanningTaskRecord task) {
+        return planningTaskEventMapper.findLatestTerminal(task.id())
+                .map(event -> readTerminalMetadata(task, event.payloadJson()))
+                .orElseGet(() -> new TerminalMetadata(
+                        task.errorCode(), null, null, null, null, null,
+                        null, null, task.errorMessage(), null, null, null,
+                        List.of(), null, List.of()
+                ));
+    }
+
+    private TerminalMetadata readTerminalMetadata(PlanningTaskRecord task, String payloadJson) {
+        try {
+            JsonNode payload = objectMapper.readTree(payloadJson);
+            return new TerminalMetadata(
+                    text(payload, "errorCode", task.errorCode()),
+                    text(payload, "errorCategory", legacyErrorCategory(task.errorCode())),
+                    text(payload, "provider", null),
+                    text(payload, "operation", null),
+                    optionalBoolean(payload, "retryable"),
+                    optionalInteger(payload, "retryCount"),
+                    optionalBoolean(payload, "fallbackAttempted"),
+                    optionalBoolean(payload, "fallbackSucceeded"),
+                    text(payload, "safeMessage", text(payload, "message", task.errorMessage())),
+                    text(payload, "safeProviderCode", null),
+                    text(payload, "requestedProviderMode", null),
+                    text(payload, "primaryProvider", null),
+                    nullableStringList(payload, "actualProviders"),
+                    text(payload, "fallbackReason", null),
+                    fallbackOperationList(payload, "fallbackOperations")
+            );
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Planning task terminal event is invalid", exception);
+        }
+    }
+
+    private String legacyErrorCategory(String errorCode) {
+        return "NO_FEASIBLE_ITINERARY".equals(errorCode)
+                ? "PLANNING_INFEASIBLE" : null;
+    }
+
+    private String text(JsonNode payload, String field, String fallback) {
+        JsonNode value = payload.get(field);
+        return value == null || value.isNull() ? fallback : value.asText();
+    }
+
+    private Boolean optionalBoolean(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        return value == null || value.isNull() ? null : value.asBoolean();
+    }
+
+    private Integer optionalInteger(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        return value == null || value.isNull() ? null : value.asInt();
+    }
+
+    private List<String> nullableStringList(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (!value.isArray()) {
+            throw new IllegalStateException(
+                    "Planning task terminal event field must be an array: " + field);
+        }
+        java.util.ArrayList<String> result = new java.util.ArrayList<>();
+        value.forEach(item -> result.add(item.asText()));
+        return List.copyOf(result);
+    }
+
+    private List<FallbackOperationResponse> fallbackOperationList(
+            JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (!value.isArray()) {
+            throw new IllegalStateException(
+                    "Planning task terminal event field must be an array: " + field);
+        }
+        java.util.ArrayList<FallbackOperationResponse> result = new java.util.ArrayList<>();
+        value.forEach(item -> result.add(new FallbackOperationResponse(
+                text(item, "operation", null), optionalUuid(item, "transitId"),
+                optionalUuid(item, "fromActivityId"),
+                optionalUuid(item, "toActivityId"),
+                text(item, "requestedMode", null),
+                text(item, "actualProvider", null),
+                text(item, "errorCategory", null),
+                text(item, "errorCode", null),
+                item.path("retryCount").asInt()
+        )));
+        return List.copyOf(result);
+    }
+
+    private UUID optionalUuid(JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        return value == null || value.isNull()
+                ? null : UUID.fromString(value.asText());
     }
 
     @Transactional(readOnly = true)
@@ -396,8 +524,55 @@ public class PlanningTaskService {
             String status,
             int baselineTripVersion,
             String eventStreamUrl,
+            String errorCode,
+            String errorCategory,
+            String provider,
+            String operation,
+            Boolean retryable,
+            Integer retryCount,
+            Boolean fallbackAttempted,
+            Boolean fallbackSucceeded,
+            String safeMessage,
+            String safeProviderCode,
+            String requestedProviderMode,
+            String primaryProvider,
+            List<String> actualProviders,
+            String fallbackReason,
+            List<FallbackOperationResponse> fallbackOperations,
             Instant createdAt,
             Instant updatedAt
+    ) {
+    }
+
+    private record TerminalMetadata(
+            String errorCode,
+            String errorCategory,
+            String provider,
+            String operation,
+            Boolean retryable,
+            Integer retryCount,
+            Boolean fallbackAttempted,
+            Boolean fallbackSucceeded,
+            String safeMessage,
+            String safeProviderCode,
+            String requestedProviderMode,
+            String primaryProvider,
+            List<String> actualProviders,
+            String fallbackReason,
+            List<FallbackOperationResponse> fallbackOperations
+    ) {
+    }
+
+    public record FallbackOperationResponse(
+            String operation,
+            UUID transitId,
+            UUID fromActivityId,
+            UUID toActivityId,
+            String requestedMode,
+            String actualProvider,
+            String errorCategory,
+            String errorCode,
+            int retryCount
     ) {
     }
 

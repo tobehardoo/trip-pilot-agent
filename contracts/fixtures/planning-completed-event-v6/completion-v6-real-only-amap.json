@@ -1,0 +1,74 @@
+{
+  "eventType": "PLANNING_COMPLETED",
+  "schemaVersion": 6,
+  "eventId": "01000000-0000-4000-8000-000000000003",
+  "traceId": "02000000-0000-4000-8000-000000000003",
+  "taskId": "03000000-0000-4000-8000-000000000003",
+  "tripId": "04000000-0000-4000-8000-000000000003",
+  "runId": "05000000-0000-4000-8000-000000000003",
+  "occurredAt": "2026-08-01T01:00:00Z",
+  "payload": {
+    "provider": "AMAP",
+    "itinerary": {
+      "title": "Real-only AMap itinerary",
+      "days": [{
+        "date": "2026-08-01",
+        "activities": [
+          {
+            "activityId": "10000000-0000-4000-8000-000000000011",
+            "title": "Museum",
+            "startTime": "2026-08-01T09:00:00+08:00",
+            "endTime": "2026-08-01T10:00:00+08:00",
+            "estimatedCost": 0,
+            "source": "AMAP",
+            "providerPoiId": "POI-REAL-1",
+            "coordinates": {"longitude": 113.319263, "latitude": 23.109078},
+            "address": "Museum address"
+          },
+          {
+            "activityId": "10000000-0000-4000-8000-000000000012",
+            "title": "Tower",
+            "startTime": "2026-08-01T11:00:00+08:00",
+            "endTime": "2026-08-01T12:00:00+08:00",
+            "estimatedCost": 0,
+            "source": "AMAP",
+            "providerPoiId": "POI-REAL-2",
+            "coordinates": {"longitude": 113.324553, "latitude": 23.106414},
+            "address": "Tower address"
+          }
+        ],
+        "transitLegs": [{
+          "transitId": "20000000-0000-4000-8000-000000000011",
+          "fromActivityIndex": 0,
+          "toActivityIndex": 1,
+          "mode": "WALKING",
+          "distanceMeters": 500,
+          "durationSeconds": 600,
+          "provider": "AMAP",
+          "estimated": false,
+          "polyline": [
+            {"longitude": 113.319263, "latitude": 23.109078},
+            {"longitude": 113.324553, "latitude": 23.106414}
+          ]
+        }]
+      }],
+      "estimatedTotalCost": 0
+    },
+    "knowledge": {
+      "status": "UNAVAILABLE",
+      "query": "real-only fixture",
+      "citations": [],
+      "freshness": {"status": "UNAVAILABLE"},
+      "message": "No knowledge fixture"
+    },
+    "factImpacts": [],
+    "providerProvenance": {
+      "requestedProviderMode": "REAL_ONLY",
+      "primaryProvider": "AMAP",
+      "actualProviders": ["AMAP"],
+      "fallbackAttempted": false,
+      "fallbackSucceeded": false,
+      "fallbackOperations": []
+    }
+  }
+}

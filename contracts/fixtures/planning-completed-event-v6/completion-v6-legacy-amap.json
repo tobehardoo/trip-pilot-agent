@@ -1,0 +1,39 @@
+{
+  "eventType": "PLANNING_COMPLETED",
+  "schemaVersion": 6,
+  "eventId": "01000000-0000-4000-8000-000000000001",
+  "traceId": "02000000-0000-4000-8000-000000000001",
+  "taskId": "03000000-0000-4000-8000-000000000001",
+  "tripId": "04000000-0000-4000-8000-000000000001",
+  "runId": "05000000-0000-4000-8000-000000000001",
+  "occurredAt": "2026-08-01T01:00:00Z",
+  "payload": {
+    "provider": "AMAP",
+    "itinerary": {
+      "title": "Legacy AMap itinerary",
+      "days": [{
+        "date": "2026-08-01",
+        "activities": [{
+          "title": "Museum",
+          "startTime": "2026-08-01T09:00:00+08:00",
+          "endTime": "2026-08-01T10:00:00+08:00",
+          "estimatedCost": 0,
+          "source": "AMAP",
+          "providerPoiId": "POI-LEGACY-1",
+          "coordinates": {"longitude": 113.319263, "latitude": 23.109078},
+          "address": "Legacy address"
+        }],
+        "transitLegs": []
+      }],
+      "estimatedTotalCost": 0
+    },
+    "knowledge": {
+      "status": "UNAVAILABLE",
+      "query": "legacy fixture",
+      "citations": [],
+      "freshness": {"status": "UNAVAILABLE"},
+      "message": "Historical v6 did not record provider provenance"
+    },
+    "factImpacts": []
+  }
+}

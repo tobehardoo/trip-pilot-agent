@@ -3,7 +3,9 @@ package io.github.tobehardoo.trippilot.infrastructure.mq;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -62,6 +64,9 @@ public class PlanningCompletedEventParser {
         JsonNode itinerary = payload.path("itinerary");
         JsonNode days = itinerary.path("days");
         int schemaVersion = event.path("schemaVersion").asInt();
+        if (schemaVersion < 1 || schemaVersion > 6) {
+            throw invalid("unsupported eventType or schemaVersion");
+        }
         if (!payload.isObject() || !payload.path("provider").isTextual()
                 || !itinerary.isObject() || !itinerary.path("title").isTextual()
                 || !itinerary.path("estimatedTotalCost").isNumber() || !days.isArray()) {
@@ -69,6 +74,7 @@ public class PlanningCompletedEventParser {
         }
         validateKnowledgeTypes(payload, schemaVersion);
         validateFactImpactTypes(payload, schemaVersion);
+        validateProviderProvenanceTypes(payload, schemaVersion);
         for (JsonNode day : days) {
             JsonNode activities = day.path("activities");
             if (!day.isObject() || !day.path("date").isTextual() || !activities.isArray()) {
@@ -83,6 +89,10 @@ public class PlanningCompletedEventParser {
                     throw invalid("activity field types do not match the JSON Schema");
                 }
                 validateActivityMetadataTypes(activity);
+                if (activity.has("activityId")
+                        && (schemaVersion != 6 || !activity.path("activityId").isTextual())) {
+                    throw invalid("activityId is only supported as a UUID string in schema v6");
+                }
             }
             validateTransitLegTypes(day, schemaVersion);
         }
@@ -123,6 +133,54 @@ public class PlanningCompletedEventParser {
                 throw invalid("fact impact field types do not match the JSON Schema");
             }
         }
+    }
+
+    private void validateProviderProvenanceTypes(JsonNode payload, int schemaVersion) {
+        if (!payload.has("providerProvenance")) {
+            return;
+        }
+        if (schemaVersion != 6) {
+            throw invalid("provider provenance is only supported in schema v6");
+        }
+        JsonNode provenance = payload.path("providerProvenance");
+        JsonNode actualProviders = provenance.path("actualProviders");
+        JsonNode operations = provenance.path("fallbackOperations");
+        if (!provenance.isObject()
+                || !provenance.path("requestedProviderMode").isTextual()
+                || !provenance.path("primaryProvider").isTextual()
+                || !actualProviders.isArray()
+                || !provenance.path("fallbackAttempted").isBoolean()
+                || !provenance.path("fallbackSucceeded").isBoolean()
+                || !operations.isArray()
+                || provenance.has("fallbackReason")
+                    && !provenance.path("fallbackReason").isNull()
+                    && !provenance.path("fallbackReason").isTextual()) {
+            throw invalid("provider provenance field types do not match the JSON Schema");
+        }
+        actualProviders.forEach(provider -> {
+            if (!provider.isTextual()) {
+                throw invalid("actualProviders must contain provider names");
+            }
+        });
+        for (JsonNode operation : operations) {
+            if (!operation.isObject()
+                    || !operation.path("operation").isTextual()
+                    || !nullableText(operation, "transitId")
+                    || !nullableText(operation, "fromActivityId")
+                    || !nullableText(operation, "toActivityId")
+                    || !operation.path("requestedMode").isTextual()
+                    || !operation.path("actualProvider").isTextual()
+                    || !operation.path("errorCategory").isTextual()
+                    || !operation.path("errorCode").isTextual()
+                    || !operation.path("retryCount").isIntegralNumber()) {
+                throw invalid("fallback operation field types do not match the JSON Schema");
+            }
+        }
+    }
+
+    private boolean nullableText(JsonNode object, String field) {
+        JsonNode value = object.get(field);
+        return value != null && (value.isNull() || value.isTextual());
     }
 
     private void validateKnowledgeTypes(JsonNode payload, int schemaVersion) {
@@ -188,6 +246,10 @@ public class PlanningCompletedEventParser {
                     || !leg.path("polyline").isArray()) {
                 throw invalid("transit leg field types do not match the JSON Schema");
             }
+            if (leg.has("transitId")
+                    && (schemaVersion != 6 || !leg.path("transitId").isTextual())) {
+                throw invalid("transitId is only supported as a UUID string in schema v6");
+            }
             for (JsonNode point : leg.path("polyline")) {
                 if (!point.isObject() || !point.path("longitude").isNumber()
                         || !point.path("latitude").isNumber()) {
@@ -249,6 +311,141 @@ public class PlanningCompletedEventParser {
         }
         validateKnowledge(event.schemaVersion(), event.payload().knowledge());
         validateFactImpacts(event.schemaVersion(), event.payload().factImpacts());
+        validateProviderProvenance(event);
+    }
+
+    private void validateProviderProvenance(PlanningCompletedEvent event) {
+        PlanningCompletedEvent.ProviderProvenance provenance =
+                event.payload().providerProvenance();
+        if (provenance == null) {
+            return;
+        }
+        if (event.schemaVersion() != 6
+                || provenance.requestedProviderMode() == null
+                || provenance.primaryProvider() == null
+                || provenance.actualProviders().isEmpty()
+                || provenance.actualProviders().size() > 2
+                || new HashSet<>(provenance.actualProviders()).size()
+                    != provenance.actualProviders().size()
+                || provenance.fallbackOperations().size() > 100) {
+            throw invalid("provider provenance is invalid");
+        }
+
+        Set<PlanningCompletedEvent.ProviderSource> observedProviders = new HashSet<>();
+        event.payload().itinerary().days().forEach(day -> {
+            day.activities().forEach(activity -> observedProviders.add(
+                    PlanningCompletedEvent.ProviderSource.valueOf(activity.source())
+            ));
+            day.transitLegs().forEach(leg -> observedProviders.add(
+                    PlanningCompletedEvent.ProviderSource.valueOf(leg.provider())
+            ));
+        });
+        List<PlanningCompletedEvent.ProviderSource> canonicalProviders =
+                observedProviders.stream().sorted().toList();
+        if (!provenance.actualProviders().equals(canonicalProviders)) {
+            throw invalid("actualProviders must exactly match final activity and transit sources");
+        }
+        if (provenance.fallbackAttempted() != provenance.fallbackSucceeded()) {
+            throw invalid("successful completion cannot contain a failed fallback");
+        }
+        if (provenance.fallbackAttempted()) {
+            if (!validCode(provenance.fallbackReason())
+                    || provenance.fallbackOperations().isEmpty()) {
+                throw invalid("successful fallback requires reason and operation evidence");
+            }
+        } else if (provenance.fallbackReason() != null
+                || !provenance.fallbackOperations().isEmpty()) {
+            throw invalid("non-fallback completion must not contain fallback evidence");
+        }
+
+        switch (provenance.requestedProviderMode()) {
+            case DEMO_ONLY -> {
+                if (provenance.primaryProvider() != PlanningCompletedEvent.ProviderSource.DEMO
+                        || !provenance.actualProviders().equals(
+                                List.of(PlanningCompletedEvent.ProviderSource.DEMO))
+                        || provenance.fallbackAttempted()) {
+                    throw invalid("DEMO_ONLY completion must only contain DEMO evidence");
+                }
+            }
+            case REAL_ONLY -> {
+                if (provenance.primaryProvider() != PlanningCompletedEvent.ProviderSource.AMAP
+                        || !provenance.actualProviders().equals(
+                                List.of(PlanningCompletedEvent.ProviderSource.AMAP))
+                        || provenance.fallbackAttempted()) {
+                    throw invalid("REAL_ONLY completion must only contain AMAP evidence");
+                }
+            }
+            case REAL_WITH_EXPLICIT_FALLBACK -> {
+                if (provenance.primaryProvider() != PlanningCompletedEvent.ProviderSource.AMAP
+                        || provenance.fallbackAttempted()
+                            && !provenance.actualProviders().contains(
+                                    PlanningCompletedEvent.ProviderSource.DEMO)
+                        || !provenance.fallbackAttempted()
+                            && !provenance.actualProviders().equals(
+                                    List.of(PlanningCompletedEvent.ProviderSource.AMAP))) {
+                    throw invalid("explicit fallback completion has inconsistent provider evidence");
+                }
+            }
+        }
+        validateFallbackOperations(event, provenance);
+    }
+
+    private void validateFallbackOperations(
+            PlanningCompletedEvent event,
+            PlanningCompletedEvent.ProviderProvenance provenance
+    ) {
+        Set<PlanningCompletedEvent.FallbackOperation> uniqueOperations = new HashSet<>();
+        for (PlanningCompletedEvent.FallbackOperation operation
+                : provenance.fallbackOperations()) {
+            if (operation == null
+                    || !uniqueOperations.add(operation)
+                    || operation.requestedMode() != provenance.requestedProviderMode()
+                    || operation.actualProvider() != PlanningCompletedEvent.ProviderSource.DEMO
+                    || operation.errorCategory() == null
+                    || !validCode(operation.errorCode())
+                    || operation.retryCount() < 0 || operation.retryCount() > 10) {
+                throw invalid("fallback operation evidence is invalid");
+            }
+            if (operation.operation() != PlanningCompletedEvent.ProviderOperation.ROUTE) {
+                if (operation.transitId() != null || operation.fromActivityId() != null
+                        || operation.toActivityId() != null) {
+                    throw invalid("whole-plan fallback must not claim a transit identity");
+                }
+                continue;
+            }
+            validateRouteFallbackIdentity(event, operation);
+        }
+    }
+
+    private void validateRouteFallbackIdentity(
+            PlanningCompletedEvent event,
+            PlanningCompletedEvent.FallbackOperation operation
+    ) {
+        int matches = 0;
+        for (PlanningCompletedEvent.Day day : event.payload().itinerary().days()) {
+            for (PlanningCompletedEvent.TransitLeg leg : day.transitLegs()) {
+                if (!java.util.Objects.equals(operation.transitId(), leg.transitId())) {
+                    continue;
+                }
+                PlanningCompletedEvent.Activity origin =
+                        day.activities().get(leg.fromActivityIndex());
+                PlanningCompletedEvent.Activity destination =
+                        day.activities().get(leg.toActivityIndex());
+                if (!java.util.Objects.equals(operation.fromActivityId(), origin.activityId())
+                        || !java.util.Objects.equals(operation.toActivityId(), destination.activityId())
+                        || !"DEMO".equals(leg.provider()) || !leg.estimated()) {
+                    throw invalid("fallback operation must match one transit identity");
+                }
+                matches++;
+            }
+        }
+        if (matches != 1) {
+            throw invalid("fallback operation must match one transit identity");
+        }
+    }
+
+    private boolean validCode(String value) {
+        return validText(value, 60) && value.matches("[A-Z0-9_]+");
     }
 
     private void validateFactImpacts(
@@ -411,16 +608,22 @@ public class PlanningCompletedEventParser {
         if (day.transitLegs().size() != expectedCount) {
             throw invalid("transit legs must connect every adjacent activity");
         }
-        for (int index = 0; index < day.transitLegs().size(); index++) {
-            PlanningCompletedEvent.TransitLeg leg = day.transitLegs().get(index);
-            if (leg.fromActivityIndex() != index || leg.toActivityIndex() != index + 1) {
+        Set<String> endpoints = new HashSet<>();
+        for (PlanningCompletedEvent.TransitLeg leg : day.transitLegs()) {
+            int fromIndex = leg.fromActivityIndex();
+            int toIndex = leg.toActivityIndex();
+            if (fromIndex < 0 || toIndex != fromIndex + 1
+                    || toIndex >= day.activities().size()) {
                 throw invalid("transit legs must connect adjacent activities in order");
+            }
+            if (!endpoints.add(fromIndex + ":" + toIndex)) {
+                throw invalid("transit legs must use unique adjacent activity endpoints");
             }
             if (!validTransitLeg(leg, schemaVersion)) {
                 throw invalid("transit leg fields are invalid");
             }
-            PlanningCompletedEvent.Activity origin = day.activities().get(index);
-            PlanningCompletedEvent.Activity destination = day.activities().get(index + 1);
+            PlanningCompletedEvent.Activity origin = day.activities().get(fromIndex);
+            PlanningCompletedEvent.Activity destination = day.activities().get(toIndex);
             if (origin.endTime().plusSeconds(leg.durationSeconds())
                     .isAfter(destination.startTime())) {
                 throw invalid("transit leg travel time must fit between activities");

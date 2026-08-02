@@ -10,12 +10,15 @@ from typing import Protocol
 from uuid import UUID
 
 from trip_agent.planning.optimization import OptimizationConflict, RelaxationSuggestion
+from trip_agent.providers.errors import PlanningProviderError
 from trip_agent.providers.map import MapProviderName, Poi
 from trip_agent.worker.contracts import (
+    FallbackOperation,
     Itinerary,
     KnowledgeEvidence,
     PlanningCreateCommand,
     PlanningReplanCommand,
+    ProviderProvenance,
 )
 
 
@@ -47,6 +50,35 @@ class PlanningResult:
     provider: MapProviderName
     itinerary: Itinerary
     guide_fact_ids: tuple[UUID, ...] = ()
+    requested_provider_mode: str | None = None
+    primary_provider: str | None = None
+    actual_providers: tuple[str, ...] = ()
+    fallback_attempted: bool = False
+    fallback_succeeded: bool = False
+    fallback_reason: str | None = None
+    fallback_operations: tuple[FallbackOperation, ...] = ()
+
+    def provider_provenance(self) -> ProviderProvenance | None:
+        if self.requested_provider_mode is None:
+            if (
+                self.primary_provider is not None
+                or self.actual_providers
+                or self.fallback_attempted
+                or self.fallback_succeeded
+                or self.fallback_reason is not None
+                or self.fallback_operations
+            ):
+                raise ValueError("partial provider provenance is not publishable")
+            return None
+        return ProviderProvenance(
+            requested_provider_mode=self.requested_provider_mode,
+            primary_provider=self.primary_provider,
+            actual_providers=self.actual_providers,
+            fallback_attempted=self.fallback_attempted,
+            fallback_succeeded=self.fallback_succeeded,
+            fallback_reason=self.fallback_reason,
+            fallback_operations=self.fallback_operations,
+        )
 
 
 @dataclass(frozen=True)
@@ -56,10 +88,6 @@ class ResolvedTravelAnchors:
     arrival: Poi | None = None
     departure: Poi | None = None
     accommodation: Poi | None = None
-
-
-class PlanningProviderError(Exception):
-    """An expected provider failure that may use the configured fallback."""
 
 
 class PlanningInfeasibleError(Exception):

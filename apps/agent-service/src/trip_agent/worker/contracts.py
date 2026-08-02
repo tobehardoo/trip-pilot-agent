@@ -494,7 +494,36 @@ class ActivityCoordinates(MessageModel):
         return value
 
 
+class FallbackOperation(MessageModel):
+    operation: Literal["PLANNING", "REPLANNING", "ROUTE"]
+    transit_id: UUID | None = None
+    from_activity_id: UUID | None = None
+    to_activity_id: UUID | None = None
+    requested_mode: Literal["REAL_WITH_EXPLICIT_FALLBACK"]
+    actual_provider: Literal["DEMO"]
+    error_category: Literal[
+        "QUOTA_EXCEEDED",
+        "RATE_LIMITED",
+        "TIMEOUT",
+        "NETWORK_ERROR",
+        "PROVIDER_UNAVAILABLE",
+        "MALFORMED_RESPONSE",
+    ]
+    error_code: ShortText
+    retry_count: int = Field(strict=True, ge=0, le=10)
+
+    @model_validator(mode="after")
+    def validate_route_identity(self) -> Self:
+        route_ids = (self.transit_id, self.from_activity_id, self.to_activity_id)
+        if self.operation == "ROUTE" and any(value is None for value in route_ids):
+            raise ValueError("route fallback requires stable transit and activity IDs")
+        if self.operation != "ROUTE" and any(value is not None for value in route_ids):
+            raise ValueError("whole-plan fallback must not claim a transit identity")
+        return self
+
+
 class ItineraryActivity(MessageModel):
+    activity_id: UUID | None = None
     title: ItineraryText
     start_time: datetime
     end_time: datetime
@@ -515,6 +544,7 @@ class ItineraryActivity(MessageModel):
 
 
 class TransitLeg(MessageModel):
+    transit_id: UUID | None = None
     from_activity_index: int = Field(strict=True, ge=0)
     to_activity_index: int = Field(strict=True, ge=1)
     mode: Literal["WALKING", "DRIVING"]
@@ -523,8 +553,11 @@ class TransitLeg(MessageModel):
     provider: Literal["AMAP", "DEMO"]
     estimated: bool = Field(strict=True)
     polyline: tuple[ActivityCoordinates, ...] = Field(min_length=1, max_length=5_000)
-    estimated_cost: JsonDecimal | None = Field(default=None)
-    cost_source: Literal["PROVIDER", "RULE_ESTIMATE", "DEMO", "UNKNOWN"] = "UNKNOWN"
+    estimated_cost: JsonDecimal | None = Field(default=None, exclude=True)
+    cost_source: Literal["PROVIDER", "RULE_ESTIMATE", "DEMO", "UNKNOWN"] = Field(
+        default="UNKNOWN", exclude=True
+    )
+    fallback_operation: FallbackOperation | None = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
     def validate_cost(self) -> Self:
@@ -550,17 +583,24 @@ class ItineraryDay(MessageModel):
 
     @model_validator(mode="after")
     def validate_transit_legs(self) -> Self:
-        expected_count = len(self.activities) - 1
-        if len(self.transit_legs) != expected_count:
-            raise ValueError("transit legs must connect each adjacent activity")
-        for index, leg in enumerate(self.transit_legs):
-            if leg.from_activity_index != index or leg.to_activity_index != index + 1:
+        expected_pairs = {
+            (index, index + 1) for index in range(len(self.activities) - 1)
+        }
+        actual_pairs: set[tuple[int, int]] = set()
+        for leg in self.transit_legs:
+            endpoints = (leg.from_activity_index, leg.to_activity_index)
+            if endpoints not in expected_pairs:
                 raise ValueError("transit legs must connect adjacent activities in order")
-            earliest_arrival = self.activities[index].end_time + timedelta(
+            if endpoints in actual_pairs:
+                raise ValueError("transit legs must use unique adjacent activity endpoints")
+            actual_pairs.add(endpoints)
+            earliest_arrival = self.activities[leg.from_activity_index].end_time + timedelta(
                 seconds=leg.duration_seconds
             )
-            if earliest_arrival > self.activities[index + 1].start_time:
+            if earliest_arrival > self.activities[leg.to_activity_index].start_time:
                 raise ValueError("transit leg travel time must fit between activities")
+        if len(self.transit_legs) != len(expected_pairs) or actual_pairs != expected_pairs:
+            raise ValueError("transit legs must connect each adjacent activity")
         return self
 
 
@@ -638,6 +678,12 @@ class ReplanItineraryDay(InboundMessageModel):
     date: date
     activities: tuple[ItineraryActivity, ...] = Field(min_length=1)
     transit_legs: tuple[TransitLeg, ...]
+
+    @model_validator(mode="after")
+    def validate_present_transit_legs(self) -> Self:
+        if self.transit_legs:
+            self.to_itinerary_day()
+        return self
 
     def to_itinerary_day(self) -> ItineraryDay:
         return ItineraryDay(
@@ -740,11 +786,98 @@ class PlanningFactImpact(MessageModel):
         return self
 
 
+class ProviderProvenance(MessageModel):
+    requested_provider_mode: Literal[
+        "DEMO_ONLY",
+        "REAL_ONLY",
+        "REAL_WITH_EXPLICIT_FALLBACK",
+    ]
+    primary_provider: Literal["AMAP", "DEMO"]
+    actual_providers: tuple[Literal["AMAP", "DEMO"], ...] = Field(min_length=1)
+    fallback_attempted: bool = Field(strict=True)
+    fallback_succeeded: bool = Field(strict=True)
+    fallback_reason: ShortText | None = None
+    fallback_operations: tuple[FallbackOperation, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_and_normalize(self) -> Self:
+        provider_order = {"AMAP": 0, "DEMO": 1}
+        actual_providers = tuple(
+            sorted(set(self.actual_providers), key=provider_order.__getitem__)
+        )
+        operation_keys: set[tuple[object, ...]] = set()
+        operations: list[FallbackOperation] = []
+        for operation in sorted(
+            self.fallback_operations,
+            key=lambda item: (
+                item.operation,
+                str(item.transit_id or ""),
+                str(item.from_activity_id or ""),
+                str(item.to_activity_id or ""),
+                item.error_category,
+                item.error_code,
+                item.retry_count,
+            ),
+        ):
+            key = (
+                operation.operation,
+                operation.transit_id,
+                operation.from_activity_id,
+                operation.to_activity_id,
+                operation.requested_mode,
+                operation.actual_provider,
+                operation.error_category,
+                operation.error_code,
+                operation.retry_count,
+            )
+            if key not in operation_keys:
+                operation_keys.add(key)
+                operations.append(operation)
+        object.__setattr__(self, "actual_providers", actual_providers)
+        object.__setattr__(self, "fallback_operations", tuple(operations))
+        if len(self.fallback_operations) > 100:
+            raise ValueError("fallback operation evidence exceeds the supported limit")
+
+        if self.fallback_attempted != self.fallback_succeeded:
+            raise ValueError("successful completion cannot contain a failed fallback")
+        if self.fallback_attempted:
+            if not self.fallback_operations or self.fallback_reason is None:
+                raise ValueError("successful fallback requires reason and operation evidence")
+        elif self.fallback_operations or self.fallback_reason is not None:
+            raise ValueError("non-fallback completion must not contain fallback evidence")
+
+        if self.requested_provider_mode == "DEMO_ONLY":
+            if self.primary_provider != "DEMO" or self.actual_providers != ("DEMO",):
+                raise ValueError("DEMO_ONLY completion must only contain DEMO evidence")
+            if self.fallback_attempted:
+                raise ValueError("DEMO_ONLY completion cannot be a fallback")
+        elif self.requested_provider_mode == "REAL_ONLY":
+            if self.primary_provider != "AMAP" or self.actual_providers != ("AMAP",):
+                raise ValueError("REAL_ONLY completion must only contain AMAP evidence")
+            if self.fallback_attempted:
+                raise ValueError("REAL_ONLY completion cannot use DEMO fallback")
+        else:
+            if self.primary_provider != "AMAP":
+                raise ValueError("explicit fallback mode must have AMAP as primary provider")
+            if self.fallback_attempted and "DEMO" not in self.actual_providers:
+                raise ValueError("successful fallback must record DEMO as an actual provider")
+            if not self.fallback_attempted and self.actual_providers != ("AMAP",):
+                raise ValueError("unused explicit fallback must remain pure AMAP")
+
+        if any(
+            operation.requested_mode != self.requested_provider_mode
+            for operation in self.fallback_operations
+        ):
+            raise ValueError("fallback operation mode must match top-level provenance")
+        return self
+
+
 class PlanningCompletedPayload(MessageModel):
     provider: Literal["AMAP", "DEMO"]
     itinerary: Itinerary
     knowledge: KnowledgeEvidence
     fact_impacts: tuple[PlanningFactImpact, ...] = Field(default=(), max_length=500)
+    provider_provenance: ProviderProvenance | None = None
 
     @model_validator(mode="after")
     def validate_activity_sources(self) -> Self:
@@ -780,7 +913,7 @@ class PlanningRelaxation(MessageModel):
     message: KnowledgeMessage
 
 
-class PlanningFailedPayload(MessageModel):
+class PlanningFailedPayloadV1(MessageModel):
     status: Literal["FAILED"]
     error_code: Literal["NO_FEASIBLE_ITINERARY"]
     message: KnowledgeMessage
@@ -788,9 +921,71 @@ class PlanningFailedPayload(MessageModel):
     relaxation_suggestions: tuple[PlanningRelaxation, ...] = Field(max_length=20)
 
 
-class PlanningFailedEvent(MessageModel):
+class PlanningFailedEventV1(MessageModel):
     event_type: Literal["PLANNING_FAILED"]
     schema_version: Literal[1]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    run_id: UUID
+    occurred_at: datetime
+    payload: PlanningFailedPayloadV1
+
+
+class PlanningFailedPayload(MessageModel):
+    status: Literal["FAILED"]
+    error_code: ShortText
+    error_category: Literal[
+        "CONFIGURATION_ERROR",
+        "AUTHENTICATION_ERROR",
+        "PERMISSION_DENIED",
+        "QUOTA_EXCEEDED",
+        "RATE_LIMITED",
+        "TIMEOUT",
+        "NETWORK_ERROR",
+        "PROVIDER_UNAVAILABLE",
+        "INVALID_REQUEST",
+        "NO_RESULT",
+        "UNSUPPORTED_MODE",
+        "MALFORMED_RESPONSE",
+        "DATA_QUALITY_ERROR",
+        "PROVIDER_ADAPTER_ERROR",
+        "PLANNING_INFEASIBLE",
+        "INTERNAL_ERROR",
+    ]
+    provider: Literal["AMAP", "DEMO", "PLANNER"]
+    operation: Literal[
+        "CONFIGURATION",
+        "PLANNING",
+        "REPLANNING",
+        "POI_SEARCH",
+        "ROUTE",
+    ]
+    retryable: bool = Field(strict=True)
+    retry_count: int = Field(strict=True, ge=0, le=10)
+    fallback_attempted: bool = Field(strict=True)
+    fallback_succeeded: bool = Field(strict=True)
+    safe_message: KnowledgeMessage
+    safe_provider_code: ShortText | None = None
+    cause_type: ShortText | None = None
+    conflicts: tuple[PlanningConflict, ...] = Field(default=(), max_length=20)
+    relaxation_suggestions: tuple[PlanningRelaxation, ...] = Field(
+        default=(), max_length=20
+    )
+
+    @model_validator(mode="after")
+    def validate_fallback_outcome(self) -> Self:
+        if self.fallback_succeeded and not self.fallback_attempted:
+            raise ValueError("fallbackSucceeded requires fallbackAttempted")
+        if self.error_category == "PLANNING_INFEASIBLE" and not self.conflicts:
+            raise ValueError("planning infeasibility requires conflicts")
+        return self
+
+
+class PlanningFailedEvent(MessageModel):
+    event_type: Literal["PLANNING_FAILED"]
+    schema_version: Literal[2]
     event_id: UUID
     trace_id: UUID
     task_id: UUID

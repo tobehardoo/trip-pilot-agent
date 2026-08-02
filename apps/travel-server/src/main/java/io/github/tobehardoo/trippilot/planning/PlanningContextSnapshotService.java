@@ -109,9 +109,16 @@ public class PlanningContextSnapshotService {
         CityIntelligenceRefreshRecord refresh = cityIntelligenceMapper
                 .findLatestRefresh(trip.id())
                 .orElse(null);
+        boolean weatherAvailable = facts.stream()
+                .anyMatch(fact -> "WEATHER".equals(fact.category())
+                        && "CITY_INTELLIGENCE".equals(fact.sourceType())
+                        && !fact.stale()
+                        && Set.of("WEATHER_PROVIDER", "MAP_PROVIDER")
+                                .contains(fact.reliabilityLevel()));
         boolean stale = facts.stream().anyMatch(PlanningFact::stale)
                 || refresh == null
-                || !Set.of("SUCCEEDED", "PARTIAL").contains(refresh.status());
+                || !Set.of("SUCCEEDED", "PARTIAL").contains(refresh.status())
+                || !weatherAvailable;
         List<Diagnostic> diagnostics;
         if (refresh == null) {
             diagnostics = List.of(new Diagnostic(
@@ -119,11 +126,23 @@ public class PlanningContextSnapshotService {
                     "No city intelligence refresh exists",
                     null
             ));
+        } else if (Set.of("QUEUED", "RUNNING").contains(refresh.status())) {
+            diagnostics = List.of(new Diagnostic(
+                    "CITY_INTELLIGENCE_REFRESH_PENDING",
+                    "City intelligence refresh did not finish before the planning snapshot",
+                    refresh.status()
+            ));
         } else if (refresh.errorCode() != null || refresh.errorMessage() != null
                 || !Set.of("SUCCEEDED", "PARTIAL").contains(refresh.status())) {
             diagnostics = List.of(new Diagnostic(
                     refresh.errorCode(),
                     refresh.errorMessage(),
+                    refresh.status()
+            ));
+        } else if (!weatherAvailable) {
+            diagnostics = List.of(new Diagnostic(
+                    "CITY_INTELLIGENCE_WEATHER_UNAVAILABLE",
+                    "No weather data is available for the trip dates",
                     refresh.status()
             ));
         } else {

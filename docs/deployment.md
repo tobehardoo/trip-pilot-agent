@@ -29,6 +29,7 @@ TripPilot 使用 Docker Compose 作为默认运行方式。当前生产拓扑一
 | `PROVIDER_RETRY_MAX_ELAPSED_SECONDS` | 规划 Provider 最大累计重试时间 |
 | `PROVIDER_RETRY_JITTER_RATIO` | 规划 Provider 重试抖动比例 |
 | `PROVIDER_FALLBACK_CATEGORIES` | JSON 数组；仅可显式增加 `QUOTA_EXCEEDED`、`MALFORMED_RESPONSE`，生产默认 `[]` |
+| `CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT` | 规划前 best-effort 等待城市情报的上限，默认 `PT2S`；非正值用于不启动异步消费者的测试环境 |
 | `REFRESH_COOKIE_SECURE` | 生产 HTTPS 必须为 `true` |
 
 真实 Provider 相关变量：
@@ -66,6 +67,7 @@ docker compose -f compose.prod.yaml --env-file .env ps
 - 服务端和浏览器高德 Key 分离。
 - QWeather Key 和专用 Host 成对配置，并在有效套餐窗口验证当前、预报和近期历史天气。
 - 上述 `PROVIDER_RETRY_*` 和 `PROVIDER_FALLBACK_CATEGORIES` 约束规划 Provider；QWeather 城市情报失败使用独立的显式降级记录，不能误报为规划 Provider fallback。
+- 规划前刷新是有界 best-effort 增强，不阻断 Demo、远期行程或 Provider 暂时失败。超时/运行中会写入 `CITY_INTELLIGENCE_REFRESH_PENDING`，成功但行程日期没有可用天气会写入 `CITY_INTELLIGENCE_WEATHER_UNAVAILABLE`；planning context 标为 stale 并保留诊断，不能把旧或空天气伪装为本轮新鲜数据。
 - Web JS Key、安全密钥和域名白名单属于同一高德应用。
 - 最终浏览器域名能加载真实底图，缺 Key 或失败时页面显示降级视图而非空白。
 - Provider Key、模型 Key、Cookie 和 Token 不进入日志。

@@ -117,16 +117,23 @@ class QWeatherWeatherProvider:
         statements: list[str] = []
         unavailable_historical_dates: list[date] = []
 
-        for historical_date in _historical_dates(start_date, end_date, current_date):
-            try:
-                historical = await self._historical(location.location_id, historical_date)
-            except (RuntimeError, ValueError) as error:
+        historical_dates = _historical_dates(start_date, end_date, current_date)
+        historical_results = await asyncio.gather(*(
+            self._historical_or_unavailable(location.location_id, historical_date)
+            for historical_date in historical_dates
+        ))
+        for historical_date, (historical, error_message) in zip(
+            historical_dates,
+            historical_results,
+            strict=True,
+        ):
+            if historical is None:
                 unavailable_historical_dates.append(historical_date)
                 logger.warning(
                     "qweather_historical_day_unavailable city=%s date=%s reason=%s",
                     city,
                     historical_date.isoformat(),
-                    str(error),
+                    error_message,
                 )
                 continue
             if historical.weather_daily is None:
@@ -245,6 +252,16 @@ class QWeatherWeatherProvider:
         response = _HistoricalResponse.model_validate(payload)
         _require_success(response.code)
         return response
+
+    async def _historical_or_unavailable(
+        self,
+        location_id: str,
+        requested_date: date,
+    ) -> tuple[_HistoricalResponse | None, str | None]:
+        try:
+            return await self._historical(location_id, requested_date), None
+        except (RuntimeError, ValueError) as error:
+            return None, str(error)
 
     async def _get(self, path: str, params: dict[str, str]) -> object:
         try:

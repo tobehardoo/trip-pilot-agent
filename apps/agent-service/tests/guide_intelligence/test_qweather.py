@@ -209,6 +209,60 @@ def test_keeps_current_and_forecast_when_one_historical_day_fails() -> None:
     assert "2026-07-29 历史天气暂不可用" in result.content
 
 
+def test_collects_historical_days_concurrently() -> None:
+    active_historical_requests = 0
+    max_active_historical_requests = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active_historical_requests, max_active_historical_requests
+        if request.url.path == "/geo/v2/city/lookup":
+            return httpx.Response(
+                200,
+                json={"code": "200", "location": [{"id": "101280101", "name": "广州"}]},
+            )
+        if request.url.path == "/v7/weather/now":
+            return httpx.Response(200, json={"code": "200"})
+        if request.url.path == "/v7/weather/7d":
+            return httpx.Response(200, json={"code": "200", "daily": []})
+        if request.url.path == "/v7/historical/weather":
+            active_historical_requests += 1
+            max_active_historical_requests = max(
+                max_active_historical_requests,
+                active_historical_requests,
+            )
+            await asyncio.sleep(0.01)
+            active_historical_requests -= 1
+            raw_date = request.url.params["date"]
+            return httpx.Response(200, json={
+                "code": "200",
+                "weatherDaily": {
+                    "date": f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}",
+                    "tempMax": "30",
+                    "tempMin": "20",
+                },
+            })
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = QWeatherWeatherProvider(
+        api_key="test-key",
+        http_client=client,
+        api_host="weather.test.qweatherapi.com",
+    )
+
+    asyncio.run(
+        provider.collect(
+            city="广州",
+            start_date=date(2026, 7, 27),
+            end_date=date(2026, 7, 29),
+            checked_at=datetime(2026, 7, 30, 5, 0, tzinfo=UTC),
+        )
+    )
+    asyncio.run(client.aclose())
+
+    assert max_active_historical_requests == 3
+
+
 def test_rejects_a_response_with_only_historical_failure_notices() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/geo/v2/city/lookup":

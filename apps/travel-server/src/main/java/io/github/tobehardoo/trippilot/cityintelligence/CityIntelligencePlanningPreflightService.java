@@ -27,7 +27,7 @@ public class CityIntelligencePlanningPreflightService {
         this.waitTimeout = waitTimeout;
     }
 
-    public void prepare(TripService.TripResponse trip) {
+    public PreparationResult prepare(TripService.TripResponse trip) {
         CityIntelligenceRefreshRecord refresh = mapper.findLatestRefresh(trip.id())
                 .orElse(null);
         UUID refreshId;
@@ -42,27 +42,32 @@ public class CityIntelligencePlanningPreflightService {
         } else {
             refreshId = refresh.id();
         }
-        awaitTerminal(refreshId);
+        if (waitTimeout.isZero() || waitTimeout.isNegative()) {
+            return new PreparationResult(refreshId, "DISABLED");
+        }
+        CityIntelligenceRefreshRecord completed = awaitTerminal(refreshId);
+        if (completed == null) {
+            return new PreparationResult(refreshId, "TIMED_OUT");
+        }
+        return new PreparationResult(refreshId, completed.status());
     }
 
-    private void awaitTerminal(UUID refreshId) {
-        if (waitTimeout.isZero() || waitTimeout.isNegative()) {
-            return;
-        }
+    private CityIntelligenceRefreshRecord awaitTerminal(UUID refreshId) {
         Instant deadline = Instant.now().plus(waitTimeout);
         while (Instant.now().isBefore(deadline)) {
             CityIntelligenceRefreshRecord current = mapper.findRefresh(refreshId)
                     .orElse(null);
             if (current == null || isTerminal(current.status())) {
-                return;
+                return current;
             }
             try {
                 Thread.sleep(Math.min(50, waitTimeout.toMillis()));
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                return;
+                return null;
             }
         }
+        return null;
     }
 
     private boolean isTerminal(String status) {
@@ -85,6 +90,9 @@ public class CityIntelligencePlanningPreflightService {
                         + tripId + ":" + refresh.id() + ":" + refresh.version())
                         .getBytes(StandardCharsets.UTF_8)
         );
+    }
+
+    public record PreparationResult(UUID refreshId, String status) {
     }
 
 }

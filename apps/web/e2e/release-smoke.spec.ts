@@ -101,7 +101,72 @@ const itinerary = {
   createdAt: '2026-07-26T02:00:00Z',
 }
 
-async function mockReleaseApi(page: Page) {
+const combinedItinerary = {
+  ...itinerary,
+  days: [
+    ...itinerary.days,
+    {
+      date: '2026-08-02',
+      activities: [{
+        id: '99999999-9999-4999-8999-999999999999',
+        title: 'Museum day two',
+        startTime: '2026-08-02T02:00:00Z',
+        endTime: '2026-08-02T04:00:00Z',
+        estimatedCost: 20,
+        source: 'DEMO',
+        providerPoiId: null,
+        coordinates: { longitude: 113.27, latitude: 23.13 },
+        address: 'Museum Road',
+        locked: false,
+      }],
+      transitLegs: [],
+    },
+  ],
+}
+
+const planningTaskId = '33333333-3333-4333-8333-333333333333'
+
+const combinedEvaluation = {
+  schemaVersion: 1,
+  evaluatorVersion: 'rule-v1',
+  feasible: true,
+  overallScore: 91,
+  dimensions: {
+    constraintSatisfaction: 100,
+    timeFeasibility: 88,
+    budgetFit: 94,
+    routeEfficiency: 86,
+    interestMatch: 87,
+  },
+  warnings: [],
+  decisions: [],
+  summary: 'Combined browser acceptance score.',
+  evaluatedAt: '2026-08-02T00:00:00Z',
+}
+
+const cityIntelligence = {
+  id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  sourceType: 'CITY_INTELLIGENCE',
+  sourceUrl: 'https://dev.qweather.com/en/docs/api/',
+  finalUrl: 'https://dev.qweather.com/en/docs/api/',
+  sourceHost: 'QWeather',
+  title: 'Combined city intelligence',
+  excerpt: '2026-08-02 weather forecast.',
+  contentHash: 'a'.repeat(64),
+  fetchedAt: '2026-08-02T00:00:00Z',
+  enabled: true,
+  facts: [{
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    category: 'WEATHER',
+    statement: '2026-08-02 广州天气预报：白天晴 32℃，夜间多云 25℃，东风3级。',
+    evidence: 'Controlled QWeather response.',
+    confidence: 0.9,
+    observedAt: '2026-08-02T00:00:00Z',
+    expiresAt: '2026-08-03T00:00:00Z',
+  }],
+}
+
+async function mockReleaseApi(page: Page, options: { combined?: boolean } = {}) {
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -119,7 +184,7 @@ async function mockReleaseApi(page: Page) {
       return
     }
     if (path === `/api/trips/${tripId}/itinerary`) {
-      await route.fulfill({ json: itinerary })
+      await route.fulfill({ json: options.combined ? combinedItinerary : itinerary })
       return
     }
     if (path === `/api/trips/${tripId}/itinerary/versions`) {
@@ -127,8 +192,8 @@ async function mockReleaseApi(page: Page) {
         versionId: itinerary.versionId,
         versionNumber: itinerary.versionNumber,
         parentVersionId: itinerary.parentVersionId,
-        planningTaskId: null,
-        versionSource: 'USER_EDIT',
+        planningTaskId: options.combined ? planningTaskId : null,
+        versionSource: options.combined ? 'PLANNING_TASK' : 'USER_EDIT',
         title: itinerary.title,
         estimatedTotalCost: itinerary.estimatedTotalCost,
         provider: itinerary.provider,
@@ -139,7 +204,23 @@ async function mockReleaseApi(page: Page) {
       return
     }
     if (path === `/api/trips/${tripId}/guide-imports`) {
-      await route.fulfill({ json: [] })
+      await route.fulfill({ json: options.combined ? [cityIntelligence] : [] })
+      return
+    }
+    if (options.combined && path === `/api/planning-tasks/${planningTaskId}`) {
+      await route.fulfill({
+        json: {
+          taskId: planningTaskId,
+          tripId,
+          taskType: 'CREATE',
+          status: 'SUCCEEDED',
+          baselineTripVersion: 0,
+          eventStreamUrl: `/api/planning-tasks/${planningTaskId}/events`,
+          evaluation: combinedEvaluation,
+          createdAt: '2026-08-02T00:00:00Z',
+          updatedAt: '2026-08-02T00:01:00Z',
+        },
+      })
       return
     }
     if (path === `/api/trips/${tripId}/itinerary/edits/preview`) {
@@ -213,4 +294,25 @@ test('stores several traveller edits as a draft and commits them only after conf
   await expect(page.getByTestId('save-itinerary-draft')).toBeVisible()
   await page.getByTestId('save-itinerary-draft').click()
   await expect(page.getByTestId('save-itinerary-draft')).toBeHidden()
+})
+
+test('restores evaluation and links the weather date to the map route', async ({ page }) => {
+  await mockReleaseApi(page, { combined: true })
+  await page.goto(`/trips/${tripId}`)
+
+  await expect(page.getByText('行程质量')).toBeVisible()
+  await expect(page.getByText('91/100')).toBeVisible()
+
+  const weather = page.getByRole('region', { name: '行程天气' })
+  const map = page.getByTestId('trip-map')
+  const mapLocations = map.locator('button[aria-label^="定位 "]')
+  await expect(weather).toBeVisible()
+  await expect(mapLocations).toHaveCount(3)
+
+  const secondDay = weather.getByRole('button', { name: '选择 2026-08-02 天气' })
+  await secondDay.click()
+
+  await expect(secondDay).toHaveAttribute('aria-pressed', 'true')
+  await expect(mapLocations).toHaveCount(1)
+  await expect(map.getByRole('button', { name: '定位 Museum day two' })).toBeVisible()
 })

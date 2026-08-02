@@ -2,7 +2,9 @@
 
 import hashlib
 import logging
+import math
 import os
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from typing import Protocol
@@ -29,6 +31,7 @@ from trip_agent.guide_intelligence.trusted_facts import (
     FactValidator,
     NormalizedDocument,
     RuleFactExtractor,
+    ValidatedFact,
 )
 
 _TEXT_SOURCE_LABELS: dict[GuideSourceType, str] = {
@@ -262,7 +265,11 @@ class GuideImportService:
         amap_api_key = os.getenv("AMAP_WEB_SERVICE_KEY", "").strip()
         qweather_api_key = os.getenv("QWEATHER_API_KEY", "").strip()
         qweather_api_host = os.getenv("QWEATHER_API_HOST", "").strip()
-        use_qweather = bool(qweather_api_key and qweather_api_host)
+        if bool(qweather_api_key) != bool(qweather_api_host):
+            raise RuntimeError(
+                "QWEATHER_API_KEY and QWEATHER_API_HOST must be configured together"
+            )
+        use_qweather = bool(qweather_api_key)
         weather_provider = "QWEATHER" if use_qweather else "AMAP"
         weather_fallback_reason: str | None = None
         location_fallback_reason: str | None = None
@@ -286,7 +293,9 @@ class GuideImportService:
                 location_query = city
                 if amap_provider is not None:
                     try:
-                        location_query = await amap_provider.resolve_city_location(city)
+                        location_query = _qweather_location_query(
+                            await amap_provider.resolve_city_location(city)
+                        )
                     except (RuntimeError, ValueError) as error:
                         location_fallback_reason = str(error)
                         logger.warning(
@@ -346,7 +355,9 @@ class GuideImportService:
                         )
                         extracted = ExtractedGuide(
                             title=weather.title,
-                            content=f"{weather.content}\n{amap.content}",
+                            content="\n".join(
+                                (weather.content, *(fact.statement for fact in poi_facts))
+                            ),
                             facts=(*weather.facts, *poi_facts),
                         )
             else:
@@ -396,7 +407,9 @@ class GuideImportService:
             title=extracted.title,
             content=extracted.content,
             fetched_at=fetched_at,
-            reliability_level="WEATHER_PROVIDER",
+            reliability_level=(
+                "WEATHER_PROVIDER" if weather_provider == "QWEATHER" else "MAP_PROVIDER"
+            ),
             metadata={
                 "weatherProvider": weather_provider,
                 "weatherFallbackReason": weather_fallback_reason,
@@ -412,7 +425,15 @@ class GuideImportService:
                 "endDate": end_date.isoformat(),
             },
         )
-        return await self._enrich(result, document)
+        return await self._enrich(
+            result,
+            document,
+            fact_transform=lambda fact: _with_city_provider_provenance(
+                fact,
+                weather_provider=weather_provider,
+                poi_provider=poi_provider,
+            ),
+        )
 
     def _enrich_rules(
         self,
@@ -444,6 +465,8 @@ class GuideImportService:
         self,
         result: GuideImportResult,
         document: NormalizedDocument,
+        *,
+        fact_transform: Callable[[ValidatedFact], ValidatedFact] | None = None,
     ) -> GuideImportResult:
         rule_candidates = self._rule_extractor.extract(
             document,
@@ -454,7 +477,12 @@ class GuideImportService:
             document,
             (*rule_candidates, *model_result.candidates),
         )
-        merge = self._merger.merge(validation.accepted)
+        accepted = (
+            tuple(fact_transform(fact) for fact in validation.accepted)
+            if fact_transform is not None
+            else validation.accepted
+        )
+        merge = self._merger.merge(accepted)
         return replace(
             result,
             normalized_document=document,
@@ -463,7 +491,6 @@ class GuideImportService:
             merge_decisions=merge.decisions,
             model_extraction=model_result,
         )
-
     async def _extract_model(
         self,
         document: NormalizedDocument,
@@ -479,6 +506,45 @@ class GuideImportService:
                 document,
                 checked_at=checked_at,
             )
+
+
+def _qweather_location_query(center: str) -> str:
+    parts = [part.strip() for part in center.split(",")]
+    if len(parts) != 2:
+        raise ValueError("AMap city center must contain longitude and latitude")
+    try:
+        longitude, latitude = (float(part) for part in parts)
+    except ValueError as error:
+        raise ValueError("AMap city center must contain numeric coordinates") from error
+    if not math.isfinite(longitude) or not math.isfinite(latitude):
+        raise ValueError("AMap city center coordinates must be finite")
+    if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
+        raise ValueError("AMap city center coordinates are outside valid bounds")
+    return f"{longitude:.2f},{latitude:.2f}"
+
+
+def _with_city_provider_provenance(
+    fact: ValidatedFact,
+    *,
+    weather_provider: str,
+    poi_provider: str | None,
+) -> ValidatedFact:
+    provider = weather_provider if fact.category == "WEATHER" else poi_provider
+    if provider == "QWEATHER":
+        return replace(
+            fact,
+            source_name="和风天气城市情报",
+            source_url="https://dev.qweather.com/en/docs/api/",
+            reliability_level="WEATHER_PROVIDER",
+        )
+    if provider == "AMAP":
+        return replace(
+            fact,
+            source_name="高德城市情报",
+            source_url="https://lbs.amap.com/api/webservice/guide/api/search",
+            reliability_level="MAP_PROVIDER",
+        )
+    return fact
 
 
 def _candidate_host(source_url: str) -> str:

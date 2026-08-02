@@ -31,6 +31,7 @@ class CityIntelligencePlanningPreflightServiceTest {
                     case "findRefresh" -> Optional.of(
                             refreshReads.incrementAndGet() == 1 ? running : succeeded
                     );
+                    case "findFreshApplicableFactCategories" -> List.of("WEATHER");
                     default -> defaultValue(method.getReturnType());
                 }
         );
@@ -41,9 +42,91 @@ class CityIntelligencePlanningPreflightServiceTest {
                         Duration.ofMillis(200)
                 );
 
-        service.prepare(trip());
+        CityIntelligencePlanningPreflightService.PreparationResult result =
+                service.prepare(trip());
 
         assertThat(refreshReads).hasValue(2);
+        assertThat(result.status()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void rejectsPlanningWhenTheRefreshDoesNotFinishBeforeTheDeadline() {
+        UUID refreshId = UUID.randomUUID();
+        CityIntelligenceRefreshRecord running = refresh(refreshId, "RUNNING");
+        CityIntelligenceMapper mapper = (CityIntelligenceMapper) Proxy.newProxyInstance(
+                CityIntelligenceMapper.class.getClassLoader(),
+                new Class<?>[]{CityIntelligenceMapper.class},
+                (proxy, method, arguments) -> switch (method.getName()) {
+                    case "findLatestRefresh", "findRefresh" -> Optional.of(running);
+                    default -> defaultValue(method.getReturnType());
+                }
+        );
+        CityIntelligencePlanningPreflightService service =
+                new CityIntelligencePlanningPreflightService(
+                        mapper,
+                        null,
+                        Duration.ofMillis(20)
+                );
+
+        CityIntelligencePlanningPreflightService.PreparationResult result =
+                service.prepare(trip());
+
+        assertThat(result.status()).isEqualTo("TIMED_OUT");
+    }
+
+    @Test
+    void reportsSuccessWithoutBlockingOnUnavailableTripDateWeather() {
+        UUID refreshId = UUID.randomUUID();
+        CityIntelligenceRefreshRecord running = refresh(refreshId, "RUNNING");
+        CityIntelligenceRefreshRecord succeeded = refresh(refreshId, "SUCCEEDED");
+        CityIntelligenceMapper mapper = (CityIntelligenceMapper) Proxy.newProxyInstance(
+                CityIntelligenceMapper.class.getClassLoader(),
+                new Class<?>[]{CityIntelligenceMapper.class},
+                (proxy, method, arguments) -> switch (method.getName()) {
+                    case "findLatestRefresh" -> Optional.of(running);
+                    case "findRefresh" -> Optional.of(succeeded);
+                    case "findFreshApplicableFactCategories" -> List.of("ADDRESS");
+                    default -> defaultValue(method.getReturnType());
+                }
+        );
+        CityIntelligencePlanningPreflightService service =
+                new CityIntelligencePlanningPreflightService(
+                        mapper,
+                        null,
+                        Duration.ofMillis(100)
+                );
+
+        CityIntelligencePlanningPreflightService.PreparationResult result =
+                service.prepare(trip());
+
+        assertThat(result.status()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void reportsProviderFailureWithoutBlockingDemoPlanning() {
+        UUID refreshId = UUID.randomUUID();
+        CityIntelligenceRefreshRecord running = refresh(refreshId, "RUNNING");
+        CityIntelligenceRefreshRecord failed = refresh(refreshId, "FAILED");
+        CityIntelligenceMapper mapper = (CityIntelligenceMapper) Proxy.newProxyInstance(
+                CityIntelligenceMapper.class.getClassLoader(),
+                new Class<?>[]{CityIntelligenceMapper.class},
+                (proxy, method, arguments) -> switch (method.getName()) {
+                    case "findLatestRefresh" -> Optional.of(running);
+                    case "findRefresh" -> Optional.of(failed);
+                    default -> defaultValue(method.getReturnType());
+                }
+        );
+        CityIntelligencePlanningPreflightService service =
+                new CityIntelligencePlanningPreflightService(
+                        mapper,
+                        null,
+                        Duration.ofMillis(100)
+                );
+
+        CityIntelligencePlanningPreflightService.PreparationResult result =
+                service.prepare(trip());
+
+        assertThat(result.status()).isEqualTo("FAILED");
     }
 
     @Test

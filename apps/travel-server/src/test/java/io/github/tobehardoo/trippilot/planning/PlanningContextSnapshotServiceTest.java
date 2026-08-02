@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.cityintelligence.CityIntelligenceMapper;
+import io.github.tobehardoo.trippilot.cityintelligence.CityIntelligenceRefreshRecord;
 import io.github.tobehardoo.trippilot.guide.GuideImportMapper;
 import io.github.tobehardoo.trippilot.guide.GuideImportService;
 import io.github.tobehardoo.trippilot.trip.TripService;
@@ -71,6 +72,95 @@ class PlanningContextSnapshotServiceTest {
                     assertThat(excluded.factId()).isEqualTo(factId.toString());
                     assertThat(excluded.reason()).isEqualTo("EFFECTIVE_DATE_OUTSIDE_TRIP");
                 });
+    }
+
+    @Test
+    void recordsUnavailableWeatherWithoutBlockingAFutureTripSnapshot() {
+        PlanningContextSnapshotService service = serviceWithRefresh("SUCCEEDED");
+        TripService.TripResponse trip = trip(
+                LocalDate.of(2026, 9, 1),
+                LocalDate.of(2026, 9, 3)
+        );
+        GuideImportService.PlanningGuideFact communityWeather =
+                new GuideImportService.PlanningGuideFact(
+                        UUID.randomUUID(), UUID.randomUUID(), "WEATHER",
+                        "Community weather guess", "Community weather guess",
+                        "PASTED_TEXT", null, "Community", "Community weather",
+                        0.5, LocalDate.of(2026, 9, 1),
+                        Instant.parse("2026-08-02T00:00:00Z"),
+                        Instant.parse("2026-09-02T00:00:00Z")
+                );
+
+        PlanningContextSnapshotService.PlanningContextSnapshot snapshot = service.freeze(
+                UUID.randomUUID(), UUID.randomUUID(), trip, List.of(communityWeather),
+                Instant.parse("2026-08-02T00:00:00Z")
+        );
+
+        assertThat(snapshot.stale()).isTrue();
+        assertThat(snapshot.diagnostics()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.code()).isEqualTo("CITY_INTELLIGENCE_WEATHER_UNAVAILABLE");
+            assertThat(diagnostic.refreshStatus()).isEqualTo("SUCCEEDED");
+        });
+    }
+
+    @Test
+    void recordsAPendingRefreshWhenTheBoundedPreflightTimesOut() {
+        PlanningContextSnapshotService service = serviceWithRefresh("RUNNING");
+
+        PlanningContextSnapshotService.PlanningContextSnapshot snapshot = service.freeze(
+                UUID.randomUUID(), UUID.randomUUID(),
+                trip(LocalDate.of(2026, 8, 2), LocalDate.of(2026, 8, 4)),
+                List.of(), Instant.parse("2026-08-02T00:00:00Z")
+        );
+
+        assertThat(snapshot.stale()).isTrue();
+        assertThat(snapshot.diagnostics()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.code()).isEqualTo("CITY_INTELLIGENCE_REFRESH_PENDING");
+            assertThat(diagnostic.refreshStatus()).isEqualTo("RUNNING");
+        });
+    }
+
+    private PlanningContextSnapshotService serviceWithRefresh(String status) {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        PlanningContextSnapshotMapper snapshotMapper = proxy(
+                PlanningContextSnapshotMapper.class,
+                (method, arguments) -> method.getName().equals("insert") ? 1 : null
+        );
+        GuideImportMapper guideMapper = proxy(
+                GuideImportMapper.class,
+                (method, arguments) -> switch (method.getName()) {
+                    case "findActivePlanningTrustedFacts", "findPlanningMergeDecisions" -> List.of();
+                    default -> defaultValue(method.getReturnType());
+                }
+        );
+        CityIntelligenceMapper cityMapper = proxy(
+                CityIntelligenceMapper.class,
+                (method, arguments) -> method.getName().equals("findLatestRefresh")
+                        ? Optional.of(refresh(status))
+                        : defaultValue(method.getReturnType())
+        );
+        return new PlanningContextSnapshotService(
+                snapshotMapper,
+                guideMapper,
+                cityMapper,
+                new PlanningFactConflictResolver(objectMapper),
+                objectMapper
+        );
+    }
+
+    private TripService.TripResponse trip(LocalDate startDate, LocalDate endDate) {
+        return new TripService.TripResponse(
+                UUID.randomUUID(), "Trip", "Guangzhou", startDate, endDate,
+                "DRAFT", 0, null, Instant.now(), Instant.now(), null
+        );
+    }
+
+    private CityIntelligenceRefreshRecord refresh(String status) {
+        Instant now = Instant.parse("2026-08-02T00:00:00Z");
+        return new CityIntelligenceRefreshRecord(
+                UUID.randomUUID(), UUID.randomUUID(), "CN-GD-GZ", UUID.randomUUID(),
+                status, "[]", "[]", 1, now, now, null, null, 1, now, now
+        );
     }
 
     @SuppressWarnings("unchecked")

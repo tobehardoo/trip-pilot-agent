@@ -4,7 +4,7 @@
 
 2026-08-02 的组合代码已完成本地发布候选技术门禁。组合范围覆盖 PlanEvaluation、QWeather/AMap 城市情报、天气时间轴、地图日期联动，以及当前 itinerary version 对应评估结果的恢复与并发保护。
 
-当前结论是“可部署到 staging 的本地 RC 候选”，不是已经通过 staging 签字的发布候选，也不是互联网生产发布。组合代码基线为 `093aef1`；其后的证据提交只修改测试夹具、泄密扫描例外和文档，不改变产品运行代码。
+当前结论是“可部署到 staging 的本地 RC 候选”，不是已经通过 staging 签字的发布候选，也不是互联网生产发布。`093aef1` 是初始组合代码基线；强制审计随后修复了 Provider provenance、QWeather 配置/坐标和 planning preflight，最终候选应以审计提交后的分支 HEAD 为准。
 
 这不是互联网生产发布声明。生产发布仍取决于部署者环境中的 HTTPS、Cookie 安全配置、真实 Provider Key、域名白名单和高德 Web JS 底图验收。
 
@@ -26,13 +26,13 @@
 
 | 范围 | 命令 | 结果 |
 | --- | --- | --- |
-| Java 测试、Flyway 和验证 | `mvn verify` in `apps/travel-server` | 203 tests passed；Flyway V1–V27；JaCoCo 通过 |
-| Python 测试 | `python -m pytest -q --basetemp=.pytest-temp-codex-combined-full` in `apps/agent-service` | 537 passed, 37 skipped |
+| Java 测试、Flyway 和验证 | `mvn verify` in `apps/travel-server` | 208 tests passed；Flyway V1–V27；JaCoCo 通过 |
+| Python 测试 | `python -m pytest -q --basetemp=.pytest-temp-codex-audit-final` in `apps/agent-service` | 541 passed, 37 skipped |
 | Python 静态检查 | `python -m ruff check .` in `apps/agent-service` | 通过 |
 | PlanEvaluation 基准 | `python benchmarks/run_plan_evaluation.py` in `apps/agent-service` | 8 scenarios passed；重复运行结果一致 |
 | Web 单元测试与覆盖率 | `pnpm test:coverage` in `apps/web` | 124 passed across 24 files；语句/行 94.25%，分支 85.84%，函数 88.46% |
 | Web 类型和构建 | `pnpm typecheck` and `pnpm build` in `apps/web` | 通过 |
-| 浏览器验收 | `pnpm test:e2e` in `apps/web` | 5 passed |
+| 浏览器验收 | `pnpm test:e2e` in `apps/web` | 6 passed；包含评估恢复、天气日期与地图过滤组合场景 |
 | Compose | 开发/生产 `config`、生产镜像构建、隔离冷启动与健康检查 | 通过；8 个运行服务健康，`knowledge-init` 退出码 0，Web/API HTTP 200 |
 | 仓库安全与文档 | gitleaks 全历史扫描、Markdown links、`git diff --check`、tracked secret-like file 检查 | 通过；87 commits 无泄露 |
 | 分享回归 | `mvn -q -Dtest=ItineraryShareFlowIntegrationTest test` | 通过 |

@@ -1,0 +1,25 @@
+{
+  "eventType": "PLANNING_FAILED",
+  "schemaVersion": 2,
+  "eventId": "38e10d2b-fd84-55ae-97dc-a1e00cac682b",
+  "traceId": "ea930620-41a7-4fdc-b6d1-d298a850112a",
+  "taskId": "dfb858fc-b910-4056-a375-2366dcaab690",
+  "tripId": "d209daf2-f004-42cc-8385-510825f40fe1",
+  "runId": "3b85b6b6-9e42-433b-90ef-d94a3eb26e18",
+  "occurredAt": "2026-07-31T00:00:00Z",
+  "payload": {
+    "status": "FAILED",
+    "errorCode": "PROVIDER_AUTHENTICATION_FAILED",
+    "errorCategory": "AUTHENTICATION_ERROR",
+    "provider": "AMAP",
+    "operation": "POI_SEARCH",
+    "retryable": false,
+    "retryCount": 0,
+    "fallbackAttempted": false,
+    "fallbackSucceeded": false,
+    "safeMessage": "AMap authentication failed",
+    "safeProviderCode": "10001",
+    "conflicts": [],
+    "relaxationSuggestions": []
+  }
+}

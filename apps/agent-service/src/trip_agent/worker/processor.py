@@ -40,6 +40,11 @@ from trip_agent.infrastructure.demo.knowledge_provider import (
 )
 from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider  # noqa: F811
 from trip_agent.planning.trusted_context import planning_fact_impacts
+from trip_agent.providers.errors import (
+    ProviderErrorCategory,
+    ProviderFailureDetails,
+    ProviderOperation,
+)
 from trip_agent.worker.contracts import (
     KnowledgeCitationSnapshot,
     KnowledgeEvidence,
@@ -133,6 +138,7 @@ async def process_planning_create(
             itinerary=result.itinerary,
             knowledge=knowledge,
             fact_impacts=_fact_impacts(effective_command, result),
+            provider_provenance=result.provider_provenance(),
         ),
     )
 
@@ -168,6 +174,7 @@ async def process_planning_replan(
             itinerary=result.itinerary,
             knowledge=command.payload.knowledge,
             fact_impacts=(),
+            provider_provenance=result.provider_provenance(),
         ),
     )
 
@@ -190,13 +197,62 @@ def _command_with_fresh_guide_evidence(
 
 def planning_failed_event(
     command: PlanningCreateCommand | PlanningReplanCommand,
-    failure: PlanningInfeasibleError,
+    failure: PlanningInfeasibleError | PlanningProviderError | Exception,
     *,
     occurred_at: datetime | None = None,
 ) -> PlanningFailedEvent:
+    command_operation = (
+        ProviderOperation.REPLANNING
+        if isinstance(command, PlanningReplanCommand)
+        else ProviderOperation.PLANNING
+    )
+    if isinstance(failure, PlanningInfeasibleError):
+        details = ProviderFailureDetails(
+            category=ProviderErrorCategory.PLANNING_INFEASIBLE,
+            error_code="NO_FEASIBLE_ITINERARY",
+            provider="PLANNER",
+            operation=command_operation,
+            retryable=False,
+            fallback_allowed=False,
+            safe_provider_code=None,
+            safe_message=str(failure),
+            retry_count=0,
+            cause_type=None,
+        )
+        conflicts = tuple(
+            PlanningConflict(
+                code=item.code,
+                message=item.message,
+                affected=item.affected,
+            )
+            for item in failure.conflicts
+        )
+        relaxations = tuple(
+            PlanningRelaxation(code=item.code, message=item.message)
+            for item in failure.relaxations
+        )
+    elif isinstance(failure, PlanningProviderError):
+        details = failure.details
+        conflicts = ()
+        relaxations = ()
+    else:
+        details = ProviderFailureDetails(
+            category=ProviderErrorCategory.INTERNAL_ERROR,
+            error_code="INTERNAL_PLANNING_FAILED",
+            provider="PLANNER",
+            operation=command_operation,
+            retryable=False,
+            fallback_allowed=False,
+            safe_provider_code=None,
+            safe_message="Planning failed due to an internal error",
+            retry_count=0,
+            cause_type=type(failure).__name__,
+        )
+        conflicts = ()
+        relaxations = ()
     return PlanningFailedEvent(
         event_type="PLANNING_FAILED",
-        schema_version=1,
+        schema_version=2,
         event_id=_failed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -205,20 +261,19 @@ def planning_failed_event(
         occurred_at=occurred_at or datetime.now(UTC),
         payload=PlanningFailedPayload(
             status="FAILED",
-            error_code="NO_FEASIBLE_ITINERARY",
-            message=str(failure),
-            conflicts=tuple(
-                PlanningConflict(
-                    code=item.code,
-                    message=item.message,
-                    affected=item.affected,
-                )
-                for item in failure.conflicts
-            ),
-            relaxation_suggestions=tuple(
-                PlanningRelaxation(code=item.code, message=item.message)
-                for item in failure.relaxations
-            ),
+            error_code=details.error_code,
+            error_category=details.category.value,
+            provider=details.provider,
+            operation=details.operation.value,
+            retryable=details.retryable,
+            retry_count=details.retry_count,
+            fallback_attempted=details.fallback_attempted,
+            fallback_succeeded=details.fallback_succeeded,
+            safe_message=details.safe_message,
+            safe_provider_code=details.safe_provider_code,
+            cause_type=details.cause_type,
+            conflicts=conflicts,
+            relaxation_suggestions=relaxations,
         ),
     )
 

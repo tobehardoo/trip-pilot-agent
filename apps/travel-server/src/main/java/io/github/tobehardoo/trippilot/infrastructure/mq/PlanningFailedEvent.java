@@ -20,12 +20,40 @@ public record PlanningFailedEvent(
             String errorCode,
             String message,
             List<Conflict> conflicts,
-            List<Relaxation> relaxationSuggestions
+            List<Relaxation> relaxationSuggestions,
+            String errorCategory,
+            String provider,
+            String operation,
+            boolean retryable,
+            int retryCount,
+            boolean fallbackAttempted,
+            boolean fallbackSucceeded,
+            String safeMessage,
+            String safeProviderCode,
+            String causeType
     ) {
+        public Payload(
+                String status,
+                String errorCode,
+                String message,
+                List<Conflict> conflicts,
+                List<Relaxation> relaxationSuggestions
+        ) {
+            this(
+                    status, errorCode, message, conflicts, relaxationSuggestions,
+                    null, null, null, false, 0, false, false,
+                    null, null, null
+            );
+        }
+
         public Payload {
             conflicts = conflicts == null ? List.of() : List.copyOf(conflicts);
             relaxationSuggestions = relaxationSuggestions == null
                     ? List.of() : List.copyOf(relaxationSuggestions);
+        }
+
+        public String displayMessage() {
+            return safeMessage == null ? message : safeMessage;
         }
     }
 

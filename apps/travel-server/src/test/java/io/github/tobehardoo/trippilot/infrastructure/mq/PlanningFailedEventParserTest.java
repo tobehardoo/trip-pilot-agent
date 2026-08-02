@@ -1,6 +1,8 @@
 package io.github.tobehardoo.trippilot.infrastructure.mq;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.UUID;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -40,6 +42,62 @@ public class PlanningFailedEventParserTest {
                 .isInstanceOf(PlanningEventContractException.class);
         assertThatThrownBy(() -> parser.parse(empty.getBytes(StandardCharsets.UTF_8)))
                 .isInstanceOf(PlanningEventContractException.class);
+    }
+
+    @Test
+    void parsesProviderFailureV2AndPreservesSafeProviderCode() throws Exception {
+        PlanningFailedEvent event = parser.parse(Files.readAllBytes(v2Fixture()));
+
+        assertThat(event.schemaVersion()).isEqualTo(2);
+        assertThat(event.payload().errorCategory()).isEqualTo("AUTHENTICATION_ERROR");
+        assertThat(event.payload().provider()).isEqualTo("AMAP");
+        assertThat(event.payload().operation()).isEqualTo("POI_SEARCH");
+        assertThat(event.payload().safeProviderCode()).isEqualTo("10001");
+        assertThat(event.payload().displayMessage()).isEqualTo("AMap authentication failed");
+    }
+
+    @Test
+    void v2AcceptsUnknownFieldsButRejectsMissingRequiredFieldsAndVersions() throws Exception {
+        String valid = Files.readString(v2Fixture());
+        String unknown = valid.replace(
+                "\"safeProviderCode\": \"10001\"",
+                "\"safeProviderCode\": \"10001\", \"futureMetadata\": true"
+        );
+        String missing = valid.replace("\"errorCategory\": \"AUTHENTICATION_ERROR\",", "");
+        String unsupported = valid.replace("\"schemaVersion\": 2", "\"schemaVersion\": 3");
+
+        assertThat(parser.parse(unknown.getBytes(StandardCharsets.UTF_8)).schemaVersion())
+                .isEqualTo(2);
+        assertThatThrownBy(() -> parser.parse(missing.getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(PlanningEventContractException.class);
+        assertThatThrownBy(() -> parser.parse(unsupported.getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(PlanningEventContractException.class);
+    }
+
+    @Test
+    void v2RejectsCoercedBooleanAndIntegerFields() throws Exception {
+        String valid = Files.readString(v2Fixture());
+        String stringBoolean = valid.replace("\"retryable\": false", "\"retryable\": \"false\"");
+        String decimalRetryCount = valid.replace("\"retryCount\": 0", "\"retryCount\": 0.5");
+
+        assertThatThrownBy(() -> parser.parse(stringBoolean.getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(PlanningEventContractException.class);
+        assertThatThrownBy(() -> parser.parse(decimalRetryCount.getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(PlanningEventContractException.class);
+    }
+
+    private static Path v2Fixture() {
+        Path fromRepository = Path.of(
+                "contracts", "fixtures", "planning-failed-event-v2",
+                "provider-authentication-failed.json"
+        ).toAbsolutePath();
+        if (Files.exists(fromRepository)) {
+            return fromRepository;
+        }
+        return Path.of(
+                "..", "..", "contracts", "fixtures", "planning-failed-event-v2",
+                "provider-authentication-failed.json"
+        ).toAbsolutePath();
     }
 
     public static String json(UUID eventId) {

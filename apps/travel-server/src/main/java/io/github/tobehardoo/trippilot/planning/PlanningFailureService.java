@@ -49,13 +49,17 @@ public class PlanningFailureService {
             }
             throw rejected("Failed eventId already belongs to another planning task event");
         }
+        if ("FAILED".equals(task.status())) {
+            return;
+        }
         if (!"QUEUED".equals(task.status()) && !"RUNNING".equals(task.status())) {
             throw rejected("Planning task cannot accept a failure event in status " + task.status());
         }
         PlanningFailedEvent.Payload payload = event.payload();
         Instant now = clock.instant();
         requireOne(taskMapper.updateTerminalStatus(
-                task.id(), task.taskVersion(), "FAILED", payload.errorCode(), payload.message()
+                task.id(), task.taskVersion(), "FAILED",
+                payload.errorCode(), payload.displayMessage()
         ), "planning task status");
         eventMapper.findLatestProgress(task.id()).ifPresent(progress -> metrics.stageDuration(
                 progress.stage(), java.time.Duration.between(progress.createdAt(), now)

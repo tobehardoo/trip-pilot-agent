@@ -99,7 +99,7 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
         String tripId = json(createTrip(accessToken)
                 .andExpect(status().isCreated())
                 .andReturn()).get("id").asText();
-        String idempotencyKey = "85787716-2922-43c7-a25f-17387aff90e0";
+        String idempotencyKey = "00000000-0000-4000-8000-000000000001";
 
         MvcResult first = mockMvc.perform(post(
                                 "/api/trips/{tripId}/city-intelligence/refreshes",

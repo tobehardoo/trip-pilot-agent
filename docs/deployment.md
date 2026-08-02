@@ -83,6 +83,12 @@ docker compose --env-file .env -p trip-pilot-rc -f compose.prod.yaml ps
 
 本轮结果：PostgreSQL、RabbitMQ、Redis、Agent API、Worker、Java、Web 和 Prometheus 均健康，`knowledge-init` 退出码为 0；开发/生产 Compose 的 `config -q` 均通过。真实验收必须显式设置 `RUN_REAL_PROVIDER_TESTS=true`，普通 Python 测试不会消耗 AMap 配额。
 
+### 2026-08-02 组合候选证据
+
+PlanEvaluation 与天气/城市情报的组合代码基线 `093aef1` 已完成本地生产编排复验。五类生产镜像构建成功；隔离项目 `trip-pilot-combined-gate` 使用 `PROVIDER_MODE=DEMO_ONLY`、假本地密钥、独立端口、网络和卷冷启动，PostgreSQL、Redis、RabbitMQ、Agent API、Worker、Java、Web 和 Prometheus 均健康，`knowledge-init` 退出码为 0，Web 与 `/api/health` 返回 HTTP 200，验收后独立资源已拆除。
+
+该证据证明组合制品可在本地生产拓扑启动，不证明真实 Provider 或生产环境可用。staging 必须使用不可变镜像摘要与 `REAL_ONLY`，并另行记录 HTTPS、Secure Cookie、QWeather Key/专用 Host、AMap 服务端 Key、Web JS 最终域名白名单、负向凭据/限流、日志脱敏、告警、备份恢复、回滚和 soak 结果。
+
 ### 模式迁移、回退与日志
 
 本地无凭据开发使用 `PROVIDER_MODE=DEMO_ONLY`；staging/production 使用 `REAL_ONLY`。只有内部演示或容错验证才使用 `REAL_WITH_EXPLICIT_FALLBACK`，且 fallback category 白名单应保持最小。回滚配置时应切换为明确的 `DEMO_ONLY` 或回退上一镜像，不能恢复“真实失败静默 Demo 成功”的旧语义。

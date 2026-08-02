@@ -2,9 +2,9 @@
 
 ## 当前状态
 
-V2.0 已在 2026-07-27 形成本地交付证据。证据覆盖 Demo 模式、生产 Compose、本地浏览器验收、规划进度、通勤写回、分享、PDF/ICS 导出、归档搜索和诊断入口。
+2026-08-02 的组合代码已完成本地发布候选技术门禁。组合范围覆盖 PlanEvaluation、QWeather/AMap 城市情报、天气时间轴、地图日期联动，以及当前 itinerary version 对应评估结果的恢复与并发保护。
 
-PlanEvaluation 交付闭环已在 2026-08-02 完成本地验证，覆盖确定性评分、警告与决策解释、事件持久化、实体 ID 重映射、SSE 回放、GET 查询和前端展示。
+当前结论是“可部署到 staging 的本地 RC 候选”，不是已经通过 staging 签字的发布候选，也不是互联网生产发布。组合代码基线为 `093aef1`；其后的证据提交只修改测试夹具、泄密扫描例外和文档，不改变产品运行代码。
 
 这不是互联网生产发布声明。生产发布仍取决于部署者环境中的 HTTPS、Cookie 安全配置、真实 Provider Key、域名白名单和高德 Web JS 底图验收。
 
@@ -12,6 +12,9 @@ PlanEvaluation 交付闭环已在 2026-08-02 完成本地验证，覆盖确定�
 
 - 规划进度使用版本化契约、Worker 真实阶段事件、Java 幂等持久化、`Last-Event-ID` 回放和浏览器恢复。
 - 方案评估使用无 LLM 的确定性规则和版本化权重；完成事件中的结果会持久化并随行程实体 ID 重映射，旧事件和失败任务保持 `evaluation = null`。
+- 当前行程版本会恢复关联 planning task 的评估；用户编辑/回滚版本不继承陈旧评分，加载失败可见且可重试，跨行程和重开竞态受请求代次保护。
+- 城市情报可组合 QWeather 当前天气、7 日预报、近期历史天气与 AMap 数据；QWeather 失败时按可用数据显式降级，不伪装为成功。
+- 行程详情同时呈现评估面板、天气时间轴和地图日期筛选，选中日期在天气与地图之间保持一致。
 - 通勤编辑保存 `TRANSIT` 与 `TAXI` 选择、重新计算的时长、费用、Provider 元数据、计算时间和 stale 状态。
 - 匿名分享固定到不可变行程版本；Token 使用强随机值，只保存 SHA-256 哈希，并支持撤销、过期和匿名限流。
 - PDF 使用支持中文的字体并经过 PDFium 渲染验证；ICS 使用 UTF-8 日历导出。
@@ -24,12 +27,14 @@ PlanEvaluation 交付闭环已在 2026-08-02 完成本地验证，覆盖确定�
 | 范围 | 命令 | 结果 |
 | --- | --- | --- |
 | Java 测试、Flyway 和验证 | `mvn verify` in `apps/travel-server` | 203 tests passed；Flyway V1–V27；JaCoCo 通过 |
-| Python 测试 | `python -m pytest --basetemp C:\tmp\trippilot-plan-eval-20260802` in `apps/agent-service` | 521 passed, 37 skipped |
+| Python 测试 | `python -m pytest -q --basetemp=.pytest-temp-codex-combined-full` in `apps/agent-service` | 537 passed, 37 skipped |
 | Python 静态检查 | `python -m ruff check .` in `apps/agent-service` | 通过 |
 | PlanEvaluation 基准 | `python benchmarks/run_plan_evaluation.py` in `apps/agent-service` | 8 scenarios passed；重复运行结果一致 |
-| Web 单元测试 | `pnpm test` in `apps/web` | 103 passed across 23 files |
+| Web 单元测试与覆盖率 | `pnpm test:coverage` in `apps/web` | 124 passed across 24 files；语句/行 94.25%，分支 85.84%，函数 88.46% |
 | Web 类型和构建 | `pnpm typecheck` and `pnpm build` in `apps/web` | 通过 |
-| 浏览器验收 | `pnpm test:e2e` in `apps/web` | 4 passed |
+| 浏览器验收 | `pnpm test:e2e` in `apps/web` | 5 passed |
+| Compose | 开发/生产 `config`、生产镜像构建、隔离冷启动与健康检查 | 通过；8 个运行服务健康，`knowledge-init` 退出码 0，Web/API HTTP 200 |
+| 仓库安全与文档 | gitleaks 全历史扫描、Markdown links、`git diff --check`、tracked secret-like file 检查 | 通过；87 commits 无泄露 |
 | 分享回归 | `mvn -q -Dtest=ItineraryShareFlowIntegrationTest test` | 通过 |
 
 ## 数据库迁移
@@ -40,7 +45,7 @@ V2.0 证据包含以下新增迁移：
 - `V24__create_itinerary_shares.sql`
 - `V25__add_trip_archive_and_search_index.sql`
 
-Flyway 升级路径已从历史版本验证到 V25。
+Flyway 升级路径已从空库验证到 V27。
 
 ## 外部发布前置条件
 
@@ -53,11 +58,10 @@ Flyway 升级路径已从历史版本验证到 V25。
 
 ## 已知风险
 
-- `planning-completed-event-v7` 通勤成本链路正在过渡，仍需确认 Python 模型、JSON Schema、Java 事件记录和前端展示全部一致。
-- 行程编辑幂等键需要前后端配合补齐。
-- 部分读取路径存在 N+1 查询，当前数据量影响低，但需要专项优化。
-- 规划进度的持久化前后时序仍有进一步收紧空间。
-- 路由守卫、Windows CI 和浏览器级 SSE 恢复测试尚未成为稳定门禁。
+- 真实 QWeather 专用 Host/Key、AMap 服务端 Key 和 Web JS 最终域名白名单尚未在 staging 验收。
+- HTTPS、Secure Cookie、告警、备份恢复、回滚和至少 24 小时 soak 尚无部署环境证据。
+- 本地 Windows Maven 需显式指定 ASCII JaCoCo 数据路径；Linux CI 不受该路径编码问题影响，但仍需以远端 CI 结果确认平台一致性。
+- 现有浏览器验收覆盖 SSE 恢复与核心组合链路，但不替代真实 Provider、浏览器域名/CSP 和故障注入验收。
 
 ## 归档证据
 

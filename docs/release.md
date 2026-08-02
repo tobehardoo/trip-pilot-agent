@@ -52,6 +52,7 @@ Flyway 升级路径已从空库验证到 V27。
 ## 外部发布前置条件
 
 - HTTPS 终止可用，且 `REFRESH_COOKIE_SECURE=true`。
+- 七类运行镜像均以批准的 registry `@sha256` 引用部署，解析后的 9 个服务镜像全部与候选证据一致；目标环境不重新构建。
 - `INTERNAL_DIAGNOSTICS_TOKEN` 使用强随机值，并区别于其他应用凭据。
 - `PROVIDER_MODE=REAL_ONLY` 时提供真实 Provider Key 和对应域名/IP 白名单；旧 `DEMO_MODE` 只用于兼容。
 - QWeather Key 与控制台分配的真实 HTTPS Host 成对配置，并完成套餐范围内的真实天气验收。

@@ -11,7 +11,7 @@ from validate_staging_env import load_env, validate_staging_environment
 
 
 def valid_environment() -> dict[str, str]:
-    return {
+    values = {
         "APP_ENV": "staging",
         "IMAGE_TAG": "7b99b85",
         "PROVIDER_MODE": "REAL_ONLY",
@@ -30,6 +30,20 @@ def valid_environment() -> dict[str, str]:
         "VITE_AMAP_WEB_JS_KEY": "amap-browser-credential",
         "VITE_AMAP_SECURITY_CODE": "amap-browser-security-code",
     }
+    for index, name in enumerate(
+        (
+            "POSTGRES_IMAGE",
+            "REDIS_IMAGE",
+            "RABBITMQ_IMAGE",
+            "TRAVEL_SERVER_IMAGE",
+            "AGENT_SERVICE_IMAGE",
+            "WEB_IMAGE",
+            "PROMETHEUS_IMAGE",
+        ),
+        1,
+    ):
+        values[name] = f"registry.example.com/trippilot/{name.lower()}@sha256:{index:064x}"
+    return values
 
 
 class ValidateStagingEnvironmentTest(unittest.TestCase):
@@ -93,6 +107,16 @@ class ValidateStagingEnvironmentTest(unittest.TestCase):
             any("JWT_SECRET" in error and "interpolation" in error for error in errors)
         )
         self.assertFalse(any(values["JWT_SECRET"] in error for error in errors))
+
+    def test_requires_every_runtime_image_to_use_an_immutable_digest(self) -> None:
+        values = valid_environment()
+        values["TRAVEL_SERVER_IMAGE"] = "registry.example.com/trippilot/server:latest"
+        values["REDIS_IMAGE"] = ""
+
+        errors = validate_staging_environment(values)
+
+        self.assertTrue(any("TRAVEL_SERVER_IMAGE" in error for error in errors))
+        self.assertTrue(any("REDIS_IMAGE" in error for error in errors))
 
     def test_load_env_ignores_comments_and_preserves_equals_in_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

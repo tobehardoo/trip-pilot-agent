@@ -34,6 +34,16 @@ _HOST_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _INTERPOLATION_PATTERN = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\})")
+_IMMUTABLE_IMAGE_VARIABLES = (
+    "POSTGRES_IMAGE",
+    "REDIS_IMAGE",
+    "RABBITMQ_IMAGE",
+    "TRAVEL_SERVER_IMAGE",
+    "AGENT_SERVICE_IMAGE",
+    "WEB_IMAGE",
+    "PROMETHEUS_IMAGE",
+)
+_DIGEST_IMAGE_PATTERN = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}\Z", re.IGNORECASE)
 
 
 def _decode_double_quoted(value: str) -> str:
@@ -153,6 +163,10 @@ def validate_staging_environment(values: Mapping[str, str]) -> list[str]:
     image_tag = _required_value(values, "IMAGE_TAG", errors)
     if image_tag.lower() in {"local", "latest"}:
         errors.append("IMAGE_TAG must identify the reviewed candidate, not local/latest")
+    for image_variable in _IMMUTABLE_IMAGE_VARIABLES:
+        image_reference = _required_value(values, image_variable, errors)
+        if image_reference and not _DIGEST_IMAGE_PATTERN.fullmatch(image_reference):
+            errors.append(f"{image_variable} must use a complete @sha256 digest reference")
 
     provider_mode = _required_value(values, "PROVIDER_MODE", errors)
     if provider_mode and provider_mode != "REAL_ONLY":

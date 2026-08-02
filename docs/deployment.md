@@ -32,6 +32,20 @@ TripPilot 使用 Docker Compose 作为默认运行方式。当前生产拓扑一
 | `CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT` | 规划前 best-effort 等待城市情报的上限，默认 `PT2S`；非正值用于不启动异步消费者的测试环境 |
 | `REFRESH_COOKIE_SECURE` | 生产 HTTPS 必须为 `true` |
 
+Staging/production 还必须为所有运行镜像提供完整 registry digest 引用；本地构建不设置这些变量，继续使用 `IMAGE_TAG`：
+
+| 变量 | 对应服务 |
+| --- | --- |
+| `POSTGRES_IMAGE` | 自定义 PostgreSQL/PostGIS/pgvector 镜像 |
+| `REDIS_IMAGE` | Redis |
+| `RABBITMQ_IMAGE` | RabbitMQ |
+| `TRAVEL_SERVER_IMAGE` | Java API |
+| `AGENT_SERVICE_IMAGE` | Worker、Agent API、knowledge-init 共用镜像 |
+| `WEB_IMAGE` | Web/Nginx |
+| `PROMETHEUS_IMAGE` | Prometheus |
+
+每个值必须采用 `registry/repository@sha256:<64-hex-digest>`，不能只用 tag。生产/预生产从 registry 拉取这些制品，不在目标环境重新 build。
+
 真实 Provider 相关变量：
 
 | 变量 | 说明 |
@@ -111,7 +125,7 @@ docker compose --env-file <private-staging-env> -f compose.prod.yaml config --im
 python scripts/validate_staging_env.py --env-file <private-staging-env>
 ```
 
-通过表示以下静态条件成立：`APP_ENV` 为 staging/production、候选标签不是 local/latest、`PROVIDER_MODE=REAL_ONLY`、fallback 白名单为空、Secret 非示例值且关键令牌互不复用、Secure Cookie 开启、可信代理 CIDR 有界、AMap 服务端/Web JS 凭据分离、QWeather Key 与专用 Host 完整。它不能证明凭据真实有效、HTTPS 正确、域名已加入白名单或第三方套餐可用；这些必须由后续真实请求证明。
+通过表示以下静态条件成立：`APP_ENV` 为 staging/production、候选标签不是 local/latest、七类运行镜像全部使用完整 `@sha256` 引用、`PROVIDER_MODE=REAL_ONLY`、fallback 白名单为空、Secret 非示例值且关键令牌互不复用/不使用插值、所有服务端 Secret 与两个浏览器可见 AMap 值隔离、Secure Cookie 开启、可信代理 CIDR 有界、QWeather Key 与专用 Host 完整。它不能证明凭据真实有效、HTTPS 正确、域名已加入白名单或第三方套餐可用；这些必须由后续真实请求证明。
 
 `.env.example` 应当被该命令拒绝，这是保护机制而不是失败。预检单元测试：
 
@@ -123,7 +137,7 @@ python -m ruff check scripts/validate_staging_env.py scripts/tests/test_validate
 ### 3. 部署顺序与即时探测
 
 1. 在变更窗口开始前完成数据库自定义格式备份，并在隔离数据库验证可读性、Flyway 版本和关键表计数。
-2. 以已批准 digest 拉取镜像；运行生产 Compose 的 `config --quiet`，再启动隔离 staging 项目。
+2. 把七个 `*_IMAGE` 配置为已批准的完整 registry digest 并拉取镜像；运行生产 Compose 的 `config --quiet` 和 `config --images`，确认每项都以 `@sha256` 结尾，再启动隔离 staging 项目。目标环境禁止 `--build`。
 3. 等待 PostgreSQL、Redis、RabbitMQ、Agent API、Worker、Travel Server、Web 和 Prometheus 健康，确认 `knowledge-init` 退出码为 0。
 4. 通过最终 HTTPS 域名请求 Web 和 `/api/health`；不能用容器内部 HTTP 代替公网入口验证。
 5. 记录开始时间、操作者、候选 SHA/digest、健康状态和证据位置。任何自动降级、重启循环或迁移异常都先停止验收并保留现场。

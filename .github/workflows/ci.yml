@@ -59,8 +59,12 @@ jobs:
           connection.execute('CREATE EXTENSION IF NOT EXISTS vector');
           connection.commit(); connection.close()"
       - run: uv run ruff check .
+      - name: Validate release tooling style
+        run: uv run ruff check ../../scripts/validate_staging_env.py ../../scripts/tests
       - run: uv run pytest --cov=trip_agent.retrieval --cov=trip_agent.acquisition --cov-report=term --cov-fail-under=80
       - run: uv run pytest
+      - name: Run PlanEvaluation benchmark
+        run: uv run python benchmarks/run_plan_evaluation.py
 
   web:
     runs-on: ubuntu-latest
@@ -97,6 +101,27 @@ jobs:
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
           INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
         run: docker compose -f compose.prod.yaml config --quiet
+      - name: Validate immutable image overrides
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          REDIS_PASSWORD: ci-redis-password
+          RABBITMQ_PASSWORD: ci-rabbitmq-password
+          JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
+          INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
+          POSTGRES_IMAGE: registry.invalid/postgres@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          REDIS_IMAGE: registry.invalid/redis@sha256:2222222222222222222222222222222222222222222222222222222222222222
+          RABBITMQ_IMAGE: registry.invalid/rabbitmq@sha256:3333333333333333333333333333333333333333333333333333333333333333
+          TRAVEL_SERVER_IMAGE: registry.invalid/travel-server@sha256:4444444444444444444444444444444444444444444444444444444444444444
+          AGENT_SERVICE_IMAGE: registry.invalid/agent-service@sha256:5555555555555555555555555555555555555555555555555555555555555555
+          WEB_IMAGE: registry.invalid/web@sha256:6666666666666666666666666666666666666666666666666666666666666666
+          PROMETHEUS_IMAGE: registry.invalid/prometheus@sha256:7777777777777777777777777777777777777777777777777777777777777777
+        run: |
+          digest_images="$(docker compose -f compose.prod.yaml config --images)"
+          test "$(printf '%s\n' "$digest_images" | wc -l)" -eq 9
+          if printf '%s\n' "$digest_images" | grep -Ev '@sha256:[0-9a-f]{64}$'; then
+            echo "A production service did not resolve to an immutable image digest"
+            exit 1
+          fi
       - name: Build production images
         env:
           POSTGRES_PASSWORD: ci-postgres-password
@@ -116,6 +141,8 @@ jobs:
         run: |
           docker compose -f compose.prod.yaml up -d --wait --wait-timeout 180
           curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8080/
+          curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8080/api/health |
+            python3 -c "import json, sys; payload = json.load(sys.stdin); assert payload.get('status') == 'UP' and payload.get('service') == 'travel-server'"
       - name: Tear down production Compose smoke stack
         if: always()
         env:
@@ -135,6 +162,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Validate release tooling behavior
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Validate Markdown links
         run: python scripts/check_markdown_links.py
       - uses: gitleaks/gitleaks-action@v2

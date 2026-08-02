@@ -2,7 +2,7 @@ name: trip-pilot-prod
 
 services:
   postgres:
-    image: trip-pilot-postgres:${IMAGE_TAG:-local}
+    image: ${POSTGRES_IMAGE:-trip-pilot-postgres:${IMAGE_TAG:-local}}
     build:
       context: .
       dockerfile: infra/docker/postgres/Dockerfile
@@ -20,7 +20,7 @@ services:
       retries: 20
 
   redis:
-    image: redis:7.4-alpine
+    image: ${REDIS_IMAGE:-redis:7.4-alpine}
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
     volumes:
@@ -34,7 +34,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
 
   rabbitmq:
-    image: rabbitmq:4.1-management-alpine
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4.1-management-alpine}
     restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-trip_pilot}
@@ -48,7 +48,7 @@ services:
       retries: 20
 
   travel-server:
-    image: trip-pilot-travel-server:${IMAGE_TAG:-local}
+    image: ${TRAVEL_SERVER_IMAGE:-trip-pilot-travel-server:${IMAGE_TAG:-local}}
     build:
       context: .
       dockerfile: apps/travel-server/Dockerfile
@@ -83,7 +83,7 @@ services:
       retries: 20
 
   agent-service:
-    image: trip-pilot-agent-service:${IMAGE_TAG:-local}
+    image: ${AGENT_SERVICE_IMAGE:-trip-pilot-agent-service:${IMAGE_TAG:-local}}
     build:
       context: .
       dockerfile: apps/agent-service/Dockerfile
@@ -136,7 +136,7 @@ services:
       retries: 20
 
   agent-api:
-    image: trip-pilot-agent-service:${IMAGE_TAG:-local}
+    image: ${AGENT_SERVICE_IMAGE:-trip-pilot-agent-service:${IMAGE_TAG:-local}}
     restart: unless-stopped
     command:
       - /app/.venv/bin/uvicorn
@@ -169,7 +169,7 @@ services:
       retries: 20
 
   knowledge-init:
-    image: trip-pilot-agent-service:${IMAGE_TAG:-local}
+    image: ${AGENT_SERVICE_IMAGE:-trip-pilot-agent-service:${IMAGE_TAG:-local}}
     restart: "no"
     command:
       - /bin/sh
@@ -195,7 +195,7 @@ services:
         condition: service_healthy
 
   web:
-    image: trip-pilot-web:${IMAGE_TAG:-local}
+    image: ${WEB_IMAGE:-trip-pilot-web:${IMAGE_TAG:-local}}
     build:
       context: .
       dockerfile: apps/web/Dockerfile
@@ -217,7 +217,7 @@ services:
       retries: 20
 
   prometheus:
-    image: trip-pilot-prometheus:${IMAGE_TAG:-local}
+    image: ${PROMETHEUS_IMAGE:-trip-pilot-prometheus:${IMAGE_TAG:-local}}
     build:
       context: .
       dockerfile: infra/monitoring/Dockerfile

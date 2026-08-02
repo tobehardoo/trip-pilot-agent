@@ -25,14 +25,25 @@ from trip_agent.domain.planning.protocols import (
     KnowledgeEvidenceProvider,
     PlanningInfeasibleError,
     PlanningProvider,
+    PlanningProviderError,
 )
 from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider
 from trip_agent.infrastructure.demo.knowledge_provider import DemoKnowledgeEvidenceProvider
 from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
 from trip_agent.platform_util import run_async
+from trip_agent.providers.errors import (
+    ProviderErrorCategory,
+    ProviderExecutionMode,
+    ProviderFallbackPolicy,
+)
 from trip_agent.providers.map import AmapMapProvider, JsonCache
 from trip_agent.providers.redis_cache import RedisJsonCache
-from trip_agent.providers.route import AmapRouteProvider
+from trip_agent.providers.retry import (
+    ProviderRetryPolicy,
+    RetryingMapProvider,
+    RetryingRouteProvider,
+)
+from trip_agent.providers.route import AmapRouteProvider, DemoRouteProvider
 from trip_agent.retrieval.embeddings import (
     DashScopeEmbeddingProvider,
     EmbeddingProvider,
@@ -279,9 +290,16 @@ class WorkerSettings(BaseSettings):
     rabbitmq_port: int = 5672
     rabbitmq_user: str = "trip_pilot"
     rabbitmq_password: str = "replace-with-local-password"
-    demo_mode: bool = True
+    provider_mode: ProviderExecutionMode | None = None
+    demo_mode: bool | None = None
     amap_web_service_key: SecretStr | None = None
     amap_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    provider_max_attempts: int = Field(default=3, ge=1, le=5)
+    provider_retry_base_delay_seconds: float = Field(default=0.2, ge=0, le=5)
+    provider_retry_max_delay_seconds: float = Field(default=2.0, ge=0, le=30)
+    provider_retry_max_elapsed_seconds: float = Field(default=5.0, gt=0, le=60)
+    provider_retry_jitter_ratio: float = Field(default=0.2, ge=0, le=1)
+    provider_fallback_categories: frozenset[ProviderErrorCategory] = frozenset()
     poi_cache_ttl_seconds: int = Field(default=86_400, gt=0)
     route_cache_ttl_seconds: int = Field(default=3_600, gt=0)
     redis_host: str = "localhost"
@@ -305,17 +323,56 @@ class WorkerSettings(BaseSettings):
 
     @model_validator(mode="after")
     def require_real_provider_key(self) -> Self:
+        if self.provider_mode is not None and self.demo_mode is not None:
+            legacy_mode = (
+                ProviderExecutionMode.DEMO_ONLY
+                if self.demo_mode
+                else ProviderExecutionMode.REAL_ONLY
+            )
+            if self.provider_mode != legacy_mode:
+                raise ValueError("PROVIDER_MODE conflicts with DEMO_MODE")
+        ProviderFallbackPolicy(
+            additional_allowed_categories=self.provider_fallback_categories
+        )
         key = self.amap_web_service_key
-        if not self.demo_mode and (key is None or not key.get_secret_value().strip()):
-            raise ValueError("AMAP_WEB_SERVICE_KEY is required when DEMO_MODE=false")
+        if self.resolved_provider_mode != ProviderExecutionMode.DEMO_ONLY and (
+            key is None or not key.get_secret_value().strip()
+        ):
+            raise ValueError("AMAP_WEB_SERVICE_KEY is required in a real provider mode")
         embedding_key = self.dashscope_api_key
         if (
-            not self.demo_mode
+            self.resolved_provider_mode != ProviderExecutionMode.DEMO_ONLY
             and self.knowledge_embedding_provider == "dashscope"
             and (embedding_key is None or not embedding_key.get_secret_value().strip())
         ):
             raise ValueError("DASHSCOPE_API_KEY is required for DashScope embeddings")
         return self
+
+    @property
+    def resolved_provider_mode(self) -> ProviderExecutionMode:
+        if self.provider_mode is not None:
+            return self.provider_mode
+        if self.demo_mode is not None:
+            return (
+                ProviderExecutionMode.DEMO_ONLY
+                if self.demo_mode
+                else ProviderExecutionMode.REAL_ONLY
+            )
+        return ProviderExecutionMode.DEMO_ONLY
+
+    def provider_retry_policy(self) -> ProviderRetryPolicy:
+        return ProviderRetryPolicy(
+            max_attempts=self.provider_max_attempts,
+            base_delay_seconds=self.provider_retry_base_delay_seconds,
+            max_delay_seconds=self.provider_retry_max_delay_seconds,
+            max_elapsed_seconds=self.provider_retry_max_elapsed_seconds,
+            jitter_ratio=self.provider_retry_jitter_ratio,
+        )
+
+    def provider_fallback_policy(self) -> ProviderFallbackPolicy:
+        return ProviderFallbackPolicy(
+            additional_allowed_categories=self.provider_fallback_categories
+        )
 
     def redis_connection_url(self) -> str:
         password = quote(self.redis_password.get_secret_value(), safe="")
@@ -349,28 +406,52 @@ def build_planning_provider(
     http_client: httpx.AsyncClient | None = None,
     cache: JsonCache | None = None,
 ) -> PlanningProvider:
-    if settings.demo_mode:
+    mode = settings.resolved_provider_mode
+    if mode == ProviderExecutionMode.DEMO_ONLY:
         return DemoPlanningProvider()
     if http_client is None:
         raise ValueError("HTTP client is required in real provider mode")
     key = settings.amap_web_service_key
     if key is None:
         raise ValueError("AMap key is required in real provider mode")
-    amap_map = AmapMapProvider(
-        api_key=key.get_secret_value(),
-        http_client=http_client,
-        cache=cache,
-        cache_ttl_seconds=settings.poi_cache_ttl_seconds,
+    retry_policy = settings.provider_retry_policy()
+    amap_map = RetryingMapProvider(
+        AmapMapProvider(
+            api_key=key.get_secret_value(),
+            http_client=http_client,
+            cache=cache,
+            cache_ttl_seconds=settings.poi_cache_ttl_seconds,
+        ),
+        retry_policy,
     )
-    amap_route = AmapRouteProvider(
-        api_key=key.get_secret_value(),
-        http_client=http_client,
-        cache=cache,
-        cache_ttl_seconds=settings.route_cache_ttl_seconds,
+    amap_route = RetryingRouteProvider(
+        AmapRouteProvider(
+            api_key=key.get_secret_value(),
+            http_client=http_client,
+            cache=cache,
+            cache_ttl_seconds=settings.route_cache_ttl_seconds,
+        ),
+        retry_policy,
     )
+    policy = settings.provider_fallback_policy()
+    primary = AmapPlanningProvider(
+        amap_map,
+        amap_route,
+        route_fallback=(
+            DemoRouteProvider()
+            if mode == ProviderExecutionMode.REAL_WITH_EXPLICIT_FALLBACK
+            else None
+        ),
+        provider_mode=mode,
+        fallback_policy=policy,
+    )
+    if mode == ProviderExecutionMode.REAL_ONLY:
+        return primary
     return FallbackPlanningProvider(
-        AmapPlanningProvider(amap_map, amap_route),
+        primary,
         DemoPlanningProvider(),
+        provider_mode=mode,
+        fallback_policy=policy,
     )
 
 
@@ -381,7 +462,7 @@ def build_knowledge_provider(
     repository: KnowledgeSearchRepository | None = None,
     freshness_provider: KnowledgeFreshnessProvider | None = None,
 ) -> KnowledgeEvidenceProvider:
-    if settings.demo_mode:
+    if settings.resolved_provider_mode == ProviderExecutionMode.DEMO_ONLY:
         return DemoKnowledgeEvidenceProvider()
     database_url = settings.knowledge_connection_url()
     selected_embedding = embedding_provider or _configured_embedding_provider(settings)
@@ -416,7 +497,8 @@ def _configured_embedding_provider(settings: WorkerSettings) -> EmbeddingProvide
 async def planning_provider_runtime(
     settings: WorkerSettings,
 ) -> AsyncIterator[PlanningProvider]:
-    if settings.demo_mode:
+    logger.info("provider_mode=%s", settings.resolved_provider_mode.value)
+    if settings.resolved_provider_mode == ProviderExecutionMode.DEMO_ONLY:
         yield DemoPlanningProvider()
         return
     async with httpx.AsyncClient(timeout=settings.amap_timeout_seconds) as http_client:
@@ -453,6 +535,7 @@ async def handle_delivery(
     cancellation_registry: CancellationRegistry | None = None,
     cancellation_oracle: CancellationOracle | None = None,
 ) -> None:
+    processing_command = False
     try:
         raw_command: Any = json.loads(message.body)
         if not isinstance(raw_command, dict):
@@ -494,6 +577,7 @@ async def handle_delivery(
                     + 1,
                 },
             )
+            processing_command = True
             if isinstance(command, PlanningReplanCommand):
                 process_task = asyncio.create_task(
                     process_planning_replan(
@@ -528,6 +612,7 @@ async def handle_delivery(
                 with suppress(asyncio.CancelledError):
                     await cancel_wait
             completed = await process_task
+            processing_command = False
             if await _is_cancelled(command.task_id, cancellation_registry, cancellation_oracle):
                 if cancellation_registry is not None:
                     cancellation_registry.finish(command.task_id)
@@ -557,59 +642,92 @@ async def handle_delivery(
                 routing_key=COMPLETED_ROUTING_KEY,
                 mandatory=True,
             )
-    except PlanningInfeasibleError as failure:
-        try:
-            cancelled = await _is_cancelled(
-                command.task_id,
+    except (PlanningInfeasibleError, PlanningProviderError) as failure:
+        await _publish_terminal_failure(
+            message,
+            event_exchange,
+            command,
+            failure,
+            cancellation_registry,
+            cancellation_oracle,
+        )
+        return
+    except Exception as failure:
+        if processing_command:
+            logger.exception("planning command ended with a non-retryable internal error")
+            await _publish_terminal_failure(
+                message,
+                event_exchange,
+                command,
+                failure,
                 cancellation_registry,
                 cancellation_oracle,
             )
-        except Exception:
-            logger.exception("could not verify task status before failure publication")
-            if cancellation_registry is not None:
-                cancellation_registry.finish(command.task_id)
-            await message.nack(requeue=True)
             return
-        if cancelled:
-            if cancellation_registry is not None:
-                cancellation_registry.finish(command.task_id)
-            await message.ack()
-            return
-        failed = planning_failed_event(command, failure)
-        outgoing = aio_pika.Message(
-            body=failed.model_dump_json(by_alias=True, exclude_none=True).encode(),
-            content_type="application/json",
-            content_encoding="utf-8",
-            delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-            message_id=str(failed.event_id),
-            correlation_id=str(failed.trace_id),
-            type=failed.event_type,
-            headers={
-                "traceId": str(failed.trace_id),
-                "taskId": str(failed.task_id),
-                "tripId": str(failed.trip_id),
-                "runId": str(failed.run_id),
-            },
-        )
-        try:
-            await event_exchange.publish(
-                outgoing,
-                routing_key=FAILED_ROUTING_KEY,
-                mandatory=True,
-            )
-        except Exception:
-            logger.exception("planning failure event was not confirmed")
-            if cancellation_registry is not None:
-                cancellation_registry.finish(command.task_id)
-            await message.nack(requeue=True)
-            return
-    except Exception:
         logger.exception("planning command failed before completion event was confirmed")
         if cancellation_registry is not None:
             cancellation_registry.finish(command.task_id)
         await message.nack(requeue=True)
         return
 
+    await message.ack()
+    if cancellation_registry is not None:
+        cancellation_registry.finish(command.task_id)
+
+
+async def _publish_terminal_failure(
+    message: IncomingDelivery,
+    event_exchange: EventExchange,
+    command: PlanningCreateCommand | PlanningReplanCommand,
+    failure: Exception,
+    cancellation_registry: CancellationRegistry | None,
+    cancellation_oracle: CancellationOracle | None,
+) -> None:
+    try:
+        cancelled = await _is_cancelled(
+            command.task_id,
+            cancellation_registry,
+            cancellation_oracle,
+        )
+    except Exception:
+        logger.exception("could not verify task status before failure publication")
+        if cancellation_registry is not None:
+            cancellation_registry.finish(command.task_id)
+        await message.nack(requeue=True)
+        return
+    if cancelled:
+        if cancellation_registry is not None:
+            cancellation_registry.finish(command.task_id)
+        await message.ack()
+        return
+    failed = planning_failed_event(command, failure)
+    outgoing = aio_pika.Message(
+        body=failed.model_dump_json(by_alias=True, exclude_none=True).encode(),
+        content_type="application/json",
+        content_encoding="utf-8",
+        delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+        message_id=str(failed.event_id),
+        correlation_id=str(failed.trace_id),
+        type=failed.event_type,
+        headers={
+            "traceId": str(failed.trace_id),
+            "taskId": str(failed.task_id),
+            "tripId": str(failed.trip_id),
+            "runId": str(failed.run_id),
+        },
+    )
+    try:
+        await event_exchange.publish(
+            outgoing,
+            routing_key=FAILED_ROUTING_KEY,
+            mandatory=True,
+        )
+    except Exception:
+        logger.exception("planning failure event was not confirmed")
+        if cancellation_registry is not None:
+            cancellation_registry.finish(command.task_id)
+        await message.nack(requeue=True)
+        return
     await message.ack()
     if cancellation_registry is not None:
         cancellation_registry.finish(command.task_id)

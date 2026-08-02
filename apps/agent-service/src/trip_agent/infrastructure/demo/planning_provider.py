@@ -66,6 +66,9 @@ class DemoPlanningProvider:
                 days=days,
                 estimated_total_cost=Decimal("0"),
             ),
+            requested_provider_mode="DEMO_ONLY",
+            primary_provider="DEMO",
+            actual_providers=("DEMO",),
         )
 
     async def replan(self, command: PlanningReplanCommand) -> PlanningResult:
@@ -73,7 +76,11 @@ class DemoPlanningProvider:
             LocalReplanningProvider,
         )
 
-        return await LocalReplanningProvider(DemoRouteProvider()).replan(command)
+        from trip_agent.providers.errors import ProviderExecutionMode  # noqa: PLC0415
+
+        return await LocalReplanningProvider(
+            DemoRouteProvider(), provider_mode=ProviderExecutionMode.DEMO_ONLY
+        ).replan(command)
 
     def _day(self, command: PlanningCreateCommand, offset: int) -> ItineraryDay:
         trip = command.payload.trip

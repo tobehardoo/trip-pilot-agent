@@ -5,11 +5,13 @@ APIs for POI search and route planning, on the candidate ranker for scoring, and
 OR‑Tools for daily schedule optimisation.
 """
 
+import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from itertools import combinations
 from math import ceil
 from typing import Literal
+from uuid import UUID, uuid5
 
 from trip_agent.domain.planning.protocols import (
     PlanningInfeasibleError,
@@ -40,7 +42,12 @@ from trip_agent.planning.optimization import (
     TimeBlock,
 )
 from trip_agent.planning.trusted_context import hard_closed_fact
-from trip_agent.providers._demo_route import DemoRouteProvider
+from trip_agent.providers.errors import (
+    FallbackDecision,
+    ProviderExecutionMode,
+    ProviderFallbackPolicy,
+    ProviderOperation,
+)
 from trip_agent.providers.map import (
     MapProvider,
     Poi,
@@ -51,6 +58,7 @@ from trip_agent.providers.map import (
 from trip_agent.providers.route import RoutePlan, RouteProvider, RouteRequest
 from trip_agent.worker.contracts import (
     ActivityCoordinates,
+    FallbackOperation,
     GuideFactEvidence,
     Itinerary,
     ItineraryDay,
@@ -59,6 +67,8 @@ from trip_agent.worker.contracts import (
     TransitLeg,
 )
 from trip_agent.worker.progress import report_planning_progress
+
+logger = logging.getLogger(__name__)
 
 
 def _non_weather_guide_statements(
@@ -98,12 +108,16 @@ class AmapPlanningProvider:
         route_fallback: RouteProvider | None = None,
         candidate_ranker: CandidateRanker | None = None,
         optimizer: DailyOptimizer | None = None,
+        provider_mode: ProviderExecutionMode = ProviderExecutionMode.REAL_ONLY,
+        fallback_policy: ProviderFallbackPolicy | None = None,
     ) -> None:
         self._map_provider = map_provider
         self._route_provider = route_provider
-        self._route_fallback = route_fallback or DemoRouteProvider()
+        self._route_fallback = route_fallback
         self._candidate_ranker = candidate_ranker or CandidateRanker()
         self._optimizer = optimizer or DailyOptimizer()
+        self._provider_mode = provider_mode
+        self._fallback_policy = fallback_policy or ProviderFallbackPolicy()
 
     # -- public API -----------------------------------------------------------
 
@@ -212,7 +226,7 @@ class AmapPlanningProvider:
                 guide_influenced = tuple(poi.provider_id for poi in pois) != tuple(
                     poi.provider_id for poi in baseline_selected
                 )
-            except (PlanningInfeasibleError, PlanningProviderError):
+            except PlanningInfeasibleError:
                 days, pois = baseline_days, baseline_selected
         unmatched_must_visits = tuple(
             place
@@ -235,6 +249,21 @@ class AmapPlanningProvider:
                     ),
                 ),
             )
+        actual_providers = tuple(sorted({
+            "AMAP",
+            *(
+                leg.provider
+                for day in days
+                for leg in day.transit_legs
+            ),
+        }))
+        fallback_operations = tuple(
+            leg.fallback_operation
+            for day in days
+            for leg in day.transit_legs
+            if leg.fallback_operation is not None
+        )
+        used_route_fallback = bool(fallback_operations)
         return PlanningResult(
             provider="AMAP",
             itinerary=Itinerary(
@@ -245,6 +274,13 @@ class AmapPlanningProvider:
             guide_fact_ids=(
                 matched_guide_fact_ids(command, pois) if guide_influenced else ()
             ),
+            requested_provider_mode=self._provider_mode.value,
+            primary_provider="AMAP",
+            actual_providers=actual_providers,
+            fallback_attempted=used_route_fallback,
+            fallback_succeeded=used_route_fallback,
+            fallback_reason=("ROUTE_PROVIDER_FAILURE" if used_route_fallback else None),
+            fallback_operations=fallback_operations,
         )
 
     async def replan(self, command: PlanningReplanCommand) -> PlanningResult:
@@ -253,7 +289,10 @@ class AmapPlanningProvider:
         )
 
         return await LocalReplanningProvider(
-            self._route_provider, self._route_fallback
+            self._route_provider,
+            self._route_fallback,
+            provider_mode=self._provider_mode,
+            fallback_policy=self._fallback_policy,
         ).replan(command)
 
     # -- internal helpers -----------------------------------------------------
@@ -420,7 +459,10 @@ class AmapPlanningProvider:
             if isinstance(search, ProviderFailure):
                 if search.error_code == "POI_NOT_FOUND":
                     raise self._anchor_unavailable(anchor.place_name)
-                raise PlanningProviderError(search.error_code)
+                raise PlanningProviderError.from_failure(
+                    search,
+                    operation=ProviderOperation.POI_SEARCH,
+                )
             if search.provider != "AMAP":
                 raise PlanningProviderError("UNEXPECTED_MAP_PROVIDER")
             matching = next(
@@ -500,7 +542,10 @@ class AmapPlanningProvider:
             if isinstance(search, ProviderFailure):
                 if search.error_code == "POI_NOT_FOUND":
                     continue
-                raise PlanningProviderError(search.error_code)
+                raise PlanningProviderError.from_failure(
+                    search,
+                    operation=ProviderOperation.POI_SEARCH,
+                )
             if search.provider != "AMAP":
                 raise PlanningProviderError("UNEXPECTED_MAP_PROVIDER")
             candidates.extend(search.data)
@@ -709,14 +754,44 @@ class AmapPlanningProvider:
         assert first_end is not None
         assert second_start is not None
         assert second_end is not None
+        first_activity_id = self._activity_id(
+            command.task_id, trip_date, first_poi.provider_id, first_start
+        )
+        second_activity_id = self._activity_id(
+            command.task_id, trip_date, second_poi.provider_id, second_start
+        )
+        transit_id = uuid5(
+            command.task_id,
+            f"transit:{trip_date}:{first_activity_id}:{second_activity_id}:{route.data.mode}",
+        )
+        fallback_operation = (
+            FallbackOperation(
+                operation="ROUTE",
+                transit_id=transit_id,
+                from_activity_id=first_activity_id,
+                to_activity_id=second_activity_id,
+                requested_mode="REAL_WITH_EXPLICIT_FALLBACK",
+                actual_provider="DEMO",
+                error_category=route.fallback_error.category.value,
+                error_code=route.fallback_error.error_code,
+                retry_count=route.fallback_error.retry_count,
+            )
+            if route.fallback_error is not None
+            else None
+        )
         return ItineraryDay(
             date=trip_date,
             activities=(
-                amap_activity(first_poi, first_start, first_end),
-                amap_activity(second_poi, second_start, second_end),
+                amap_activity(first_poi, first_start, first_end).model_copy(
+                    update={"activity_id": first_activity_id}
+                ),
+                amap_activity(second_poi, second_start, second_end).model_copy(
+                    update={"activity_id": second_activity_id}
+                ),
             ),
             transit_legs=(
                 TransitLeg(
+                    transit_id=transit_id,
                     from_activity_index=0,
                     to_activity_index=1,
                     mode=route.data.mode,
@@ -733,16 +808,57 @@ class AmapPlanningProvider:
                     ),
                     estimated_cost=self._transit_cost(route.data),
                     cost_source=self._transit_cost_source(route),
+                    fallback_operation=fallback_operation,
                 ),
             ),
         )
 
+    @staticmethod
+    def _activity_id(
+        task_id: UUID,
+        trip_date: date,
+        provider_poi_id: str,
+        start_time: datetime,
+    ) -> UUID:
+        return uuid5(
+            task_id,
+            f"activity:{trip_date}:{provider_poi_id}:{start_time.isoformat()}",
+        )
+
     async def _route(self, request: RouteRequest) -> ProviderSuccess[RoutePlan]:
         result = await self._route_provider.get_route(request)
+        fallback_error = None
         if isinstance(result, ProviderFailure):
+            primary_error = PlanningProviderError.from_failure(
+                result,
+                operation=ProviderOperation.ROUTE,
+            )
+            decision = self._fallback_policy.decide(
+                self._provider_mode,
+                primary_error.details,
+            )
+            if (
+                decision != FallbackDecision.ALLOW_FALLBACK
+                or self._route_fallback is None
+            ):
+                raise primary_error.with_fallback(
+                    allowed=False,
+                    attempted=False,
+                    succeeded=False,
+                )
+            logger.warning(
+                "provider_route_fallback category=%s reason=%s retry_count=%s",
+                primary_error.details.category,
+                primary_error.details.error_code,
+                primary_error.details.retry_count,
+            )
+            fallback_error = primary_error.details
             result = await self._route_fallback.get_route(request)
         if isinstance(result, ProviderFailure):
-            raise PlanningProviderError(result.error_code)
+            raise PlanningProviderError.from_failure(
+                result,
+                operation=ProviderOperation.ROUTE,
+            ).with_fallback(allowed=True, attempted=True, succeeded=False)
         if result.provider not in {"AMAP", "DEMO"}:
             raise PlanningProviderError("UNEXPECTED_ROUTE_PROVIDER")
         if (result.provider == "AMAP" and result.estimated) or (
@@ -751,6 +867,8 @@ class AmapPlanningProvider:
             raise RuntimeError(
                 "route provider returned inconsistent source metadata"
             )
+        if fallback_error is not None:
+            return result.model_copy(update={"fallback_error": fallback_error})
         return result
 
     async def _route_cached(

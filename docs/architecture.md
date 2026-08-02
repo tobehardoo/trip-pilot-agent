@@ -64,13 +64,32 @@ Java 拥有用户可见业务事实和事务一致性；Python 只消费冻结�
 
 ## 可靠性模型
 
+Provider 执行链为：
+
+```text
+WorkerSettings
+  -> build_planning_provider
+  -> DemoPlanningProvider | AmapPlanningProvider
+  -> RetryingMapProvider / RetryingRouteProvider
+  -> ProviderFallbackPolicy（仅显式 fallback 模式）
+  -> PlannerPipeline
+  -> Worker completion v6 | failure v2
+  -> Java parser/consumer -> task event -> SSE/API
+```
+
 - Transactional Outbox 保证数据库写入和消息发布最终一致。
 - RabbitMQ 使用 at-least-once 投递；消费者用任务、消息和序列号做幂等。
 - 规划任务状态只允许 `QUEUED -> RUNNING -> COMPLETED/FAILED/CANCELLED`。
 - SSE 事件持久化到数据库，浏览器通过 `Last-Event-ID` 补发遗漏事件。
 - 同一旅行只允许一个修改行程的活动任务，避免并发覆盖当前版本。
 - 回滚不修改历史版本，而是复制目标版本并创建新的 `ROLLBACK` 版本。
-- Provider 失败时可以降级，但必须标记 Demo、估算、缓存或 stale 状态。
+- `DEMO_ONLY` 完全不创建 AMap；`REAL_ONLY` 完全不创建 Demo/fallback；`REAL_WITH_EXPLICIT_FALLBACK` 才创建两者，并由集中白名单按 category、operation 与 retry exhaustion 判定。
+- `RATE_LIMITED`、`TIMEOUT`、`NETWORK_ERROR`、`PROVIDER_UNAVAILABLE` 和部分 `MALFORMED_RESPONSE` 在单一执行层有限重试；配置、鉴权、权限、配额、无效请求、Adapter 与内部错误默认不重试。
+- 显式 route 回退必须标记目标 Transit 为 `DEMO/estimated`，顶层来源聚合为 `MIXED` 并记录原因/关联 ID；`REAL_ONLY` 错误发布 failure v2，不能转换为成功。
+- `PlanningResult` 是成功 provenance 的唯一事实来源。completion v6 通过可选对象传递 requested/primary/actual providers 与结构化 fallback operation；Java 不扫描结果补造 mode 或 fallback。
+- 新版本中的 Activity/Transit 使用数据库 UUID。完成事务按消息内稳定 ID 重映射 Route operation 后，将同一 JSONB 用于任务查询和 SSE 回放；历史 v6 无 provenance 时保持未记录。该路径复用 `planning_task_event.payload`，Flyway 仍为 V27。
+- AMap 严格真实模式由 `PROVIDER_MODE=REAL_ONLY` 选择，服务端使用 `AMAP_WEB_SERVICE_KEY`，浏览器地图使用独立的 `VITE_AMAP_WEB_JS_KEY`/`VITE_AMAP_SECURITY_CODE`。
+- 当前真实验收覆盖广州 POI、步行和驾车路线；不把未验证的公交路线或公网域名能力推断为已交付。
 
 ## 规划流程
 
@@ -103,7 +122,7 @@ COMPLETED
 
 ## 可观测性
 
-Prometheus 覆盖规划成功/失败/取消、阶段耗时、Provider 结果、RabbitMQ 积压和任务结果。关键日志携带 `traceId`、`tripId`、`taskId`、`messageId` 和 `provider` 等非敏感标识。
+Prometheus 覆盖规划成功/失败/取消、阶段耗时、Provider 结果、RabbitMQ 积压和任务结果。关键日志携带 `traceId`、`tripId`、`taskId`、`messageId` 和 `provider` 等非敏感标识。Provider 回退使用稳定标记 `planning_provider_fallback`，并记录 operation、reason、retry_count、event_id、trace_id、task_id 和 trip_id；密钥、Cookie、Authorization 和完整 payload 不进入日志。
 
 ## 历史详稿
 

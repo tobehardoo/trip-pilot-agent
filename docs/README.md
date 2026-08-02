@@ -12,6 +12,10 @@
 | [部署与运维](deployment.md) | 面向运行：环境变量、Compose、测试、备份、回滚和发布检查 |
 | [技术决策](decision-record.md) | 面向维护：关键 ADR、约束和变更流程 |
 | [发布状态](release.md) | 面向验收：V2.0 证据、外部阻塞、已知风险和下一版本门禁 |
+| [当前系统理解](current-system-understanding.md) | 面向接手开发：基于代码的模块、链路、数据边界与未确认项 |
+| [当前状态评估](current-state-assessment.md) | 面向决策：实际完成度、测试结果、P0–P3 问题和文档冲突 |
+| [下一阶段执行计划](next-stage-execution-plan.md) | 面向执行：稳定性优先的原子切片、验收和回滚要求 |
+| [交付基线](project-delivery-baseline.md) | 面向交付：当前可做、不可承诺、风险和适用性 |
 
 ## 归档文档
 

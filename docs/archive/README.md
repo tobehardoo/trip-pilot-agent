@@ -23,6 +23,8 @@
 | `v2-delivery-checklist.md` | V2.0 交付与验收清单 |
 | `v2-release-evidence.md` | V2.0 发布证据原文 |
 | `v2-roadmap.md` | V2.0 方针与范围草案 |
+| `post-v2.5-p0-p2-execution-plan.md` | V2.5 之后的生产可信度、架构治理与产品扩展执行规划 |
+| `p0-execution-evidence.md` | P0 配置、CI、Compose 与备份恢复演练记录，以及真实环境剩余门禁 |
 
 ## 使用规则
 

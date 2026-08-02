@@ -1,5 +1,14 @@
 # 技术决策
 
+## ADR 014：完成事件运行时契约锁定为 v6（2026-07-30）
+
+- [已验证] `apps/agent-service/src/trip_agent/worker/contracts.py`、`worker/processor.py` 均发布 `schemaVersion: 6`；`PlanningCompletedEventParser` 仅接受 v1-v6，并在 JSON 字段校验之前拒绝 v7。
+- [已验证] v6 允许向后兼容的可选 `providerProvenance`，历史 payload 无该对象仍合法且不得被推断。v7 草案的业务增量仍是 Transit 成本与扩展 mode；该草案未随 v6 provenance 改动启用。
+- [已验证] v6 producer 不再把内部 Transit 成本字段序列化到消息；`test_messaging_contract_schemas.py` 现以含 Transit 的 worker wire payload 验证 v6 JSON Schema。
+- [已验证] provenance Route operation 以稳定消息 ID 关联 Transit/Activity，Java 在完成事务内重映射为版本数据库 UUID，并复用既有任务事件 JSONB；无需 ADR 或 Flyway 主版本升级。
+- [文档声明] `contracts/messaging/planning-completed-event-v7.schema.json` 是下一次独立升级的草案，不是可投递、可消费或可持久化的运行时版本。
+- [待确认] 启用 v7 前必须一次性完成 Python 生产、Java 解析/校验/持久化、Web 展示与跨语言样例测试，并明确成本来源和 `TRANSIT`/`TAXI` 的业务语义。
+
 本文保留当前仍约束实现的关键 ADR 摘要。完整历史理由见 [原 ADR 详稿](archive/decision-record.md)。
 
 ## 当前决策

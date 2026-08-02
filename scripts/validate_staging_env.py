@@ -7,7 +7,6 @@ import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-
 _SECRET_MINIMUM_LENGTHS = {
     "POSTGRES_PASSWORD": 16,
     "REDIS_PASSWORD": 16,

@@ -61,8 +61,13 @@ jobs:
       - run: uv run ruff check .
       - name: Validate release tooling style
         run: uv run ruff check ../../scripts/validate_staging_env.py ../../scripts/tests
-      - run: uv run pytest --cov=trip_agent.retrieval --cov=trip_agent.acquisition --cov-report=term --cov-fail-under=80
-      - run: uv run pytest
+      - run: >-
+          uv run pytest
+          --cov=trip_agent.retrieval
+          --cov=trip_agent.acquisition
+          --cov=trip_agent.guide_intelligence
+          --cov-report=term
+          --cov-fail-under=80
       - name: Run PlanEvaluation benchmark
         run: uv run python benchmarks/run_plan_evaluation.py
 

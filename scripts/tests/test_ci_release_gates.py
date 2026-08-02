@@ -16,6 +16,27 @@ class CiReleaseGatesTest(unittest.TestCase):
             workflow,
         )
 
+    def test_python_coverage_gate_includes_guide_intelligence(self) -> None:
+        workflow = (
+            Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+        ).read_text(encoding="utf-8")
+
+        coverage_step = next(
+            step
+            for step in workflow.split("\n      - ")
+            if "--cov=trip_agent.guide_intelligence" in step
+        )
+        for argument in (
+            "--cov=trip_agent.retrieval",
+            "--cov=trip_agent.acquisition",
+            "--cov=trip_agent.guide_intelligence",
+            "--cov-fail-under=80",
+        ):
+            self.assertIn(argument, coverage_step)
+
+        self.assertNotIn(" tests/", coverage_step)
+        self.assertEqual(workflow.count("uv run pytest"), 1)
+
     def test_compose_smoke_probes_both_web_and_api(self) -> None:
         workflow = (
             Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"

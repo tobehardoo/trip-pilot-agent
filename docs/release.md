@@ -4,11 +4,14 @@
 
 V2.0 已在 2026-07-27 形成本地交付证据。证据覆盖 Demo 模式、生产 Compose、本地浏览器验收、规划进度、通勤写回、分享、PDF/ICS 导出、归档搜索和诊断入口。
 
+PlanEvaluation 交付闭环已在 2026-08-02 完成本地验证，覆盖确定性评分、警告与决策解释、事件持久化、实体 ID 重映射、SSE 回放、GET 查询和前端展示。
+
 这不是互联网生产发布声明。生产发布仍取决于部署者环境中的 HTTPS、Cookie 安全配置、真实 Provider Key、域名白名单和高德 Web JS 底图验收。
 
 ## 已验证能力
 
 - 规划进度使用版本化契约、Worker 真实阶段事件、Java 幂等持久化、`Last-Event-ID` 回放和浏览器恢复。
+- 方案评估使用无 LLM 的确定性规则和版本化权重；完成事件中的结果会持久化并随行程实体 ID 重映射，旧事件和失败任务保持 `evaluation = null`。
 - 通勤编辑保存 `TRANSIT` 与 `TAXI` 选择、重新计算的时长、费用、Provider 元数据、计算时间和 stale 状态。
 - 匿名分享固定到不可变行程版本；Token 使用强随机值，只保存 SHA-256 哈希，并支持撤销、过期和匿名限流。
 - PDF 使用支持中文的字体并经过 PDFium 渲染验证；ICS 使用 UTF-8 日历导出。
@@ -20,10 +23,11 @@ V2.0 已在 2026-07-27 形成本地交付证据。证据覆盖 Demo 模式、生
 
 | 范围 | 命令 | 结果 |
 | --- | --- | --- |
-| Java 测试、Flyway 和验证 | `mvn -q verify` in `apps/travel-server` | 通过 |
-| Python 测试 | `python -m pytest --basetemp .tmp/pytest-v2-run` in `apps/agent-service` | 415 passed, 34 skipped |
+| Java 测试、Flyway 和验证 | `mvn verify` in `apps/travel-server` | 203 tests passed；Flyway V1–V27；JaCoCo 通过 |
+| Python 测试 | `python -m pytest --basetemp C:\tmp\trippilot-plan-eval-20260802` in `apps/agent-service` | 521 passed, 37 skipped |
 | Python 静态检查 | `python -m ruff check .` in `apps/agent-service` | 通过 |
-| Web 单元测试 | `pnpm test` in `apps/web` | 92 passed across 20 files |
+| PlanEvaluation 基准 | `python benchmarks/run_plan_evaluation.py` in `apps/agent-service` | 8 scenarios passed；重复运行结果一致 |
+| Web 单元测试 | `pnpm test` in `apps/web` | 103 passed across 23 files |
 | Web 类型和构建 | `pnpm typecheck` and `pnpm build` in `apps/web` | 通过 |
 | 浏览器验收 | `pnpm test:e2e` in `apps/web` | 4 passed |
 | 分享回归 | `mvn -q -Dtest=ItineraryShareFlowIntegrationTest test` | 通过 |

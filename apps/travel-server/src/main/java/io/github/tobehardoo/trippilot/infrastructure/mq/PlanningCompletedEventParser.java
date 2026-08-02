@@ -24,6 +24,22 @@ public class PlanningCompletedEventParser {
     private static final int MAX_ROUTE_DISTANCE_METERS = 40_100_000;
     private static final int MAX_ROUTE_DURATION_SECONDS = 31_536_000;
     private static final int MAX_POLYLINE_POINTS = 5_000;
+    private static final Set<String> EVALUATION_WARNING_CODES = Set.of(
+            "TIGHT_TRANSFER", "HIGH_DAILY_LOAD", "BUDGET_NEAR_LIMIT",
+            "LONG_WALKING", "LATE_DAY_END", "LOW_INTEREST_MATCH",
+            "PROVIDER_FALLBACK_USED", "ESTIMATED_TRANSIT", "LOW_TIME_BUFFER"
+    );
+    private static final Set<String> EVALUATION_SEVERITIES = Set.of(
+            "INFO", "WARNING", "CRITICAL"
+    );
+    private static final Set<String> EVALUATION_ENTITY_TYPES = Set.of(
+            "PLAN", "DAY", "ACTIVITY", "TRANSIT"
+    );
+    private static final Set<String> EVALUATION_REASON_CODES = Set.of(
+            "FIXED_APPOINTMENT", "NEARBY_CLUSTER", "MUST_VISIT",
+            "TRANSIT_MODE", "SHORTEST_ROUTE", "PROVIDER_CONSTRAINT",
+            "TIME_OPTIMIZATION", "BUDGET_CONSTRAINT", "REGIONAL_GROUPING"
+    );
 
     private final ObjectReader reader;
     private final ObjectMapper objectMapper;
@@ -330,6 +346,8 @@ public class PlanningCompletedEventParser {
                 || !evaluation.path("feasible").isBoolean()
                 || !evaluation.path("overallScore").isInt()
                 || !evaluation.path("dimensions").isObject()
+                || !evaluation.path("warnings").isArray()
+                || !evaluation.path("decisions").isArray()
                 || !evaluation.path("summary").isTextual()
                 || !evaluation.path("evaluatedAt").isTextual()) {
             throw invalid("evaluation field types do not match the JSON Schema");
@@ -354,6 +372,10 @@ public class PlanningCompletedEventParser {
         if (evaluation.overallScore() < 0 || evaluation.overallScore() > 100) {
             throw invalid("evaluation overallScore must be 0-100");
         }
+        if (!validText(evaluation.summary(), 1_000)
+                || evaluation.evaluatedAt() == null) {
+            throw invalid("evaluation summary or evaluatedAt is invalid");
+        }
         PlanningCompletedEvent.EvaluationDimensions dims = evaluation.dimensions();
         if (dims == null
                 || dims.constraintSatisfaction() < 0 || dims.constraintSatisfaction() > 100
@@ -375,8 +397,11 @@ public class PlanningCompletedEventParser {
         }
         if (evaluation.warnings() != null) {
             for (PlanningCompletedEvent.EvaluationWarning w : evaluation.warnings()) {
-                if (w == null || w.code() == null || w.severity() == null
-                        || w.message() == null || w.entityType() == null) {
+                if (w == null
+                        || !EVALUATION_WARNING_CODES.contains(w.code())
+                        || !EVALUATION_SEVERITIES.contains(w.severity())
+                        || !validText(w.message(), 300)
+                        || !EVALUATION_ENTITY_TYPES.contains(w.entityType())) {
                     throw invalid("evaluation warning is invalid");
                 }
             }
@@ -384,9 +409,18 @@ public class PlanningCompletedEventParser {
         if (evaluation.decisions() != null) {
             java.util.Set<String> seen = new java.util.HashSet<>();
             for (PlanningCompletedEvent.DecisionExplanation d : evaluation.decisions()) {
-                if (d == null || d.subjectType() == null || d.summary() == null
+                if (d == null
+                        || !EVALUATION_ENTITY_TYPES.contains(d.subjectType())
+                        || !validText(d.summary(), 300)
                         || d.reasonCodes() == null || d.reasonCodes().isEmpty()
-                        || d.reasons() == null || d.reasons().isEmpty()) {
+                        || !EVALUATION_REASON_CODES.containsAll(d.reasonCodes())
+                        || d.reasons() == null || d.reasons().isEmpty()
+                        || d.reasonCodes().size() != d.reasons().size()
+                        || d.reasons().stream().anyMatch(reason -> !validText(reason, 300))
+                        || d.evidence().stream().anyMatch(evidence -> evidence == null
+                                || !validText(evidence.key(), 60)
+                                || !validText(evidence.label(), 300)
+                                || !validText(evidence.value(), 200))) {
                     throw invalid("evaluation decision is invalid");
                 }
                 if (!seen.add(d.subjectType() + "|" + d.subjectId() + "|" + d.summary())) {

@@ -1,0 +1,6 @@
+{
+  "id": "budget-near-limit",
+  "description": "A feasible real-provider plan consumes 90% of its budget.",
+  "profile": "budget-near-limit",
+  "expect": {"minimum_score": 90, "maximum_score": 99, "required_warnings": ["BUDGET_NEAR_LIMIT"], "forbidden_warnings": ["ESTIMATED_TRANSIT"]}
+}

@@ -1,0 +1,6 @@
+{
+  "id": "mixed-provider-fallback",
+  "description": "A route-level timeout uses explicit Demo fallback with stable transit identity.",
+  "profile": "mixed-provider-fallback",
+  "expect": {"minimum_score": 100, "maximum_score": 100, "required_warnings": ["PROVIDER_FALLBACK_USED", "ESTIMATED_TRANSIT"], "forbidden_warnings": []}
+}

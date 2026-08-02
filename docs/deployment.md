@@ -95,6 +95,7 @@ Set-Location apps/agent-service
 uv sync --extra dev
 uv run pytest
 uv run ruff check .
+uv run python benchmarks/run_plan_evaluation.py
 
 # Web
 Set-Location ../web

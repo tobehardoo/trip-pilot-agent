@@ -1,0 +1,6 @@
+{
+  "id": "tight-transfer",
+  "description": "A four-minute buffer triggers both tight and critical low-buffer warnings.",
+  "profile": "tight-transfer",
+  "expect": {"minimum_score": 95, "maximum_score": 99, "required_warnings": ["TIGHT_TRANSFER", "LOW_TIME_BUFFER", "ESTIMATED_TRANSIT"], "forbidden_warnings": []}
+}

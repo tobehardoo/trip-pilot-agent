@@ -16,8 +16,11 @@ from trip_agent.providers.errors import (
     ProviderExecutionMode,
     ProviderFallbackPolicy,
 )
-from trip_agent.worker.contracts import PlanningCreateCommand, PlanningReplanCommand
-from trip_agent.worker.contracts import FallbackOperation
+from trip_agent.worker.contracts import (
+    FallbackOperation,
+    PlanningCreateCommand,
+    PlanningReplanCommand,
+)
 
 logger = logging.getLogger(__name__)
 

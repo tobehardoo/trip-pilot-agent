@@ -18,7 +18,7 @@
           {"activityId": "ea000002-0000-4000-8000-000000000004", "title": "Canton Tower", "startTime": "2026-08-02T13:00:00+08:00", "endTime": "2026-08-02T15:00:00+08:00", "estimatedCost": 50, "source": "AMAP", "providerPoiId": "POI-FIX-2", "coordinates": {"longitude": 113.32, "latitude": 23.12}, "address": "Fix St 2"}
         ],
         "transitLegs": [
-          {"transitId": "et000001-0000-4000-8000-000000000004", "fromActivityIndex": 0, "toActivityIndex": 1, "mode": "DRIVING", "distanceMeters": 2000, "durationSeconds": 600, "provider": "AMAP", "estimated": false, "polyline": [{"longitude": 113.30, "latitude": 23.10}, {"longitude": 113.32, "latitude": 23.12}]}
+          {"transitId": "e7000001-0000-4000-8000-000000000004", "fromActivityIndex": 0, "toActivityIndex": 1, "mode": "DRIVING", "distanceMeters": 2000, "durationSeconds": 600, "provider": "AMAP", "estimated": false, "polyline": [{"longitude": 113.30, "latitude": 23.10}, {"longitude": 113.32, "latitude": 23.12}]}
         ]
       }],
       "estimatedTotalCost": 80
@@ -37,7 +37,7 @@
       "schemaVersion": 1,
       "evaluatorVersion": "rule-v1",
       "feasible": true,
-      "overallScore": 98,
+      "overallScore": 97,
       "dimensions": {
         "constraintSatisfaction": 100,
         "timeFeasibility": 100,
@@ -67,7 +67,7 @@
           "dayIndex": 0
         }
       ],
-      "summary": "行程整体质量 98/100，满足 1 个固定预约。",
+      "summary": "行程整体质量 97/100，满足 1 个固定预约。",
       "evaluatedAt": "2026-08-02T00:00:00Z"
     }
   }

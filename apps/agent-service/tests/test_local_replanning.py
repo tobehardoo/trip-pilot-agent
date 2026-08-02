@@ -239,6 +239,8 @@ def test_local_replanning_only_rebuilds_impacted_transit() -> None:
     assert second_day == command.payload.itinerary.days[1].to_itinerary_day()
     assert completed.payload.knowledge == command.payload.knowledge
     assert completed.payload.provider == "AMAP"
+    assert completed.payload.evaluation is not None
+    assert completed.payload.evaluation.feasible is True
 
 
 def test_local_replanning_preserves_the_existing_transit_mode() -> None:

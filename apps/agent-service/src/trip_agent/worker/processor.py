@@ -34,6 +34,7 @@ from trip_agent.domain.shared import (  # noqa: F401
     MAX_TRIP_DAYS,
     text_matches,
 )
+from trip_agent.evaluation import get_plan_evaluator
 from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider  # noqa: F811
 from trip_agent.infrastructure.demo.knowledge_provider import (
     DemoKnowledgeEvidenceProvider,  # noqa: F811
@@ -59,7 +60,6 @@ from trip_agent.worker.contracts import (
     PlanningRelaxation,
     PlanningReplanCommand,
 )
-from trip_agent.evaluation import get_plan_evaluator
 from trip_agent.worker.progress import report_planning_progress
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider  # noqa: F811
 
@@ -164,6 +164,7 @@ async def process_planning_replan(
         "RESULT_EXPLAINING",
         "Preparing the updated local itinerary",
     )
+    evaluation = get_plan_evaluator().evaluate(command, result)
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
         schema_version=6,
@@ -179,6 +180,7 @@ async def process_planning_replan(
             knowledge=command.payload.knowledge,
             fact_impacts=(),
             provider_provenance=result.provider_provenance(),
+            evaluation=evaluation,
         ),
     )
 

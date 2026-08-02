@@ -111,7 +111,10 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
             return new CompletionPayload(
                     SUCCEEDED, event.runId(), result.versionId(),
                     result.versionNumber(), result.provider(), null, null,
-                    null, null, null, null, null
+                    null, null, null, null, null,
+                    remapEvaluation(
+                            event.payload().evaluation(),
+                            result.persistedActivities(), result.persistedTransit())
             );
         }
         return new CompletionPayload(
@@ -120,8 +123,81 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                 provenance.primaryProvider(), provenance.actualProviders(),
                 provenance.fallbackAttempted(), provenance.fallbackSucceeded(),
                 provenance.fallbackReason(), remapFallbackOperations(
-                        provenance.fallbackOperations(), result.persistedTransit())
+                        provenance.fallbackOperations(), result.persistedTransit()),
+                remapEvaluation(
+                        event.payload().evaluation(),
+                        result.persistedActivities(), result.persistedTransit())
         );
+    }
+
+    private PlanningCompletedEvent.PlanEvaluation remapEvaluation(
+            PlanningCompletedEvent.PlanEvaluation evaluation,
+            List<ItineraryService.PersistedActivityReference> persistedActivities,
+            List<ItineraryService.PersistedTransitReference> persistedTransit
+    ) {
+        if (evaluation == null) {
+            return null;
+        }
+        List<PlanningCompletedEvent.EvaluationWarning> warnings = evaluation.warnings().stream()
+                .map(warning -> new PlanningCompletedEvent.EvaluationWarning(
+                        warning.code(), warning.severity(), warning.message(),
+                        warning.dayIndex(), warning.entityType(),
+                        remapEvaluationEntity(
+                                warning.entityType(), warning.entityId(),
+                                persistedActivities, persistedTransit),
+                        warning.metricKey(), warning.actualValue(), warning.threshold()
+                ))
+                .toList();
+        List<PlanningCompletedEvent.DecisionExplanation> decisions = evaluation.decisions().stream()
+                .map(decision -> new PlanningCompletedEvent.DecisionExplanation(
+                        decision.subjectType(),
+                        remapEvaluationEntity(
+                                decision.subjectType(), decision.subjectId(),
+                                persistedActivities, persistedTransit),
+                        decision.summary(), decision.reasonCodes(), decision.reasons(),
+                        decision.constraintRefs(), decision.evidence(), decision.dayIndex()
+                ))
+                .toList();
+        return new PlanningCompletedEvent.PlanEvaluation(
+                evaluation.schemaVersion(), evaluation.evaluatorVersion(), evaluation.feasible(),
+                evaluation.overallScore(), evaluation.dimensions(), warnings, decisions,
+                evaluation.summary(), evaluation.evaluatedAt()
+        );
+    }
+
+    private UUID remapEvaluationEntity(
+            String entityType,
+            UUID sourceId,
+            List<ItineraryService.PersistedActivityReference> persistedActivities,
+            List<ItineraryService.PersistedTransitReference> persistedTransit
+    ) {
+        if (sourceId == null) {
+            return null;
+        }
+        List<UUID> matches;
+        if ("TRANSIT".equals(entityType)) {
+            matches = persistedTransit.stream()
+                    .filter(reference -> Objects.equals(reference.sourceTransitId(), sourceId))
+                    .map(ItineraryService.PersistedTransitReference::transitId)
+                    .distinct()
+                    .toList();
+        } else if ("ACTIVITY".equals(entityType)) {
+            matches = persistedActivities.stream()
+                    .filter(reference -> Objects.equals(
+                            reference.sourceActivityId(), sourceId))
+                    .map(ItineraryService.PersistedActivityReference::activityId)
+                    .distinct()
+                    .toList();
+        } else {
+            return sourceId;
+        }
+        if (matches.isEmpty()) {
+            throw rejected("Evaluation entity was not persisted with the itinerary");
+        }
+        if (matches.size() != 1) {
+            throw rejected("Evaluation entity could not be mapped to one persisted identity");
+        }
+        return matches.getFirst();
     }
 
     private List<CompletionFallbackOperation> remapFallbackOperations(
@@ -297,7 +373,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
             Boolean fallbackAttempted,
             Boolean fallbackSucceeded,
             String fallbackReason,
-            List<CompletionFallbackOperation> fallbackOperations
+            List<CompletionFallbackOperation> fallbackOperations,
+            PlanningCompletedEvent.PlanEvaluation evaluation
     ) {
     }
 

@@ -7,17 +7,19 @@ Thresholds and weights are centrally configured here — never scattered.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
+from unicodedata import normalize
 from uuid import UUID
 
 from trip_agent.worker.contracts import (
     FallbackOperation,
+    FixedSchedule,
     Itinerary,
     ItineraryActivity,
     ItineraryDay,
     PlanningCreateCommand,
-    TransitLeg,
+    PlanningReplanCommand,
 )
 
 # ── Central weight configuration ──────────────────────────────────────────
@@ -86,7 +88,8 @@ class DayStats:
 # ── Budget ─────────────────────────────────────────────────────────────────
 
 def build_budget_context(
-    command: PlanningCreateCommand, itinerary: Itinerary
+    command: PlanningCreateCommand | PlanningReplanCommand,
+    itinerary: Itinerary,
 ) -> BudgetContext:
     budget_amount = command.payload.trip.constraints.budget_amount
     cost = itinerary.estimated_total_cost
@@ -188,7 +191,9 @@ def score_time_feasibility(
             to_start = day.activities[leg.to_activity_index].start_time
             buffer_min = (to_start - from_end).total_seconds() / 60
             if buffer_min < MIN_BUFFER_MINUTES:
-                score -= 2
+                # A two-point dimension penalty disappears after the 25%
+                # weighting and integer rounding, leaving a risky plan at 100.
+                score -= 4
     return max(0, score)
 
 
@@ -219,7 +224,10 @@ def time_warnings(
                 result.append(EvaluationWarning(
                     code="LATE_DAY_END",
                     severity="INFO",
-                    message=f"第 {stats.day_index + 1} 天结束时间较晚 ({local_end.strftime('%H:%M')})",
+                    message=(
+                        f"第 {stats.day_index + 1} 天结束时间较晚 "
+                        f"({local_end.strftime('%H:%M')})"
+                    ),
                     day_index=stats.day_index,
                     entity_type="DAY",
                     metric_key="last_activity_end_hour",
@@ -284,7 +292,10 @@ def route_warnings(days: tuple[ItineraryDay, ...]) -> tuple[object, ...]:
                     result.append(EvaluationWarning(
                         code="LONG_WALKING",
                         severity="INFO",
-                        message=f"步行路段较长 ({leg.duration_seconds // 60} 分钟, {leg.distance_meters}m)",
+                        message=(
+                            f"步行路段较长 ({leg.duration_seconds // 60} 分钟, "
+                            f"{leg.distance_meters}m)"
+                        ),
                         day_index=day_idx,
                         entity_type="TRANSIT",
                         entity_id=leg.transit_id,
@@ -319,7 +330,7 @@ def route_warnings(days: tuple[ItineraryDay, ...]) -> tuple[object, ...]:
 # ── Constraint satisfaction ────────────────────────────────────────────────
 
 def score_constraint_satisfaction(
-    command: PlanningCreateCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand,
     itinerary: Itinerary,
 ) -> int:
     """Score how well constraints are satisfied.  Start at 100, deduct for relaxations."""
@@ -336,16 +347,17 @@ def score_constraint_satisfaction(
         coverage = len(must_visit & visited) / len(must_visit)
         if coverage < 1.0:
             score -= round((1.0 - coverage) * 15)  # partial must-visit failure
-    # Fixed schedules: check all are within activity time windows
+    # Fixed schedules: both the place and time window must match.
     fixed_count = len(constraints.fixed_schedules)
     if fixed_count > 0:
         covered = 0
-        for fs in constraints.fixed_schedules:
-            for day in itinerary.days:
-                for a in day.activities:
-                    if a.start_time <= fs.start_time and a.end_time >= fs.end_time:
-                        covered += 1
-                        break
+        for schedule in constraints.fixed_schedules:
+            if any(
+                activity_covers_fixed_schedule(activity, schedule)
+                for day in itinerary.days
+                for activity in day.activities
+            ):
+                covered += 1
         if covered < fixed_count:
             score -= 5 * (fixed_count - covered)
     return max(0, score)
@@ -353,7 +365,9 @@ def score_constraint_satisfaction(
 
 # ── Interest match ─────────────────────────────────────────────────────────
 
-def score_interest_match(command: PlanningCreateCommand) -> int:
+def score_interest_match(
+    command: PlanningCreateCommand | PlanningReplanCommand,
+) -> int:
     """Score preference alignment at a basic level.
 
     NOTE: Full semantic interest matching requires reliable activity
@@ -393,7 +407,7 @@ def provider_fallback_warnings(
 # ── Constraint consistency guard ───────────────────────────────────────────
 
 def detect_hard_constraint_violations(
-    command: PlanningCreateCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand,
     itinerary: Itinerary,
     budget_ctx: BudgetContext,
 ) -> list[str]:
@@ -421,13 +435,33 @@ def detect_hard_constraint_violations(
 
     # Fixed schedules inside activity windows
     for fs in constraints.fixed_schedules:
-        found = False
-        for day in itinerary.days:
-            for a in day.activities:
-                if a.start_time <= fs.start_time and a.end_time >= fs.end_time:
-                    found = True
-                    break
+        found = any(
+            activity_covers_fixed_schedule(activity, fs)
+            for day in itinerary.days
+            for activity in day.activities
+        )
         if not found:
             violations.append(f"fixed schedule '{fs.place_name}' is not covered")
 
     return violations
+
+
+def activity_covers_fixed_schedule(
+    activity: ItineraryActivity,
+    schedule: FixedSchedule,
+) -> bool:
+    """Return whether an activity represents the scheduled place and window."""
+    return (
+        _normalise_place_name(activity.title)
+        == _normalise_place_name(schedule.place_name)
+        and activity.start_time <= schedule.start_time
+        and activity.end_time >= schedule.end_time
+    )
+
+
+def _normalise_place_name(value: str) -> str:
+    return "".join(
+        character
+        for character in normalize("NFKC", value).casefold()
+        if character.isalnum()
+    )

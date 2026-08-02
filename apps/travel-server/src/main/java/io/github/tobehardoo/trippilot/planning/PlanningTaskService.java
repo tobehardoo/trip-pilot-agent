@@ -452,7 +452,8 @@ public class PlanningTaskService {
         try {
             return objectMapper.treeToValue(evalNode, PlanEvaluation.class);
         } catch (JsonProcessingException e) {
-            return null;
+            throw new IllegalStateException(
+                    "Planning task evaluation payload is invalid", e);
         }
     }
 

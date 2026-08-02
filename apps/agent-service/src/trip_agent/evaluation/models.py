@@ -16,6 +16,8 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
+from trip_agent.evaluation.scoring import weighted_overall_score
+
 type WarningCode = Literal[
     "TIGHT_TRANSFER",
     "HIGH_DAILY_LOAD",
@@ -174,13 +176,7 @@ class PlanEvaluation(BaseModel):
     @model_validator(mode="after")
     def score_matches_dimensions(self) -> Self:
         dim = self.dimensions
-        expected = round(
-            dim.constraint_satisfaction * 0.30
-            + dim.time_feasibility * 0.25
-            + dim.budget_fit * 0.15
-            + dim.route_efficiency * 0.15
-            + dim.interest_match * 0.15
-        )
+        expected = weighted_overall_score(dim)
         if self.overall_score != expected:
             raise ValueError(
                 f"overallScore ({self.overall_score}) "

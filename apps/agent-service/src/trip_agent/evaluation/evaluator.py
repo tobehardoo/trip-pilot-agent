@@ -1,7 +1,11 @@
 """PlanEvaluator — deterministic, read-only, side-effect-free."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from trip_agent.domain.planning.protocols import PlanningResult
+from trip_agent.evaluation.explanations import (
+    DeterministicPlanExplanationGenerator,
+)
 from trip_agent.evaluation.models import (
     EvaluationDimensions,
     EvaluationWarning,
@@ -20,15 +24,9 @@ from trip_agent.evaluation.rules import (
     score_route_efficiency,
     score_time_feasibility,
     time_warnings,
-    CONSTRAINT_SATISFACTION_WEIGHT,
-    TIME_FEASIBILITY_WEIGHT,
-    BUDGET_FIT_WEIGHT,
-    ROUTE_EFFICIENCY_WEIGHT,
-    INTEREST_MATCH_WEIGHT,
 )
-from trip_agent.evaluation.explanations import (
-    DeterministicPlanExplanationGenerator,
-)
+from trip_agent.evaluation.scoring import weighted_overall_score
+from trip_agent.worker.contracts import PlanningCreateCommand, PlanningReplanCommand
 
 EVALUATOR_VERSION = "rule-v1"
 
@@ -53,8 +51,8 @@ class PlanEvaluator:
 
     def evaluate(
         self,
-        command: object,
-        result: object,
+        command: PlanningCreateCommand | PlanningReplanCommand,
+        result: PlanningResult,
     ) -> PlanEvaluation:
         """Produce a complete, deterministic plan evaluation.
 
@@ -71,12 +69,29 @@ class PlanEvaluator:
         )
         if violations:
             # Lazy import to avoid circular dependency
-            from trip_agent.providers.errors import PlanningProviderError
-            raise PlanningProviderError(
-                "\n".join(violations),
-                category="DATA_QUALITY_ERROR",
-                provider="PLANNER",
+            from trip_agent.providers.errors import (
+                PlanningProviderError,
+                ProviderErrorCategory,
+                ProviderFailureDetails,
+                ProviderOperation,
             )
+            operation = (
+                ProviderOperation.REPLANNING
+                if command.payload.task_type == "REPLAN"
+                else ProviderOperation.PLANNING
+            )
+            raise PlanningProviderError(ProviderFailureDetails(
+                category=ProviderErrorCategory.DATA_QUALITY_ERROR,
+                error_code="PLAN_EVALUATION_DATA_QUALITY_ERROR",
+                provider="PLANNER",
+                operation=operation,
+                retryable=False,
+                fallback_allowed=False,
+                safe_provider_code=None,
+                safe_message="\n".join(violations),
+                retry_count=0,
+                cause_type=None,
+            ))
 
         constraint_sat = score_constraint_satisfaction(command, itinerary)
         time_feas = score_time_feasibility(itinerary.days, day_stats)
@@ -108,16 +123,16 @@ class PlanEvaluator:
         )
 
         evaluated_at = (
-            self._clock.now(timezone.utc)
+            self._clock.now(UTC)
             if hasattr(self._clock, "now")
-            else datetime.now(timezone.utc)
+            else datetime.now(UTC)
         )
 
         return PlanEvaluation(
             schema_version=1,
             evaluator_version=EVALUATOR_VERSION,
             feasible=True,
-            overall_score=_weighted_score(dimensions),
+            overall_score=weighted_overall_score(dimensions),
             dimensions=dimensions,
             warnings=tuple(warnings),
             decisions=decisions,
@@ -126,20 +141,3 @@ class PlanEvaluator:
             ),
             evaluated_at=evaluated_at,
         )
-
-
-def _weighted_score(d: EvaluationDimensions) -> int:
-    from trip_agent.evaluation.rules import (
-        CONSTRAINT_SATISFACTION_WEIGHT,
-        TIME_FEASIBILITY_WEIGHT,
-        BUDGET_FIT_WEIGHT,
-        ROUTE_EFFICIENCY_WEIGHT,
-        INTEREST_MATCH_WEIGHT,
-    )
-    return round(
-        d.constraint_satisfaction * CONSTRAINT_SATISFACTION_WEIGHT
-        + d.time_feasibility * TIME_FEASIBILITY_WEIGHT
-        + d.budget_fit * BUDGET_FIT_WEIGHT
-        + d.route_efficiency * ROUTE_EFFICIENCY_WEIGHT
-        + d.interest_match * INTEREST_MATCH_WEIGHT
-    )

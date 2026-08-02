@@ -12,13 +12,13 @@
     "itinerary": {
       "title": "Mixed Provider Itinerary",
       "days": [{
-        "date": "2026-08-02",
+        "date": "2026-08-01",
         "activities": [
-          {"activityId": "ea000001-0000-4000-8000-000000000003", "title": "AMAP Place", "startTime": "2026-08-02T09:00:00+08:00", "endTime": "2026-08-02T10:30:00+08:00", "estimatedCost": 30, "source": "AMAP", "providerPoiId": "POI-MIX-1", "coordinates": {"longitude": 113.30, "latitude": 23.10}, "address": "Mix St 1"},
-          {"activityId": "ea000002-0000-4000-8000-000000000003", "title": "Demo Place", "startTime": "2026-08-02T11:30:00+08:00", "endTime": "2026-08-02T13:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-MIX-2", "coordinates": {"longitude": 113.32, "latitude": 23.12}, "address": "Mix St 2"}
+          {"activityId": "ea000001-0000-4000-8000-000000000003", "title": "AMAP Place", "startTime": "2026-08-01T09:00:00+08:00", "endTime": "2026-08-01T10:30:00+08:00", "estimatedCost": 30, "source": "AMAP", "providerPoiId": "POI-MIX-1", "coordinates": {"longitude": 113.30, "latitude": 23.10}, "address": "Mix St 1"},
+          {"activityId": "ea000002-0000-4000-8000-000000000003", "title": "Demo Place", "startTime": "2026-08-01T11:30:00+08:00", "endTime": "2026-08-01T13:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-MIX-2", "coordinates": {"longitude": 113.32, "latitude": 23.12}, "address": "Mix St 2"}
         ],
         "transitLegs": [
-          {"transitId": "et000001-0000-4000-8000-000000000003", "fromActivityIndex": 0, "toActivityIndex": 1, "mode": "DRIVING", "distanceMeters": 1500, "durationSeconds": 600, "provider": "DEMO", "estimated": true, "polyline": [{"longitude": 113.30, "latitude": 23.10}, {"longitude": 113.32, "latitude": 23.12}]}
+          {"transitId": "e7000001-0000-4000-8000-000000000003", "fromActivityIndex": 0, "toActivityIndex": 1, "mode": "DRIVING", "distanceMeters": 1500, "durationSeconds": 600, "provider": "DEMO", "estimated": true, "polyline": [{"longitude": 113.30, "latitude": 23.10}, {"longitude": 113.32, "latitude": 23.12}]}
         ]
       }],
       "estimatedTotalCost": 30
@@ -34,7 +34,7 @@
       "fallbackReason": "ROUTE_PROVIDER_FAILURE",
       "fallbackOperations": [{
         "operation": "ROUTE",
-        "transitId": "et000001-0000-4000-8000-000000000003",
+        "transitId": "e7000001-0000-4000-8000-000000000003",
         "fromActivityId": "ea000001-0000-4000-8000-000000000003",
         "toActivityId": "ea000002-0000-4000-8000-000000000003",
         "requestedMode": "REAL_WITH_EXPLICIT_FALLBACK",
@@ -48,7 +48,7 @@
       "schemaVersion": 1,
       "evaluatorVersion": "rule-v1",
       "feasible": true,
-      "overallScore": 68,
+      "overallScore": 94,
       "dimensions": {
         "constraintSatisfaction": 100,
         "timeFeasibility": 100,
@@ -57,12 +57,12 @@
         "interestMatch": 80
       },
       "warnings": [
-        {"code": "PROVIDER_FALLBACK_USED", "severity": "WARNING", "message": "路段使用 Demo 降级 (TIMEOUT)", "entityType": "TRANSIT", "entityId": "et000001-0000-4000-8000-000000000003", "metricKey": "fallback", "actualValue": 2, "threshold": null},
-        {"code": "ESTIMATED_TRANSIT", "severity": "INFO", "message": "此路段使用估算路线", "dayIndex": 0, "entityType": "TRANSIT", "entityId": "et000001-0000-4000-8000-000000000003", "metricKey": null, "actualValue": null, "threshold": null}
+        {"code": "PROVIDER_FALLBACK_USED", "severity": "WARNING", "message": "路段使用 Demo 降级 (TIMEOUT)", "entityType": "TRANSIT", "entityId": "e7000001-0000-4000-8000-000000000003", "metricKey": "fallback", "actualValue": 2, "threshold": null},
+        {"code": "ESTIMATED_TRANSIT", "severity": "INFO", "message": "此路段使用估算路线", "dayIndex": 0, "entityType": "TRANSIT", "entityId": "e7000001-0000-4000-8000-000000000003", "metricKey": null, "actualValue": null, "threshold": null}
       ],
       "decisions": [{
         "subjectType": "TRANSIT",
-        "subjectId": "et000001-0000-4000-8000-000000000003",
+        "subjectId": "e7000001-0000-4000-8000-000000000003",
         "summary": "此路段使用 Demo 数据，因为真实路线服务不可用",
         "reasonCodes": ["PROVIDER_CONSTRAINT"],
         "reasons": ["Provider 错误: TIMEOUT"],
@@ -70,7 +70,7 @@
         "evidence": [{"key": "provider_fallback", "label": "降级 Provider", "value": "DEMO (retry=2)"}],
         "dayIndex": 0
       }],
-      "summary": "行程整体质量 68/100，1 个路段使用 Demo 降级。",
+      "summary": "行程整体质量 94/100，1 个路段使用 Demo 降级。",
       "evaluatedAt": "2026-08-02T00:00:00Z"
     }
   }

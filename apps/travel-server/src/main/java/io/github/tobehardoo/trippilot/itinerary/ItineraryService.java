@@ -1046,17 +1046,21 @@ public class ItineraryService {
                 versionId, event.payload().knowledge(),
                 "itinerary knowledge evidence"
         );
+        List<PersistedActivityReference> persistedActivities = new ArrayList<>();
         List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (int dayIndex = 0; dayIndex < result.days().size(); dayIndex++) {
-            persistedTransit.addAll(persistDay(
-                    versionId, dayIndex, result.days().get(dayIndex)));
+            PersistedDayReferences references = persistDay(
+                    versionId, dayIndex, result.days().get(dayIndex));
+            persistedActivities.addAll(references.activities());
+            persistedTransit.addAll(references.transit());
         }
         requireOne(
                 itineraryMapper.updateCurrentVersion(itinerary.id(), versionId),
                 "current version"
         );
         return new CreateItineraryResult(
-                versionId, versionNumber, provider, persistedTransit
+                versionId, versionNumber, provider,
+                persistedActivities, persistedTransit
         );
     }
 
@@ -1120,6 +1124,7 @@ public class ItineraryService {
                 source.id(), versionId, "local replan knowledge");
         factImpactMapper.copyToVersion(source.id(), versionId);
 
+        List<PersistedActivityReference> persistedActivities = new ArrayList<>();
         List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (ItineraryMapper.StoredDay sourceDay : sourceDays) {
             PlanningCompletedEvent.Day resultDay =
@@ -1137,6 +1142,13 @@ public class ItineraryService {
             );
             List<UUID> activityIds =
                     persistSourceActivities(targetDayId, activities);
+            for (int index = 0; index < activityIds.size(); index++) {
+                UUID sourceActivityId = resultDay.activities().get(index).activityId();
+                if (sourceActivityId != null) {
+                    persistedActivities.add(new PersistedActivityReference(
+                            sourceActivityId, activityIds.get(index)));
+                }
+            }
             List<ItineraryMapper.StoredTransitLeg> sourceTransitLegs =
                     itineraryMapper.findTransitLegs(sourceDay.id());
             if (impactedDates.contains(sourceDay.date())) {
@@ -1145,10 +1157,10 @@ public class ItineraryService {
                         activities, sourceTransitLegs, resultDay
                 ));
             } else {
-                copyTransitLegsFromSource(
+                persistedTransit.addAll(copyTransitLegsFromSource(
                         targetDayId, activityIds,
-                        activities, sourceTransitLegs
-                );
+                        activities, sourceTransitLegs, resultDay
+                ));
             }
         }
         requireOne(
@@ -1157,13 +1169,14 @@ public class ItineraryService {
                 "current itinerary version"
         );
         return new CreateItineraryResult(
-                versionId, source.versionNumber() + 1, provider, persistedTransit
+                versionId, source.versionNumber() + 1, provider,
+                persistedActivities, persistedTransit
         );
     }
 
     // ---- planning-completion helpers (moved from PlanningCompletionService) --
 
-    private List<PersistedTransitReference> persistDay(
+    private PersistedDayReferences persistDay(
             UUID versionId, int dayIndex, PlanningCompletedEvent.Day day) {
         UUID dayId = UUID.randomUUID();
         requireOne(
@@ -1175,6 +1188,7 @@ public class ItineraryService {
                 "itinerary day"
         );
         List<UUID> activityIds = new ArrayList<>(day.activities().size());
+        List<PersistedActivityReference> persistedActivities = new ArrayList<>();
         for (int activityIndex = 0;
                 activityIndex < day.activities().size();
                 activityIndex++) {
@@ -1184,6 +1198,10 @@ public class ItineraryService {
                     activity.coordinates();
             UUID activityId = UUID.randomUUID();
             activityIds.add(activityId);
+            if (activity.activityId() != null) {
+                persistedActivities.add(new PersistedActivityReference(
+                        activity.activityId(), activityId));
+            }
             requireOne(
                     itineraryMapper.insertActivity(
                             new ItineraryMapper.ActivityWrite(
@@ -1238,7 +1256,7 @@ public class ItineraryService {
                     transitId, fromActivityId, toActivityId
             ));
         }
-        return List.copyOf(persistedTransit);
+        return new PersistedDayReferences(persistedActivities, persistedTransit);
     }
 
     private List<UUID> persistSourceActivities(
@@ -1354,11 +1372,13 @@ public class ItineraryService {
         return matchingLegs.isEmpty() ? false : matchingLegs.get(0).locked();
     }
 
-    private void copyTransitLegsFromSource(
+    private List<PersistedTransitReference> copyTransitLegsFromSource(
             UUID dayId,
             List<UUID> activityIds,
             List<ItineraryMapper.StoredActivity> activities,
-            List<ItineraryMapper.StoredTransitLeg> legs) {
+            List<ItineraryMapper.StoredTransitLeg> legs,
+            PlanningCompletedEvent.Day resultDay) {
+        List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (int index = 0; index < legs.size(); index++) {
             ItineraryMapper.StoredTransitLeg leg = legs.get(index);
             Integer fromIndex =
@@ -1371,10 +1391,18 @@ public class ItineraryService {
             }
             UUID fromActivityId = activityIds.get(fromIndex);
             UUID toActivityId = activityIds.get(toIndex);
+            UUID transitId = UUID.randomUUID();
+            PlanningCompletedEvent.TransitLeg resultLeg = resultDay.transitLegs()
+                    .stream()
+                    .filter(candidate -> candidate.fromActivityIndex() == fromIndex
+                            && candidate.toActivityIndex() == toIndex)
+                    .findFirst()
+                    .orElseThrow(() -> rejected(
+                            "Local replanning result is missing a transit leg"));
             requireOne(
                     itineraryMapper.insertTransitLeg(
                             new ItineraryMapper.TransitLegWrite(
-                                    UUID.randomUUID(), dayId, index,
+                                    transitId, dayId, index,
                                     fromActivityId, toActivityId,
                                     leg.mode(), leg.distanceMeters(),
                                     leg.durationSeconds(), leg.provider(),
@@ -1385,7 +1413,16 @@ public class ItineraryService {
                     ),
                     "local replan transit leg"
             );
+            if (resultLeg.transitId() != null) {
+                persistedTransit.add(new PersistedTransitReference(
+                        resultLeg.transitId(),
+                        resultDay.activities().get(fromIndex).activityId(),
+                        resultDay.activities().get(toIndex).activityId(),
+                        transitId, fromActivityId, toActivityId
+                ));
+            }
         }
+        return List.copyOf(persistedTransit);
     }
 
     private static Integer findSourceActivityIndex(
@@ -1473,11 +1510,19 @@ public class ItineraryService {
             UUID versionId,
             int versionNumber,
             String provider,
+            List<PersistedActivityReference> persistedActivities,
             List<PersistedTransitReference> persistedTransit
     ) {
         public CreateItineraryResult {
+            persistedActivities = List.copyOf(persistedActivities);
             persistedTransit = List.copyOf(persistedTransit);
         }
+    }
+
+    public record PersistedActivityReference(
+            UUID sourceActivityId,
+            UUID activityId
+    ) {
     }
 
     public record PersistedTransitReference(
@@ -1488,5 +1533,15 @@ public class ItineraryService {
             UUID fromActivityId,
             UUID toActivityId
     ) {
+    }
+
+    private record PersistedDayReferences(
+            List<PersistedActivityReference> activities,
+            List<PersistedTransitReference> transit
+    ) {
+        private PersistedDayReferences {
+            activities = List.copyOf(activities);
+            transit = List.copyOf(transit);
+        }
     }
 }

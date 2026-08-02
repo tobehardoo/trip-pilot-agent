@@ -1,0 +1,6 @@
+{
+  "id": "high-daily-load",
+  "description": "Five activities in one day trigger the daily-load disclosure.",
+  "profile": "high-daily-load",
+  "expect": {"minimum_score": 95, "maximum_score": 99, "required_warnings": ["HIGH_DAILY_LOAD"], "forbidden_warnings": []}
+}

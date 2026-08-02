@@ -5,8 +5,8 @@ from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
-
 from test_planning_worker import COMMAND
+
 from trip_agent.domain.planning.protocols import PlanningResult
 from trip_agent.worker.contracts import (
     ActivityCoordinates,
@@ -19,7 +19,6 @@ from trip_agent.worker.contracts import (
     TransitLeg,
 )
 from trip_agent.worker.processor import DemoPlanningProvider, process_planning_create
-
 
 ACTIVITY_IDS = tuple(
     UUID(value)

@@ -16,6 +16,99 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PlanningCompletedEventParserTest {
 
     @Test
+    void parsesEverySharedPlanEvaluationFixtureAndKeepsLegacyV6Compatible() {
+        String[] evaluationFixtures = {
+                "completion-v6-evaluation-clean.json",
+                "completion-v6-evaluation-warnings.json",
+                "completion-v6-evaluation-mixed-provider.json",
+                "completion-v6-evaluation-fixed-appointment.json"
+        };
+
+        for (String fixture : evaluationFixtures) {
+            PlanningCompletedEvent event = parser.parse(bytes(
+                    PlanningCompletedEventFixture.sharedV6Fixture(fixture)
+            ));
+
+            assertThat(event.payload().evaluation()).isNotNull();
+            assertThat(event.payload().evaluation().evaluatorVersion()).isEqualTo("rule-v1");
+            assertThat(event.payload().evaluation().feasible()).isTrue();
+        }
+
+        PlanningCompletedEvent legacy = parser.parse(bytes(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-legacy-without-evaluation.json"
+                )
+        ));
+        assertThat(legacy.payload().evaluation()).isNull();
+    }
+
+    @Test
+    void rejectsEvaluationWhenOverallScoreDoesNotMatchWeightedDimensions() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-evaluation-clean.json"
+                )
+        );
+        ((ObjectNode) event.at("/payload/evaluation")).put("overallScore", 1);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("overallScore must match weighted dimensions");
+    }
+
+    @Test
+    void acceptsEvaluationHalfUpRoundingAtTheCrossLanguageBoundary() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-evaluation-clean.json"
+                )
+        );
+        ObjectNode evaluation = (ObjectNode) event.at("/payload/evaluation");
+        evaluation.put("overallScore", 99);
+        ((ObjectNode) evaluation.path("dimensions"))
+                .put("constraintSatisfaction", 100)
+                .put("timeFeasibility", 100)
+                .put("budgetFit", 100)
+                .put("routeEfficiency", 90)
+                .put("interestMatch", 100);
+
+        PlanningCompletedEvent parsed = parser.parse(
+                objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.payload().evaluation().overallScore()).isEqualTo(99);
+    }
+
+    @Test
+    void rejectsEvaluationValuesOutsideTheSharedSchemaEnumsAndCardinality()
+            throws Exception {
+        ObjectNode invalidWarning = evaluationFixture("completion-v6-evaluation-warnings.json");
+        ((ObjectNode) invalidWarning.at("/payload/evaluation/warnings/0"))
+                .put("severity", "BLOCKER");
+        ObjectNode invalidReason = evaluationFixture(
+                "completion-v6-evaluation-fixed-appointment.json");
+        ((ArrayNode) invalidReason.at(
+                "/payload/evaluation/decisions/0/reasonCodes"))
+                .set(0, objectMapper.getNodeFactory().textNode("INVENTED_REASON"));
+        ObjectNode unmatchedReasons = evaluationFixture(
+                "completion-v6-evaluation-fixed-appointment.json");
+        ((ArrayNode) unmatchedReasons.at(
+                "/payload/evaluation/decisions/0/reasons")).removeAll();
+
+        assertThatThrownBy(() -> parser.parse(
+                objectMapper.writeValueAsBytes(invalidWarning)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("warning is invalid");
+        assertThatThrownBy(() -> parser.parse(
+                objectMapper.writeValueAsBytes(invalidReason)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("decision is invalid");
+        assertThatThrownBy(() -> parser.parse(
+                objectMapper.writeValueAsBytes(unmatchedReasons)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("decision is invalid");
+    }
+
+    @Test
     void acceptsHistoricalV6WithoutInventingProviderProvenance() {
         PlanningCompletedEvent event = parser.parse(bytes(
                 PlanningCompletedEventFixture.sharedV6Fixture(
@@ -540,6 +633,11 @@ class PlanningCompletedEventParserTest {
         return (ObjectNode) objectMapper.readTree(PlanningCompletedEventFixture.completedAmapEventV4(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
         ));
+    }
+
+    private ObjectNode evaluationFixture(String fixtureName) throws Exception {
+        return (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedV6Fixture(fixtureName));
     }
 
     private byte[] bytes(String value) {

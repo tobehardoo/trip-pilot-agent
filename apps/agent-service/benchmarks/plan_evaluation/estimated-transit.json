@@ -1,0 +1,6 @@
+{
+  "id": "estimated-transit",
+  "description": "A Demo transit leg is disclosed as estimated.",
+  "profile": "estimated-transit",
+  "expect": {"minimum_score": 100, "maximum_score": 100, "required_warnings": ["ESTIMATED_TRANSIT"], "forbidden_warnings": ["PROVIDER_FALLBACK_USED"]}
+}

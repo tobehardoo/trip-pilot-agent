@@ -75,7 +75,6 @@ class DemoPlanningProvider:
         from trip_agent.application.replan_service import (  # noqa: PLC0415
             LocalReplanningProvider,
         )
-
         from trip_agent.providers.errors import ProviderExecutionMode  # noqa: PLC0415
 
         return await LocalReplanningProvider(

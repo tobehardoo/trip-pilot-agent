@@ -10,7 +10,7 @@ from typing import Protocol
 from uuid import UUID
 
 from trip_agent.planning.optimization import OptimizationConflict, RelaxationSuggestion
-from trip_agent.providers.errors import PlanningProviderError
+from trip_agent.providers.errors import PlanningProviderError  # noqa: F401
 from trip_agent.providers.map import MapProviderName, Poi
 from trip_agent.worker.contracts import (
     FallbackOperation,

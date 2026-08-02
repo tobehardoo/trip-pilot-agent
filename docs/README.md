@@ -16,6 +16,7 @@
 | [当前状态评估](current-state-assessment.md) | 面向决策：实际完成度、测试结果、P0–P3 问题和文档冲突 |
 | [下一阶段执行计划](next-stage-execution-plan.md) | 面向执行：稳定性优先的原子切片、验收和回滚要求 |
 | [交付基线](project-delivery-baseline.md) | 面向交付：当前可做、不可承诺、风险和适用性 |
+| [PlanEvaluation ADR](adr/plan-evaluation-and-explanation-policy.md) | 质量评分、解释、版本、持久化、兼容与回滚策略 |
 
 ## 归档文档
 

@@ -6,9 +6,9 @@ TripPilot 是三服务 Monorepo：Vue Web、Spring Boot 业务后端和 Python A
 
 | 服务 | 职责 |
 | --- | --- |
-| `apps/web` | 登录、旅行工作台、规划进度、地图概览、版本、分享和导出入口 |
-| `apps/travel-server` | 身份、旅行、约束、规划任务、行程版本、安全、Outbox、SSE、诊断和导出 |
-| `apps/agent-service` | 攻略抽取、城市知识处理、POI/路线 Provider、候选排序、约束求解和消息消费 |
+| `apps/web` | 登录、旅行工作台、规划进度、质量评估、地图概览、版本、分享和导出入口 |
+| `apps/travel-server` | 身份、旅行、约束、规划任务、质量元数据持久化、安全、Outbox、SSE、诊断和导出 |
+| `apps/agent-service` | 攻略抽取、城市知识处理、POI/路线 Provider、候选排序、约束求解、确定性质量评估和消息消费 |
 | `contracts` | Java、Python 和 TypeScript 共享的版本化消息契约 |
 | `knowledge` | 城市知识 Markdown、来源注册和固定评测语料 |
 | `infra` | 数据库扩展、Prometheus 配置和运行基础设施 |
@@ -88,6 +88,7 @@ WorkerSettings
 - 显式 route 回退必须标记目标 Transit 为 `DEMO/estimated`，顶层来源聚合为 `MIXED` 并记录原因/关联 ID；`REAL_ONLY` 错误发布 failure v2，不能转换为成功。
 - `PlanningResult` 是成功 provenance 的唯一事实来源。completion v6 通过可选对象传递 requested/primary/actual providers 与结构化 fallback operation；Java 不扫描结果补造 mode 或 fallback。
 - 新版本中的 Activity/Transit 使用数据库 UUID。完成事务按消息内稳定 ID 重映射 Route operation 后，将同一 JSONB 用于任务查询和 SSE 回放；历史 v6 无 provenance 时保持未记录。该路径复用 `planning_task_event.payload`，Flyway 仍为 V27。
+- `PlanEvaluator` 在成功消息发布前以纯规则读取冻结 command 与 `PlanningResult`，生成五维评分、warning 和 evidence-backed decision。硬约束违规转为 `DATA_QUALITY_ERROR`，不发布伪成功；evaluation 与 fallback operation 的实体 ID 在终态事件落库前一起重映射，GET/SSE/回放读取同一 JSONB。
 - AMap 严格真实模式由 `PROVIDER_MODE=REAL_ONLY` 选择，服务端使用 `AMAP_WEB_SERVICE_KEY`，浏览器地图使用独立的 `VITE_AMAP_WEB_JS_KEY`/`VITE_AMAP_SECURITY_CODE`。
 - 当前真实验收覆盖广州 POI、步行和驾车路线；不把未验证的公交路线或公网域名能力推断为已交付。
 

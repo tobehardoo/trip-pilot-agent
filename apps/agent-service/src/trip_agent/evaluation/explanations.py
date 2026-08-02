@@ -5,16 +5,18 @@ Every generated statement is backed by verifiable data from the plan.
 
 from __future__ import annotations
 
-from uuid import UUID
-
+from trip_agent.domain.planning.protocols import PlanningResult
 from trip_agent.evaluation.models import (
     DecisionExplanation,
     EvaluationDimensions,
     EvaluationEvidence,
 )
-from trip_agent.evaluation.rules import BudgetContext, DayStats
-from trip_agent.domain.planning.protocols import PlanningResult
-from trip_agent.worker.contracts import PlanningCreateCommand
+from trip_agent.evaluation.rules import (
+    BudgetContext,
+    DayStats,
+    activity_covers_fixed_schedule,
+)
+from trip_agent.worker.contracts import PlanningCreateCommand, PlanningReplanCommand
 
 
 class DeterministicPlanExplanationGenerator:
@@ -23,7 +25,7 @@ class DeterministicPlanExplanationGenerator:
     def generate(
         self,
         *,
-        command: PlanningCreateCommand,
+        command: PlanningCreateCommand | PlanningReplanCommand,
         result: PlanningResult,
         budget_ctx: BudgetContext,
         day_stats: tuple[DayStats, ...],
@@ -42,26 +44,32 @@ class DeterministicPlanExplanationGenerator:
         for day in result.itinerary.days:
             for activity in day.activities:
                 for fs in constraints.fixed_schedules:
-                    if (
-                        activity.start_time <= fs.start_time
-                        and activity.end_time >= fs.end_time
-                    ):
-                        decisions.append(DecisionExplanation(
-                            subject_type="ACTIVITY",
-                            subject_id=activity.activity_id,
-                            summary=f"「{activity.title}」因固定预约安排在 {_format_time(activity.start_time)}",
-                            reason_codes=("FIXED_APPOINTMENT",),
-                            reasons=(f"预约「{fs.place_name}」时间为 {_format_time(fs.start_time)} 至 {_format_time(fs.end_time)}",),
-                            constraint_refs=(),
-                            evidence=(
-                                EvaluationEvidence(
-                                    key="fixed_schedule",
-                                    label="固定预约",
-                                    value=fs.place_name,
+                    if activity_covers_fixed_schedule(activity, fs):
+                        decisions.append(
+                            DecisionExplanation(
+                                subject_type="ACTIVITY",
+                                subject_id=activity.activity_id,
+                                summary=(
+                                    f"「{activity.title}」因固定预约安排在 "
+                                    f"{_format_time(activity.start_time)}"
                                 ),
-                            ),
-                            day_index=list(result.itinerary.days).index(day),
-                        ))
+                                reason_codes=("FIXED_APPOINTMENT",),
+                                reasons=(
+                                    f"预约「{fs.place_name}」时间为 "
+                                    f"{_format_time(fs.start_time)} 至 "
+                                    f"{_format_time(fs.end_time)}",
+                                ),
+                                constraint_refs=(),
+                                evidence=(
+                                    EvaluationEvidence(
+                                        key="fixed_schedule",
+                                        label="固定预约",
+                                        value=fs.place_name,
+                                    ),
+                                ),
+                                day_index=list(result.itinerary.days).index(day),
+                            )
+                        )
 
         # Transit-level with fallback
         for day in result.itinerary.days:
@@ -85,15 +93,20 @@ class DeterministicPlanExplanationGenerator:
                     ))
 
                 if leg.mode == "WALKING" and leg.duration_seconds >= 30 * 60:
-                    decisions.append(DecisionExplanation(
-                        subject_type="TRANSIT",
-                        subject_id=leg.transit_id,
-                        summary=f"选择步行 ({leg.duration_seconds // 60} 分钟)，距离 {leg.distance_meters}m",
-                        reason_codes=("SHORTEST_ROUTE",),
-                        reasons=("两点之间步行距离适中",),
-                        constraint_refs=(),
-                        day_index=list(result.itinerary.days).index(day),
-                    ))
+                    decisions.append(
+                        DecisionExplanation(
+                            subject_type="TRANSIT",
+                            subject_id=leg.transit_id,
+                            summary=(
+                                f"选择步行 ({leg.duration_seconds // 60} 分钟)，"
+                                f"距离 {leg.distance_meters}m"
+                            ),
+                            reason_codes=("SHORTEST_ROUTE",),
+                            reasons=("两点之间步行距离适中",),
+                            constraint_refs=(),
+                            day_index=list(result.itinerary.days).index(day),
+                        )
+                    )
 
         # Sort stable: plan → day_index → subject_type → subject_id
         decisions.sort(key=_decision_sort_key)
@@ -102,7 +115,7 @@ class DeterministicPlanExplanationGenerator:
     def summary(
         self,
         *,
-        command: PlanningCreateCommand,
+        command: PlanningCreateCommand | PlanningReplanCommand,
         result: PlanningResult,
         dimensions: EvaluationDimensions,
     ) -> str:
@@ -123,7 +136,9 @@ class DeterministicPlanExplanationGenerator:
         return "，".join(parts) + "。"
 
     def _plan_level(
-        self, command: PlanningCreateCommand, result: PlanningResult
+        self,
+        command: PlanningCreateCommand | PlanningReplanCommand,
+        result: PlanningResult,
     ) -> DecisionExplanation:
         constraints = command.payload.trip.constraints
         fixed_count = len(constraints.fixed_schedules)
@@ -159,7 +174,7 @@ class DeterministicPlanExplanationGenerator:
 
     def _day_level(
         self,
-        command: PlanningCreateCommand,
+        command: PlanningCreateCommand | PlanningReplanCommand,
         result: PlanningResult,
         stats: DayStats,
     ) -> tuple[DecisionExplanation, ...]:
@@ -170,7 +185,7 @@ class DeterministicPlanExplanationGenerator:
                 subject_id=None,
                 summary=f"第 {stats.day_index + 1} 天安排了 {stats.activity_count} 个活动",
                 reason_codes=("REGIONAL_GROUPING",),
-                reasons=(f"活动集中在一天，减少跨天通勤",),
+                reasons=("活动集中在一天，减少跨天通勤",),
                 day_index=stats.day_index,
             ))
         return tuple(decisions)
@@ -178,11 +193,11 @@ class DeterministicPlanExplanationGenerator:
 
 def _weighted_overall(d: EvaluationDimensions) -> int:
     from trip_agent.evaluation.rules import (
-        CONSTRAINT_SATISFACTION_WEIGHT,
-        TIME_FEASIBILITY_WEIGHT,
         BUDGET_FIT_WEIGHT,
-        ROUTE_EFFICIENCY_WEIGHT,
+        CONSTRAINT_SATISFACTION_WEIGHT,
         INTEREST_MATCH_WEIGHT,
+        ROUTE_EFFICIENCY_WEIGHT,
+        TIME_FEASIBILITY_WEIGHT,
     )
     return round(
         d.constraint_satisfaction * CONSTRAINT_SATISFACTION_WEIGHT

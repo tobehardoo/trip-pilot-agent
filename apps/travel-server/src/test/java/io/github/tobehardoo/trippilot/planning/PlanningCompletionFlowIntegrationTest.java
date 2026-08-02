@@ -201,7 +201,109 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.fallbackAttempted").value(false))
                 .andExpect(jsonPath("$.fallbackSucceeded").value(false))
                 .andExpect(jsonPath("$.safeMessage").value("AMap authentication failed"))
-                .andExpect(jsonPath("$.safeProviderCode").value("10001"));
+                .andExpect(jsonPath("$.safeProviderCode").value("10001"))
+                .andExpect(jsonPath("$.evaluation").doesNotExist());
+    }
+
+    @Test
+    void returnsEvaluationThroughTaskApiAndLastEventIdReplay() throws Exception {
+        PlanningContext context = createPlanningContext("completion-evaluation@example.com");
+        long queuedEventId = latestTaskEventId(context.taskId());
+        completionService.handle(sharedV6Event(
+                "completion-v6-evaluation-clean.json", UUID.randomUUID(), context));
+
+        mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCEEDED"))
+                .andExpect(jsonPath("$.evaluation.schemaVersion").value(1))
+                .andExpect(jsonPath("$.evaluation.evaluatorVersion").value("rule-v1"))
+                .andExpect(jsonPath("$.evaluation.overallScore").value(97))
+                .andExpect(jsonPath("$.evaluation.dimensions.interestMatch").value(80));
+
+        MvcResult stream = mockMvc.perform(get(
+                        "/api/planning-tasks/{taskId}/events", context.taskId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Last-Event-ID", queuedEventId)
+                        .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+        mockMvc.perform(asyncDispatch(stream))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("event:PLANNING_COMPLETED")))
+                .andExpect(content().string(containsString("\"evaluation\":{")))
+                .andExpect(content().string(containsString("\"overallScore\":97")));
+    }
+
+    @Test
+    void remapsMixedEvaluationEntityIdsToPersistedTransitIdentity() throws Exception {
+        PlanningContext context = createPlanningContext("completion-evaluation-mixed@example.com");
+        completionService.handle(sharedV6Event(
+                "completion-v6-evaluation-mixed-provider.json",
+                UUID.randomUUID(),
+                context
+        ));
+        UUID persistedTransitId = jdbcTemplate.queryForObject(
+                "SELECT id FROM business.transit_leg", UUID.class);
+
+        mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.evaluation.overallScore").value(94))
+                .andExpect(jsonPath("$.fallbackOperations[0].transitId")
+                        .value(persistedTransitId.toString()))
+                .andExpect(jsonPath("$.evaluation.warnings[0].entityId")
+                        .value(persistedTransitId.toString()))
+                .andExpect(jsonPath("$.evaluation.warnings[1].entityId")
+                        .value(persistedTransitId.toString()))
+                .andExpect(jsonPath("$.evaluation.decisions[0].subjectId")
+                        .value(persistedTransitId.toString()));
+    }
+
+    @Test
+    void remapsEvaluationActivityIdWhenTheDayHasNoTransitLeg() throws Exception {
+        PlanningContext context = createPlanningContext(
+                "completion-evaluation-single-activity@example.com");
+        ObjectNode fixture = sharedV6Fixture(
+                "completion-v6-evaluation-fixed-appointment.json",
+                UUID.randomUUID(), context);
+        ArrayNode activities = (ArrayNode) fixture.at(
+                "/payload/itinerary/days/0/activities");
+        activities.remove(1);
+        ((ObjectNode) fixture.at("/payload/itinerary/days/0"))
+                .put("date", "2026-08-01");
+        ((ObjectNode) activities.get(0))
+                .put("startTime", "2026-08-01T09:00:00+08:00")
+                .put("endTime", "2026-08-01T11:00:00+08:00");
+        ((ArrayNode) fixture.at(
+                "/payload/itinerary/days/0/transitLegs")).removeAll();
+
+        completionService.handle(eventParser.parse(bytes(
+                objectMapper.writeValueAsString(fixture))));
+
+        UUID persistedActivityId = jdbcTemplate.queryForObject(
+                "SELECT id FROM business.activity", UUID.class);
+        mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.evaluation.decisions[1].subjectId")
+                        .value(persistedActivityId.toString()));
+    }
+
+    @Test
+    void keepsLegacyCompletionEvaluationNullInTaskApi() throws Exception {
+        PlanningContext context = createPlanningContext("completion-evaluation-legacy@example.com");
+        completionService.handle(sharedV6Event(
+                "completion-v6-legacy-without-evaluation.json",
+                UUID.randomUUID(),
+                context
+        ));
+
+        mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("SUCCEEDED"))
+                .andExpect(jsonPath("$.evaluation").doesNotExist());
     }
 
     @Test

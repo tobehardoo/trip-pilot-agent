@@ -73,7 +73,7 @@
 | `planning-cancel-command-v1.schema.json` | Java -> Python | 协作式取消 |
 | `city-intelligence-refresh-command-v1.schema.json` | Java -> Python | 城市情报刷新 |
 | `planning-progress-event-v1.schema.json` | Python -> Java | 真实阶段进度 |
-| `planning-completed-event-v6.schema.json` | Python -> Java | 当前稳定规划完成事件，包含事实影响与可选 Provider provenance |
+| `planning-completed-event-v6.schema.json` | Python -> Java | 当前稳定规划完成事件，包含事实影响、可选 Provider provenance 与可选 PlanEvaluation |
 | `planning-completed-event-v7.schema.json` | —（未启用） | Transit 成本和扩展交通模式草案；不进入当前 Python 发布或 Java 消费路径 |
 | `planning-failed-event-v2.schema.json` | Python -> Java | 当前唯一新写入失败事件，覆盖不可行、Provider 与内部失败 |
 | `planning-failed-event-v1.schema.json` | Python -> Java（只读兼容） | 仅兼容历史 `NO_FEASIBLE_ITINERARY`，已废弃生产 |
@@ -86,12 +86,13 @@
 - 旧版本 Schema 保留在仓库作为历史参考，代码只处理活跃版本。
 - Demo 模式和真实 Provider 模式使用同一契约，不能使用前端模拟进度代替 Worker 事件。
 - v6 provenance 的 `actualProviders` 非空且与最终 Activity/Transit 来源一致；非法 mode/provider/fallback 组合被 Schema 或模型/parser 拒绝。历史 v6 缺失 provenance 仍可读取。
+- v6 `evaluation` 使用独立 `schemaVersion=1` 和 `evaluatorVersion=rule-vN`，总分必须等于五维加权值并采用整数 half-up 舍入。create/replan 的新成功事件均携带 evaluation；历史 v6 缺失/null 时任务 API 返回 `null`，failure 事件不携带该字段。
 
 ## SSE 协议
 
 规划事件持久化后通过 SSE 推送给浏览器。浏览器断线后使用 `Last-Event-ID` 恢复遗漏事件。
 
-终态失败事件与 `GET /api/planning-tasks/{taskId}` 均可返回 `errorCode`、`errorCategory`、`retryable`、`provider`、`operation`、`retryCount`、`fallbackAttempted`、`fallbackSucceeded`、`safeMessage` 和可选 `safeProviderCode`。成功终态另可返回 requested/primary/actual providers、fallback reason 和结构化 operations。字段来自已持久化 task event payload，因此重连回放与任务查询语义一致；历史成功事件缺失 provenance 时相关字段为 `null`/缺失而非 `false`。
+终态失败事件与 `GET /api/planning-tasks/{taskId}` 均可返回 `errorCode`、`errorCategory`、`retryable`、`provider`、`operation`、`retryCount`、`fallbackAttempted`、`fallbackSucceeded`、`safeMessage` 和可选 `safeProviderCode`。成功终态另可返回 requested/primary/actual providers、fallback reason、结构化 operations 和 `evaluation`。字段来自已持久化 task event payload，因此重连回放与任务查询语义一致；evaluation 内的 Transit/Activity ID 与持久化版本一致。历史成功事件缺失 provenance/evaluation 时相关字段为 `null`/缺失而非猜测值。
 
 每个进度事件至少包含：
 

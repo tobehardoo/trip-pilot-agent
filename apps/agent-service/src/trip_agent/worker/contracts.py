@@ -878,6 +878,23 @@ class PlanningCompletedPayload(MessageModel):
     knowledge: KnowledgeEvidence
     fact_impacts: tuple[PlanningFactImpact, ...] = Field(default=(), max_length=500)
     provider_provenance: ProviderProvenance | None = None
+    evaluation: object | None = Field(default=None)
+
+    @field_validator("evaluation", mode="before")
+    @classmethod
+    def _normalize_evaluation(cls, value: object) -> object:
+        """Accept None or a PlanEvaluation; the PlanEvaluation type is
+        validated by importing it on first use to avoid a circular
+        dependency between contracts ↔ evaluation.models."""
+        if value is None:
+            return None
+        # Deferred import breaks the circular chain
+        from trip_agent.evaluation.models import PlanEvaluation  # noqa: PLC0415
+        if isinstance(value, PlanEvaluation):
+            return value
+        if isinstance(value, dict):
+            return PlanEvaluation.model_validate(value)
+        raise ValueError("evaluation must be a PlanEvaluation or None")
 
     @model_validator(mode="after")
     def validate_activity_sources(self) -> Self:

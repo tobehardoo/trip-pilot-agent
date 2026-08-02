@@ -59,6 +59,7 @@ from trip_agent.worker.contracts import (
     PlanningRelaxation,
     PlanningReplanCommand,
 )
+from trip_agent.evaluation import get_plan_evaluator
 from trip_agent.worker.progress import report_planning_progress
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider  # noqa: F811
 
@@ -124,6 +125,8 @@ async def process_planning_create(
         knowledge,
         checked_at=completed_at,
     )
+    evaluator = get_plan_evaluator()
+    evaluation = evaluator.evaluate(effective_command, result)
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
         schema_version=6,
@@ -139,6 +142,7 @@ async def process_planning_create(
             knowledge=knowledge,
             fact_impacts=_fact_impacts(effective_command, result),
             provider_provenance=result.provider_provenance(),
+            evaluation=evaluation,
         ),
     )
 

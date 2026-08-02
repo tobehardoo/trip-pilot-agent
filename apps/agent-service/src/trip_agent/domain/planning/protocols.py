@@ -57,6 +57,7 @@ class PlanningResult:
     fallback_succeeded: bool = False
     fallback_reason: str | None = None
     fallback_operations: tuple[FallbackOperation, ...] = ()
+    evaluation: object | None = None  # PlanEvaluation — lazy import to avoid cycle
 
     def provider_provenance(self) -> ProviderProvenance | None:
         if self.requested_provider_mode is None:

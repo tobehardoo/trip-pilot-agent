@@ -45,8 +45,8 @@
 #### I-03：组合导入污染 trusted fact 的 Provider provenance
 
 - 发现：组合路径虽然从顶层 facts 排除了 AMap `WEATHER`，却把完整 `amap.content` 拼回规范化文档，规则抽取会再次生成 AMap 天气；文档级 QWeather 来源又被复制给所有 trusted facts，导致 AMap 地点事实引用 QWeather URL。
-- 处置：组合文档只拼接 QWeather 内容与 AMap 非天气 fact statements；验证后的 trusted facts 在 merge 前按类别重写来源，天气使用 QWeather/`WEATHER_PROVIDER`，非天气事实使用 AMap/`MAP_PROVIDER`，merge decision 与最终选择保持一致。
-- 验证：测试断言组合文档不含 AMap 阵雨文本、只有 1 条天气 trusted fact，并验证天气和地址分别携带正确 Provider 名称、URL 与可靠性。
+- 处置：组合文档只拼接 QWeather 内容与 AMap 非天气 fact statements；验证后的 trusted facts 在 merge 前按类别重写来源，天气使用 QWeather/`WEATHER_PROVIDER`，非天气事实使用 AMap/`MAP_PROVIDER`，merge decision 与最终选择保持一致。独立复核进一步发现 AMap-only/回退天气仍引用 POI 搜索文档，随后把 AMap 天气 URL 修正为 `weatherinfo`、地点 URL 保持 `search`。
+- 验证：测试断言组合文档不含 AMap 阵雨文本、只有 1 条天气 trusted fact，并验证组合、AMap-only 与 QWeather 失败回退三条路径的天气/地址分别携带正确 Provider 名称、端点 URL 与可靠性；17 项 service 定向测试和 Ruff 通过。
 
 #### I-04：planning preflight 超时后仍可能把旧或空天气误当作本轮上下文
 

@@ -541,7 +541,11 @@ def _with_city_provider_provenance(
         return replace(
             fact,
             source_name="高德城市情报",
-            source_url="https://lbs.amap.com/api/webservice/guide/api/search",
+            source_url=(
+                "https://lbs.amap.com/api/webservice/guide/api/weatherinfo"
+                if fact.category == "WEATHER"
+                else "https://lbs.amap.com/api/webservice/guide/api/search"
+            ),
             reliability_level="MAP_PROVIDER",
         )
     return fact

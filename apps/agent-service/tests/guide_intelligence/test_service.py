@@ -233,6 +233,13 @@ def test_import_city_uses_amap_when_qweather_is_not_configured(
     assert result.source_host == "高德城市情报"
     assert result.normalized_document is not None
     assert result.normalized_document.metadata["weatherProvider"] == "AMAP"
+    trusted_weather = [fact for fact in result.trusted_facts if fact.category == "WEATHER"]
+    assert trusted_weather
+    assert all(
+        fact.source_url
+        == "https://lbs.amap.com/api/webservice/guide/api/weatherinfo"
+        for fact in trusted_weather
+    )
 
 
 def test_import_city_uses_qweather_without_amap(
@@ -279,6 +286,13 @@ def test_import_city_falls_back_to_amap_when_qweather_fails(
     assert result.normalized_document.metadata["weatherProvider"] == "AMAP"
     assert result.normalized_document.metadata["weatherFallbackReason"] == (
         "QWeather request timed out"
+    )
+    trusted_weather = [fact for fact in result.trusted_facts if fact.category == "WEATHER"]
+    assert trusted_weather
+    assert all(
+        fact.source_url
+        == "https://lbs.amap.com/api/webservice/guide/api/weatherinfo"
+        for fact in trusted_weather
     )
 
 

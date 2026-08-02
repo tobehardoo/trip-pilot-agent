@@ -22,6 +22,7 @@ from trip_agent.providers._route_contracts import (
     RouteResult,
     RouteStep,
 )
+from trip_agent.providers.errors import ProviderErrorCategory
 from trip_agent.providers.map import (
     Coordinates,
     JsonCache,
@@ -72,23 +73,30 @@ class AmapRouteProvider:
                 self.driving_endpoint if request.mode == "DRIVING" else self.endpoint,
                 params=self._request_params(request),
             )
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as exception:
             return AmapRouteFailures.create(
                 "PROVIDER_TIMEOUT",
                 "AMap route request timed out",
                 retryable=True,
                 started_at=started_at,
+                cause_type=type(exception).__name__,
             )
-        except httpx.RequestError:
+        except httpx.RequestError as exception:
             return AmapRouteFailures.create(
                 "PROVIDER_UNAVAILABLE",
                 "AMap route service is temporarily unavailable",
+                category=ProviderErrorCategory.NETWORK_ERROR,
                 retryable=True,
                 started_at=started_at,
+                cause_type=type(exception).__name__,
             )
 
         if response.status_code >= 400:
-            return AmapRouteFailures.from_http(response.status_code, started_at)
+            return AmapRouteFailures.from_http(
+                response.status_code,
+                started_at,
+                retry_after_seconds=self._retry_after_seconds(response),
+            )
 
         try:
             payload = AmapWalkingResponse.model_validate(response.json())
@@ -96,7 +104,7 @@ class AmapRouteProvider:
             return AmapRouteFailures.create(
                 "PROVIDER_SCHEMA_CHANGED",
                 "AMap returned an unexpected route response",
-                retryable=False,
+                retryable=True,
                 started_at=started_at,
             )
 
@@ -106,7 +114,7 @@ class AmapRouteProvider:
             return AmapRouteFailures.create(
                 "PROVIDER_SCHEMA_CHANGED",
                 "AMap route response is missing route data",
-                retryable=False,
+                retryable=True,
                 started_at=started_at,
             )
         if not payload.route.paths:
@@ -122,7 +130,7 @@ class AmapRouteProvider:
             return AmapRouteFailures.create(
                 "PROVIDER_SCHEMA_CHANGED",
                 "AMap returned an unexpected walking route structure",
-                retryable=False,
+                retryable=True,
                 started_at=started_at,
             )
 
@@ -228,6 +236,16 @@ class AmapRouteProvider:
     @staticmethod
     def _coordinate_pair(value: Coordinates) -> str:
         return f"{value.longitude:.6f},{value.latitude:.6f}"
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response) -> float | None:
+        value = response.headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            return max(0, float(value))
+        except ValueError:
+            return None
 
     @staticmethod
     def _cache_key(request: RouteRequest) -> str:

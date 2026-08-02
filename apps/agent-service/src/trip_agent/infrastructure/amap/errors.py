@@ -11,12 +11,18 @@ from __future__ import annotations
 
 from typing import Final
 
-# Keys rotated, expired, missing, or lacking required permissions.
+# Keys missing, invalid, expired, or disabled.
 AUTH_CODES: Final[frozenset[str]] = frozenset(
     {
         "10001",
         "10002",
         "10005",
+    }
+)
+
+# Valid credentials without permission for the requested product or platform.
+PERMISSION_CODES: Final[frozenset[str]] = frozenset(
+    {
         "10006",
         "10007",
         "10008",

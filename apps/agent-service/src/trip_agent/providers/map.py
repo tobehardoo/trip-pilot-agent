@@ -22,9 +22,16 @@ from pydantic import (
 from trip_agent.infrastructure.amap.errors import (
     AUTH_CODES,
     INVALID_REQUEST_CODES,
+    PERMISSION_CODES,
     QUOTA_CODES,
     RATE_CODES,
     UNAVAILABLE_CODES,
+)
+from trip_agent.providers.errors import (
+    ProviderErrorCategory,
+    ProviderFailureDetails,
+    ProviderOperation,
+    category_for_error_code,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,17 +135,38 @@ class ProviderSuccess[DataT](ProviderModel):
     cached: bool
     fetched_at: datetime
     estimated: bool
+    fallback_error: ProviderFailureDetails | None = Field(default=None, exclude=True)
 
 
 class ProviderFailure(ProviderModel):
     provider: MapProviderName
     error_code: ProviderErrorCode
     error_message: NonEmptyText
+    category: ProviderErrorCategory
+    operation: ProviderOperation = ProviderOperation.PLANNING
     retryable: bool
+    fallback_allowed: bool = False
+    safe_provider_code: str | None = None
+    retry_count: int = Field(default=0, ge=0, le=10)
+    cause_type: str | None = None
+    retry_exhausted: bool = False
+    retry_after_seconds: float | None = Field(default=None, ge=0, le=3_600)
     latency_ms: int = Field(ge=0)
     cached: bool = False
     fetched_at: datetime
     estimated: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def add_legacy_failure_classification(cls, value: object) -> object:
+        if not isinstance(value, Mapping):
+            return value
+        classified = dict(value)
+        classified.setdefault(
+            "category",
+            category_for_error_code(str(classified.get("error_code", ""))),
+        )
+        return classified
 
 
 type PoiSearchResult = ProviderSuccess[tuple[Poi, ...]] | ProviderFailure
@@ -240,23 +268,26 @@ class AmapMapProvider:
                     "output": "json",
                 },
             )
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as exception:
             return self._failure(
                 "PROVIDER_TIMEOUT",
                 "AMap request timed out",
                 retryable=True,
                 started_at=started_at,
+                cause_type=type(exception).__name__,
             )
-        except httpx.RequestError:
+        except httpx.RequestError as exception:
             return self._failure(
                 "PROVIDER_UNAVAILABLE",
                 "AMap is temporarily unavailable",
+                category=ProviderErrorCategory.NETWORK_ERROR,
                 retryable=True,
                 started_at=started_at,
+                cause_type=type(exception).__name__,
             )
 
         if response.status_code >= 400:
-            return self._http_failure(response.status_code, started_at)
+            return self._http_failure(response, started_at)
 
         try:
             payload = _AmapTextResponse.model_validate(response.json())
@@ -264,7 +295,7 @@ class AmapMapProvider:
             return self._failure(
                 "PROVIDER_SCHEMA_CHANGED",
                 "AMap returned an unexpected response",
-                retryable=False,
+                retryable=True,
                 started_at=started_at,
             )
 
@@ -278,7 +309,7 @@ class AmapMapProvider:
             return self._failure(
                 "PROVIDER_SCHEMA_CHANGED",
                 "AMap returned an unexpected POI structure",
-                retryable=False,
+                retryable=True,
                 started_at=started_at,
             )
 
@@ -328,20 +359,33 @@ class AmapMapProvider:
         except Exception:
             logger.warning("POI cache write failed", exc_info=True)
 
-    def _http_failure(self, status_code: int, started_at: float) -> ProviderFailure:
+    def _http_failure(self, response: httpx.Response, started_at: float) -> ProviderFailure:
+        status_code = response.status_code
+        safe_code = f"HTTP_{status_code}"
         if status_code == 408:
             return self._failure(
                 "PROVIDER_TIMEOUT",
                 "AMap request timed out",
                 retryable=True,
                 started_at=started_at,
+                safe_provider_code=safe_code,
             )
-        if status_code in {401, 403}:
+        if status_code == 401:
             return self._failure(
                 "PROVIDER_AUTH_FAILED",
                 "AMap authentication failed",
                 retryable=False,
                 started_at=started_at,
+                safe_provider_code=safe_code,
+            )
+        if status_code == 403:
+            return self._failure(
+                "PROVIDER_AUTH_FAILED",
+                "AMap permission was denied",
+                category=ProviderErrorCategory.PERMISSION_DENIED,
+                retryable=False,
+                started_at=started_at,
+                safe_provider_code=safe_code,
             )
         if status_code == 429:
             return self._failure(
@@ -349,6 +393,8 @@ class AmapMapProvider:
                 "AMap rate limit was reached",
                 retryable=True,
                 started_at=started_at,
+                safe_provider_code=safe_code,
+                retry_after_seconds=self._retry_after_seconds(response),
             )
         if status_code >= 500:
             return self._failure(
@@ -356,57 +402,97 @@ class AmapMapProvider:
                 "AMap is temporarily unavailable",
                 retryable=True,
                 started_at=started_at,
+                safe_provider_code=safe_code,
             )
         return self._failure(
             "PROVIDER_ERROR",
             "AMap request failed",
+            category=ProviderErrorCategory.INVALID_REQUEST,
             retryable=False,
             started_at=started_at,
+            safe_provider_code=safe_code,
         )
 
     def _business_failure(self, infocode: str, started_at: float) -> ProviderFailure:
-        if infocode in AUTH_CODES:
+        if infocode in PERMISSION_CODES:
             code: ProviderErrorCode = "PROVIDER_AUTH_FAILED"
+            message = "AMap permission was denied"
+            category = ProviderErrorCategory.PERMISSION_DENIED
+            retryable = False
+        elif infocode in AUTH_CODES:
+            code = "PROVIDER_AUTH_FAILED"
             message = "AMap authentication failed"
+            category = ProviderErrorCategory.AUTHENTICATION_ERROR
             retryable = False
         elif infocode in RATE_CODES:
             code = "PROVIDER_RATE_LIMITED"
             message = "AMap rate limit was reached"
+            category = ProviderErrorCategory.RATE_LIMITED
             retryable = True
         elif infocode in QUOTA_CODES:
             code = "PROVIDER_QUOTA_EXHAUSTED"
             message = "AMap quota was exhausted"
+            category = ProviderErrorCategory.QUOTA_EXCEEDED
             retryable = False
         elif infocode in UNAVAILABLE_CODES or infocode.startswith("3"):
             code = "PROVIDER_UNAVAILABLE"
             message = "AMap is temporarily unavailable"
+            category = ProviderErrorCategory.PROVIDER_UNAVAILABLE
             retryable = True
         elif infocode in INVALID_REQUEST_CODES:
             code = "PROVIDER_REQUEST_INVALID"
             message = "AMap rejected the request parameters"
+            category = ProviderErrorCategory.INVALID_REQUEST
             retryable = False
         else:
             code = "PROVIDER_ERROR"
             message = "AMap returned an error"
+            category = ProviderErrorCategory.PROVIDER_ADAPTER_ERROR
             retryable = False
-        return self._failure(code, message, retryable=retryable, started_at=started_at)
+        return self._failure(
+            code,
+            message,
+            category=category,
+            retryable=retryable,
+            started_at=started_at,
+            safe_provider_code=infocode,
+        )
 
     @staticmethod
     def _failure(
         error_code: ProviderErrorCode,
         error_message: str,
         *,
+        category: ProviderErrorCategory | None = None,
         retryable: bool,
         started_at: float,
+        safe_provider_code: str | None = None,
+        cause_type: str | None = None,
+        retry_after_seconds: float | None = None,
     ) -> ProviderFailure:
         return ProviderFailure(
             provider="AMAP",
             error_code=error_code,
             error_message=error_message,
+            category=category or category_for_error_code(error_code),
+            operation=ProviderOperation.POI_SEARCH,
             retryable=retryable,
+            safe_provider_code=safe_provider_code,
+            cause_type=cause_type,
+            retry_after_seconds=retry_after_seconds,
             latency_ms=AmapMapProvider._elapsed_ms(started_at),
             fetched_at=datetime.now(UTC),
         )
+
+    @staticmethod
+    def _retry_after_seconds(response: httpx.Response) -> float | None:
+        value = response.headers.get("Retry-After")
+        if value is None:
+            return None
+        try:
+            return max(0, float(value))
+        except ValueError:
+            return None
 
     @staticmethod
     def _cache_key(request: PoiSearchRequest) -> str:

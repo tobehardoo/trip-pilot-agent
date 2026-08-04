@@ -10,7 +10,8 @@
 - 最终自动化：Java 195 passed、Python 502 passed/37 skipped、Web 110 passed；JaCoCo、Flyway V1-V27、两套 Compose、typecheck/build 和 `git diff --check` 通过。真实 AMap 显式运行 3 passed。
 - 限制：限流/配额/5xx/非法响应使用 Mock；公交、公网 HTTPS/白名单与长期告警未真实验证；工作区有 105 个跨主题未提交状态项，提交拆分见 `project-delivery-baseline.md`。
 
-日期：2026-07-31  
+日期：2026-07-31
+
 结论：**RC_BASELINE_READY_WITH_LIMITATIONS**
 
 本报告记录运行时工作区和独立 `trip-pilot-rc` Compose 项目的验收证据。它不是干净提交、正式公网部署或长期稳定性认证。报告不包含任何真实密钥、Token、Cookie 或密码。

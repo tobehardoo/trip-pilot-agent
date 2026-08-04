@@ -1,6 +1,7 @@
 # P0 Local Real AMap Validation
 
-Date: 2026-07-30  
+Date: 2026-07-30
+
 Scope: isolated local Compose environment only; this is not a substitute for final HTTPS-domain acceptance.
 
 ## Results

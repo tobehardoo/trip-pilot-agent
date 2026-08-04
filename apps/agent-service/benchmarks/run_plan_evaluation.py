@@ -180,7 +180,7 @@ def _command(
             "payload": {
                 "taskType": "CREATE",
                 "baselineTripVersion": 0,
-                "idempotencyKey": "d05b381a-39af-47b5-9925-52f412629f8f",
+                "idempotencyKey": "00000000-0000-4000-8000-000000000001",
                 "trip": {
                     "title": "Benchmark trip",
                     "destination": "Guangzhou",

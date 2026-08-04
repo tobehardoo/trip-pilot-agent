@@ -72,6 +72,32 @@ class CiReleaseGatesTest(unittest.TestCase):
         )
         self.assertIn("grep -Ev '@sha256:[0-9a-f]{64}$'", workflow)
 
+    def test_benchmark_idempotency_uuid_is_synthetic_and_precisely_allowlisted(
+        self,
+    ) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        benchmark = (
+            repository_root
+            / "apps"
+            / "agent-service"
+            / "benchmarks"
+            / "run_plan_evaluation.py"
+        ).read_text(encoding="utf-8")
+        gitleaks_ignore = (repository_root / ".gitleaksignore").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            '"idempotencyKey": "00000000-0000-4000-8000-000000000001"',
+            benchmark,
+        )
+        self.assertIn(
+            "56eee3cb7393c02874e3ffa47e346063069c51e4:"
+            "apps/agent-service/benchmarks/run_plan_evaluation.py:"
+            "generic-api-key:183",
+            gitleaks_ignore,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

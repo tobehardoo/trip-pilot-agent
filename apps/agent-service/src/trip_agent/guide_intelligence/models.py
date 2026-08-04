@@ -66,6 +66,7 @@ class ExtractedGuide:
     title: str
     content: str
     facts: tuple[TravelFact, ...]
+    source_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

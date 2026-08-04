@@ -10,9 +10,11 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from trip_agent.acquisition.security import SourceSecurityError, validate_source_url
 from trip_agent.guide_intelligence.models import ExtractedGuide, TravelFact
 
 logger = logging.getLogger(__name__)
+_QWEATHER_ATTRIBUTION_URL = "https://www.qweather.com"
 
 
 class _ResponseModel(BaseModel):
@@ -40,6 +42,7 @@ class _Now(_ResponseModel):
 
 class _NowResponse(_ResponseModel):
     code: str
+    fx_link: object | None = Field(default=None, alias="fxLink")
     now: _Now | None = None
 
 
@@ -55,6 +58,7 @@ class _ForecastDay(_ResponseModel):
 
 class _ForecastResponse(_ResponseModel):
     code: str
+    fx_link: object | None = Field(default=None, alias="fxLink")
     daily: tuple[_ForecastDay, ...] = ()
 
 
@@ -112,7 +116,7 @@ class QWeatherWeatherProvider:
             raise ValueError("checked_at must be timezone-aware")
         location = await self._location(location_query or city)
         current_date = checked_at.astimezone(self._shanghai).date()
-        now, forecast = await self._current_and_forecast(location.location_id)
+        now, forecast, source_url = await self._current_and_forecast(location.location_id)
         facts: list[TravelFact] = []
         statements: list[str] = []
         unavailable_historical_dates: list[date] = []
@@ -214,6 +218,7 @@ class QWeatherWeatherProvider:
             title=f"{location.name}城市实时情报",
             content="\n".join(statements),
             facts=tuple(facts),
+            source_url=source_url,
         )
 
     async def _location(self, city: str) -> _Location:
@@ -228,7 +233,7 @@ class QWeatherWeatherProvider:
     async def _current_and_forecast(
         self,
         location_id: str,
-    ) -> tuple[_Now | None, tuple[_ForecastDay, ...]]:
+    ) -> tuple[_Now | None, tuple[_ForecastDay, ...], str]:
         now_payload, forecast_payload = await _gather(
             self._get("/v7/weather/now", {"location": location_id, "lang": "zh"}),
             self._get("/v7/weather/7d", {"location": location_id, "lang": "zh"}),
@@ -237,7 +242,11 @@ class QWeatherWeatherProvider:
         forecast_response = _ForecastResponse.model_validate(forecast_payload)
         _require_success(now_response.code)
         _require_success(forecast_response.code)
-        return now_response.now, forecast_response.daily
+        return (
+            now_response.now,
+            forecast_response.daily,
+            _safe_qweather_fx_link(now_response.fx_link, forecast_response.fx_link),
+        )
 
     async def _historical(self, location_id: str, requested_date: date) -> _HistoricalResponse:
         payload = await self._get(
@@ -300,6 +309,17 @@ def _normalize_api_host(api_host: str) -> str:
     if parsed.scheme != "https" or not parsed.netloc or parsed.path not in ("", "/"):
         raise ValueError("QWeather API host must be an HTTPS domain without a path")
     return candidate
+
+
+def _safe_qweather_fx_link(*candidates: object | None) -> str:
+    for candidate in candidates:
+        if not isinstance(candidate, str):
+            continue
+        try:
+            return validate_source_url(candidate, allowed_domains=("qweather.com",))
+        except (SourceSecurityError, ValueError):
+            continue
+    return _QWEATHER_ATTRIBUTION_URL
 
 
 def _historical_dates(start_date: date, end_date: date, current_date: date) -> tuple[date, ...]:

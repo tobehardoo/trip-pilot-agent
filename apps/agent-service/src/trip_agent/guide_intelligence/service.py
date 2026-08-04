@@ -359,6 +359,7 @@ class GuideImportService:
                                 (weather.content, *(fact.statement for fact in poi_facts))
                             ),
                             facts=(*weather.facts, *poi_facts),
+                            source_url=weather.source_url,
                         )
             else:
                 if amap_provider is None:
@@ -372,9 +373,9 @@ class GuideImportService:
                 poi_provider = "AMAP"
         content_hash = hashlib.sha256(extracted.content.encode()).hexdigest()
         normalized_city = city.strip()
+        qweather_source_url = extracted.source_url or "https://www.qweather.com"
         source_url = (
-            "https://dev.qweather.com/en/docs/api/"
-            f"#trip-pilot-city={normalized_city}"
+            qweather_source_url
             if weather_provider == "QWEATHER"
             else "https://lbs.amap.com/api/webservice/guide/api/weatherinfo"
             f"#trip-pilot-city={normalized_city}"
@@ -418,7 +419,7 @@ class GuideImportService:
                 "poiUnavailableReason": poi_unavailable_reason,
                 "providerSources": provider_sources,
                 "providerSourceUrls": {
-                    "QWEATHER": "https://dev.qweather.com/en/docs/api/",
+                    "QWEATHER": qweather_source_url,
                     "AMAP": "https://lbs.amap.com/api/webservice/guide/api/search",
                 },
                 "startDate": start_date.isoformat(),
@@ -432,6 +433,7 @@ class GuideImportService:
                 fact,
                 weather_provider=weather_provider,
                 poi_provider=poi_provider,
+                qweather_source_url=qweather_source_url,
             ),
         )
 
@@ -528,13 +530,14 @@ def _with_city_provider_provenance(
     *,
     weather_provider: str,
     poi_provider: str | None,
+    qweather_source_url: str,
 ) -> ValidatedFact:
     provider = weather_provider if fact.category == "WEATHER" else poi_provider
     if provider == "QWEATHER":
         return replace(
             fact,
             source_name="和风天气城市情报",
-            source_url="https://dev.qweather.com/en/docs/api/",
+            source_url=qweather_source_url,
             reliability_level="WEATHER_PROVIDER",
         )
     if provider == "AMAP":

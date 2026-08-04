@@ -81,6 +81,7 @@ class StubQWeatherProvider:
             title="和风天气城市情报",
             content="广州当前天气：晴，30℃。",
             facts=(_fact("WEATHER", "和风天气晴"),),
+            source_url="https://www.qweather.com/weather/guangzhou-101280101.html",
         )
 
 
@@ -139,7 +140,9 @@ def test_import_city_combines_qweather_with_amap_non_weather_facts(
     trusted_weather = [fact for fact in result.trusted_facts if fact.category == "WEATHER"]
     assert len(trusted_weather) == 1
     assert trusted_weather[0].source_name == "和风天气城市情报"
-    assert trusted_weather[0].source_url == "https://dev.qweather.com/en/docs/api/"
+    assert trusted_weather[0].source_url == (
+        "https://www.qweather.com/weather/guangzhou-101280101.html"
+    )
     trusted_addresses = [fact for fact in result.trusted_facts if fact.category == "ADDRESS"]
     assert len(trusted_addresses) == 1
     assert trusted_addresses[0].source_name == "高德城市情报"

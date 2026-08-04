@@ -295,3 +295,118 @@ def test_rejects_a_response_with_only_historical_failure_notices() -> None:
             )
         )
     asyncio.run(client.aclose())
+
+
+def test_exposes_the_qweather_fx_link_for_product_attribution() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/geo/v2/city/lookup":
+            return httpx.Response(
+                200,
+                json={"code": "200", "location": [{"id": "101280101", "name": "广州"}]},
+            )
+        if request.url.path == "/v7/weather/now":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "fxLink": "https://www.qweather.com/weather/guangzhou-101280101.html",
+                    "now": {
+                        "obsTime": "2026-07-30T13:00+08:00",
+                        "text": "晴",
+                        "temp": "31",
+                    },
+                },
+            )
+        if request.url.path == "/v7/weather/7d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "fxLink": "https://www.qweather.com/weather/forecast/guangzhou.html",
+                    "daily": [],
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = QWeatherWeatherProvider(
+        api_key="test-key",
+        http_client=client,
+        api_host="weather.test.qweatherapi.com",
+    )
+
+    result = asyncio.run(
+        provider.collect(
+            city="广州",
+            start_date=date(2026, 7, 30),
+            end_date=date(2026, 7, 30),
+            checked_at=datetime(2026, 7, 30, 5, 0, tzinfo=UTC),
+        )
+    )
+    asyncio.run(client.aclose())
+
+    assert result.source_url == (
+        "https://www.qweather.com/weather/guangzhou-101280101.html"
+    )
+
+
+@pytest.mark.parametrize(
+    "now_fx_link",
+    [
+        "javascript:alert(document.cookie)",
+        "https://attacker.example/weather",
+        "https://[",
+        "https://www.qweather.com:444/weather",
+        {"private": "do-not-log"},
+    ],
+)
+def test_rejects_untrusted_qweather_fx_links_from_product_attribution(
+    now_fx_link: object,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/geo/v2/city/lookup":
+            return httpx.Response(
+                200,
+                json={"code": "200", "location": [{"id": "101280101", "name": "广州"}]},
+            )
+        if request.url.path == "/v7/weather/now":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "fxLink": now_fx_link,
+                    "now": {
+                        "obsTime": "2026-07-30T13:00+08:00",
+                        "text": "晴",
+                        "temp": "31",
+                    },
+                },
+            )
+        if request.url.path == "/v7/weather/7d":
+            return httpx.Response(
+                200,
+                json={
+                    "code": "200",
+                    "daily": [],
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = QWeatherWeatherProvider(
+        api_key="test-key",
+        http_client=client,
+        api_host="weather.test.qweatherapi.com",
+    )
+
+    result = asyncio.run(
+        provider.collect(
+            city="广州",
+            start_date=date(2026, 7, 30),
+            end_date=date(2026, 7, 30),
+            checked_at=datetime(2026, 7, 30, 5, 0, tzinfo=UTC),
+        )
+    )
+    asyncio.run(client.aclose())
+
+    assert result.source_url == "https://www.qweather.com"

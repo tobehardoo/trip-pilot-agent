@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.UUID;
 
 import io.github.tobehardoo.trippilot.trip.TripRequests.CreateTripRequest;
+import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConfigurationRequest;
 import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConstraintRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -66,6 +67,12 @@ public class TripController {
     TripService.TripResponse updateConstraints(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId,
                                                @Valid @RequestBody UpdateConstraintRequest request) {
         return tripService.updateConstraints(userId(jwt), tripId, request);
+    }
+
+    @PutMapping("/{tripId}/configuration")
+    TripService.TripResponse updateConfiguration(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId,
+                                                 @Valid @RequestBody UpdateConfigurationRequest request) {
+        return tripService.updateConfiguration(userId(jwt), tripId, request);
     }
 
     @PostMapping("/{tripId}/archive")

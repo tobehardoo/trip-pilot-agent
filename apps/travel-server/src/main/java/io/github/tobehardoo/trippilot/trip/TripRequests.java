@@ -55,6 +55,21 @@ final class TripRequests {
         }
     }
 
+    /**
+     * Unified configuration update: trip metadata plus constraints are changed
+     * atomically under one optimistic-lock version bump. Replanning stays a
+     * separate operation.
+     */
+    record UpdateConfigurationRequest(
+            @NotNull @Min(0) Integer version,
+            @NotBlank @Size(max = 120) String title,
+            @NotBlank @Size(max = 120) String destination,
+            @NotNull LocalDate startDate,
+            @NotNull LocalDate endDate,
+            @NotNull @Valid ConstraintInput constraints
+    ) {
+    }
+
     record ConstraintInput(
             @DecimalMin("0.0") @Digits(integer = 10, fraction = 2) BigDecimal budgetAmount,
             @Min(1) @Max(50) int travelers,

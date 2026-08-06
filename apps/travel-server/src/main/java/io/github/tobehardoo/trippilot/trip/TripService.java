@@ -16,6 +16,7 @@ import io.github.tobehardoo.trippilot.trip.TripRequests.CreateTripRequest;
 import io.github.tobehardoo.trippilot.trip.TripRequests.FixedSchedule;
 import io.github.tobehardoo.trippilot.trip.TripRequests.MealWindow;
 import io.github.tobehardoo.trippilot.trip.TripRequests.TravelAnchor;
+import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConfigurationRequest;
 import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConstraintRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -106,6 +107,31 @@ public class TripService {
                     "Trip was updated by another request; reload it before retrying");
         }
         tripMapper.updateConstraint(toRecord(tripId, request.asConstraintInput()));
+        return get(ownerId, tripId);
+    }
+
+    /**
+     * Updates trip metadata and constraints atomically under a single
+     * optimistic-lock version bump. If either the metadata write or the
+     * constraint write fails, the whole transaction rolls back so the trip can
+     * never observe a half-applied configuration. Replanning stays a separate
+     * operation; the current itinerary is implicitly stale until a replan
+     * completes against the new version.
+     */
+    @Transactional
+    public TripResponse updateConfiguration(UUID ownerId, UUID tripId, UpdateConfigurationRequest request) {
+        TripRecord trip = findOwned(ownerId, tripId);
+        validator.validateDateRange(request.startDate(), request.endDate());
+        validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
+        validator.validateContext(request.constraints(), request.startDate(), request.endDate());
+        if (tripMapper.updateConfigurationMetadata(
+                tripId, ownerId, request.version(),
+                request.title().trim(), request.destination().trim(),
+                request.startDate(), request.endDate()) != 1) {
+            throw new ApiException(HttpStatus.CONFLICT, "TRIP_VERSION_CONFLICT",
+                    "Trip was updated by another request; reload it before retrying");
+        }
+        tripMapper.updateConstraint(toRecord(tripId, request.constraints()));
         return get(ownerId, tripId);
     }
 

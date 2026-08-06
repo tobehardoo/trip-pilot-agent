@@ -154,6 +154,29 @@ public interface TripMapper {
     int incrementVersion(@Param("id") UUID id, @Param("ownerId") UUID ownerId,
                          @Param("expectedVersion") int expectedVersion);
 
+    /**
+     * Atomically applies the optimistic-lock version bump together with the
+     * trip metadata fields so a configuration save cannot leave the version
+     * and the metadata out of step. Returns 1 on success, 0 on a version
+     * conflict.
+     */
+    @Update("""
+            UPDATE business.trip
+            SET title = #{title}, destination = #{destination},
+                start_date = #{startDate}, end_date = #{endDate},
+                version = version + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND owner_id = #{ownerId} AND version = #{expectedVersion}
+            """)
+    int updateConfigurationMetadata(
+            @Param("id") UUID id,
+            @Param("ownerId") UUID ownerId,
+            @Param("expectedVersion") int expectedVersion,
+            @Param("title") String title,
+            @Param("destination") String destination,
+            @Param("startDate") java.time.LocalDate startDate,
+            @Param("endDate") java.time.LocalDate endDate
+    );
+
     @Update("""
             UPDATE business.trip_constraint
             SET budget_amount = #{budgetAmount}, travelers = #{travelers},

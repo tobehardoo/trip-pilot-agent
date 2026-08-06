@@ -84,7 +84,7 @@ public class ItineraryService {
                 .orElseThrow(this::itineraryNotFound);
         return toItineraryResponse(new ItineraryMapper.CurrentVersion(
                 version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
-                version.estimatedTotalCost(), version.provider(), version.createdAt(), null
+                version.estimatedTotalCost(), version.provider(), version.createdAt(), null, 0
         ));
     }
 
@@ -256,6 +256,7 @@ public class ItineraryService {
                         day.dayType()
                 ))
                 .toList();
+        boolean stale = version.tripVersion() > itineraryMapper.findPlanningBaseline(version.id());
         return new ItineraryResponse(
             version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
                 version.estimatedTotalCost(), responseProvider(version.provider(), days), days,
@@ -271,7 +272,8 @@ public class ItineraryService {
                                 impact.conflicted(), impact.refreshFailed()
                         ))
                         .toList(),
-                version.createdAt(), version.rollbackFromVersionId()
+                version.createdAt(), version.rollbackFromVersionId(),
+                stale
         );
     }
 
@@ -740,7 +742,8 @@ public class ItineraryService {
             KnowledgeResponse knowledge,
             List<FactImpactResponse> factImpacts,
             Instant createdAt,
-            UUID rollbackFromVersionId
+            UUID rollbackFromVersionId,
+            boolean stale
     ) {
     }
 

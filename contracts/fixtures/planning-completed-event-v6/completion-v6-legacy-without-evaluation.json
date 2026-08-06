@@ -6,15 +6,15 @@
   "taskId": "e3000000-0000-4000-8000-000000000005",
   "tripId": "e4000000-0000-4000-8000-000000000005",
   "runId": "e5000000-0000-4000-8000-000000000005",
-  "occurredAt": "2026-08-01T00:00:00Z",
+  "occurredAt": "2026-09-01T00:00:00Z",
   "payload": {
     "provider": "AMAP",
     "itinerary": {
       "title": "Legacy Itinerary Without Evaluation",
       "days": [{
-        "date": "2026-08-01",
+        "date": "2026-09-01",
         "activities": [
-          {"activityId": "ea000001-0000-4000-8000-000000000005", "title": "Legacy Activity", "startTime": "2026-08-01T10:00:00+08:00", "endTime": "2026-08-01T12:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-LEGACY-1", "coordinates": {"longitude": 113.30, "latitude": 23.10}, "address": "Legacy St 1"}
+          {"activityId": "ea000001-0000-4000-8000-000000000005", "title": "Legacy Activity", "startTime": "2026-09-01T10:00:00+08:00", "endTime": "2026-09-01T12:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-LEGACY-1", "coordinates": {"longitude": 113.30, "latitude": 23.10}, "address": "Legacy St 1"}
         ],
         "transitLegs": []
       }],

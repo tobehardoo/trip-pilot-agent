@@ -149,7 +149,7 @@ class GuideImportFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.title").value("广州城市实时情报"))
                 .andExpect(jsonPath("$.sourceHost").value("高德城市情报"))
                 .andExpect(jsonPath("$.facts[0].category").value("WEATHER"))
-                .andExpect(jsonPath("$.facts[0].effectiveDate").value("2026-08-01"));
+                .andExpect(jsonPath("$.facts[0].effectiveDate").value("2026-09-01"));
     }
 
     @Test
@@ -160,8 +160,8 @@ class GuideImportFlowIntegrationTest extends PostgresIntegrationTest {
                 {
                   "sourceType": "CITY_INTELLIGENCE",
                   "city": "广州",
-                  "startDate": "2026-08-01",
-                  "endDate": "2026-08-02"
+                  "startDate": "2026-09-01",
+                  "endDate": "2026-09-02"
                 }
                 """;
 
@@ -311,8 +311,8 @@ class GuideImportFlowIntegrationTest extends PostgresIntegrationTest {
                                 {
                                   "title": "广州周末",
                                   "destination": "%s",
-                                  "startDate": "2026-08-01",
-                                  "endDate": "2026-08-02",
+                                  "startDate": "2026-09-01",
+                                  "endDate": "2026-09-02",
                                   "constraints": {
                                     "budgetAmount": 2000,
                                     "travelers": 2,

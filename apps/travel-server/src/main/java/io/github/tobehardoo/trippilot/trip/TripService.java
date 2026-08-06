@@ -32,22 +32,26 @@ public class TripService {
     private final TripMapper tripMapper;
     private final ObjectMapper objectMapper;
     private final TripConstraintValidator validator;
+    private final TripDatePolicy datePolicy;
     private final CityIntelligencePrewarmService cityIntelligencePrewarmService;
 
     public TripService(
             TripMapper tripMapper,
             ObjectMapper objectMapper,
             TripConstraintValidator validator,
+            TripDatePolicy datePolicy,
             CityIntelligencePrewarmService cityIntelligencePrewarmService
     ) {
         this.tripMapper = tripMapper;
         this.objectMapper = objectMapper;
         this.validator = validator;
+        this.datePolicy = datePolicy;
         this.cityIntelligencePrewarmService = cityIntelligencePrewarmService;
     }
 
     @Transactional
     public TripResponse create(UUID ownerId, CreateTripRequest request) {
+        datePolicy.validateNewTripStartDate(request.startDate());
         validator.validateDateRange(request.startDate(), request.endDate());
         validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
         validator.validateContext(request.constraints(), request.startDate(), request.endDate());

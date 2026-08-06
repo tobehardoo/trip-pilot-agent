@@ -186,7 +186,7 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
         String accessToken = registerAndGetAccessToken("planning-legacy-long@example.com");
         String tripId = createTrip(accessToken);
         jdbcTemplate.update(
-                "UPDATE business.trip SET end_date = DATE '2026-08-08' WHERE id = ?",
+                "UPDATE business.trip SET end_date = DATE '2026-09-08' WHERE id = ?",
                 UUID.fromString(tripId)
         );
 
@@ -489,8 +489,8 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                                 {
                                   "title": "广州四日慢游",
                                   "destination": "广州",
-                                  "startDate": "2026-08-01",
-                                  "endDate": "2026-08-04",
+                                  "startDate": "2026-09-01",
+                                  "endDate": "2026-09-04",
                                   "constraints": {
                                     "budgetAmount": 6000,
                                     "travelers": 2,

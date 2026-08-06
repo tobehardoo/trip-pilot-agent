@@ -271,10 +271,10 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 "/payload/itinerary/days/0/activities");
         activities.remove(1);
         ((ObjectNode) fixture.at("/payload/itinerary/days/0"))
-                .put("date", "2026-08-01");
+                .put("date", "2026-09-01");
         ((ObjectNode) activities.get(0))
-                .put("startTime", "2026-08-01T09:00:00+08:00")
-                .put("endTime", "2026-08-01T11:00:00+08:00");
+                .put("startTime", "2026-09-01T09:00:00+08:00")
+                .put("endTime", "2026-09-01T11:00:00+08:00");
         ((ArrayNode) fixture.at(
                 "/payload/itinerary/days/0/transitLegs")).removeAll();
 
@@ -386,7 +386,7 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.versionNumber").value(1))
                 .andExpect(jsonPath("$.title").value("广州 Demo 行程"))
-                .andExpect(jsonPath("$.days[0].date").value("2026-08-01"))
+                .andExpect(jsonPath("$.days[0].date").value("2026-09-01"))
                 .andExpect(jsonPath("$.days[0].activities[0].source").value("DEMO"));
     }
 
@@ -855,15 +855,15 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
         );
         jdbcTemplate.update("""
                 INSERT INTO business.itinerary_day(id, itinerary_version_id, day_date, day_index)
-                VALUES (?, ?, DATE '2026-08-02', 1)
+                VALUES (?, ?, DATE '2026-09-02', 1)
                 """, foreignDayId, versionId);
         jdbcTemplate.update("""
                 INSERT INTO business.activity(
                     id, itinerary_day_id, activity_order, title,
                     start_time, end_time, estimated_cost, source
                 ) VALUES (?, ?, 0, 'Foreign day activity',
-                          TIMESTAMPTZ '2026-08-02 09:00:00+08',
-                          TIMESTAMPTZ '2026-08-02 10:00:00+08', 0, 'DEMO')
+                          TIMESTAMPTZ '2026-09-02 09:00:00+08',
+                          TIMESTAMPTZ '2026-09-02 10:00:00+08', 0, 'DEMO')
                 """, foreignActivityId, foreignDayId);
 
         assertThatThrownBy(() -> jdbcTemplate.update("""
@@ -1126,8 +1126,8 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                                 {
                                   "title": "广州一日游",
                                   "destination": "广州",
-                                  "startDate": "2026-08-01",
-                                  "endDate": "2026-08-01",
+                                  "startDate": "2026-09-01",
+                                  "endDate": "2026-09-01",
                                   "constraints": {
                                     "budgetAmount": 1000,
                                     "travelers": 2,

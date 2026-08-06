@@ -127,7 +127,7 @@ class ItineraryShareFlowIntegrationTest extends PostgresIntegrationTest {
                         .content("""
                                 {
                                   "title":"Share test trip", "destination":"Guangzhou",
-                                  "startDate":"2026-08-01", "endDate":"2026-08-01",
+                                  "startDate":"2026-09-01", "endDate":"2026-09-01",
                                   "constraints":{"budgetAmount":1000,"travelers":1,
                                   "travelerType":"SOLO","pace":"BALANCED",
                                   "preferences":[],"fixedSchedules":[]}

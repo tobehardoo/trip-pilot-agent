@@ -50,8 +50,8 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
                                   "version": 0,
                                   "title": "深圳周末慢游",
                                   "destination": "深圳",
-                                  "startDate": "2026-08-15",
-                                  "endDate": "2026-08-17",
+                                  "startDate": "2026-09-15",
+                                  "endDate": "2026-09-17",
                                   "constraints": {
                                     "budgetAmount": 5000,
                                     "travelers": 2,
@@ -71,8 +71,8 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("深圳周末慢游"))
                 .andExpect(jsonPath("$.destination").value("深圳"))
-                .andExpect(jsonPath("$.startDate").value("2026-08-15"))
-                .andExpect(jsonPath("$.endDate").value("2026-08-17"))
+                .andExpect(jsonPath("$.startDate").value("2026-09-15"))
+                .andExpect(jsonPath("$.endDate").value("2026-09-17"))
                 .andExpect(jsonPath("$.version").value(1))
                 .andExpect(jsonPath("$.constraints.budgetAmount").value(5000))
                 .andExpect(jsonPath("$.constraints.mustVisitPlaces[0]").value("世界之窗"))
@@ -92,7 +92,7 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(put("/api/trips/{tripId}/configuration", tripId)
                         .header("Authorization", bearer(accessToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(configBody("7", "深圳周末慢游", "深圳", "2026-08-15", "2026-08-17")))
+                        .content(configBody("7", "深圳周末慢游", "深圳", "2026-09-15", "2026-09-17")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("TRIP_VERSION_CONFLICT"));
 
@@ -110,7 +110,7 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(put("/api/trips/{tripId}/configuration", tripId)
                         .header("Authorization", bearer(accessToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(configBody("0", "深圳周末慢游", "深圳", "2026-08-17", "2026-08-15")))
+                        .content(configBody("0", "深圳周末慢游", "深圳", "2026-09-17", "2026-09-15")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
@@ -119,8 +119,8 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.title").value("广州四日慢游"))
                 .andExpect(jsonPath("$.destination").value("广州"))
-                .andExpect(jsonPath("$.startDate").value("2026-08-01"))
-                .andExpect(jsonPath("$.endDate").value("2026-08-04"))
+                .andExpect(jsonPath("$.startDate").value("2026-09-01"))
+                .andExpect(jsonPath("$.endDate").value("2026-09-04"))
                 .andExpect(jsonPath("$.version").value(0))
                 .andExpect(jsonPath("$.constraints.budgetAmount").value(6000));
     }
@@ -136,7 +136,7 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(put("/api/trips/{tripId}/configuration", tripId)
                         .header("Authorization", bearer(accessToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(configBody("0", "深圳周末慢游", "深圳", "2026-08-15", "2026-08-17")))
+                        .content(configBody("0", "深圳周末慢游", "深圳", "2026-09-15", "2026-09-17")))
                 .andExpect(status().isOk());
 
         String snapshot = jdbcTemplate.queryForObject(
@@ -168,7 +168,7 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(put("/api/trips/{tripId}/configuration", tripId)
                         .header("Authorization", bearer(accessToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(configBody("0", "深圳周末慢游", "深圳", "2026-08-15", "2026-08-17")))
+                        .content(configBody("0", "深圳周末慢游", "深圳", "2026-09-15", "2026-09-17")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.version").value(1));
         mockMvc.perform(get("/api/trips/{tripId}/itinerary", tripId)
@@ -188,7 +188,7 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(put("/api/trips/{tripId}/configuration", tripId)
                         .header("Authorization", bearer(accessToken))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(configBody("1", "深圳三日", "深圳", "2026-08-16", "2026-08-18")))
+                        .content(configBody("1", "深圳三日", "深圳", "2026-09-16", "2026-09-18")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.version").value(2));
         mockMvc.perform(get("/api/trips/{tripId}/itinerary", tripId)
@@ -229,7 +229,7 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
                         constraint_snapshot, guide_evidence_snapshot, trace_id, version
                     ) VALUES (
                         ?::uuid, ?::uuid, ?::uuid, 'REPLAN', 'SUCCEEDED',
-                        ?, ?::uuid, '["2026-08-15"]'::jsonb,
+                        ?, ?::uuid, '["2026-09-15"]'::jsonb,
                         '{}'::jsonb, '{"facts":[]}'::jsonb, ?::uuid, 0
                     )
                     """, taskId, tripId, UUID.randomUUID(), baselineVersion,
@@ -297,8 +297,8 @@ class TripConfigurationIntegrationTest extends PostgresIntegrationTest {
                         {
                           "title": "广州四日慢游",
                           "destination": "广州",
-                          "startDate": "2026-08-01",
-                          "endDate": "2026-08-04",
+                          "startDate": "2026-09-01",
+                          "endDate": "2026-09-04",
                           "constraints": {
                             "budgetAmount": 6000,
                             "travelers": 2,

@@ -118,7 +118,7 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
         UUID tripId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO business.trip(id, owner_id, title, destination, start_date, end_date, status, version)
-                VALUES (?::uuid, ?::uuid, '旧旅行', '广州', DATE '2026-08-01', DATE '2026-08-02', 'DRAFT', 2)
+                VALUES (?::uuid, ?::uuid, '旧旅行', '广州', DATE '2026-09-01', DATE '2026-09-02', 'DRAFT', 2)
                 """, tripId, ownerId);
         jdbcTemplate.update("""
                 INSERT INTO business.trip_constraint(
@@ -128,8 +128,8 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                 ) VALUES (
                     ?::uuid, 3000, 2, 'COUPLE', 'RELAXED',
                     '[]'::jsonb, '[]'::jsonb,
-                    '{"placeName":"广州南站","time":"2026-08-01T11:00:00+08:00"}'::jsonb,
-                    '{"placeName":"广州白云机场","time":"2026-08-02T17:00:00+08:00"}'::jsonb,
+                    '{"placeName":"广州南站","time":"2026-09-01T11:00:00+08:00"}'::jsonb,
+                    '{"placeName":"广州白云机场","time":"2026-09-02T17:00:00+08:00"}'::jsonb,
                     '{"placeName":"老酒店"}'::jsonb,
                     '["陈家祠"]'::jsonb, '[]'::jsonb,
                     '[{"mealType":"LUNCH","startTime":"12:00","endTime":"13:00"}]'::jsonb,
@@ -154,7 +154,7 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
         UUID tripId = UUID.randomUUID();
         jdbcTemplate.update("""
                 INSERT INTO business.trip(id, owner_id, title, destination, start_date, end_date, status, version)
-                VALUES (?::uuid, ?::uuid, '无餐窗旧旅行', '广州', DATE '2026-08-01', DATE '2026-08-03', 'DRAFT', 0)
+                VALUES (?::uuid, ?::uuid, '无餐窗旧旅行', '广州', DATE '2026-09-01', DATE '2026-09-03', 'DRAFT', 0)
                 """, tripId, ownerId);
         jdbcTemplate.update("""
                 INSERT INTO business.trip_constraint(
@@ -188,7 +188,7 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                 ,
                 "arrival": {
                   "placeName": "广州南站",
-                  "time": "2026-08-01T11:00:00+08:00",
+                  "time": "2026-09-01T11:00:00+08:00",
                   "poi": {
                     "name": "广州南站",
                     "providerPoiId": "B000A7BD2F",
@@ -201,7 +201,7 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                 },
                 "departure": {
                   "placeName": "广州白云机场",
-                  "time": "2026-08-02T17:00:00+08:00",
+                  "time": "2026-09-02T17:00:00+08:00",
                   "poi": {
                     "name": "广州白云国际机场",
                     "providerPoiId": "B000A80Z8H",
@@ -269,8 +269,8 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                 "preferences": ["美食", "岭南文化"],
                 "fixedSchedules": [{
                   "placeName": "广东省博物馆",
-                  "startTime": "2026-08-02T10:00:00+08:00",
-                  "endTime": "2026-08-02T12:00:00+08:00"
+                  "startTime": "2026-09-02T10:00:00+08:00",
+                  "endTime": "2026-09-02T12:00:00+08:00"
                 }],
                 "mustVisitPlaces": ["陈家祠"],
                 "avoidPlaces": ["广州塔"],
@@ -308,8 +308,8 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                         {
                           "title": "广州四日慢游",
                           "destination": "广州",
-                          "startDate": "2026-08-01",
-                          "endDate": "2026-08-04",
+                          "startDate": "2026-09-01",
+                          "endDate": "2026-09-04",
                           "constraints": {
                             "budgetAmount": 6000,
                             "travelers": 2,

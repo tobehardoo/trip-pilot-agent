@@ -54,12 +54,12 @@ public final class PlanningCompletedEventFixture {
                       "title": "广州 Demo 行程",
                       "days": [
                         {
-                          "date": "2026-08-01",
+                          "date": "2026-09-01",
                           "activities": [
                             {
                               "title": "广州 Demo 探索",
-                              "startTime": "2026-08-01T09:00:00+08:00",
-                              "endTime": "2026-08-01T11:00:00+08:00",
+                              "startTime": "2026-09-01T09:00:00+08:00",
+                              "endTime": "2026-09-01T11:00:00+08:00",
                               "estimatedCost": 0,
                               "source": "DEMO"
                             }
@@ -92,12 +92,12 @@ public final class PlanningCompletedEventFixture {
                       "title": "广州真实地点行程",
                       "days": [
                         {
-                          "date": "2026-08-01",
+                          "date": "2026-09-01",
                           "activities": [
                             {
                               "title": "广东省博物馆",
-                              "startTime": "2026-08-01T09:00:00+08:00",
-                              "endTime": "2026-08-01T11:00:00+08:00",
+                              "startTime": "2026-09-01T09:00:00+08:00",
+                              "endTime": "2026-09-01T11:00:00+08:00",
                               "estimatedCost": 0,
                               "source": "AMAP",
                               "providerPoiId": "B00140TWHT",
@@ -136,12 +136,12 @@ public final class PlanningCompletedEventFixture {
                       "title": "广州真实路线行程",
                       "days": [
                         {
-                          "date": "2026-08-01",
+                          "date": "2026-09-01",
                           "activities": [
                             {
                               "title": "广东省博物馆",
-                              "startTime": "2026-08-01T09:00:00+08:00",
-                              "endTime": "2026-08-01T11:00:00+08:00",
+                              "startTime": "2026-09-01T09:00:00+08:00",
+                              "endTime": "2026-09-01T11:00:00+08:00",
                               "estimatedCost": 0,
                               "source": "AMAP",
                               "providerPoiId": "B00140TWHT",
@@ -150,8 +150,8 @@ public final class PlanningCompletedEventFixture {
                             },
                             {
                               "title": "广州塔",
-                              "startTime": "2026-08-01T13:00:00+08:00",
-                              "endTime": "2026-08-01T15:00:00+08:00",
+                              "startTime": "2026-09-01T13:00:00+08:00",
+                              "endTime": "2026-09-01T15:00:00+08:00",
                               "estimatedCost": 0,
                               "source": "AMAP",
                               "providerPoiId": "B00141TTHJ",
@@ -254,14 +254,14 @@ public final class PlanningCompletedEventFixture {
                       "title": "广州真实路线行程",
                       "days": [
                         {
-                          "date": "2026-08-01",
+                          "date": "2026-09-01",
                           "dayType": "ARRIVAL_DAY",
                           "activities": [
                             {
                               "activityId": "6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f60",
                               "title": "广州站",
-                              "startTime": "2026-08-01T13:30:00+08:00",
-                              "endTime": "2026-08-01T14:00:00+08:00",
+                              "startTime": "2026-09-01T13:30:00+08:00",
+                              "endTime": "2026-09-01T14:00:00+08:00",
                               "estimatedCost": 0,
                               "source": "AMAP",
                               "providerPoiId": "STATION-1",
@@ -273,8 +273,8 @@ public final class PlanningCompletedEventFixture {
                             {
                               "activityId": "6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f61",
                               "title": "越秀公园",
-                              "startTime": "2026-08-01T14:40:00+08:00",
-                              "endTime": "2026-08-01T16:10:00+08:00",
+                              "startTime": "2026-09-01T14:40:00+08:00",
+                              "endTime": "2026-09-01T16:10:00+08:00",
                               "estimatedCost": 0,
                               "source": "AMAP",
                               "providerPoiId": "PARK-1",
@@ -286,8 +286,8 @@ public final class PlanningCompletedEventFixture {
                             {
                               "activityId": "6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f62",
                               "title": "晚餐（建议在当前区域自行选择餐馆）",
-                              "startTime": "2026-08-01T17:00:00+08:00",
-                              "endTime": "2026-08-01T18:00:00+08:00",
+                              "startTime": "2026-09-01T17:00:00+08:00",
+                              "endTime": "2026-09-01T18:00:00+08:00",
                               "estimatedCost": 0,
                               "source": "AMAP",
                               "kind": "MEAL",
@@ -334,12 +334,12 @@ public final class PlanningCompletedEventFixture {
         String secondDay = """
                 ,
                         {
-                          "date": "2026-08-02",
+                          "date": "2026-09-02",
                           "activities": [
                             {
                               "title": "Yuexiu Park",
-                              "startTime": "2026-08-02T09:00:00+08:00",
-                              "endTime": "2026-08-02T11:00:00+08:00",
+                              "startTime": "2026-09-02T09:00:00+08:00",
+                              "endTime": "2026-09-02T11:00:00+08:00",
                               "estimatedCost": 0,
                               "source": "AMAP",
                               "providerPoiId": "PARK-1",
@@ -348,8 +348,8 @@ public final class PlanningCompletedEventFixture {
                             },
                             {
                               "title": "Chen Clan Academy",
-                              "startTime": "2026-08-02T13:00:00+08:00",
-                              "endTime": "2026-08-02T15:00:00+08:00",
+                              "startTime": "2026-09-02T13:00:00+08:00",
+                              "endTime": "2026-09-02T15:00:00+08:00",
                               "estimatedCost": 0,
                               "source": "AMAP",
                               "providerPoiId": "ACADEMY-1",

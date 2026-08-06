@@ -413,6 +413,42 @@ function statusLabel(status: string) {
   return { DRAFT: '草稿', PLANNING: '规划中', READY: '可使用', FAILED: '规划失败' }[status] ?? status
 }
 
+function mobilityLabel(level: string | undefined) {
+  return { STANDARD: '标准', REDUCED: '行动较缓', STEP_FREE: '无障碍' }[level ?? 'STANDARD'] ?? '标准'
+}
+
+function mealLabel(mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER') {
+  return { BREAKFAST: '早餐', LUNCH: '午餐', DINNER: '晚餐' }[mealType]
+}
+
+function mealSourceLabel(source?: 'SYSTEM_DEFAULT' | 'USER_SET') {
+  return source === 'USER_SET' ? '用户设置' : '系统默认'
+}
+
+function formatMealWindow(mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER') {
+  const window = props.trip?.constraints.mealWindows?.find((item) => item.mealType === mealType)
+  if (!window) return '未设置'
+  return `${window.startTime.slice(0, 5)}–${window.endTime.slice(0, 5)}`
+}
+
+const isItineraryStale = computed(() => props.itinerary?.stale === true)
+
+const accommodationSummary = computed(() => {
+  const acc = props.trip?.constraints.accommodation
+  if (acc?.poi) return { text: acc.poi.name, note: '已确认' }
+  if (acc?.placeName) return { text: acc.placeName, note: '待重新确认' }
+  return { text: '尚未选择', note: null }
+})
+
+/** No trusted coordinate anchors at all: transit uses an estimated default start. */
+const usesEstimatedAnchors = computed(() => {
+  const constraints = props.trip?.constraints
+  if (!constraints) return false
+  return !constraints.arrival?.poi
+    && !constraints.departure?.poi
+    && !constraints.accommodation?.poi
+})
+
 function formatDate(date: string) {
   return date.replaceAll('-', '.')
 }
@@ -1265,8 +1301,29 @@ watch(() => props.itinerary, (nextItinerary) => {
               </Button>
             </div>
 
+            <!-- Stale warning: live constraints changed since the itinerary was planned -->
+            <div
+              v-if="isItineraryStale"
+              class="mb-6 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+              role="status"
+            >
+              <RefreshCw :size="16" class="mt-0.5 shrink-0" aria-hidden="true" />
+              <div>
+                <strong>约束已更新，当前行程仍基于上一版约束。</strong>
+                <span class="block text-xs text-amber-700 mt-0.5">保存配置后需重新规划，新约束才会反映到行程中。</span>
+              </div>
+            </div>
+
             <!-- Constraint Summary -->
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 pb-6 border-b border-surface-100">
+              <div class="flex items-start gap-3 sm:col-span-2">
+                <MapPin :size="18" class="text-surface-400 mt-0.5 shrink-0" aria-hidden="true" />
+                <div>
+                  <dt class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">目的地与日期</dt>
+                  <dd class="text-base font-bold text-surface-800">{{ trip.destination }}</dd>
+                  <dd class="text-sm text-surface-500">{{ formatDate(trip.startDate) }} — {{ formatDate(trip.endDate) }}</dd>
+                </div>
+              </div>
               <div class="flex items-start gap-3">
                 <Wallet :size="18" class="text-surface-400 mt-0.5 shrink-0" aria-hidden="true" />
                 <div>
@@ -1284,8 +1341,8 @@ watch(() => props.itinerary, (nextItinerary) => {
               <div class="flex items-start gap-3">
                 <CircleGauge :size="18" class="text-surface-400 mt-0.5 shrink-0" aria-hidden="true" />
                 <div>
-                  <dt class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">节奏</dt>
-                  <dd class="text-base font-bold text-surface-800">{{ paceLabel(trip.constraints.pace) }}</dd>
+                  <dt class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">节奏 · 行动能力</dt>
+                  <dd class="text-base font-bold text-surface-800">{{ paceLabel(trip.constraints.pace) }} · {{ mobilityLabel(trip.constraints.mobilityLevel) }}</dd>
                 </div>
               </div>
             </div>
@@ -1313,18 +1370,44 @@ watch(() => props.itinerary, (nextItinerary) => {
               </div>
               <div>
                 <h3 class="text-sm font-semibold text-surface-700 mb-3">到返与住宿</h3>
-                <p class="text-sm text-surface-500">
-                  到达：{{ trip.constraints.arrival?.placeName ?? '未设置' }}<br />
-                  返程：{{ trip.constraints.departure?.placeName ?? '未设置' }}<br />
-                  住宿：{{ trip.constraints.accommodation?.placeName ?? '未设置' }}
-                </p>
+                <ul class="space-y-2 text-sm">
+                  <li class="flex items-center gap-2">
+                    <span class="text-surface-400">到达</span>
+                    <span class="text-surface-700">{{ trip.constraints.arrival?.placeName ?? '尚未设置' }}</span>
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="text-surface-400">返程</span>
+                    <span class="text-surface-700">{{ trip.constraints.departure?.placeName ?? '尚未设置' }}</span>
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="text-surface-400">酒店</span>
+                    <span class="text-surface-700">{{ accommodationSummary.text }}</span>
+                    <span v-if="accommodationSummary.note" class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+                      {{ accommodationSummary.note }}
+                    </span>
+                  </li>
+                  <li v-if="usesEstimatedAnchors" class="text-xs text-surface-400">
+                    首末段交通 按默认起点估算
+                  </li>
+                </ul>
               </div>
               <div>
-                <h3 class="text-sm font-semibold text-surface-700 mb-3">地点与行动能力</h3>
+                <h3 class="text-sm font-semibold text-surface-700 mb-3">三餐时间</h3>
+                <ul class="space-y-2 text-sm">
+                  <li v-for="mealType in ['BREAKFAST', 'LUNCH', 'DINNER'] as const" :key="mealType" class="flex items-center gap-2">
+                    <span class="w-8 text-surface-400">{{ mealLabel(mealType) }}</span>
+                    <span class="text-surface-700">{{ formatMealWindow(mealType) }}</span>
+                    <span class="text-xs text-surface-400">
+                      · {{ mealSourceLabel(props.trip?.constraints.mealWindows?.find((w) => w.mealType === mealType)?.source) }}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <h3 class="text-sm font-semibold text-surface-700 mb-3">必去与避开</h3>
                 <p class="text-sm text-surface-500">
                   必去：{{ (trip.constraints.mustVisitPlaces ?? []).join('、') || '未设置' }}<br />
-                  排除：{{ (trip.constraints.avoidPlaces ?? []).join('、') || '未设置' }}<br />
-                  行动能力：{{ trip.constraints.mobilityLevel ?? 'STANDARD' }}
+                  排除：{{ (trip.constraints.avoidPlaces ?? []).join('、') || '未设置' }}
                 </p>
               </div>
             </div>

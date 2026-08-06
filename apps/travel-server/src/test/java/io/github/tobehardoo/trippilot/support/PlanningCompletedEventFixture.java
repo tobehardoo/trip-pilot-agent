@@ -12,8 +12,16 @@ public final class PlanningCompletedEventFixture {
     }
 
     public static String sharedV6Fixture(String fixtureName) {
+        return sharedFixture("planning-completed-event-v6", fixtureName, "v6");
+    }
+
+    public static String sharedV8Fixture(String fixtureName) {
+        return sharedFixture("planning-completed-event-v8", fixtureName, "v8");
+    }
+
+    private static String sharedFixture(String directory, String fixtureName, String label) {
         Path relative = Path.of(
-                "contracts", "fixtures", "planning-completed-event-v6", fixtureName
+                "contracts", "fixtures", directory, fixtureName
         );
         Path workingDirectory = Path.of("").toAbsolutePath();
         Path fixture = workingDirectory.resolve(relative);
@@ -24,7 +32,8 @@ public final class PlanningCompletedEventFixture {
         try {
             return Files.readString(fixture, StandardCharsets.UTF_8);
         } catch (IOException exception) {
-            throw new IllegalStateException("Could not read shared completion v6 fixture", exception);
+            throw new IllegalStateException(
+                    "Could not read shared completion " + label + " fixture", exception);
         }
     }
 
@@ -224,6 +233,98 @@ public final class PlanningCompletedEventFixture {
                         "\"provider\": \"AMAP\""
                 )
                 .replace("\"estimated\": false", "\"estimated\": true");
+    }
+
+    public static String completedAmapEventV8(
+            UUID eventId, UUID traceId, UUID taskId, UUID tripId
+    ) {
+        return """
+                {
+                  "eventType": "PLANNING_COMPLETED",
+                  "schemaVersion": 8,
+                  "eventId": "%s",
+                  "traceId": "%s",
+                  "taskId": "%s",
+                  "tripId": "%s",
+                  "runId": "a61f2109-ec3f-51f8-a536-25f0049d8326",
+                  "occurredAt": "2026-07-18T03:00:00Z",
+                  "payload": {
+                    "provider": "AMAP",
+                    "itinerary": {
+                      "title": "广州真实路线行程",
+                      "days": [
+                        {
+                          "date": "2026-08-01",
+                          "dayType": "ARRIVAL_DAY",
+                          "activities": [
+                            {
+                              "activityId": "6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f60",
+                              "title": "广州站",
+                              "startTime": "2026-08-01T13:30:00+08:00",
+                              "endTime": "2026-08-01T14:00:00+08:00",
+                              "estimatedCost": 0,
+                              "source": "AMAP",
+                              "providerPoiId": "STATION-1",
+                              "coordinates": {"longitude": 113.249382, "latitude": 23.149933},
+                              "address": "环市西路159号",
+                              "kind": "ARRIVAL",
+                              "timeFixed": true
+                            },
+                            {
+                              "activityId": "6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f61",
+                              "title": "越秀公园",
+                              "startTime": "2026-08-01T14:40:00+08:00",
+                              "endTime": "2026-08-01T16:10:00+08:00",
+                              "estimatedCost": 0,
+                              "source": "AMAP",
+                              "providerPoiId": "PARK-1",
+                              "coordinates": {"longitude": 113.264385, "latitude": 23.140326},
+                              "address": "解放北路988号",
+                              "kind": "ATTRACTION",
+                              "timeFixed": false
+                            },
+                            {
+                              "activityId": "6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f62",
+                              "title": "晚餐（建议在当前区域自行选择餐馆）",
+                              "startTime": "2026-08-01T17:00:00+08:00",
+                              "endTime": "2026-08-01T18:00:00+08:00",
+                              "estimatedCost": 0,
+                              "source": "AMAP",
+                              "kind": "MEAL",
+                              "timeFixed": false
+                            }
+                          ],
+                          "transitLegs": [
+                            {
+                              "transitId": "6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f70",
+                              "fromActivityIndex": 0,
+                              "toActivityIndex": 1,
+                              "mode": "DRIVING",
+                              "distanceMeters": 2600,
+                              "durationSeconds": 900,
+                              "provider": "AMAP",
+                              "estimated": false,
+                              "polyline": [
+                                {"longitude": 113.249382, "latitude": 23.149933},
+                                {"longitude": 113.264385, "latitude": 23.140326}
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "estimatedTotalCost": 0
+                    },
+                    "factImpacts": [],
+                    "knowledge": {
+                      "status": "DEMO",
+                      "query": "广州",
+                      "citations": [],
+                      "freshness": {"status": "UNAVAILABLE"},
+                      "message": "演示模式未使用生产知识检索"
+                    }
+                  }
+                }
+                """.formatted(eventId, traceId, taskId, tripId);
     }
 
     public static String completedTwoDayAmapEventV3(

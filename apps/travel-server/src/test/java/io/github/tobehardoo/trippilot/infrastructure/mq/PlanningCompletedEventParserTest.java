@@ -617,6 +617,128 @@ class PlanningCompletedEventParserTest {
         );
     }
 
+    @Test
+    void parsesV8ScheduleFieldsAndPreservesThem() {
+        PlanningCompletedEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV8(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        ));
+
+        assertThat(event.schemaVersion()).isEqualTo(8);
+        PlanningCompletedEvent.Day day = event.payload().itinerary().days().get(0);
+        assertThat(day.dayType()).isEqualTo("ARRIVAL_DAY");
+        assertThat(day.activities().get(0).kind()).isEqualTo("ARRIVAL");
+        assertThat(day.activities().get(0).timeFixed()).isTrue();
+        assertThat(day.activities().get(1).kind()).isEqualTo("ATTRACTION");
+        assertThat(day.activities().get(1).timeFixed()).isFalse();
+        assertThat(day.activities().get(2).kind()).isEqualTo("MEAL");
+        assertThat(day.activities().get(2).timeFixed()).isFalse();
+    }
+
+    @Test
+    void v8AcceptsStructuralMealNodeWithoutProviderMetadataAndTransitGap() {
+        PlanningCompletedEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV8(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        ));
+
+        PlanningCompletedEvent.Activity meal = event.payload().itinerary().days().get(0)
+                .activities().get(2);
+        assertThat(meal.kind()).isEqualTo("MEAL");
+        assertThat(meal.providerPoiId()).isNull();
+        assertThat(meal.coordinates()).isNull();
+        assertThat(meal.address()).isNull();
+        // Only one transit leg covers activities 0->1; the meal gap (1->2) has none.
+        assertThat(event.payload().itinerary().days().get(0).transitLegs()).hasSize(1);
+    }
+
+    @Test
+    void v8RejectsUnknownActivityKind() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV8(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        ((ObjectNode) event.at("/payload/itinerary/days/0/activities/1")).put("kind", "TRANSFER");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("activity kind is not a supported value");
+    }
+
+    @Test
+    void v8RejectsUnknownDayType() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV8(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        ((ObjectNode) event.at("/payload/itinerary/days/0")).put("dayType", "NIGHT_DAY");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("dayType is not a supported value");
+    }
+
+    @Test
+    void v8RejectsNonStructuralActivityMissingProviderMetadata() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV8(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        // Make the ATTRACTION lose its provider metadata: structural-only exemption.
+        ObjectNode attraction = (ObjectNode) event.at("/payload/itinerary/days/0/activities/1");
+        attraction.remove("providerPoiId");
+        attraction.remove("coordinates");
+        attraction.remove("address");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("AMAP activity requires valid provider metadata");
+    }
+
+    @Test
+    void parsesSharedV8FixtureAndPreservesScheduleFields() {
+        PlanningCompletedEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.sharedV8Fixture(
+                        "completion-v8-real-only-amap.json"
+                )
+        ));
+
+        assertThat(event.schemaVersion()).isEqualTo(8);
+        PlanningCompletedEvent.Day day = event.payload().itinerary().days().get(0);
+        assertThat(day.dayType()).isEqualTo("ARRIVAL_DAY");
+        assertThat(day.activities().get(0).kind()).isEqualTo("ARRIVAL");
+        assertThat(day.activities().get(0).timeFixed()).isTrue();
+        assertThat(day.activities().get(2).kind()).isEqualTo("MEAL");
+        assertThat(day.activities().get(2).providerPoiId()).isNull();
+        // The meal gap has no transit leg; only 0->1 is covered.
+        assertThat(day.transitLegs()).hasSize(1);
+    }
+
+    @Test
+    void rejectsAbandonedV7EvenWhenStructurallyWellFormed() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV8(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        event.put("schemaVersion", 7);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("unsupported eventType or schemaVersion");
+    }
+
     private ObjectNode amapV2Event() throws Exception {
         return (ObjectNode) objectMapper.readTree(PlanningCompletedEventFixture.completedAmapEventV2(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()

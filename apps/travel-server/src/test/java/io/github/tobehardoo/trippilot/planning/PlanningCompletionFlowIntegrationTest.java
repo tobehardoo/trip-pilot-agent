@@ -438,6 +438,60 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void persistsV8ScheduleFieldsIncludingStructuralMealWithoutMetadata() throws Exception {
+        PlanningContext context = createPlanningContext("completion-v8@example.com");
+        PlanningCompletedEvent event = eventParser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV8(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        ));
+
+        completionService.handle(event);
+
+        Map<String, Object> day = jdbcTemplate.queryForMap("""
+                SELECT itinerary_day.day_type
+                FROM business.itinerary
+                JOIN business.itinerary_version
+                  ON itinerary_version.id = itinerary.current_version_id
+                JOIN business.itinerary_day
+                  ON itinerary_day.itinerary_version_id = itinerary_version.id
+                WHERE itinerary.trip_id = ?
+                """, context.tripId());
+        assertThat(day).containsEntry("day_type", "ARRIVAL_DAY");
+
+        List<Map<String, Object>> activities = jdbcTemplate.queryForList("""
+                SELECT activity.title, activity.kind, activity.time_fixed,
+                       activity.provider_poi_id
+                FROM business.itinerary
+                JOIN business.itinerary_version
+                  ON itinerary_version.id = itinerary.current_version_id
+                JOIN business.itinerary_day
+                  ON itinerary_day.itinerary_version_id = itinerary_version.id
+                JOIN business.activity ON activity.itinerary_day_id = itinerary_day.id
+                WHERE itinerary.trip_id = ?
+                ORDER BY activity.activity_order
+                """, context.tripId());
+        assertThat(activities.get(0))
+                .containsEntry("kind", "ARRIVAL")
+                .containsEntry("time_fixed", true)
+                .containsEntry("provider_poi_id", "STATION-1");
+        assertThat(activities.get(2))
+                .containsEntry("kind", "MEAL")
+                .containsEntry("time_fixed", false)
+                .containsEntry("provider_poi_id", null);
+
+        mockMvc.perform(get("/api/trips/{tripId}/itinerary", context.tripId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.days[0].dayType").value("ARRIVAL_DAY"))
+                .andExpect(jsonPath("$.days[0].activities[0].kind").value("ARRIVAL"))
+                .andExpect(jsonPath("$.days[0].activities[0].timeFixed").value(true))
+                .andExpect(jsonPath("$.days[0].activities[2].kind").value("MEAL"))
+                .andExpect(jsonPath("$.days[0].activities[2].timeFixed").value(false))
+                .andExpect(jsonPath("$.days[0].activities[2].providerPoiId").doesNotExist());
+    }
+
+    @Test
     void persistsAndReturnsV3TransitLegsLinkedToAdjacentActivities() throws Exception {
         PlanningContext context = createPlanningContext("completion-route@example.com");
         PlanningCompletedEvent event = eventParser.parse(bytes(

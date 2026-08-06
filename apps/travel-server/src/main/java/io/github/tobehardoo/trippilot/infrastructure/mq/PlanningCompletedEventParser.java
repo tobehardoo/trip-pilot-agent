@@ -40,6 +40,15 @@ public class PlanningCompletedEventParser {
             "TRANSIT_MODE", "SHORTEST_ROUTE", "PROVIDER_CONSTRAINT",
             "TIME_OPTIMIZATION", "BUDGET_CONSTRAINT", "REGIONAL_GROUPING"
     );
+    private static final Set<String> DAY_TYPES = Set.of(
+            "ARRIVAL_DAY", "FULL_DAY", "DEPARTURE_DAY", "SPECIAL_ACTIVITY_DAY"
+    );
+    private static final Set<String> ACTIVITY_KINDS = Set.of(
+            "ATTRACTION", "EXPERIENCE", "MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"
+    );
+    private static final Set<String> STRUCTURAL_KINDS = Set.of(
+            "MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"
+    );
 
     private final ObjectReader reader;
     private final ObjectMapper objectMapper;
@@ -80,7 +89,9 @@ public class PlanningCompletedEventParser {
         JsonNode itinerary = payload.path("itinerary");
         JsonNode days = itinerary.path("days");
         int schemaVersion = event.path("schemaVersion").asInt();
-        if (schemaVersion < 1 || schemaVersion > 6) {
+        // Java accepts v1-v6 (historical/current) and v8 (candidate); v7 is
+        // ABANDONED and stays rejected.
+        if (schemaVersion < 1 || schemaVersion > 8 || schemaVersion == 7) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (!payload.isObject() || !payload.path("provider").isTextual()
@@ -97,6 +108,9 @@ public class PlanningCompletedEventParser {
             if (!day.isObject() || !day.path("date").isTextual() || !activities.isArray()) {
                 throw invalid("day field types do not match the JSON Schema");
             }
+            if (day.has("dayType") && !day.path("dayType").isTextual()) {
+                throw invalid("dayType must be a string");
+            }
             for (JsonNode activity : activities) {
                 if (!activity.isObject() || !activity.path("title").isTextual()
                         || !activity.path("startTime").isTextual()
@@ -105,10 +119,17 @@ public class PlanningCompletedEventParser {
                         || !activity.path("source").isTextual()) {
                     throw invalid("activity field types do not match the JSON Schema");
                 }
+                if (activity.has("kind") && !activity.path("kind").isTextual()) {
+                    throw invalid("activity kind must be a string");
+                }
+                if (activity.has("timeFixed") && !activity.path("timeFixed").isBoolean()) {
+                    throw invalid("activity timeFixed must be a boolean");
+                }
                 validateActivityMetadataTypes(activity);
                 if (activity.has("activityId")
-                        && (schemaVersion != 6 || !activity.path("activityId").isTextual())) {
-                    throw invalid("activityId is only supported as a UUID string in schema v6");
+                        && ((schemaVersion != 6 && schemaVersion != 8)
+                        || !activity.path("activityId").isTextual())) {
+                    throw invalid("activityId is only supported as a UUID string in schema v6/v8");
                 }
             }
             validateTransitLegTypes(day, schemaVersion);
@@ -156,8 +177,8 @@ public class PlanningCompletedEventParser {
         if (!payload.has("providerProvenance")) {
             return;
         }
-        if (schemaVersion != 6) {
-            throw invalid("provider provenance is only supported in schema v6");
+        if (schemaVersion != 6 && schemaVersion != 8) {
+            throw invalid("provider provenance is only supported in schema v6/v8");
         }
         JsonNode provenance = payload.path("providerProvenance");
         JsonNode actualProviders = provenance.path("actualProviders");
@@ -264,8 +285,9 @@ public class PlanningCompletedEventParser {
                 throw invalid("transit leg field types do not match the JSON Schema");
             }
             if (leg.has("transitId")
-                    && (schemaVersion != 6 || !leg.path("transitId").isTextual())) {
-                throw invalid("transitId is only supported as a UUID string in schema v6");
+                    && ((schemaVersion != 6 && schemaVersion != 8)
+                    || !leg.path("transitId").isTextual())) {
+                throw invalid("transitId is only supported as a UUID string in schema v6/v8");
             }
             for (JsonNode point : leg.path("polyline")) {
                 if (!point.isObject() || !point.path("longitude").isNumber()
@@ -299,7 +321,8 @@ public class PlanningCompletedEventParser {
                 && event.schemaVersion() != 3
                 && event.schemaVersion() != 4
                 && event.schemaVersion() != 5
-                && event.schemaVersion() != 6)) {
+                && event.schemaVersion() != 6
+                && event.schemaVersion() != 8)) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (event.eventId() == null || event.traceId() == null || event.taskId() == null
@@ -336,8 +359,8 @@ public class PlanningCompletedEventParser {
         if (!payload.has("evaluation") || payload.get("evaluation").isNull()) {
             return;
         }
-        if (schemaVersion != 6) {
-            throw invalid("evaluation is only supported in schema v6");
+        if (schemaVersion != 6 && schemaVersion != 8) {
+            throw invalid("evaluation is only supported in schema v6/v8");
         }
         JsonNode evaluation = payload.path("evaluation");
         if (!evaluation.isObject()
@@ -359,7 +382,8 @@ public class PlanningCompletedEventParser {
         if (evaluation == null) {
             return;
         }
-        if (event.schemaVersion() != 6 || evaluation.schemaVersion() != 1) {
+        if ((event.schemaVersion() != 6 && event.schemaVersion() != 8)
+                || evaluation.schemaVersion() != 1) {
             throw invalid("evaluation schemaVersion must be 1");
         }
         if (evaluation.evaluatorVersion() == null
@@ -436,7 +460,7 @@ public class PlanningCompletedEventParser {
         if (provenance == null) {
             return;
         }
-        if (event.schemaVersion() != 6
+        if ((event.schemaVersion() != 6 && event.schemaVersion() != 8)
                 || provenance.requestedProviderMode() == null
                 || provenance.primaryProvider() == null
                 || provenance.actualProviders().isEmpty()
@@ -683,6 +707,9 @@ public class PlanningCompletedEventParser {
                 || day.activities().isEmpty()) {
             throw invalid("each itinerary day requires activities");
         }
+        if (day.dayType() != null && !DAY_TYPES.contains(day.dayType())) {
+            throw invalid("dayType is not a supported value");
+        }
         java.time.OffsetDateTime previousEnd = null;
         for (PlanningCompletedEvent.Activity activity : day.activities()) {
             if (activity == null || !validText(activity.title(), 200)
@@ -690,6 +717,9 @@ public class PlanningCompletedEventParser {
                     || !isPersistableMoney(activity.estimatedCost())
                     || !supportedProvider(activity.source())) {
                 throw invalid("activity fields are invalid");
+            }
+            if (activity.kind() != null && !ACTIVITY_KINDS.contains(activity.kind())) {
+                throw invalid("activity kind is not a supported value");
             }
             if (!provider.equals(activity.source())) {
                 throw invalid("activity source must match payload provider");
@@ -720,9 +750,16 @@ public class PlanningCompletedEventParser {
             }
             return;
         }
-        int expectedCount = day.activities().size() - 1;
-        if (day.transitLegs().size() != expectedCount) {
+        // Gaps between adjacent activities are allowed only in v8 (unresolved
+        // structural nodes such as a meal without a bound restaurant have no
+        // transit leg). Older producers always emit one leg per adjacent pair.
+        boolean strictAdjacency = schemaVersion != 8;
+        if (strictAdjacency
+                && day.transitLegs().size() != day.activities().size() - 1) {
             throw invalid("transit legs must connect every adjacent activity");
+        }
+        if (day.transitLegs().size() > day.activities().size() - 1) {
+            throw invalid("transit legs cannot exceed adjacent activity pairs");
         }
         Set<String> endpoints = new HashSet<>();
         for (PlanningCompletedEvent.TransitLeg leg : day.transitLegs()) {
@@ -772,8 +809,17 @@ public class PlanningCompletedEventParser {
             }
             return;
         }
-        if (!"AMAP".equals(activity.source())
-                || !validText(activity.providerPoiId(), 100)
+        if (!"AMAP".equals(activity.source())) {
+            throw invalid("AMAP activity requires valid provider metadata");
+        }
+        boolean structural = activity.kind() != null
+                && STRUCTURAL_KINDS.contains(activity.kind());
+        if (structural && !hasProviderMetadata) {
+            // A structural node without a resolved POI is allowed (e.g. an
+            // unresolved meal slot); it carries no fake provider metadata.
+            return;
+        }
+        if (!validText(activity.providerPoiId(), 100)
                 || !validText(activity.address(), 300)
                 || !validCoordinates(activity.coordinates())) {
             throw invalid("AMAP activity requires valid provider metadata");

@@ -156,7 +156,7 @@ public class ItineraryVersionService {
         for (ItineraryMapper.StoredDay day : itineraryMapper.findDays(sourceVersionId)) {
             UUID dayId = UUID.randomUUID();
             requireOne(itineraryMapper.insertDay(new ItineraryMapper.DayWrite(
-                    dayId, targetVersionId, day.date(), day.dayIndex()
+                    dayId, targetVersionId, day.date(), day.dayIndex(), day.dayType()
             )), "rollback day");
             Map<UUID, UUID> activityIds = new HashMap<>();
             for (ItineraryMapper.StoredActivity activity
@@ -169,7 +169,9 @@ public class ItineraryVersionService {
                                 activity.title(), activity.startTime(), activity.endTime(),
                                 activity.estimatedCost(), activity.source(),
                                 activity.providerPoiId(), activity.longitude(),
-                                activity.latitude(), activity.address(), activity.locked()
+                                activity.latitude(), activity.address(), activity.locked(),
+                                activity.typeCode(), activity.typeName(),
+                                activity.kind(), activity.timeFixed()
                         )
                 ), "rollback activity");
             }

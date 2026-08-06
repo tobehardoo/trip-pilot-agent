@@ -252,7 +252,8 @@ public class ItineraryService {
                                 .toList(),
                         itineraryMapper.findTransitLegs(day.id()).stream()
                                 .map(this::toTransitLegResponse)
-                                .toList()
+                                .toList(),
+                        day.dayType()
                 ))
                 .toList();
         return new ItineraryResponse(
@@ -292,7 +293,8 @@ public class ItineraryService {
                         new ArrayList<>(itineraryMapper.findActivities(day.id()).stream()
                                 .map(this::toEditableActivity)
                                 .toList()),
-                        new ArrayList<>(itineraryMapper.findTransitLegs(day.id()))
+                        new ArrayList<>(itineraryMapper.findTransitLegs(day.id())),
+                        day.dayType()
                 ))
                 .toList();
         return new EditableItinerary(days);
@@ -302,7 +304,8 @@ public class ItineraryService {
         return new EditableActivity(
                 activity.id(), activity.title(), activity.startTime(), activity.endTime(),
                 activity.estimatedCost(), activity.source(), activity.providerPoiId(),
-                activity.longitude(), activity.latitude(), activity.address(), activity.locked()
+                activity.longitude(), activity.latitude(), activity.address(), activity.locked(),
+                activity.typeCode(), activity.typeName(), activity.kind(), activity.timeFixed()
         );
     }
 
@@ -585,7 +588,7 @@ public class ItineraryService {
             EditableDay day = itinerary.days().get(dayIndex);
             UUID newDayId = UUID.randomUUID();
             requireOne(itineraryMapper.insertDay(new ItineraryMapper.DayWrite(
-                    newDayId, versionId, day.date(), dayIndex
+                    newDayId, versionId, day.date(), dayIndex, day.dayType()
             )), "itinerary edit day");
             Map<UUID, UUID> activityIds = new HashMap<>();
             for (int activityIndex = 0; activityIndex < day.activities().size(); activityIndex++) {
@@ -595,7 +598,8 @@ public class ItineraryService {
                 requireOne(itineraryMapper.insertActivity(new ItineraryMapper.ActivityWrite(
                     newActivityId, newDayId, activityIndex, activity.title(), activity.startTime(),
                         activity.endTime(), activity.estimatedCost(), activity.source(), activity.providerPoiId(),
-                        activity.longitude(), activity.latitude(), activity.address(), activity.locked()
+                        activity.longitude(), activity.latitude(), activity.address(), activity.locked(),
+                        activity.typeCode(), activity.typeName(), activity.kind(), activity.timeFixed()
                 )), "itinerary edit activity");
             }
             if (!day.transitNeedsRefresh) {
@@ -668,7 +672,9 @@ public class ItineraryService {
                 activity.longitude() == null
                         ? null
                         : new CoordinatesResponse(activity.longitude(), activity.latitude()),
-                activity.address(), activity.locked()
+                activity.address(), activity.locked(),
+                activity.typeCode(), activity.typeName(),
+                activity.kind(), activity.timeFixed()
         );
     }
 
@@ -761,7 +767,8 @@ public class ItineraryService {
     public record DayResponse(
             LocalDate date,
             List<ActivityResponse> activities,
-            List<TransitLegResponse> transitLegs
+            List<TransitLegResponse> transitLegs,
+            String dayType
     ) {
     }
 
@@ -775,7 +782,11 @@ public class ItineraryService {
             String providerPoiId,
             CoordinatesResponse coordinates,
             String address,
-            boolean locked
+            boolean locked,
+            String typeCode,
+            String typeName,
+            String kind,
+            boolean timeFixed
     ) {
     }
 
@@ -948,15 +959,18 @@ public class ItineraryService {
         private final LocalDate date;
         private final List<EditableActivity> activities;
         private final List<ItineraryMapper.StoredTransitLeg> transitLegs;
+        private final String dayType;
         private boolean transitNeedsRefresh;
 
         private EditableDay(
                 LocalDate date,
                 List<EditableActivity> activities,
-                List<ItineraryMapper.StoredTransitLeg> transitLegs) {
+                List<ItineraryMapper.StoredTransitLeg> transitLegs,
+                String dayType) {
             this.date = date;
             this.activities = activities;
             this.transitLegs = transitLegs;
+            this.dayType = dayType;
         }
 
         LocalDate date() {
@@ -969,6 +983,10 @@ public class ItineraryService {
 
         List<ItineraryMapper.StoredTransitLeg> transitLegs() {
             return transitLegs;
+        }
+
+        String dayType() {
+            return dayType;
         }
     }
 
@@ -983,19 +1001,23 @@ public class ItineraryService {
             BigDecimal longitude,
             BigDecimal latitude,
             String address,
-            boolean locked
+            boolean locked,
+            String typeCode,
+            String typeName,
+            String kind,
+            boolean timeFixed
     ) {
         EditableActivity withLocked(boolean value) {
             return new EditableActivity(
                     id, title, startTime, endTime, estimatedCost, source, providerPoiId,
-                    longitude, latitude, address, value
+                    longitude, latitude, address, value, typeCode, typeName, kind, timeFixed
             );
         }
 
         EditableActivity withSchedule(OffsetDateTime start, OffsetDateTime end) {
             return new EditableActivity(
                     id, title, start, end, estimatedCost, source, providerPoiId,
-                    longitude, latitude, address, locked
+                    longitude, latitude, address, locked, typeCode, typeName, kind, timeFixed
             );
         }
     }
@@ -1136,7 +1158,7 @@ public class ItineraryService {
             requireOne(
                     itineraryMapper.insertDay(new ItineraryMapper.DayWrite(
                             targetDayId, versionId,
-                            sourceDay.date(), sourceDay.dayIndex()
+                            sourceDay.date(), sourceDay.dayIndex(), sourceDay.dayType()
                     )),
                     "local replan day"
             );
@@ -1182,7 +1204,7 @@ public class ItineraryService {
         requireOne(
                 itineraryMapper.insertDay(
                         new ItineraryMapper.DayWrite(
-                                dayId, versionId, day.date(), dayIndex
+                                dayId, versionId, day.date(), dayIndex, day.dayType()
                         )
                 ),
                 "itinerary day"
@@ -1215,7 +1237,10 @@ public class ItineraryService {
                                             ? null : coordinates.longitude(),
                                     coordinates == null
                                             ? null : coordinates.latitude(),
-                                    activity.address(), false
+                                    activity.address(), false,
+                                    activity.typeCode(), activity.typeName(),
+                                    activity.kind(),
+                                    Boolean.TRUE.equals(activity.timeFixed())
                             )
                     ),
                     "itinerary activity"
@@ -1280,7 +1305,9 @@ public class ItineraryService {
                                     activity.longitude(),
                                     activity.latitude(),
                                     activity.address(),
-                                    activity.locked()
+                                    activity.locked(),
+                                    activity.typeCode(), activity.typeName(),
+                                    activity.kind(), activity.timeFixed()
                             )
                     ),
                     "local replan activity"
@@ -1462,7 +1489,11 @@ public class ItineraryService {
                     || !sameCoordinates(
                             source, result.coordinates())
                     || !java.util.Objects.equals(
-                            source.address(), result.address())) {
+                            source.address(), result.address())
+                    || !java.util.Objects.equals(
+                            source.kind(), result.kind())
+                    || !java.util.Objects.equals(
+                            source.timeFixed(), Boolean.TRUE.equals(result.timeFixed()))) {
                 throw rejected(
                         "Local replanning must preserve activity details");
             }

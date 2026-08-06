@@ -60,7 +60,16 @@ public record PlanningCompletedEvent(
     public record Itinerary(String title, List<Day> days, BigDecimal estimatedTotalCost) {
     }
 
-    public record Day(LocalDate date, List<Activity> activities, List<TransitLeg> transitLegs) {
+    public record Day(
+            LocalDate date,
+            List<Activity> activities,
+            List<TransitLeg> transitLegs,
+            String dayType
+    ) {
+        public Day(LocalDate date, List<Activity> activities, List<TransitLeg> transitLegs) {
+            this(date, activities, transitLegs, null);
+        }
+
         public Day {
             transitLegs = transitLegs == null ? List.of() : List.copyOf(transitLegs);
         }
@@ -75,8 +84,28 @@ public record PlanningCompletedEvent(
             String source,
             String providerPoiId,
             Coordinates coordinates,
-            String address
+            String address,
+            String typeCode,
+            String typeName,
+            String kind,
+            Boolean timeFixed
     ) {
+        public Activity(
+                UUID activityId,
+                String title,
+                OffsetDateTime startTime,
+                OffsetDateTime endTime,
+                BigDecimal estimatedCost,
+                String source,
+                String providerPoiId,
+                Coordinates coordinates,
+                String address,
+                String typeCode,
+                String typeName
+        ) {
+            this(activityId, title, startTime, endTime, estimatedCost, source,
+                    providerPoiId, coordinates, address, typeCode, typeName, null, null);
+        }
     }
 
     public record Coordinates(BigDecimal longitude, BigDecimal latitude) {

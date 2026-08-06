@@ -48,8 +48,8 @@ public interface ItineraryMapper {
     int insertVersion(VersionWrite version);
 
     @Insert("""
-            INSERT INTO business.itinerary_day(id, itinerary_version_id, day_date, day_index)
-            VALUES (#{id}, #{itineraryVersionId}, #{date}, #{dayIndex})
+            INSERT INTO business.itinerary_day(id, itinerary_version_id, day_date, day_index, day_type)
+            VALUES (#{id}, #{itineraryVersionId}, #{date}, #{dayIndex}, #{dayType})
             """)
     int insertDay(DayWrite day);
 
@@ -57,11 +57,13 @@ public interface ItineraryMapper {
             INSERT INTO business.activity(
                 id, itinerary_day_id, activity_order, title,
                 start_time, end_time, estimated_cost, source,
-                provider_poi_id, longitude, latitude, address, locked
+                provider_poi_id, longitude, latitude, address, locked,
+                type_code, type_name, kind, time_fixed
             ) VALUES (
                 #{id}, #{itineraryDayId}, #{activityOrder}, #{title},
                 #{startTime}, #{endTime}, #{estimatedCost}, #{source},
-                #{providerPoiId}, #{longitude}, #{latitude}, #{address}, #{locked}
+                #{providerPoiId}, #{longitude}, #{latitude}, #{address}, #{locked},
+                #{typeCode}, #{typeName}, #{kind}, #{timeFixed}
             )
             """)
     int insertActivity(ActivityWrite activity);
@@ -217,7 +219,7 @@ public interface ItineraryMapper {
     boolean hasLockedItineraryElements(@Param("tripId") UUID tripId);
 
     @Select("""
-            SELECT id, day_date AS date, day_index
+            SELECT id, day_date AS date, day_index, day_type
             FROM business.itinerary_day
             WHERE itinerary_version_id = #{versionId}
             ORDER BY day_index
@@ -226,7 +228,8 @@ public interface ItineraryMapper {
 
     @Select("""
             SELECT id, activity_order, title, start_time, end_time, estimated_cost, source,
-                   provider_poi_id, longitude, latitude, address, locked
+                   provider_poi_id, longitude, latitude, address, locked,
+                   type_code, type_name, kind, time_fixed
             FROM business.activity
             WHERE itinerary_day_id = #{dayId}
             ORDER BY activity_order
@@ -293,7 +296,7 @@ public interface ItineraryMapper {
     ) {
     }
 
-    record DayWrite(UUID id, UUID itineraryVersionId, LocalDate date, int dayIndex) {
+    record DayWrite(UUID id, UUID itineraryVersionId, LocalDate date, int dayIndex, String dayType) {
     }
 
     record ActivityWrite(
@@ -309,7 +312,11 @@ public interface ItineraryMapper {
             BigDecimal longitude,
             BigDecimal latitude,
             String address,
-            boolean locked
+            boolean locked,
+            String typeCode,
+            String typeName,
+            String kind,
+            boolean timeFixed
     ) {
     }
 
@@ -399,7 +406,7 @@ public interface ItineraryMapper {
     ) {
     }
 
-    record StoredDay(UUID id, LocalDate date, int dayIndex) {
+    record StoredDay(UUID id, LocalDate date, int dayIndex, String dayType) {
     }
 
     record StoredActivity(
@@ -414,7 +421,11 @@ public interface ItineraryMapper {
             BigDecimal longitude,
             BigDecimal latitude,
             String address,
-            boolean locked
+            boolean locked,
+            String typeCode,
+            String typeName,
+            String kind,
+            boolean timeFixed
     ) {
     }
 

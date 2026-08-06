@@ -24,6 +24,12 @@ import Card from './ui/Card.vue'
 import Badge from './ui/Badge.vue'
 import TripTemplates from './TripTemplates.vue'
 
+import ConstraintCard from './ConstraintCard.vue'
+import NaturalLanguageInput from './NaturalLanguageInput.vue'
+import { createDefaultDraft, destinationToString, toCreateTripInput, type ConstraintDraft } from '../lib/constraint-draft'
+import { parseConstraint } from '../lib/constraint-parser'
+import type { ParseWarning } from '../lib/constraint-parser'
+
 const props = withDefaults(defineProps<{
   user: User
   trips: Trip[]
@@ -36,6 +42,82 @@ const props = withDefaults(defineProps<{
   destinationQuery: '',
   includeArchived: false,
 })
+
+// ── 自然语言约束输入 ──────────────────────────────────────
+const useNaturalLanguage = ref(true)
+const draft = ref<ConstraintDraft>(createDefaultDraft())
+const parseWarnings = ref<ParseWarning[]>([])
+const parseUnrecognized = ref<string[]>([])
+
+function handleParse(text: string) {
+  const result = parseConstraint(text)
+  parseWarnings.value = result.warnings
+  parseUnrecognized.value = result.unrecognized
+  applyOperations(result.operations)
+}
+
+function applyOperations(ops: ReturnType<typeof parseConstraint>['operations']) {
+  for (const op of ops) {
+    const field = draft.value[op.field as keyof ConstraintDraft] as { value: unknown; source: string } | undefined
+    if (!field) continue
+    switch (op.type) {
+      case 'set':
+        field.value = op.value
+        field.source = 'explicit'
+        break
+      case 'append':
+        if (Array.isArray(field.value) && !field.value.includes(op.value)) {
+          field.value = [...field.value, op.value]
+          field.source = 'explicit'
+        }
+        break
+      case 'remove':
+        if (Array.isArray(field.value)) {
+          field.value = field.value.filter((v: unknown) => v !== op.value)
+        }
+        break
+      case 'clear':
+        if (Array.isArray(field.value)) field.value = []
+        else field.value = null
+        field.source = 'unset'
+        break
+    }
+  }
+  // 同步到表单
+  syncDraftToForm()
+}
+
+function syncDraftToForm() {
+  const destination = destinationToString(draft.value.destination.value)
+  form.title = form.title || (destination ? `${destination}之旅` : '')
+  form.destination = destination || form.destination
+  form.startDate = draft.value.startDate.value || form.startDate
+  form.endDate = draft.value.endDate.value || form.endDate
+  form.budgetAmount = draft.value.budgetAmount.value ?? form.budgetAmount
+  form.travelers = draft.value.travelers.value
+  form.preferences = [...draft.value.preferences.value]
+}
+
+function handleCardEdit(field: string) {
+  // 切换到表单模式编辑
+  useNaturalLanguage.value = false
+}
+
+function handleCardRemove(field: string, value?: string) {
+  if (value) {
+    applyOperations([{ type: 'remove', field, value }])
+  }
+}
+
+function handleCardAppend(field: string) {
+  useNaturalLanguage.value = false
+}
+
+function handleDestinationChange(sel: { province: string; city: string; districts: string[] }) {
+  draft.value.destination.value = { province: sel.province, city: sel.city, districts: sel.districts }
+  draft.value.destination.source = 'explicit'
+  form.destination = sel.city
+}
 
 const emit = defineEmits<{
   logout: []
@@ -131,9 +213,15 @@ const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
 function openDialog(event?: Event, initial?: Pick<typeof form, 'title' | 'destination'>) {
   rememberTrigger(event?.currentTarget)
   resetForm()
+  draft.value = createDefaultDraft()
+  parseWarnings.value = []
+  parseUnrecognized.value = []
+  useNaturalLanguage.value = true
   if (initial) {
     form.title = initial.title
     form.destination = initial.destination
+    draft.value.destination.value = initial.destination
+    draft.value.destination.source = 'explicit'
   }
   dialogOpen.value = true
 }
@@ -147,8 +235,9 @@ function togglePreference(preference: string) {
 async function saveTrip() {
   submitting.value = true
   try {
+    const title = form.title || `${form.destination || draft.value.destination.value}之旅`
     await props.createTrip({
-      title: form.title,
+      title,
       destination: form.destination,
       startDate: form.startDate,
       endDate: form.endDate,
@@ -420,7 +509,33 @@ async function saveTrip() {
             </button>
           </div>
 
-          <form class="px-6 py-5" @submit.prevent="saveTrip">
+          <!-- 自然语言输入 -->
+          <div class="px-6 pt-5">
+            <NaturalLanguageInput
+              :warnings="parseWarnings"
+              :unrecognized="parseUnrecognized"
+              @parse="handleParse"
+            />
+          </div>
+
+          <!-- 约束卡片 -->
+          <div class="px-6 pt-4" v-if="draft.destination.source !== 'unset'">
+            <ConstraintCard
+              :draft="draft"
+              @edit="handleCardEdit"
+              @remove="handleCardRemove"
+              @append="handleCardAppend"
+              @destination-change="handleDestinationChange"
+            />
+          </div>
+
+          <!-- 传统表单（折叠） -->
+          <details class="px-6 pt-4" open>
+            <summary class="cursor-pointer text-xs font-semibold text-surface-500 hover:text-surface-700">
+              {{ useNaturalLanguage ? '展开完整表单编辑' : '收起完整表单' }}
+            </summary>
+
+          <form class="py-5" @submit.prevent="saveTrip">
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div class="sm:col-span-2">
                 <label for="trip-title" class="block text-xs font-semibold text-surface-600 mb-1.5">旅行名称</label>
@@ -501,6 +616,7 @@ async function saveTrip() {
               <Button variant="primary" size="sm" type="submit" :disabled="submitting">保存旅行</Button>
             </div>
           </form>
+          </details>
         </div>
       </div>
     </div>

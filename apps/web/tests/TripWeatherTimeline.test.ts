@@ -40,7 +40,7 @@ test('shows the travel range with buffer days and only fills dates backed by wea
   expect(screen.getByRole('button', { name: '选择 2026-08-05 天气' })).toBeTruthy()
   expect(screen.getByText('晴')).toBeTruthy()
   expect(screen.getByText('37° / 28°')).toBeTruthy()
-  expect(screen.getAllByText('待同步').length).toBeGreaterThan(0)
+  expect(screen.getAllByText('历史天气尚未同步').length).toBeGreaterThan(0)
 
   await fireEvent.click(screen.getByRole('button', { name: '选择 2026-08-01 天气' }))
   expect(result.emitted().selectDate).toEqual([['2026-08-01']])

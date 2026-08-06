@@ -194,8 +194,30 @@ const {
   (baseVersionId, edits) => props.commitItineraryEdits(baseVersionId, edits),
   (cause) => cause instanceof ApiError ? cause.message : '保存行程草稿失败，请稍后重试',
 )
+const STRUCTURAL_KINDS = new Set(['MEAL', 'ACCOMMODATION', 'ARRIVAL', 'DEPARTURE'])
+
+function isStructuralKind(kind?: string | null): boolean {
+  return !!kind && STRUCTURAL_KINDS.has(kind)
+}
+
+function hasMissingTransitGap(day: Itinerary['days'][number]): boolean {
+  if (day.activities.length < 2) return false
+  const legPairs = new Set(
+    day.transitLegs.map((leg) => `${leg.fromActivityId}:${leg.toActivityId}`),
+  )
+  for (let index = 0; index < day.activities.length - 1; index++) {
+    const from = day.activities[index]
+    const to = day.activities[index + 1]
+    // Gaps around structural nodes (meal/arrival/departure/accommodation) are
+    // intentional and do not require a transit refresh.
+    if (isStructuralKind(from.kind) || isStructuralKind(to.kind)) continue
+    if (!legPairs.has(`${from.id}:${to.id}`)) return true
+  }
+  return false
+}
+
 const datesNeedingTransitRefresh = computed(() => props.itinerary?.days
-  .filter((day) => day.activities.length > 1 && day.transitLegs.length !== day.activities.length - 1)
+  .filter(hasMissingTransitGap)
   .map((day) => day.date) ?? [])
 
 async function startLocalReplanning() {
@@ -648,8 +670,24 @@ function transitSummary(leg: ItineraryTransitLeg): string {
 }
 
 const totalPlaces = computed(() =>
-  props.itinerary?.days.reduce((sum, day) => sum + day.activities.length, 0) ?? 0
+  props.itinerary?.days.reduce(
+    (sum, day) => sum + day.activities.filter((activity) => !isStructuralKind(activity.kind)).length,
+    0,
+  ) ?? 0
 )
+
+const activityKindLabels: Record<string, string> = {
+  MEAL: '餐饮',
+  ACCOMMODATION: '住宿',
+  ARRIVAL: '到达',
+  DEPARTURE: '离开',
+  EXPERIENCE: '体验',
+}
+
+function activityKindLabel(kind?: string | null): string {
+  if (!kind) return ''
+  return activityKindLabels[kind] ?? kind
+}
 const factImpacts = computed(() => props.itinerary?.factImpacts ?? [])
 const latestCityIntelligenceImport = computed(() => props.guideImports
   .filter((guide) => guide.sourceType === 'CITY_INTELLIGENCE')
@@ -1068,6 +1106,12 @@ watch(() => props.itinerary, (nextItinerary) => {
                               <div class="flex items-center gap-2 mb-2">
                                 <span class="flex items-center justify-center w-8 h-8 rounded-xl bg-primary-50 text-primary-600 text-xs font-bold shrink-0">
                                   {{ activityIndex + 1 }}
+                                </span>
+                                <span
+                                  v-if="activity.kind && activity.kind !== 'ATTRACTION'"
+                                  class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 shrink-0"
+                                >
+                                  {{ activityKindLabel(activity.kind) }}
                                 </span>
                                 <h3 class="text-base font-semibold text-surface-900 truncate">{{ activity.title }}</h3>
                                 <Lock v-if="activity.locked" :size="12" class="text-amber-500 shrink-0" />

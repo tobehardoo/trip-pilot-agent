@@ -323,6 +323,21 @@ export interface GuideImport {
   fetchedAt: string
   enabled: boolean
   facts: GuideFact[]
+  quality: GuideQuality | null
+}
+
+export interface GuideQuality {
+  overall: number
+  label: string
+  dimensions: GuideQualityDimensions
+}
+
+export interface GuideQualityDimensions {
+  factDensity: number
+  categoryCoverage: number
+  strongFactRatio: number
+  conflictRate: number
+  freshnessHealth: number
 }
 
 export interface ItineraryActivity {
@@ -339,6 +354,10 @@ export interface ItineraryActivity {
   } | null
   address: string | null
   locked: boolean
+  typeCode: string | null
+  typeName: string | null
+  kind: 'ATTRACTION' | 'EXPERIENCE' | 'MEAL' | 'ACCOMMODATION' | 'ARRIVAL' | 'DEPARTURE' | null
+  timeFixed: boolean | null
 }
 
 export interface ItineraryTransitLeg {
@@ -396,6 +415,7 @@ export interface Itinerary {
   provider: ProviderSource
   days: Array<{
     date: string
+    dayType: 'ARRIVAL_DAY' | 'FULL_DAY' | 'DEPARTURE_DAY' | 'SPECIAL_ACTIVITY_DAY' | null
     activities: ItineraryActivity[]
     transitLegs: ItineraryTransitLeg[]
   }>

@@ -10,11 +10,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.cityintelligence.CityIntelligencePrewarmService;
 import io.github.tobehardoo.trippilot.common.ApiException;
+import io.github.tobehardoo.trippilot.trip.TripRequests.Accommodation;
 import io.github.tobehardoo.trippilot.trip.TripRequests.ConstraintInput;
 import io.github.tobehardoo.trippilot.trip.TripRequests.CreateTripRequest;
 import io.github.tobehardoo.trippilot.trip.TripRequests.FixedSchedule;
 import io.github.tobehardoo.trippilot.trip.TripRequests.MealWindow;
-import io.github.tobehardoo.trippilot.trip.TripRequests.PlaceAnchor;
 import io.github.tobehardoo.trippilot.trip.TripRequests.TravelAnchor;
 import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConstraintRequest;
 import org.springframework.http.HttpStatus;
@@ -131,10 +131,26 @@ public class TripService {
                 tripId, input.budgetAmount(), input.travelers(), input.travelerType(), input.pace(),
                 writeJson(input.preferences()), writeJson(input.fixedSchedules()),
                 writeNullableJson(input.arrival()), writeNullableJson(input.departure()),
-                writeNullableJson(input.accommodation()), writeJson(input.mustVisitPlaces()),
+                writeNullableJson(normalizeAccommodation(input.accommodation())),
+                writeJson(input.mustVisitPlaces()),
                 writeJson(input.avoidPlaces()), writeJson(input.mealWindows()),
                 input.mobilityLevel(), 2, null
         );
+    }
+
+    private static Accommodation normalizeAccommodation(Accommodation accommodation) {
+        if (accommodation == null) {
+            return null;
+        }
+        if (accommodation.poi() == null) {
+            return accommodation;
+        }
+        // Always persist a display name so legacy consumers (which only know
+        // placeName) still see something readable.
+        String effectiveName = accommodation.placeName() != null
+                && !accommodation.placeName().isBlank()
+                ? accommodation.placeName() : accommodation.poi().name();
+        return new Accommodation(effectiveName, accommodation.poi());
     }
 
     private TripResponse toResponse(TripRecord trip) {
@@ -146,10 +162,10 @@ public class TripService {
                 readJson(constraint.fixedSchedulesJson(), SCHEDULE_LIST),
                 readNullableJson(constraint.arrivalJson(), TravelAnchor.class),
                 readNullableJson(constraint.departureJson(), TravelAnchor.class),
-                readNullableJson(constraint.accommodationJson(), PlaceAnchor.class),
+                readNullableJson(constraint.accommodationJson(), Accommodation.class),
                 readJson(constraint.mustVisitPlacesJson(), STRING_LIST),
                 readJson(constraint.avoidPlacesJson(), STRING_LIST),
-                readJson(constraint.mealWindowsJson(), MEAL_WINDOW_LIST),
+                effectiveMealWindows(readJson(constraint.mealWindowsJson(), MEAL_WINDOW_LIST)),
                 constraint.mobilityLevel(),
                 constraint.schemaVersion()
         );
@@ -167,10 +183,10 @@ public class TripService {
                 readJson(snapshot.fixedSchedulesJson(), SCHEDULE_LIST),
                 readNullableJson(snapshot.arrivalJson(), TravelAnchor.class),
                 readNullableJson(snapshot.departureJson(), TravelAnchor.class),
-                readNullableJson(snapshot.accommodationJson(), PlaceAnchor.class),
+                readNullableJson(snapshot.accommodationJson(), Accommodation.class),
                 readJson(snapshot.mustVisitPlacesJson(), STRING_LIST),
                 readJson(snapshot.avoidPlacesJson(), STRING_LIST),
-                readJson(snapshot.mealWindowsJson(), MEAL_WINDOW_LIST),
+                effectiveMealWindows(readJson(snapshot.mealWindowsJson(), MEAL_WINDOW_LIST)),
                 snapshot.mobilityLevel(),
                 snapshot.schemaVersion()
         );
@@ -179,6 +195,22 @@ public class TripService {
                 snapshot.startDate(), snapshot.endDate(), snapshot.status(), snapshot.version(),
                 constraintResponse, snapshot.createdAt(), snapshot.updatedAt(), snapshot.archivedAt()
         );
+    }
+
+    /**
+     * Returns the effective meal windows for display: trips created before
+     * defaults were normalized get the system defaults; legacy windows without
+     * an explicit source are treated as user-set.
+     */
+    private static List<MealWindow> effectiveMealWindows(List<MealWindow> stored) {
+        if (stored == null || stored.isEmpty()) {
+            return TripRequests.DEFAULT_MEAL_WINDOWS;
+        }
+        return stored.stream()
+                .map(window -> window.source() == null
+                        ? new MealWindow(window.mealType(), window.startTime(), window.endTime(), "USER_SET")
+                        : window)
+                .toList();
     }
 
     private TripSearch normalizeSearch(TripSearch search) {
@@ -274,7 +306,7 @@ public class TripService {
             List<FixedSchedule> fixedSchedules,
             TravelAnchor arrival,
             TravelAnchor departure,
-            PlaceAnchor accommodation,
+            Accommodation accommodation,
             List<String> mustVisitPlaces,
             List<String> avoidPlaces,
             List<MealWindow> mealWindows,

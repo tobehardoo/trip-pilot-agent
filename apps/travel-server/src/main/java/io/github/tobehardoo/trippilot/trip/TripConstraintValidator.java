@@ -14,6 +14,7 @@ import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.trip.TripRequests.ConstraintInput;
 import io.github.tobehardoo.trippilot.trip.TripRequests.FixedSchedule;
 import io.github.tobehardoo.trippilot.trip.TripRequests.MealWindow;
+import io.github.tobehardoo.trippilot.trip.TripRequests.StructuredPoi;
 import io.github.tobehardoo.trippilot.trip.TripRequests.TravelAnchor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -67,6 +68,11 @@ public class TripConstraintValidator {
     ) {
         validateAnchor(input.arrival(), startDate, endDate);
         validateAnchor(input.departure(), startDate, endDate);
+        validatePoi(input.arrival() == null ? null : input.arrival().poi());
+        validatePoi(input.departure() == null ? null : input.departure().poi());
+        if (input.accommodation() != null) {
+            validatePoi(input.accommodation().poi());
+        }
         if (input.arrival() != null && input.departure() != null
                 && !input.departure().time().isAfter(input.arrival().time())) {
             throw failure("Departure time must be after arrival time");
@@ -97,6 +103,12 @@ public class TripConstraintValidator {
     }
 
     // --- internal helpers ---------------------------------------------------
+
+    private void validatePoi(StructuredPoi poi) {
+        if (poi != null && (poi.longitude() == null) != (poi.latitude() == null)) {
+            throw failure("Structured POI longitude and latitude must be provided together");
+        }
+    }
 
     private void validateAnchor(
             TravelAnchor anchor,

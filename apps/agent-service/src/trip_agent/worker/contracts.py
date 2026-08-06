@@ -99,8 +99,27 @@ class FixedSchedule(InboundMessageModel):
         return self
 
 
+class StructuredPoi(InboundMessageModel):
+    name: NameText
+    provider_poi_id: ProviderPoiId
+    full_address: AddressText | None = None
+    longitude: Decimal | None = Field(default=None, ge=-180, le=180)
+    latitude: Decimal | None = Field(default=None, ge=-90, le=90)
+    city: ShortText | None = None
+    district: ShortText | None = None
+
+    @model_validator(mode="after")
+    def validate_coordinate_pair(self) -> Self:
+        if (self.longitude is None) != (self.latitude is None):
+            raise ValueError(
+                "structured POI longitude and latitude must be provided together"
+            )
+        return self
+
+
 class PlaceAnchor(InboundMessageModel):
     place_name: NameText
+    poi: StructuredPoi | None = None
 
 
 class TravelAnchor(PlaceAnchor):
@@ -118,6 +137,7 @@ class MealWindow(InboundMessageModel):
     meal_type: Literal["BREAKFAST", "LUNCH", "DINNER"]
     start_time: time
     end_time: time
+    source: Literal["SYSTEM_DEFAULT", "USER_SET"] | None = None
 
     @model_validator(mode="after")
     def validate_time_range(self) -> Self:

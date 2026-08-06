@@ -564,19 +564,22 @@ async function handleCreateTrip(input: CreateTripInput) {
     listRequestSequence += 1
     trips.value = [created, ...trips.value]
   }
-  // 创建后自动开始规划并进入旅行详情。
-  void startPlanningForNewTrip(created.id)
+  // 先进入旅行详情（等待 selectedTrip 就绪），再用统一规划流程启动并
+  // 跟踪规划任务，避免“创建后立即导航”导致详情页丢失正在进行的规划。
   await openTrip(created.id)
+  await startPlanningForNewTrip(created.id)
 }
 
 async function startPlanningForNewTrip(tripId: string) {
-  try {
-    await withAccessToken((token) => createPlanningTask(token, tripId, crypto.randomUUID()))
-  } catch (cause) {
-    if (cause instanceof SessionChangedError) return
-    // 规划启动失败不阻断进入详情；详情页会展示规划失败原因。
-    planningError.value = errorMessage(cause)
+  // 导航后 loadTrip 异步设置 selectedTrip；等待它就绪再启动规划。
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (selectedTrip.value?.id === tripId) break
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
+  if (selectedTrip.value?.id !== tripId) return
+  await runPlanningTask((token, idempotencyKey) => (
+    createPlanningTask(token, tripId, idempotencyKey)
+  ))
 }
 
 /** 统一配置保存：原子更新元数据与约束，行程自动转为 stale，等待重新规划。 */

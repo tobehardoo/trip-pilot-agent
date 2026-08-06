@@ -63,15 +63,16 @@ public class TripConstraintValidator {
 
     public void validateContext(
             ConstraintInput input,
+            String destination,
             LocalDate startDate,
             LocalDate endDate
     ) {
         validateAnchor(input.arrival(), startDate, endDate);
         validateAnchor(input.departure(), startDate, endDate);
-        validatePoi(input.arrival() == null ? null : input.arrival().poi());
-        validatePoi(input.departure() == null ? null : input.departure().poi());
+        validatePoi(input.arrival() == null ? null : input.arrival().poi(), destination);
+        validatePoi(input.departure() == null ? null : input.departure().poi(), destination);
         if (input.accommodation() != null) {
-            validatePoi(input.accommodation().poi());
+            validatePoi(input.accommodation().poi(), destination);
         }
         if (input.arrival() != null && input.departure() != null
                 && !input.departure().time().isAfter(input.arrival().time())) {
@@ -104,10 +105,39 @@ public class TripConstraintValidator {
 
     // --- internal helpers ---------------------------------------------------
 
-    private void validatePoi(StructuredPoi poi) {
-        if (poi != null && (poi.longitude() == null) != (poi.latitude() == null)) {
+    /**
+     * Structured POIs are the only trusted coordinate anchors. A POI must
+     * carry both coordinates, an address, and a city that matches the trip
+     * destination so a result from a different city cannot be passed off as
+     * the destination's.
+     */
+    private void validatePoi(StructuredPoi poi, String destination) {
+        if (poi == null) {
+            return;
+        }
+        if ((poi.longitude() == null) != (poi.latitude() == null)) {
             throw failure("Structured POI longitude and latitude must be provided together");
         }
+        if (poi.fullAddress() == null || poi.fullAddress().isBlank()) {
+            throw failure("Structured POI must include a full address");
+        }
+        if (poi.city() == null || poi.city().isBlank()) {
+            throw failure("Structured POI must include a city");
+        }
+        if (!sameCity(destination, poi.city())) {
+            throw failure("Structured POI city must match the trip destination");
+        }
+    }
+
+    private static boolean sameCity(String destination, String poiCity) {
+        return normalizeCity(destination).equals(normalizeCity(poiCity));
+    }
+
+    private static String normalizeCity(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.trim().replaceAll("[市]$", "").toLowerCase(Locale.ROOT);
     }
 
     private void validateAnchor(

@@ -54,7 +54,7 @@ public class TripService {
         datePolicy.validateNewTripStartDate(request.startDate());
         validator.validateDateRange(request.startDate(), request.endDate());
         validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
-        validator.validateContext(request.constraints(), request.startDate(), request.endDate());
+        validator.validateContext(request.constraints(), request.destination(), request.startDate(), request.endDate());
         UUID tripId = UUID.randomUUID();
         TripRecord trip = new TripRecord(
                 tripId, ownerId, request.title().trim(), request.destination().trim(),
@@ -105,7 +105,7 @@ public class TripService {
     public TripResponse updateConstraints(UUID ownerId, UUID tripId, UpdateConstraintRequest request) {
         TripRecord trip = findOwned(ownerId, tripId);
         validator.validateSchedules(request.fixedSchedules(), trip.startDate(), trip.endDate());
-        validator.validateContext(request.asConstraintInput(), trip.startDate(), trip.endDate());
+        validator.validateContext(request.asConstraintInput(), trip.destination(), trip.startDate(), trip.endDate());
         if (tripMapper.incrementVersion(tripId, ownerId, request.version()) != 1) {
             throw new ApiException(HttpStatus.CONFLICT, "TRIP_VERSION_CONFLICT",
                     "Trip was updated by another request; reload it before retrying");
@@ -127,7 +127,7 @@ public class TripService {
         TripRecord trip = findOwned(ownerId, tripId);
         validator.validateDateRange(request.startDate(), request.endDate());
         validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
-        validator.validateContext(request.constraints(), request.startDate(), request.endDate());
+        validator.validateContext(request.constraints(), request.destination(), request.startDate(), request.endDate());
         if (tripMapper.updateConfigurationMetadata(
                 tripId, ownerId, request.version(),
                 request.title().trim(), request.destination().trim(),

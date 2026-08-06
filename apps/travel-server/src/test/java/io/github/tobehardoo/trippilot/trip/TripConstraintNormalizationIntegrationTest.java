@@ -258,6 +258,29 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
     }
 
     @Test
+    void rejectsStructuredPoiWhoseCityMismatchesTheDestination() throws Exception {
+        String accessToken = registerAndGetAccessToken("poi-city@example.com");
+
+        createTrip(accessToken, """
+                ,
+                "accommodation": {
+                  "placeName": "深圳酒店",
+                  "poi": {
+                    "name": "深圳湾酒店",
+                    "providerPoiId": "B0FFFABC12",
+                    "fullAddress": "深圳市南山区深湾一路8号",
+                    "longitude": 113.9333,
+                    "latitude": 22.5191,
+                    "city": "深圳市",
+                    "district": "南山区"
+                  }
+                }
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
     void writesNewJsonbAndReadsBackFully() throws Exception {
         String accessToken = registerAndGetAccessToken("full@example.com");
         String tripId = json(createTrip(accessToken, """

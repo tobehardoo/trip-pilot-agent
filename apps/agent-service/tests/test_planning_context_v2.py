@@ -410,9 +410,12 @@ def test_reduced_mobility_retries_after_guide_ranked_pair_is_too_far() -> None:
 
     result = asyncio.run(AmapPlanningProvider(MapProvider(), RouteProvider()).plan(command))
 
+    # 只断言景点选择：餐食（MEAL）活动会按 B7 软去重挑选餐馆 POI，
+    # 它们不应进入“必去景点成对过远”的断言集合。
     selected = {
         activity.provider_poi_id
         for activity in result.itinerary.days[0].activities
+        if activity.kind not in {"MEAL", "ARRIVAL", "DEPARTURE", "ACCOMMODATION"}
     }
     assert selected != {"top-one", "top-two"}
 

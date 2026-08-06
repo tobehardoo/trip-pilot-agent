@@ -182,6 +182,7 @@ class AmapPlanningProvider:
         total_cost = Decimal("0")
         context = command.payload.planning_context
         closure_filtered_must: set[str] = set()
+        used_restaurants_previous: frozenset[str] = frozenset()
         for offset in range(day_count):
             trip_date = trip.start_date + timedelta(days=offset)
             has_full = trip_date == special_date
@@ -226,13 +227,16 @@ class AmapPlanningProvider:
                 mobility_reduced=constraints.mobility_level == "REDUCED",
                 meal_preferences=constraints.preferences,
             )
+            used_restaurants_today: set[str] = set()
             day, day_cost, day_warnings = await self._emit_day(
                 command, offset, day_plan, anchors, poi_by_id,
                 route_cache, route_calls,
+                used_restaurants_today, used_restaurants_previous,
             )
             itinerary_days.append(day)
             total_cost += day_cost
             warnings.extend(day_warnings)
+            used_restaurants_previous = frozenset(used_restaurants_today)
 
         must_visit_unplaced = tuple(
             w.split(":", 1)[1] for w in warnings
@@ -397,6 +401,8 @@ class AmapPlanningProvider:
         poi_by_id: dict[str, Poi],
         route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]],
         route_calls: list[int],
+        used_restaurants_today: set[str],
+        used_restaurants_previous: frozenset[str],
     ) -> tuple[ItineraryDay, Decimal, tuple[str, ...]]:
         trip_date = command.payload.trip.start_date + timedelta(days=offset)
         slots: list[dict[str, object]] = []
@@ -407,8 +413,13 @@ class AmapPlanningProvider:
             elif item.kind == "DEPARTURE" and anchors.departure is not None:
                 slots.append(self._slot_from_item(item, anchors.departure, trip_date, 0))
             elif item.kind == "MEAL" and item.meal is not None:
-                restaurant = await self._resolve_meal_poi(item.meal, command)
+                restaurant = await self._resolve_meal_poi(
+                    item.meal, command,
+                    frozenset(used_restaurants_today),
+                    used_restaurants_previous,
+                )
                 if restaurant is not None:
+                    used_restaurants_today.add(restaurant.provider_id)
                     slots.append(self._slot_from_item(
                         item, restaurant, trip_date,
                         Decimal("0"), title=restaurant.name,
@@ -632,6 +643,8 @@ class AmapPlanningProvider:
         self,
         meal: MealDemand,
         command: PlanningCreateCommand,
+        used_today: frozenset[str] = frozenset(),
+        used_previous_day: frozenset[str] = frozenset(),
     ) -> Poi | None:
         trip = command.payload.trip
         for keyword in self._meal_keywords(meal):
@@ -653,9 +666,33 @@ class AmapPlanningProvider:
                     if poi.district and text_matches(meal.region, poi.district)
                 )
                 if regional:
-                    return regional[0]
-            return candidates[0]
+                    return self._prefer_non_duplicate(
+                        regional, used_today, used_previous_day
+                    )
+            return self._prefer_non_duplicate(
+                candidates, used_today, used_previous_day
+            )
         return None
+
+    @staticmethod
+    def _prefer_non_duplicate(
+        candidates: tuple[Poi, ...],
+        used_today: frozenset[str],
+        used_previous_day: frozenset[str],
+    ) -> Poi:
+        """Soft restaurant de-duplication: prefer a candidate not already
+        picked for today or the previous day, but fall back to the relevance
+        leader when every candidate repeats (hotel breakfast, thin
+        candidates, or an explicit user pick).  The AMap relevance order
+        already encodes time/operating feasibility, route fit, and preference,
+        so de-duplication is applied last and never causes a detour."""
+        for poi in candidates:
+            if (
+                poi.provider_id not in used_today
+                and poi.provider_id not in used_previous_day
+            ):
+                return poi
+        return candidates[0]
 
     @staticmethod
     def _meal_keywords(meal: MealDemand) -> tuple[str, ...]:

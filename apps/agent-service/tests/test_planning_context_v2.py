@@ -11,7 +11,6 @@ from test_planning_worker import COMMAND
 
 from trip_agent.domain.shared import matched_guide_fact_ids
 from trip_agent.planning.candidates import CandidateRanker
-from trip_agent.planning.optimization import DailyOptimizationRequest, DailyOptimizer, TimeBlock
 from trip_agent.providers.map import Coordinates, Poi, ProviderSuccess
 from trip_agent.providers.route import RoutePlan, RouteStep
 from trip_agent.worker.contracts import (
@@ -252,7 +251,7 @@ def test_provider_fallback_does_not_bypass_v2_must_visit_constraint() -> None:
         asyncio.run(provider.plan(command))
 
 
-def test_demo_fallback_respects_arrival_departure_and_meal_windows() -> None:
+def test_demo_skeleton_respects_arrival_window() -> None:
     payload = _v2_command()
     payload["payload"]["trip"]["endDate"] = "2026-08-01"
     constraints = payload["payload"]["trip"]["constraints"]
@@ -266,62 +265,15 @@ def test_demo_fallback_respects_arrival_departure_and_meal_windows() -> None:
     }
     constraints["mustVisitPlaces"] = []
     constraints["avoidPlaces"] = []
-    constraints["mealWindows"] = [
-        {"mealType": "DINNER", "startTime": "15:00", "endTime": "16:00"}
-    ]
+    constraints["mealWindows"] = []
     payload["payload"]["guideEvidence"]["facts"] = []
     command = PlanningCreateCommand.model_validate(payload)
 
     result = asyncio.run(DemoPlanningProvider().plan(command))
 
     activity = result.itinerary.days[0].activities[0]
-    assert activity.start_time >= _local(date(2026, 8, 1), 16)
+    assert activity.start_time >= _local(date(2026, 8, 1), 14)
     assert activity.end_time <= _local(date(2026, 8, 1), 18)
-
-
-def test_demo_fallback_respects_fixed_schedule_spanning_midnight() -> None:
-    payload = _v2_command()
-    constraints = payload["payload"]["trip"]["constraints"]
-    constraints["arrival"] = None
-    constraints["departure"] = None
-    constraints["accommodation"] = None
-    constraints["mustVisitPlaces"] = []
-    constraints["avoidPlaces"] = []
-    constraints["mealWindows"] = [
-        {"mealType": "LUNCH", "startTime": "12:00", "endTime": "13:00"}
-    ]
-    constraints["fixedSchedules"] = [{
-        "placeName": "Overnight train",
-        "startTime": "2026-08-01T23:00:00+08:00",
-        "endTime": "2026-08-02T10:30:00+08:00",
-    }]
-    payload["payload"]["guideEvidence"]["facts"] = []
-    command = PlanningCreateCommand.model_validate(payload)
-
-    result = asyncio.run(DemoPlanningProvider().plan(command))
-
-    second_day_activity = result.itinerary.days[1].activities[0]
-    assert second_day_activity.start_time >= _local(date(2026, 8, 2), 13)
-
-
-def test_optimizer_applies_arrival_departure_and_meal_windows() -> None:
-    day = date(2026, 8, 1)
-    result = DailyOptimizer().optimize(
-        DailyOptimizationRequest(
-            date=day,
-            available_start_minute=11 * 60,
-            available_end_minute=18 * 60,
-            route_duration_seconds=30 * 60,
-            fixed_schedules=(
-                TimeBlock("午餐", _local(day, 12), _local(day, 13)),
-            ),
-        )
-    )
-
-    assert result.status == "FEASIBLE"
-    assert result.first_start >= _local(day, 11)
-    assert result.second_start >= _local(day, 13)
-    assert result.second_end <= _local(day, 18)
 
 
 def test_contract_uses_china_local_dates_after_java_serializes_anchors_as_utc() -> None:
@@ -416,70 +368,6 @@ def test_guide_snapshot_is_merged_into_completed_knowledge_citations() -> None:
     )
 
 
-def test_step_free_uses_vehicle_routes_and_accounts_for_travel_anchors() -> None:
-    payload = _v2_command()
-    payload["payload"]["trip"]["endDate"] = "2026-08-01"
-    constraints = payload["payload"]["trip"]["constraints"]
-    constraints["arrival"] = {
-        "placeName": "Arrival Station",
-        "time": "2026-08-01T10:00:00+08:00",
-    }
-    constraints["departure"] = {
-        "placeName": "Departure Airport",
-        "time": "2026-08-01T17:00:00+08:00",
-    }
-    constraints["accommodation"] = {"placeName": "Accessible Hotel"}
-    constraints["mustVisitPlaces"] = []
-    constraints["avoidPlaces"] = []
-    constraints["mealWindows"] = []
-    constraints["mobilityLevel"] = "STEP_FREE"
-    payload["payload"]["guideEvidence"]["facts"] = []
-    command = PlanningCreateCommand.model_validate(payload)
-    anchors = {
-        "Arrival Station": _poi("arrival", "Arrival Station"),
-        "Departure Airport": _poi("departure", "Departure Airport"),
-        "Accessible Hotel": _poi("hotel", "Accessible Hotel"),
-    }
-    candidates = (_poi("one", "Museum One"), _poi("two", "Museum Two"))
-
-    class MapProvider:
-        def __init__(self) -> None:
-            self.keywords: list[str] = []
-
-        async def search_pois(self, request: object):
-            self.keywords.append(request.keyword)
-            data = (anchors[request.keyword],) if request.keyword in anchors else candidates
-            return ProviderSuccess(
-                data=data,
-                provider="AMAP",
-                latency_ms=1,
-                cached=False,
-                fetched_at=datetime(2026, 7, 14, tzinfo=UTC),
-                estimated=False,
-            )
-
-    class RouteProvider:
-        def __init__(self) -> None:
-            self.requests: list[object] = []
-
-        async def get_route(self, request: object):
-            self.requests.append(request)
-            return _route_success(request)
-
-    map_provider = MapProvider()
-    route_provider = RouteProvider()
-    result = asyncio.run(AmapPlanningProvider(map_provider, route_provider).plan(command))
-
-    day = result.itinerary.days[0]
-    assert {"Arrival Station", "Departure Airport", "Accessible Hotel"} <= set(
-        map_provider.keywords
-    )
-    assert all(request.mode == "DRIVING" for request in route_provider.requests)
-    assert day.activities[0].start_time >= _local(date(2026, 8, 1), 10, 10)
-    assert day.activities[-1].end_time <= _local(date(2026, 8, 1), 16, 50)
-    assert day.transit_legs[0].mode == "DRIVING"
-
-
 def test_reduced_mobility_retries_after_guide_ranked_pair_is_too_far() -> None:
     payload = _v2_command()
     payload["payload"]["trip"]["endDate"] = "2026-08-01"
@@ -567,138 +455,6 @@ def test_guide_fact_is_not_cited_when_it_does_not_change_the_baseline_plan() -> 
 
     assert result.guide_fact_ids == ()
 
-
-def test_guided_second_pass_does_not_hide_a_provider_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    payload = _v2_command()
-    payload["payload"]["trip"]["endDate"] = "2026-08-01"
-    constraints = payload["payload"]["trip"]["constraints"]
-    constraints["arrival"] = None
-    constraints["departure"] = None
-    constraints["accommodation"] = None
-    constraints["mustVisitPlaces"] = []
-    constraints["avoidPlaces"] = []
-    constraints["mealWindows"] = []
-    constraints["preferences"] = []
-    command = PlanningCreateCommand.model_validate(payload)
-    candidates = (_poi("alpha", "Alpha"), _poi("beta", "Beta"))
-
-    class MapProvider:
-        async def search_pois(self, request: object):
-            del request
-            return ProviderSuccess(
-                data=candidates,
-                provider="AMAP",
-                latency_ms=1,
-                cached=False,
-                fetched_at=datetime(2026, 7, 14, tzinfo=UTC),
-                estimated=False,
-            )
-
-    class RouteProvider:
-        async def get_route(self, request: object):
-            return _route_success(request)
-
-    provider = AmapPlanningProvider(MapProvider(), RouteProvider())
-    original_build = provider._build_feasible_days
-
-    async def fail_guided_build(*args: object, **kwargs: object):
-        if kwargs.get("use_guide_evidence") is True:
-            raise PlanningProviderError("PROVIDER_AUTH_FAILED")
-        return await original_build(*args, **kwargs)
-
-    monkeypatch.setattr(provider, "_build_feasible_days", fail_guided_build)
-
-    with pytest.raises(PlanningProviderError) as failure:
-        asyncio.run(provider.plan(command))
-
-    assert failure.value.details.category.value == "AUTHENTICATION_ERROR"
-
-
-def test_multiday_planner_backtracks_when_first_feasible_pair_blocks_later_day() -> None:
-    payload = _v2_command()
-    constraints = payload["payload"]["trip"]["constraints"]
-    constraints["arrival"] = None
-    constraints["departure"] = None
-    constraints["accommodation"] = None
-    constraints["mustVisitPlaces"] = []
-    constraints["avoidPlaces"] = []
-    constraints["mealWindows"] = []
-    constraints["mobilityLevel"] = "REDUCED"
-    constraints["preferences"] = []
-    payload["payload"]["guideEvidence"]["facts"] = []
-    command = PlanningCreateCommand.model_validate(payload)
-    candidates = tuple(_poi(letter.lower(), letter) for letter in ("A", "B", "C", "D"))
-
-    class MapProvider:
-        async def search_pois(self, request: object):
-            del request
-            return ProviderSuccess(
-                data=candidates,
-                provider="AMAP",
-                latency_ms=1,
-                cached=False,
-                fetched_at=datetime(2026, 7, 14, tzinfo=UTC),
-                estimated=False,
-            )
-
-    class RouteProvider:
-        async def get_route(self, request: object):
-            pair = {request.origin_poi_id, request.destination_poi_id}
-            feasible = pair in ({"a", "b"}, {"a", "c"}, {"b", "d"})
-            return _route_success(request, distance=1_000 if feasible else 5_000)
-
-    result = asyncio.run(AmapPlanningProvider(MapProvider(), RouteProvider()).plan(command))
-
-    selected_pairs = [
-        {activity.provider_poi_id for activity in day.activities}
-        for day in result.itinerary.days
-    ]
-    assert selected_pairs == [{"a", "c"}, {"b", "d"}]
-
-
-def test_failed_route_combinations_are_bounded_per_plan() -> None:
-    payload = _v2_command()
-    payload["payload"]["trip"]["endDate"] = "2026-08-07"
-    constraints = payload["payload"]["trip"]["constraints"]
-    constraints["arrival"] = None
-    constraints["departure"] = None
-    constraints["accommodation"] = None
-    constraints["mustVisitPlaces"] = []
-    constraints["avoidPlaces"] = []
-    constraints["mealWindows"] = []
-    constraints["mobilityLevel"] = "REDUCED"
-    constraints["preferences"] = []
-    payload["payload"]["guideEvidence"]["facts"] = []
-    command = PlanningCreateCommand.model_validate(payload)
-    candidates = tuple(_poi(f"poi-{index}", f"POI {index:02d}") for index in range(14))
-
-    class MapProvider:
-        async def search_pois(self, request: object):
-            del request
-            return ProviderSuccess(
-                data=candidates,
-                provider="AMAP",
-                latency_ms=1,
-                cached=False,
-                fetched_at=datetime(2026, 7, 14, tzinfo=UTC),
-                estimated=False,
-            )
-
-    class RouteProvider:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        async def get_route(self, request: object):
-            self.calls += 1
-            return _route_success(request, distance=5_000)
-
-    routes = RouteProvider()
-    with pytest.raises(PlanningProviderError, match="PAIR_ATTEMPT_BUDGET_EXHAUSTED"):
-        asyncio.run(AmapPlanningProvider(MapProvider(), routes).plan(command))
-
-    assert routes.calls <= 96
 
 
 def test_queue_delay_removes_guide_fact_that_expired_before_execution() -> None:

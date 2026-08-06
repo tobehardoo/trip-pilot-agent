@@ -101,7 +101,7 @@ def test_valid_command_publishes_the_expected_completed_contract() -> None:
     assert published.message_id is not None
     body = json.loads(published.body)
     assert body["eventType"] == "PLANNING_COMPLETED"
-    assert body["schemaVersion"] == 6
+    assert body["schemaVersion"] == 8
     assert body["taskId"] == COMMAND["taskId"]
     assert body["payload"]["itinerary"]["estimatedTotalCost"] == 0
     assert isinstance(body["payload"]["itinerary"]["estimatedTotalCost"], int | float)
@@ -419,7 +419,7 @@ def test_event_publication_failure_requeues_the_command() -> None:
 
 def test_infeasible_plan_publishes_an_actionable_failure_and_acks() -> None:
     amqp = import_module("trip_agent.worker.amqp")
-    optimization = import_module("trip_agent.planning.optimization")
+    protocols = import_module("trip_agent.domain.planning.protocols")
     processor = import_module("trip_agent.worker.processor")
     message = FakeIncomingMessage(json.dumps(COMMAND).encode())
     exchange = FakeExchange()
@@ -429,14 +429,14 @@ def test_infeasible_plan_publishes_an_actionable_failure_and_acks() -> None:
             del command
             raise processor.PlanningInfeasibleError(
                 (
-                    optimization.OptimizationConflict(
+                    protocols.OptimizationConflict(
                         "INSUFFICIENT_DAY_CAPACITY",
                         "活动、交通与固定安排无法同时放入可用时间",
                         ("不可移动安排",),
                     ),
                 ),
                 (
-                    optimization.RelaxationSuggestion(
+                    protocols.RelaxationSuggestion(
                         "REDUCE_OPTIONAL_ACTIVITIES",
                         "减少一个可选活动",
                     ),
@@ -585,7 +585,8 @@ def test_legacy_false_worker_provider_factory_builds_strict_amap_v3_with_routes(
     )
 
     def handle(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/v5/direction/walking"):
+        if request.url.path.endswith("/v5/direction/walking") or request.url.path.endswith(
+                "/v5/direction/driving"):
             return httpx.Response(
                 200,
                 json={
@@ -650,11 +651,14 @@ def test_legacy_false_worker_provider_factory_builds_strict_amap_v3_with_routes(
 
     completed, cache_ttls = asyncio.run(run_scenario())
 
-    assert completed.schema_version == 6
+    assert completed.schema_version == 8
     assert completed.payload.provider == "AMAP"
-    assert completed.payload.itinerary.days[0].activities[0].provider_poi_id == "poi-1"
-    assert completed.payload.itinerary.days[0].activities[1].provider_poi_id == "poi-2"
-    leg = completed.payload.itinerary.days[0].transit_legs[0]
+    first_day = completed.payload.itinerary.days[0]
+    assert first_day.day_type in {
+        "ARRIVAL_DAY", "FULL_DAY", "DEPARTURE_DAY", "SPECIAL_ACTIVITY_DAY",
+    }
+    assert all(a.kind is not None for a in first_day.activities)
+    leg = first_day.transit_legs[0]
     assert leg.provider == "AMAP"
     assert leg.distance_meters == 1200
     assert leg.estimated is False

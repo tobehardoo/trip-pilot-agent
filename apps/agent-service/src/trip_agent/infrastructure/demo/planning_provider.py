@@ -7,15 +7,17 @@ from datetime import datetime, time, timedelta
 from decimal import Decimal
 
 from trip_agent.domain.planning.protocols import (
+    OptimizationConflict,
     PlanningInfeasibleError,
     PlanningResult,
+    RelaxationSuggestion,
 )
 from trip_agent.domain.shared import (
     CHINA_TIME_ZONE,
     available_minutes,
     minute_datetime,
 )
-from trip_agent.planning.optimization import OptimizationConflict, RelaxationSuggestion
+from trip_agent.planning.daily_schedule import classify_day_type
 from trip_agent.providers._demo_route import DemoRouteProvider
 from trip_agent.worker.contracts import (
     Itinerary,
@@ -28,10 +30,12 @@ from trip_agent.worker.progress import report_planning_progress
 
 
 class DemoPlanningProvider:
-    """Generates a single placeholder activity per day — no real map data.
+    """Generates placeholder activities per day — no real map data.
 
     Used in PROVIDER_MODE=DEMO_ONLY or as an explicitly allowed fallback
-    when the AMap provider fails with an expected error.
+    when the AMap provider fails with an expected error.  Demo days are
+    classified (ARRIVAL/FULL/DEPARTURE) and include arrival/departure
+    placeholder nodes.
     """
 
     async def plan(self, command: PlanningCreateCommand) -> PlanningResult:
@@ -58,7 +62,9 @@ class DemoPlanningProvider:
             "Solving the requested schedule constraints",
             {"tripDays": day_count},
         )
-        days = tuple(self._day(command, offset) for offset in range(day_count))
+        days = tuple(
+            self._day_skeleton(command, offset) for offset in range(day_count)
+        )
         return PlanningResult(
             provider="DEMO",
             itinerary=Itinerary(
@@ -81,92 +87,76 @@ class DemoPlanningProvider:
             DemoRouteProvider(), provider_mode=ProviderExecutionMode.DEMO_ONLY
         ).replan(command)
 
-    def _day(self, command: PlanningCreateCommand, offset: int) -> ItineraryDay:
+    def _day_skeleton(
+        self, command: PlanningCreateCommand, offset: int
+    ) -> ItineraryDay:
         trip = command.payload.trip
         trip_date = trip.start_date + timedelta(days=offset)
         constraints = trip.constraints
+        arrival = constraints.arrival.time if constraints.arrival is not None else None
+        departure = (
+            constraints.departure.time if constraints.departure is not None else None
+        )
+        day_type = classify_day_type(
+            trip_date, trip.start_date, trip.end_date, arrival, departure
+        )
         available_start, available_end = available_minutes(
-            trip_date,
-            trip.start_date,
-            trip.end_date,
-            constraints.arrival.time if constraints.arrival is not None else None,
-            constraints.departure.time if constraints.departure is not None else None,
+            trip_date, trip.start_date, trip.end_date, arrival, departure,
         )
-        blocked = [
-            (
-                max(
-                    available_start,
-                    int(
-                        (
-                            schedule.start_time.astimezone(CHINA_TIME_ZONE)
-                            - datetime.combine(trip_date, time.min, tzinfo=CHINA_TIME_ZONE)
-                        ).total_seconds()
-                        // 60
-                    ),
-                ),
-                min(
-                    available_end,
-                    int(
-                        (
-                            schedule.end_time.astimezone(CHINA_TIME_ZONE)
-                            - datetime.combine(trip_date, time.min, tzinfo=CHINA_TIME_ZONE)
-                        ).total_seconds()
-                        // 60
-                    ),
-                ),
+        activities: list[ItineraryActivity] = []
+        if day_type == "ARRIVAL_DAY" and arrival is not None:
+            local = arrival.astimezone(CHINA_TIME_ZONE)
+            start = datetime.combine(
+                trip_date,
+                time(hour=local.hour, minute=local.minute),
+                tzinfo=CHINA_TIME_ZONE,
             )
-            for schedule in constraints.fixed_schedules
-            if (
-                schedule.start_time.astimezone(CHINA_TIME_ZONE)
-                < datetime.combine(
-                    trip_date + timedelta(days=1),
-                    time.min,
-                    tzinfo=CHINA_TIME_ZONE,
-                )
-                and schedule.end_time.astimezone(CHINA_TIME_ZONE)
-                > datetime.combine(trip_date, time.min, tzinfo=CHINA_TIME_ZONE)
+            activities.append(ItineraryActivity(
+                title="到达",
+                start_time=start,
+                end_time=start + timedelta(minutes=30),
+                estimated_cost=Decimal("0"),
+                source="DEMO",
+                kind="ARRIVAL",
+                time_fixed=True,
+            ))
+        if day_type == "DEPARTURE_DAY" and departure is not None:
+            local = departure.astimezone(CHINA_TIME_ZONE)
+            end = datetime.combine(
+                trip_date,
+                time(hour=local.hour, minute=local.minute),
+                tzinfo=CHINA_TIME_ZONE,
             )
-        ]
-        blocked.extend(
-            (
-                max(available_start, window.start_time.hour * 60 + window.start_time.minute),
-                min(available_end, window.end_time.hour * 60 + window.end_time.minute),
-            )
-            for window in constraints.meal_windows
-        )
-        cursor = available_start
-        for block_start, block_end in sorted(blocked):
-            if block_start - cursor >= 120:
-                break
-            if block_end > cursor:
-                cursor = block_end
-        if available_end - cursor < 120:
-            raise PlanningInfeasibleError(
-                conflicts=(
-                    OptimizationConflict(
-                        "INSUFFICIENT_DAY_CAPACITY",
-                        "到返时间、固定安排和用餐时段之间没有两小时可用窗口",
-                        (trip_date.isoformat(),),
-                    ),
-                ),
-                relaxations=(
-                    RelaxationSuggestion(
-                        "EXTEND_AVAILABLE_TIME",
-                        "调整到返时间、固定安排或用餐时段后重试",
-                    ),
-                ),
-            )
-        start_time = minute_datetime(trip_date, cursor)
+            activities.append(ItineraryActivity(
+                title="离开",
+                start_time=end - timedelta(minutes=60),
+                end_time=end,
+                estimated_cost=Decimal("0"),
+                source="DEMO",
+                kind="DEPARTURE",
+                time_fixed=True,
+            ))
+        cursor = minute_datetime(trip_date, available_start)
+        window_end = minute_datetime(trip_date, available_end)
+        if window_end - cursor >= timedelta(hours=2):
+            activities.append(ItineraryActivity(
+                title="自主探索时段（演示）",
+                start_time=cursor,
+                end_time=cursor + timedelta(hours=2),
+                estimated_cost=Decimal("0"),
+                source="DEMO",
+            ))
+        if not activities:
+            activities.append(ItineraryActivity(
+                title="自主探索时段（演示）",
+                start_time=minute_datetime(trip_date, available_start),
+                end_time=minute_datetime(trip_date, available_end),
+                estimated_cost=Decimal("0"),
+                source="DEMO",
+            ))
         return ItineraryDay(
             date=trip_date,
-            activities=(
-                ItineraryActivity(
-                    title="自主探索时段（演示）",
-                    start_time=start_time,
-                    end_time=start_time + timedelta(hours=2),
-                    estimated_cost=Decimal("0"),
-                    source="DEMO",
-                ),
-            ),
+            day_type=day_type,
+            activities=tuple(activities),
             transit_legs=(),
         )

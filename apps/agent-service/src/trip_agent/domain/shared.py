@@ -7,15 +7,27 @@ provider implementations to be extracted without circular imports.
 
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 if TYPE_CHECKING:
     from trip_agent.providers.map import Poi
-    from trip_agent.worker.contracts import ItineraryActivity, PlanningCreateCommand
+    from trip_agent.worker.contracts import PlanningCreateCommand
 
 # All trip dates use China Standard Time (Asia/Shanghai, UTC+8).
 CHINA_TIME_ZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+
+# Shared schedule-model literal types (single source for contracts and the
+# pure daily-schedule module).
+type DayType = Literal[
+    "ARRIVAL_DAY", "FULL_DAY", "DEPARTURE_DAY", "SPECIAL_ACTIVITY_DAY"
+]
+type ActivityKind = Literal[
+    "ATTRACTION", "EXPERIENCE", "MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"
+]
+type Magnitude = Literal["LIGHT", "NORMAL", "HALF_DAY", "FULL_DAY"]
+type Pace = Literal["RELAXED", "BALANCED", "INTENSIVE"]
+type MealType = Literal["LUNCH", "DINNER"]
 
 # Planning constants — upper bounds set by external API budgets and trip limits.
 COORDINATE_SCALE = Decimal("0.0000001")
@@ -25,8 +37,6 @@ MAX_TRIP_DAYS = 7
 AMAP_ACTIVITY_ESTIMATED_COST = Decimal("100.00")
 
 # Derived planning budget constants — upper bounds on computational effort.
-MAX_PLANNING_CANDIDATES = MAX_TRIP_DAYS * 2
-MAX_PAIR_ATTEMPTS_PER_PLAN = 48
 MAX_ROUTE_CALLS_PER_PLAN = 96
 
 
@@ -104,27 +114,6 @@ def candidate_keywords(
     return tuple(
         dict.fromkeys((*must_visit_places, *preferences, *DEFAULT_POI_KEYWORDS))
     )[:MAX_POI_QUERIES]
-
-
-def amap_activity(
-    poi: "Poi", start_time: datetime, end_time: datetime
-) -> "ItineraryActivity":
-    """Build an ItineraryActivity with AMAP source metadata."""
-    from trip_agent.worker.contracts import ActivityCoordinates, ItineraryActivity  # noqa: PLC0415
-
-    return ItineraryActivity(
-        title=poi.name,
-        start_time=start_time,
-        end_time=end_time,
-        estimated_cost=AMAP_ACTIVITY_ESTIMATED_COST,
-        source="AMAP",
-        provider_poi_id=poi.provider_id,
-        coordinates=ActivityCoordinates(
-            longitude=coordinate_decimal(poi.coordinates.longitude),
-            latitude=coordinate_decimal(poi.coordinates.latitude),
-        ),
-        address=poi.address,
-    )
 
 
 def matched_guide_fact_ids(

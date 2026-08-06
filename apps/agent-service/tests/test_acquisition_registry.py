@@ -193,11 +193,37 @@ def test_cli_validate_reports_counts_and_configuration_errors(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main(["validate", str(KNOWLEDGE_ROOT / "sources")]) == 0
+    # Validate a controlled directory so the expected counts do not depend on
+    # the (changing) checked-in knowledge/sources content.
+    valid_dir = tmp_path / "valid"
+    valid_dir.mkdir()
+    (valid_dir / "city.toml").write_text(
+        """
+[[sources]]
+source_id = "city-official"
+city = "广州"
+source_name = "广州市官方资料"
+reliability_level = "OFFICIAL"
+allowed_domains = ["www.gz.gov.cn"]
+resource_urls = [
+  "https://www.gz.gov.cn/a",
+  "https://www.gz.gov.cn/b",
+  "https://www.gz.gov.cn/c",
+]
+fetch_interval_hours = 168
+min_request_interval_seconds = 1
+request_timeout_seconds = 10
+max_response_bytes = 2000000
+""",
+        encoding="utf-8",
+    )
+    assert main(["validate", str(valid_dir)]) == 0
     success = json.loads(capsys.readouterr().out)
     assert success == {"resource_count": 3, "source_count": 1, "status": "valid"}
 
-    assert main(["validate", str(tmp_path)]) == 2
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    assert main(["validate", str(empty_dir)]) == 2
     failure = json.loads(capsys.readouterr().out)
     assert failure["status"] == "error"
     assert "no TOML" in failure["message"]

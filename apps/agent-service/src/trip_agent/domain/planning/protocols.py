@@ -6,10 +6,9 @@ importing the entire worker module.
 """
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
-from trip_agent.planning.optimization import OptimizationConflict, RelaxationSuggestion
 from trip_agent.providers.errors import PlanningProviderError  # noqa: F401
 from trip_agent.providers.map import MapProviderName, Poi
 from trip_agent.worker.contracts import (
@@ -20,6 +19,36 @@ from trip_agent.worker.contracts import (
     PlanningReplanCommand,
     ProviderProvenance,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class OptimizationConflict:
+    code: Literal[
+        "FIXED_SCHEDULE_OVERLAP",
+        "INSUFFICIENT_DAY_CAPACITY",
+        "BUDGET_EXCEEDED",
+        "MUST_VISIT_UNAVAILABLE",
+        "MOBILITY_ROUTE_TOO_LONG",
+        "TRAVEL_ANCHOR_UNAVAILABLE",
+        "MUST_VISIT_UNVERIFIABLE_IN_DEMO",
+    ]
+    message: str
+    affected: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RelaxationSuggestion:
+    code: Literal[
+        "CHANGE_FIXED_SCHEDULE",
+        "REDUCE_OPTIONAL_ACTIVITIES",
+        "EXTEND_AVAILABLE_TIME",
+        "INCREASE_BUDGET",
+        "CHANGE_MOBILITY_OR_TRANSPORT",
+        "CHECK_TRAVEL_ANCHOR",
+        "RETRY_REAL_PROVIDER",
+        "ADJUST_TRAVEL_CONTEXT",
+    ]
+    message: str
 
 
 class PlanningProvider(Protocol):

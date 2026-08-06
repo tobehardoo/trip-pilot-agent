@@ -81,12 +81,12 @@ def test_v3_planning_create_contract_accepts_the_frozen_context_shape() -> None:
     Draft202012Validator(schema).validate(_v3_command())
 
 
-def test_v6_completed_event_contract_accepts_worker_output() -> None:
+def test_v8_completed_event_contract_accepts_worker_output() -> None:
     payload = deepcopy(_v3_command())
     payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []
     command = PlanningCreateCommand.model_validate(payload)
     event = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
-    schema = _load_schema("planning-completed-event-v6.schema.json")
+    schema = _load_schema("planning-completed-event-v8.schema.json")
 
     Draft202012Validator(schema).validate(
         event.model_dump(mode="json", by_alias=True, exclude_none=True)

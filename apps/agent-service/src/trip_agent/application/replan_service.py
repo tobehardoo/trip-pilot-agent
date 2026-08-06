@@ -8,12 +8,13 @@ from decimal import Decimal
 from uuid import UUID, uuid5
 
 from trip_agent.domain.planning.protocols import (
+    OptimizationConflict,
     PlanningInfeasibleError,
     PlanningProviderError,
     PlanningResult,
+    RelaxationSuggestion,
 )
 from trip_agent.domain.shared import coordinate_decimal
-from trip_agent.planning.optimization import OptimizationConflict, RelaxationSuggestion
 from trip_agent.providers.errors import (
     FallbackDecision,
     ProviderExecutionMode,

@@ -27,8 +27,6 @@ from trip_agent.domain.shared import (  # noqa: F401
     CHINA_TIME_ZONE,
     COORDINATE_SCALE,
     DEFAULT_POI_KEYWORDS,
-    MAX_PAIR_ATTEMPTS_PER_PLAN,
-    MAX_PLANNING_CANDIDATES,
     MAX_POI_QUERIES,
     MAX_ROUTE_CALLS_PER_PLAN,
     MAX_TRIP_DAYS,
@@ -67,8 +65,6 @@ __all__ = [
     "AMAP_ACTIVITY_ESTIMATED_COST",
     "COORDINATE_SCALE",
     "DEFAULT_POI_KEYWORDS",
-    "MAX_PAIR_ATTEMPTS_PER_PLAN",
-    "MAX_PLANNING_CANDIDATES",
     "MAX_POI_QUERIES",
     "MAX_ROUTE_CALLS_PER_PLAN",
     "MAX_TRIP_DAYS",
@@ -129,7 +125,7 @@ async def process_planning_create(
     evaluation = evaluator.evaluate(effective_command, result)
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
-        schema_version=6,
+        schema_version=8,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -167,7 +163,7 @@ async def process_planning_replan(
     evaluation = get_plan_evaluator().evaluate(command, result)
     return PlanningCompletedEvent(
         event_type="PLANNING_COMPLETED",
-        schema_version=6,
+        schema_version=8,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,

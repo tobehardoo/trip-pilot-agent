@@ -93,12 +93,12 @@ def _mixed_itinerary() -> Itinerary:
     )
 
 
-def test_demo_success_emits_recorded_provenance_without_enabling_v7() -> None:
+def test_demo_success_emits_recorded_provenance() -> None:
     command = PlanningCreateCommand.model_validate(COMMAND)
 
     completed = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
 
-    assert completed.schema_version == 6
+    assert completed.schema_version == 8
     assert completed.payload.provider_provenance == ProviderProvenance(
         requested_provider_mode="DEMO_ONLY",
         primary_provider="DEMO",

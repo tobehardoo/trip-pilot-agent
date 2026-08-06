@@ -21,7 +21,14 @@ from pydantic import (
 )
 from pydantic.alias_generators import to_camel
 
-from trip_agent.domain.shared import CHINA_TIME_ZONE, normalize_text
+from trip_agent.domain.shared import (
+    CHINA_TIME_ZONE,
+    ActivityKind,
+    DayType,
+    normalize_text,
+)
+
+STRUCTURAL_ACTIVITY_KINDS = frozenset({"MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"})
 
 type JsonDecimal = Annotated[
     Decimal,
@@ -532,14 +539,24 @@ class ItineraryActivity(MessageModel):
     provider_poi_id: ProviderPoiId | None = None
     coordinates: ActivityCoordinates | None = None
     address: AddressText | None = None
+    type_code: str | None = None
+    type_name: str | None = None
+    kind: ActivityKind | None = None
+    time_fixed: bool | None = None
 
     @model_validator(mode="after")
     def validate_source_metadata(self) -> Self:
         metadata = (self.provider_poi_id, self.coordinates, self.address)
-        if self.source == "AMAP" and any(value is None for value in metadata):
-            raise ValueError("AMAP activity requires provider metadata")
         if self.source == "DEMO" and any(value is not None for value in metadata):
             raise ValueError("DEMO activity must not contain provider metadata")
+        if self.source == "AMAP":
+            structural = (
+                self.kind is not None and self.kind in STRUCTURAL_ACTIVITY_KINDS
+            )
+            if structural and not any(value is not None for value in metadata):
+                return self
+            if any(value is None for value in metadata):
+                raise ValueError("AMAP activity requires provider metadata")
         return self
 
 
@@ -578,6 +595,7 @@ class TransitLeg(MessageModel):
 
 class ItineraryDay(MessageModel):
     date: date
+    day_type: DayType | None = None
     activities: tuple[ItineraryActivity, ...] = Field(min_length=1)
     transit_legs: tuple[TransitLeg, ...]
 
@@ -599,8 +617,10 @@ class ItineraryDay(MessageModel):
             )
             if earliest_arrival > self.activities[leg.to_activity_index].start_time:
                 raise ValueError("transit leg travel time must fit between activities")
-        if len(self.transit_legs) != len(expected_pairs) or actual_pairs != expected_pairs:
-            raise ValueError("transit legs must connect each adjacent activity")
+        # Gaps between adjacent activities are allowed: structural nodes
+        # (e.g. an unresolved meal) intentionally have no transit leg.
+        if len(self.transit_legs) > len(expected_pairs):
+            raise ValueError("transit legs cannot exceed adjacent activity pairs")
         return self
 
 
@@ -909,7 +929,7 @@ class PlanningCompletedPayload(MessageModel):
 
 class PlanningCompletedEvent(MessageModel):
     event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[6]
+    schema_version: Literal[6, 8]
     event_id: UUID
     trace_id: UUID
     task_id: UUID

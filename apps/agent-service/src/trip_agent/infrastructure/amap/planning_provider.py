@@ -1,45 +1,43 @@
-"""AMap-based planning provider — real POI search, route queries, and constraint solving.
+"""AMap-based planning provider — real POI search, route queries, and scheduling.
 
-Extracted from ``worker/processor.py``.  This provider depends on AMap web-service
-APIs for POI search and route planning, on the candidate ranker for scoring, and on
-OR‑Tools for daily schedule optimisation.
+This provider depends on AMap web-service APIs for POI search and route
+planning, on the candidate ranker for scoring, and on the pure daily-schedule
+module (:mod:`trip_agent.planning.daily_schedule`) for deterministic daily
+plans (day types, anchors, meal demand, capacity).
 """
 
 import logging
-from datetime import date, datetime, time, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
-from itertools import combinations
-from math import ceil
 from typing import Literal
 from uuid import UUID, uuid5
 
 from trip_agent.domain.planning.protocols import (
+    OptimizationConflict,
     PlanningInfeasibleError,
     PlanningProviderError,
     PlanningResult,
+    RelaxationSuggestion,
     ResolvedTravelAnchors,
 )
 from trip_agent.domain.shared import (
     AMAP_ACTIVITY_ESTIMATED_COST,
     CHINA_TIME_ZONE,
-    MAX_PAIR_ATTEMPTS_PER_PLAN,
-    MAX_PLANNING_CANDIDATES,
     MAX_ROUTE_CALLS_PER_PLAN,
-    amap_activity,
-    available_minutes,
     candidate_keywords,
     coordinate_decimal,
-    matched_guide_fact_ids,
     minute_datetime,
     text_matches,
 )
 from trip_agent.planning.candidates import CandidateRanker
-from trip_agent.planning.optimization import (
-    DailyOptimizationRequest,
-    DailyOptimizer,
-    OptimizationConflict,
-    RelaxationSuggestion,
-    TimeBlock,
+from trip_agent.planning.daily_schedule import (
+    CandidateActivity,
+    DayPlan,
+    DayPlanItem,
+    FixedSchedule,
+    MealDemand,
+    classify_day_type,
+    plan_day,
 )
 from trip_agent.planning.trusted_context import hard_closed_fact
 from trip_agent.providers.errors import (
@@ -61,6 +59,7 @@ from trip_agent.worker.contracts import (
     FallbackOperation,
     GuideFactEvidence,
     Itinerary,
+    ItineraryActivity,
     ItineraryDay,
     PlanningCreateCommand,
     PlanningReplanCommand,
@@ -69,6 +68,19 @@ from trip_agent.worker.contracts import (
 from trip_agent.worker.progress import report_planning_progress
 
 logger = logging.getLogger(__name__)
+
+# Rule-based activity magnitude terms (deterministic defaults, marked as
+# rule-derived; not a substitute for curated POI duration data).
+_FULL_DAY_TERMS = (
+    "泰山", "华山", "衡山", "黄山", "庐山", "峨眉", "山岳",
+    "迪士尼", "迪斯尼", "长隆", "乐园", "环球影城", "主题公园", "度假区",
+)
+_HALF_DAY_TERMS = ("风景区", "古镇", "遗址", "公园", "博物馆群")
+_COMPLEX_TERMS = (
+    "泰山", "华山", "衡山", "黄山", "庐山", "峨眉", "峡谷",
+    "迪士尼", "迪斯尼", "长隆", "乐园", "环球影城", "主题公园", "度假区", "古镇",
+)
+_DINING_TERMS = ("美食", "餐饮", "小吃", "火锅", "面馆", "粤菜", "咖啡", "茶")
 
 
 def _non_weather_guide_statements(
@@ -98,7 +110,7 @@ class AmapPlanningProvider:
 
     Uses AMap POI search for candidate discovery, AMap route planning for
     inter‑activity transit, a deterministic :class:`CandidateRanker` for
-    scoring, and OR‑Tools CP‑SAT for daily scheduling.
+    scoring, and the pure daily-schedule module for deterministic daily plans.
     """
 
     def __init__(
@@ -107,7 +119,6 @@ class AmapPlanningProvider:
         route_provider: RouteProvider,
         route_fallback: RouteProvider | None = None,
         candidate_ranker: CandidateRanker | None = None,
-        optimizer: DailyOptimizer | None = None,
         provider_mode: ProviderExecutionMode = ProviderExecutionMode.REAL_ONLY,
         fallback_policy: ProviderFallbackPolicy | None = None,
     ) -> None:
@@ -115,131 +126,154 @@ class AmapPlanningProvider:
         self._route_provider = route_provider
         self._route_fallback = route_fallback
         self._candidate_ranker = candidate_ranker or CandidateRanker()
-        self._optimizer = optimizer or DailyOptimizer()
         self._provider_mode = provider_mode
         self._fallback_policy = fallback_policy or ProviderFallbackPolicy()
 
     # -- public API -----------------------------------------------------------
 
     async def plan(self, command: PlanningCreateCommand) -> PlanningResult:
+        return await self._plan_with_skeleton(command)
+
+    # -- daily-skeleton scheduling path ----------------------------------------
+
+    async def _plan_with_skeleton(
+        self, command: PlanningCreateCommand
+    ) -> PlanningResult:
         trip = command.payload.trip
+        constraints = trip.constraints
         day_count = (trip.end_date - trip.start_date).days + 1
-        required_pois = day_count * 2
         await report_planning_progress(
             "POI_RECALLING",
             "Loading destination points of interest",
-            {"requiredPoiCount": required_pois},
+            {"requiredPoiCount": day_count * 3},
         )
-        raw_pois = await self._collect_pois(command, required_pois)
-        await report_planning_progress(
-            "CANDIDATES_RANKING",
-            "Ranking candidates against traveler preferences",
-            {"candidateCount": len(raw_pois)},
-        )
-        candidate_pool_size = min(
-            MAX_PLANNING_CANDIDATES,
-            max(required_pois, required_pois * 2),
-        )
-        guide_facts = command.payload.guide_evidence.facts
-        guide_statements = _non_weather_guide_statements(guide_facts)
-        baseline_ranking = self._candidate_ranker.rank(
-            raw_pois,
-            destination=trip.destination,
-            preferences=trip.constraints.preferences,
-            traveler_type=trip.constraints.traveler_type,
-            limit=candidate_pool_size,
-            must_visit_places=trip.constraints.must_visit_places,
-            avoid_places=trip.constraints.avoid_places,
-        )
-        guided_ranking = self._candidate_ranker.rank(
-            raw_pois,
-            destination=trip.destination,
-            preferences=trip.constraints.preferences,
-            traveler_type=trip.constraints.traveler_type,
-            limit=candidate_pool_size,
-            must_visit_places=trip.constraints.must_visit_places,
-            avoid_places=trip.constraints.avoid_places,
-            guide_statements=guide_statements,
-        )
-        baseline_pois = tuple(item.poi for item in baseline_ranking.selected)
-        guided_pois = tuple(item.poi for item in guided_ranking.selected)
-        if len(baseline_pois) < required_pois:
+        raw_pois = await self._collect_pois(command, max(day_count * 3, 2))
+        if not raw_pois:
             raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
-        unavailable_must_visits = tuple(
-            place
-            for place in trip.constraints.must_visit_places
-            if not any(text_matches(place, poi.name) for poi in baseline_pois)
+        ranking = self._candidate_ranker.rank(
+            raw_pois,
+            destination=trip.destination,
+            preferences=constraints.preferences,
+            traveler_type=constraints.traveler_type,
+            limit=len(raw_pois),
+            must_visit_places=constraints.must_visit_places,
+            avoid_places=constraints.avoid_places,
+            guide_statements=_non_weather_guide_statements(
+                command.payload.guide_evidence.facts
+            ),
         )
-        if unavailable_must_visits:
+        ranked_pois = tuple(item.poi for item in ranking.selected)
+        poi_by_id = {poi.provider_id: poi for poi in ranked_pois}
+        score_by_id = {
+            item.poi.provider_id: item.score for item in ranking.selected
+        }
+        must_visit_text = set(constraints.must_visit_places)
+        candidates = tuple(
+            self._to_candidate(poi, must_visit_text, score_by_id)
+            for poi in ranked_pois
+        )
+        anchors = await self._resolve_travel_anchors(command)
+        special_date = self._special_day_date(command, candidates)
+
+        route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]] = {}
+        route_calls = [0]
+        itinerary_days: list[ItineraryDay] = []
+        warnings: list[str] = []
+        total_cost = Decimal("0")
+        context = command.payload.planning_context
+        closure_filtered_must: set[str] = set()
+        for offset in range(day_count):
+            trip_date = trip.start_date + timedelta(days=offset)
+            has_full = trip_date == special_date
+            day_candidates = (
+                candidates
+                if has_full or special_date is None
+                else tuple(c for c in candidates if c.magnitude != "FULL_DAY")
+            )
+            if context is not None:
+                day_candidates = tuple(
+                    candidate
+                    for candidate in day_candidates
+                    if hard_closed_fact(context, trip_date, candidate.title) is None
+                )
+                for candidate in candidates:
+                    if (
+                        candidate.must_include
+                        and hard_closed_fact(
+                            context, trip_date, candidate.title
+                        ) is not None
+                    ):
+                        closure_filtered_must.add(candidate.poi_id)
+            day_plan = plan_day(
+                trip_date=trip_date,
+                start_date=trip.start_date,
+                end_date=trip.end_date,
+                arrival=(
+                    constraints.arrival.time
+                    if constraints.arrival is not None else None
+                ),
+                departure=(
+                    constraints.departure.time
+                    if constraints.departure is not None else None
+                ),
+                accommodation_known=anchors.accommodation is not None,
+                fixed_schedules=self._fixed_schedules_on(
+                    constraints.fixed_schedules, trip_date
+                ),
+                candidates=day_candidates,
+                has_full_day_experience=has_full,
+                pace=constraints.pace,
+                mobility_reduced=constraints.mobility_level == "REDUCED",
+                meal_preferences=constraints.preferences,
+            )
+            day, day_cost, day_warnings = await self._emit_day(
+                command, offset, day_plan, anchors, poi_by_id,
+                route_cache, route_calls,
+            )
+            itinerary_days.append(day)
+            total_cost += day_cost
+            warnings.extend(day_warnings)
+
+        must_visit_unplaced = tuple(
+            w.split(":", 1)[1] for w in warnings
+            if w.startswith("MUST_VISIT_UNSCHEDULED")
+        )
+        placed_ids = {
+            activity.provider_poi_id
+            for day in itinerary_days
+            for activity in day.activities
+            if activity.provider_poi_id is not None
+        }
+        closure_unplaced = tuple(
+            candidate.title
+            for candidate in candidates
+            if candidate.must_include
+            and candidate.poi_id in closure_filtered_must
+            and candidate.poi_id not in placed_ids
+        )
+        if closure_unplaced:
             raise PlanningInfeasibleError(
                 conflicts=(
                     OptimizationConflict(
                         "MUST_VISIT_UNAVAILABLE",
-                        "必去地点未能在当前地图候选中确认",
-                        unavailable_must_visits,
+                        "必去地点在对应行程日期被官方临时关闭，无法安排",
+                        closure_unplaced,
                     ),
                 ),
                 relaxations=(
                     RelaxationSuggestion(
-                        "REDUCE_OPTIONAL_ACTIVITIES", "移除无法确认的必去地点后重试"
+                        "ADJUST_TRAVEL_CONTEXT",
+                        "调整行程日期或更换必去地点后重试",
                     ),
                 ),
             )
-        estimated_total_cost = AMAP_ACTIVITY_ESTIMATED_COST * required_pois
-        budget = trip.constraints.budget_amount
-        if budget is not None and estimated_total_cost > budget:
-            raise PlanningInfeasibleError(
-                conflicts=(
-                    OptimizationConflict(
-                        "BUDGET_EXCEEDED",
-                        f"预计活动费用 {estimated_total_cost:.2f} 超出预算 {budget:.2f}",
-                        ("budgetAmount",),
-                    ),
-                ),
-                relaxations=(
-                    RelaxationSuggestion("INCREASE_BUDGET", "提高预算上限"),
-                    RelaxationSuggestion("REDUCE_OPTIONAL_ACTIVITIES", "减少可选活动"),
-                ),
-            )
-        await report_planning_progress(
-            "ROUTES_CALCULATING",
-            "Calculating routes between selected activities",
-        )
-        anchors = await self._resolve_travel_anchors(command)
-        route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]] = {}
-        route_calls = [0]
-        baseline_days, baseline_selected = await self._build_feasible_days(
-            command, baseline_pois, anchors, route_cache, route_calls,
-        )
-        days, pois = baseline_days, baseline_selected
-        guide_influenced = False
-        if guide_facts:
-            try:
-                days, pois = await self._build_feasible_days(
-                    command,
-                    guided_pois,
-                    anchors,
-                    route_cache,
-                    route_calls,
-                    use_guide_evidence=True,
-                )
-                guide_influenced = tuple(poi.provider_id for poi in pois) != tuple(
-                    poi.provider_id for poi in baseline_selected
-                )
-            except PlanningInfeasibleError:
-                days, pois = baseline_days, baseline_selected
-        unmatched_must_visits = tuple(
-            place
-            for place in trip.constraints.must_visit_places
-            if not any(text_matches(place, poi.name) for poi in pois)
-        )
-        if unmatched_must_visits:
+        if must_visit_unplaced:
             raise PlanningInfeasibleError(
                 conflicts=(
                     OptimizationConflict(
                         "MUST_VISIT_UNAVAILABLE",
                         "必去地点无法与当前时间、路线或行动能力约束同时满足",
-                        unmatched_must_visits,
+                        must_visit_unplaced,
                     ),
                 ),
                 relaxations=(
@@ -251,36 +285,390 @@ class AmapPlanningProvider:
             )
         actual_providers = tuple(sorted({
             "AMAP",
-            *(
-                leg.provider
-                for day in days
-                for leg in day.transit_legs
-            ),
+            *(leg.provider for day in itinerary_days for leg in day.transit_legs),
         }))
         fallback_operations = tuple(
             leg.fallback_operation
-            for day in days
+            for day in itinerary_days
             for leg in day.transit_legs
             if leg.fallback_operation is not None
         )
-        used_route_fallback = bool(fallback_operations)
+        itinerary = Itinerary(
+            title=f"{trip.destination} 真实地点行程",
+            days=tuple(itinerary_days),
+            estimated_total_cost=total_cost,
+        )
         return PlanningResult(
             provider="AMAP",
-            itinerary=Itinerary(
-                title=f"{trip.destination} 真实地点行程",
-                days=tuple(days),
-                estimated_total_cost=estimated_total_cost,
-            ),
-            guide_fact_ids=(
-                matched_guide_fact_ids(command, pois) if guide_influenced else ()
-            ),
+            itinerary=itinerary,
+            guide_fact_ids=(),
             requested_provider_mode=self._provider_mode.value,
             primary_provider="AMAP",
             actual_providers=actual_providers,
-            fallback_attempted=used_route_fallback,
-            fallback_succeeded=used_route_fallback,
-            fallback_reason=("ROUTE_PROVIDER_FAILURE" if used_route_fallback else None),
+            fallback_attempted=bool(fallback_operations),
+            fallback_succeeded=bool(fallback_operations),
+            fallback_reason=(
+                "ROUTE_PROVIDER_FAILURE" if fallback_operations else None
+            ),
             fallback_operations=fallback_operations,
+        )
+
+    @staticmethod
+    def _to_candidate(
+        poi: Poi,
+        must_visit_text: set[str],
+        score_by_id: dict[str, int],
+    ) -> CandidateActivity:
+        must = any(text_matches(place, poi.name) for place in must_visit_text)
+        magnitude = AmapPlanningProvider._magnitude_for_poi(poi)
+        kind: str = (
+            "EXPERIENCE"
+            if magnitude in {"FULL_DAY", "HALF_DAY"}
+            and AmapPlanningProvider._is_complex_experience(poi)
+            else "ATTRACTION"
+        )
+        return CandidateActivity(
+            poi_id=poi.provider_id,
+            title=poi.name,
+            magnitude=magnitude,
+            coordinates=(
+                float(poi.coordinates.longitude),
+                float(poi.coordinates.latitude),
+            ),
+            region=poi.district or None,
+            must_include=must,
+            kind=kind,  # type: ignore[arg-type]
+            score=score_by_id.get(poi.provider_id, 0),
+        )
+
+    @staticmethod
+    def _magnitude_for_poi(poi: Poi) -> str:
+        text = f"{poi.name} {poi.type_name}"
+        if any(term in text for term in _FULL_DAY_TERMS):
+            return "FULL_DAY"
+        if poi.type_code.startswith("11") or any(
+            term in text for term in _HALF_DAY_TERMS
+        ):
+            return "HALF_DAY"
+        return "NORMAL"
+
+    @staticmethod
+    def _is_complex_experience(poi: Poi) -> bool:
+        text = f"{poi.name} {poi.type_name}"
+        return any(term in text for term in _COMPLEX_TERMS)
+
+    @staticmethod
+    def _fixed_schedules_on(
+        fixed_schedules: tuple[FixedSchedule, ...],
+        trip_date: date,
+    ) -> tuple[FixedSchedule, ...]:
+        return tuple(
+            schedule
+            for schedule in fixed_schedules
+            if schedule.start.astimezone(CHINA_TIME_ZONE).date() == trip_date
+        )
+
+    @staticmethod
+    def _special_day_date(
+        command: PlanningCreateCommand,
+        candidates: tuple[CandidateActivity, ...],
+    ) -> date | None:
+        if not any(c.magnitude == "FULL_DAY" for c in candidates):
+            return None
+        trip = command.payload.trip
+        constraints = trip.constraints
+        for offset in range((trip.end_date - trip.start_date).days + 1):
+            trip_date = trip.start_date + timedelta(days=offset)
+            day_type = classify_day_type(
+                trip_date, trip.start_date, trip.end_date,
+                constraints.arrival.time if constraints.arrival is not None else None,
+                constraints.departure.time if constraints.departure is not None else None,
+            )
+            if day_type == "FULL_DAY":
+                return trip_date
+        return trip.start_date + timedelta(days=1)
+
+    async def _emit_day(
+        self,
+        command: PlanningCreateCommand,
+        offset: int,
+        day_plan: DayPlan,
+        anchors: ResolvedTravelAnchors,
+        poi_by_id: dict[str, Poi],
+        route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]],
+        route_calls: list[int],
+    ) -> tuple[ItineraryDay, Decimal, tuple[str, ...]]:
+        trip_date = command.payload.trip.start_date + timedelta(days=offset)
+        slots: list[dict[str, object]] = []
+        unresolved: list[str] = []
+        for item in day_plan.items:
+            if item.kind == "ARRIVAL" and anchors.arrival is not None:
+                slots.append(self._slot_from_item(item, anchors.arrival, trip_date, 0))
+            elif item.kind == "DEPARTURE" and anchors.departure is not None:
+                slots.append(self._slot_from_item(item, anchors.departure, trip_date, 0))
+            elif item.kind == "MEAL" and item.meal is not None:
+                restaurant = await self._resolve_meal_poi(item.meal, command)
+                if restaurant is not None:
+                    slots.append(self._slot_from_item(
+                        item, restaurant, trip_date,
+                        Decimal("0"), title=restaurant.name,
+                    ))
+                else:
+                    label = "午餐" if item.meal.meal_type == "LUNCH" else "晚餐"
+                    slots.append(self._slot_from_item(
+                        item, None, trip_date, Decimal("0"),
+                        title=f"{label}（建议在当前区域自行选择餐馆）",
+                    ))
+                    unresolved.append("MEAL_POI_UNRESOLVED")
+            else:
+                poi = poi_by_id.get(item.poi_id) if item.poi_id else None
+                cost = (
+                    Decimal("0")
+                    if item.kind in {"ARRIVAL", "DEPARTURE", "ACCOMMODATION", "MEAL"}
+                    else AMAP_ACTIVITY_ESTIMATED_COST
+                )
+                slots.append(self._slot_from_item(item, poi, trip_date, cost))
+
+        if anchors.accommodation is not None:
+            hotel = anchors.accommodation
+            start_time = minute_datetime(trip_date, day_plan.window_start_minute)
+            end_slot = minute_datetime(trip_date, day_plan.window_end_minute)
+            slots.insert(0, {
+                "title": "从酒店出发",
+                "start": start_time,
+                "end": start_time + timedelta(minutes=15),
+                "poi": hotel,
+                "kind": "ACCOMMODATION",
+                "time_fixed": False,
+                "magnitude": None,
+                "cost": Decimal("0"),
+            })
+            slots.append({
+                "title": "返回酒店",
+                "start": end_slot,
+                "end": end_slot + timedelta(minutes=15),
+                "poi": hotel,
+                "kind": "ACCOMMODATION",
+                "time_fixed": False,
+                "magnitude": None,
+                "cost": Decimal("0"),
+            })
+
+        legs: list[tuple[int, int, ProviderSuccess[RoutePlan]]] = []
+        for index in range(len(slots) - 1):
+            origin = slots[index]
+            destination = slots[index + 1]
+            origin_poi = origin.get("poi")
+            destination_poi = destination.get("poi")
+            if origin_poi is None or destination_poi is None:
+                continue
+            route = await self._route_cached(
+                RouteRequest(
+                    origin=origin_poi.coordinates,
+                    destination=destination_poi.coordinates,
+                    departure_at=origin["end"],
+                    origin_poi_id=origin_poi.provider_id,
+                    destination_poi_id=destination_poi.provider_id,
+                    mode="DRIVING",
+                ),
+                route_cache, route_calls,
+            )
+            # forward-fit: shift the destination and everything after it so the
+            # real transit duration fits between activities.
+            gap_seconds = (
+                destination["start"] - origin["end"]
+            ).total_seconds()
+            if gap_seconds < route.data.duration_seconds:
+                shift = timedelta(
+                    seconds=route.data.duration_seconds - gap_seconds
+                )
+                for later in slots[index + 1:]:
+                    later["start"] = later["start"] + shift
+                    later["end"] = later["end"] + shift
+            legs.append((index, index + 1, route))
+
+        activities = tuple(
+            self._activity_from_slot(slot, trip_date, command.task_id, index)
+            for index, slot in enumerate(slots)
+        )
+        transit_legs = tuple(
+            self._leg_from_route(
+                command.task_id, trip_date, from_index, to_index, route,
+            )
+            for from_index, to_index, route in legs
+        )
+        total_cost = sum(
+            (slot.get("cost") or Decimal("0")) for slot in slots
+        )
+        return (
+            ItineraryDay(
+                date=trip_date,
+                day_type=day_plan.day_type,
+                activities=activities,
+                transit_legs=transit_legs,
+            ),
+            total_cost,
+            tuple(unresolved),
+        )
+
+    def _slot_from_item(
+        self,
+        item: DayPlanItem,
+        poi: Poi | None,
+        trip_date: date,
+        cost: Decimal,
+        *,
+        title: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "title": title or item.title,
+            "start": minute_datetime(trip_date, item.start_minute),
+            "end": minute_datetime(trip_date, item.end_minute),
+            "poi": poi,
+            "kind": item.kind,
+            "time_fixed": item.time_fixed,
+            "magnitude": item.magnitude,
+            "cost": cost,
+        }
+
+    def _activity_from_slot(
+        self, slot: dict[str, object], trip_date: date, task_id: UUID, index: int
+    ) -> ItineraryActivity:
+        poi = slot.get("poi")
+        title = str(slot["title"])
+        start = slot["start"]
+        end = slot["end"]
+        kind = str(slot["kind"])
+        time_fixed = bool(slot["time_fixed"])
+        if poi is not None:
+            activity_id = uuid5(
+                task_id,
+                f"activity:{trip_date}:{poi.provider_id}:{index}:{start.isoformat()}",
+            )
+            return ItineraryActivity(
+                activity_id=activity_id,
+                title=title,
+                start_time=start,
+                end_time=end,
+                estimated_cost=Decimal(str(slot["cost"])),
+                source="AMAP",
+                provider_poi_id=poi.provider_id,
+                coordinates=ActivityCoordinates(
+                    longitude=coordinate_decimal(poi.coordinates.longitude),
+                    latitude=coordinate_decimal(poi.coordinates.latitude),
+                ),
+                address=poi.address,
+                type_code=poi.type_code,
+                type_name=poi.type_name,
+                kind=kind,  # type: ignore[arg-type]
+                time_fixed=time_fixed,
+            )
+        return ItineraryActivity(
+            activity_id=uuid5(
+                task_id,
+                f"activity:{trip_date}:{title}:{index}:{start.isoformat()}",
+            ),
+            title=title,
+            start_time=start,
+            end_time=end,
+            estimated_cost=Decimal(str(slot["cost"])),
+            source="AMAP",
+            kind=kind,  # type: ignore[arg-type]
+            time_fixed=time_fixed,
+        )
+
+    def _leg_from_route(
+        self,
+        task_id: UUID,
+        trip_date: date,
+        from_index: int,
+        to_index: int,
+        route: ProviderSuccess[RoutePlan],
+    ) -> TransitLeg:
+        transit_id = uuid5(
+            task_id,
+            f"transit:{trip_date}:{from_index}:{to_index}:{route.data.mode}",
+        )
+        fallback_operation = (
+            FallbackOperation(
+                operation="ROUTE",
+                transit_id=transit_id,
+                from_activity_id=None,
+                to_activity_id=None,
+                requested_mode="REAL_WITH_EXPLICIT_FALLBACK",
+                actual_provider="DEMO",
+                error_category=route.fallback_error.category.value,
+                error_code=route.fallback_error.error_code,
+                retry_count=route.fallback_error.retry_count,
+            )
+            if route.fallback_error is not None
+            else None
+        )
+        cost = self._transit_cost(route.data)
+        if route.provider == "DEMO" and cost is None:
+            cost = Decimal("0.00")
+        return TransitLeg(
+            transit_id=transit_id,
+            from_activity_index=from_index,
+            to_activity_index=to_index,
+            mode=route.data.mode,
+            distance_meters=route.data.distance_meters,
+            duration_seconds=route.data.duration_seconds,
+            provider=route.provider,
+            estimated=route.estimated,
+            polyline=tuple(
+                ActivityCoordinates(
+                    longitude=coordinate_decimal(point.longitude),
+                    latitude=coordinate_decimal(point.latitude),
+                )
+                for point in route.data.polyline
+            ),
+            estimated_cost=cost,
+            cost_source=self._transit_cost_source(route),
+            fallback_operation=fallback_operation,
+        )
+
+    async def _resolve_meal_poi(
+        self,
+        meal: MealDemand,
+        command: PlanningCreateCommand,
+    ) -> Poi | None:
+        trip = command.payload.trip
+        for keyword in self._meal_keywords(meal):
+            search = await self._map_provider.search_pois(
+                PoiSearchRequest(
+                    city=trip.destination,
+                    keyword=keyword,
+                    limit=5,
+                )
+            )
+            if isinstance(search, ProviderFailure):
+                continue
+            candidates = search.data
+            if not candidates:
+                continue
+            if meal.region:
+                regional = tuple(
+                    poi for poi in candidates
+                    if poi.district and text_matches(meal.region, poi.district)
+                )
+                if regional:
+                    return regional[0]
+            return candidates[0]
+        return None
+
+    @staticmethod
+    def _meal_keywords(meal: MealDemand) -> tuple[str, ...]:
+        region = f"{meal.region} 美食" if meal.region else None
+        # Only dining-related preferences drive restaurant search; arbitrary
+        # preferences (e.g. "历史") must not pull non-restaurant POIs in.
+        dining = tuple(
+            item.strip()
+            for item in meal.preferences
+            if item.strip() and any(term in item for term in _DINING_TERMS)
+        )
+        return tuple(
+            dict.fromkeys((*(() if region is None else (region,)), *dining, "美食"))
         )
 
     async def replan(self, command: PlanningReplanCommand) -> PlanningResult:
@@ -294,150 +682,6 @@ class AmapPlanningProvider:
             provider_mode=self._provider_mode,
             fallback_policy=self._fallback_policy,
         ).replan(command)
-
-    # -- internal helpers -----------------------------------------------------
-
-    async def _build_feasible_days(
-        self,
-        command: PlanningCreateCommand,
-        candidate_pois: tuple[Poi, ...],
-        anchors: ResolvedTravelAnchors,
-        route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]] | None = None,
-        route_calls: list[int] | None = None,
-        *,
-        use_guide_evidence: bool = False,
-    ) -> tuple[list[ItineraryDay], tuple[Poi, ...]]:
-        await report_planning_progress(
-            "CONSTRAINTS_SOLVING",
-            "Solving time, budget, and mobility constraints",
-        )
-        trip = command.payload.trip
-        day_count = (trip.end_date - trip.start_date).days + 1
-        cache = route_cache if route_cache is not None else {}
-        calls = route_calls if route_calls is not None else [0]
-        pair_attempts = [0]
-        last_infeasible: list[PlanningInfeasibleError] = []
-
-        async def search(
-            offset: int,
-            remaining: tuple[Poi, ...],
-            selected: tuple[Poi, ...],
-            days: tuple[ItineraryDay, ...],
-            unmatched_must_visits: frozenset[str],
-        ) -> tuple[list[ItineraryDay], tuple[Poi, ...]] | None:
-            if offset == day_count:
-                if unmatched_must_visits:
-                    return None
-                return list(days), selected
-            trip_date = trip.start_date + timedelta(days=offset)
-            context = command.payload.planning_context
-            # Always apply user preference ranking; guide evidence provides
-            # additional boosting signals when available (P06 fix).
-            guide_statements = (
-                _non_weather_guide_statements(command.payload.guide_evidence.facts)
-                if use_guide_evidence else ()
-            )
-            weather_statements = (
-                weather_statements_for_date(command.payload.guide_evidence.facts, trip_date)
-                if use_guide_evidence else ()
-            )
-            ranking = self._candidate_ranker.rank(
-                remaining,
-                destination=trip.destination,
-                preferences=trip.constraints.preferences,
-                traveler_type=trip.constraints.traveler_type,
-                limit=len(remaining),
-                must_visit_places=trip.constraints.must_visit_places,
-                avoid_places=trip.constraints.avoid_places,
-                guide_statements=guide_statements,
-                weather_statements=weather_statements,
-            )
-            ranked_remaining = tuple(item.poi for item in ranking.selected)
-            if context is not None:
-                ranked_remaining = tuple(
-                    poi
-                    for poi in ranked_remaining
-                    if hard_closed_fact(context, trip_date, poi.name) is None
-                )
-            pairs = list(combinations(range(len(ranked_remaining)), 2))
-            pairs.sort(
-                key=lambda pair: (
-                    -sum(
-                        any(
-                            text_matches(place, ranked_remaining[index].name)
-                            for place in unmatched_must_visits
-                        )
-                        for index in pair
-                    ),
-                    pair[0] + pair[1],
-                    pair,
-                )
-            )
-            for first_index, second_index in pairs:
-                if pair_attempts[0] >= MAX_PAIR_ATTEMPTS_PER_PLAN:
-                    break
-                pair_attempts[0] += 1
-                try:
-                    day = await self._day(
-                        command, offset,
-                        ranked_remaining[first_index], ranked_remaining[second_index],
-                        anchors, cache, calls,
-                    )
-                except PlanningInfeasibleError as failure:
-                    last_infeasible[:] = [failure]
-                    continue
-                chosen = (
-                    ranked_remaining[first_index],
-                    ranked_remaining[second_index],
-                )
-                next_unmatched = frozenset(
-                    place
-                    for place in unmatched_must_visits
-                    if not any(text_matches(place, poi.name) for poi in chosen)
-                )
-                next_remaining = tuple(
-                    poi for poi in ranked_remaining if poi not in chosen
-                )
-                result = await search(
-                    offset + 1, next_remaining, (*selected, *chosen),
-                    (*days, day), next_unmatched,
-                )
-                if result is not None:
-                    return result
-            return None
-
-        result = await search(
-            0, candidate_pois, (), (),
-            frozenset(trip.constraints.must_visit_places),
-        )
-        if result is not None:
-            return result
-        unmatched_must_visits = tuple(
-            place
-            for place in trip.constraints.must_visit_places
-            if not any(text_matches(place, poi.name) for poi in candidate_pois)
-        )
-        if unmatched_must_visits:
-            raise PlanningInfeasibleError(
-                conflicts=(
-                    OptimizationConflict(
-                        "MUST_VISIT_UNAVAILABLE",
-                        "必去地点无法与当前时间、路线或行动能力约束同时满足",
-                        unmatched_must_visits,
-                    ),
-                ),
-                relaxations=(
-                    RelaxationSuggestion(
-                        "ADJUST_TRAVEL_CONTEXT",
-                        "调整到返时间、行动能力或其他必去地点后重试",
-                    ),
-                ),
-            )
-        if pair_attempts[0] >= MAX_PAIR_ATTEMPTS_PER_PLAN:
-            raise PlanningProviderError("PAIR_ATTEMPT_BUDGET_EXHAUSTED")
-        if last_infeasible:
-            raise last_infeasible[-1]
-        raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
 
     async def _resolve_travel_anchors(
         self, command: PlanningCreateCommand,
@@ -592,238 +836,6 @@ class AmapPlanningProvider:
         if route.data.estimated_cost is not None:
             return "PROVIDER"
         return "UNKNOWN"
-
-    async def _day(
-        self,
-        command: PlanningCreateCommand,
-        offset: int,
-        first_poi: Poi,
-        second_poi: Poi,
-        anchors: ResolvedTravelAnchors | None = None,
-        route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]] | None = None,
-        route_calls: list[int] | None = None,
-    ) -> ItineraryDay:
-        anchors = anchors or ResolvedTravelAnchors()
-        cache = route_cache if route_cache is not None else {}
-        calls = route_calls if route_calls is not None else [0]
-        trip_date = command.payload.trip.start_date + timedelta(days=offset)
-        constraints = command.payload.trip.constraints
-        mobility_level = constraints.mobility_level
-        route_mode = "DRIVING" if mobility_level == "STEP_FREE" else "WALKING"
-        provisional_first_end = datetime.combine(
-            trip_date, time(hour=11), tzinfo=CHINA_TIME_ZONE
-        )
-        route = await self._route_cached(
-            RouteRequest(
-                origin=first_poi.coordinates,
-                destination=second_poi.coordinates,
-                departure_at=provisional_first_end,
-                origin_poi_id=first_poi.provider_id,
-                destination_poi_id=second_poi.provider_id,
-                mode=route_mode,
-            ),
-            cache, calls,
-        )
-        mobility_limit = {
-            "STANDARD": None,
-            "REDUCED": 2_000,
-            "STEP_FREE": None,
-        }[mobility_level]
-        if mobility_limit is not None and route.data.distance_meters > mobility_limit:
-            raise PlanningInfeasibleError(
-                conflicts=(
-                    OptimizationConflict(
-                        "MOBILITY_ROUTE_TOO_LONG",
-                        f"相邻活动步行距离 {route.data.distance_meters} 米超出行动能力上限",
-                        (first_poi.name, second_poi.name),
-                    ),
-                ),
-                relaxations=(
-                    RelaxationSuggestion(
-                        "CHANGE_MOBILITY_OR_TRANSPORT",
-                        "调整地点组合或改用无障碍交通方式",
-                    ),
-                ),
-            )
-        available_start, available_end = available_minutes(
-            trip_date,
-            command.payload.trip.start_date,
-            command.payload.trip.end_date,
-            constraints.arrival.time if constraints.arrival is not None else None,
-            constraints.departure.time if constraints.departure is not None else None,
-        )
-        origin_anchor = (
-            anchors.arrival
-            if (
-                trip_date == command.payload.trip.start_date
-                and anchors.arrival is not None
-            )
-            else anchors.accommodation
-        )
-        destination_anchor = (
-            anchors.departure
-            if (
-                trip_date == command.payload.trip.end_date
-                and anchors.departure is not None
-            )
-            else anchors.accommodation
-        )
-        if origin_anchor is not None:
-            origin_route = await self._route_cached(
-                RouteRequest(
-                    origin=origin_anchor.coordinates,
-                    destination=first_poi.coordinates,
-                    departure_at=minute_datetime(trip_date, available_start),
-                    origin_poi_id=origin_anchor.provider_id,
-                    destination_poi_id=first_poi.provider_id,
-                    mode="DRIVING",
-                ),
-                cache, calls,
-            )
-            available_start += ceil(origin_route.data.duration_seconds / 60)
-        if destination_anchor is not None:
-            destination_route = await self._route_cached(
-                RouteRequest(
-                    origin=second_poi.coordinates,
-                    destination=destination_anchor.coordinates,
-                    departure_at=minute_datetime(trip_date, available_end),
-                    origin_poi_id=second_poi.provider_id,
-                    destination_poi_id=destination_anchor.provider_id,
-                    mode="DRIVING",
-                ),
-                cache, calls,
-            )
-            available_end -= ceil(destination_route.data.duration_seconds / 60)
-        if available_start >= available_end:
-            raise PlanningInfeasibleError(
-                conflicts=(
-                    OptimizationConflict(
-                        "INSUFFICIENT_DAY_CAPACITY",
-                        "到返时间没有留下可用的日间规划窗口",
-                        (trip_date.isoformat(),),
-                    ),
-                ),
-                relaxations=(
-                    RelaxationSuggestion(
-                        "EXTEND_AVAILABLE_TIME", "调整到达或返程时间"
-                    ),
-                ),
-            )
-        fixed_schedules = [
-            TimeBlock(schedule.place_name, schedule.start_time, schedule.end_time)
-            for schedule in constraints.fixed_schedules
-        ]
-        fixed_schedules.extend(
-            TimeBlock(
-                f"MEAL:{window.meal_type}",
-                datetime.combine(trip_date, window.start_time, tzinfo=CHINA_TIME_ZONE),
-                datetime.combine(trip_date, window.end_time, tzinfo=CHINA_TIME_ZONE),
-            )
-            for window in constraints.meal_windows
-        )
-        optimization = self._optimizer.optimize(
-            DailyOptimizationRequest(
-                date=trip_date,
-                route_duration_seconds=route.data.duration_seconds,
-                fixed_schedules=tuple(fixed_schedules),
-                available_start_minute=available_start,
-                available_end_minute=available_end,
-            )
-        )
-        if optimization.status == "INFEASIBLE":
-            raise PlanningInfeasibleError(
-                optimization.conflicts, optimization.relaxations
-            )
-        if any(
-            value is None
-            for value in (
-                optimization.first_start,
-                optimization.first_end,
-                optimization.second_start,
-                optimization.second_end,
-            )
-        ):
-            raise RuntimeError(
-                "feasible optimizer result omitted schedule timestamps"
-            )
-        first_start = optimization.first_start
-        first_end = optimization.first_end
-        second_start = optimization.second_start
-        second_end = optimization.second_end
-        assert first_start is not None
-        assert first_end is not None
-        assert second_start is not None
-        assert second_end is not None
-        first_activity_id = self._activity_id(
-            command.task_id, trip_date, first_poi.provider_id, first_start
-        )
-        second_activity_id = self._activity_id(
-            command.task_id, trip_date, second_poi.provider_id, second_start
-        )
-        transit_id = uuid5(
-            command.task_id,
-            f"transit:{trip_date}:{first_activity_id}:{second_activity_id}:{route.data.mode}",
-        )
-        fallback_operation = (
-            FallbackOperation(
-                operation="ROUTE",
-                transit_id=transit_id,
-                from_activity_id=first_activity_id,
-                to_activity_id=second_activity_id,
-                requested_mode="REAL_WITH_EXPLICIT_FALLBACK",
-                actual_provider="DEMO",
-                error_category=route.fallback_error.category.value,
-                error_code=route.fallback_error.error_code,
-                retry_count=route.fallback_error.retry_count,
-            )
-            if route.fallback_error is not None
-            else None
-        )
-        return ItineraryDay(
-            date=trip_date,
-            activities=(
-                amap_activity(first_poi, first_start, first_end).model_copy(
-                    update={"activity_id": first_activity_id}
-                ),
-                amap_activity(second_poi, second_start, second_end).model_copy(
-                    update={"activity_id": second_activity_id}
-                ),
-            ),
-            transit_legs=(
-                TransitLeg(
-                    transit_id=transit_id,
-                    from_activity_index=0,
-                    to_activity_index=1,
-                    mode=route.data.mode,
-                    distance_meters=route.data.distance_meters,
-                    duration_seconds=route.data.duration_seconds,
-                    provider=route.provider,
-                    estimated=route.estimated,
-                    polyline=tuple(
-                        ActivityCoordinates(
-                            longitude=coordinate_decimal(point.longitude),
-                            latitude=coordinate_decimal(point.latitude),
-                        )
-                        for point in route.data.polyline
-                    ),
-                    estimated_cost=self._transit_cost(route.data),
-                    cost_source=self._transit_cost_source(route),
-                    fallback_operation=fallback_operation,
-                ),
-            ),
-        )
-
-    @staticmethod
-    def _activity_id(
-        task_id: UUID,
-        trip_date: date,
-        provider_poi_id: str,
-        start_time: datetime,
-    ) -> UUID:
-        return uuid5(
-            task_id,
-            f"activity:{trip_date}:{provider_poi_id}:{start_time.isoformat()}",
-        )
 
     async def _route(self, request: RouteRequest) -> ProviderSuccess[RoutePlan]:
         result = await self._route_provider.get_route(request)

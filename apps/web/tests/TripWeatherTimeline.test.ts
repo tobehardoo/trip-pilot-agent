@@ -26,7 +26,7 @@ const weatherFacts = [
   },
 ]
 
-test('shows the travel range with buffer days and only fills dates backed by weather facts', async () => {
+test('shows only the trip date range and fills dates backed by weather facts', async () => {
   const result = render(TripWeatherTimeline, {
     props: {
       weatherFacts,
@@ -36,22 +36,26 @@ test('shows the travel range with buffer days and only fills dates backed by wea
   })
 
   expect(screen.getByRole('region', { name: '行程天气' })).toBeTruthy()
-  expect(screen.getByRole('button', { name: '选择 2026-07-30 天气' })).toBeTruthy()
-  expect(screen.getByRole('button', { name: '选择 2026-08-05 天气' })).toBeTruthy()
-  expect(screen.getByText('晴')).toBeTruthy()
+  // 不再展示行程前/后的额外日期。
+  expect(screen.queryByRole('button', { name: '选择 2026-07-30 天气' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '选择 2026-08-04 天气' })).toBeNull()
+  expect(screen.getByRole('button', { name: '选择 2026-08-01 天气' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: '选择 2026-08-03 天气' })).toBeTruthy()
+  expect(screen.getByText('多云')).toBeTruthy()
   expect(screen.getByText('37° / 28°')).toBeTruthy()
-  expect(screen.getAllByText('历史天气尚未同步').length).toBeGreaterThan(0)
+  // 无事实且在预报范围内：待同步
+  expect(screen.getAllByText('待同步').length).toBeGreaterThan(0)
 
   await fireEvent.click(screen.getByRole('button', { name: '选择 2026-08-01 天气' }))
   expect(result.emitted().selectDate).toEqual([['2026-08-01']])
 })
 
-test('marks a selected date and restores all routes on demand', async () => {
+test('marks a selected date, shows pending and out-of-coverage days, and restores all routes', async () => {
   const result = render(TripWeatherTimeline, {
     props: {
       weatherFacts,
       startDate: '2026-08-01',
-      endDate: '2026-08-03',
+      endDate: '2026-08-10',
       selectedDate: '2026-08-02',
       referenceDate: '2026-07-30',
     },
@@ -60,10 +64,13 @@ test('marks a selected date and restores all routes on demand', async () => {
   expect(screen.getByRole('button', { name: '选择 2026-08-02 天气' }).getAttribute('aria-pressed')).toBe('true')
   await fireEvent.click(screen.getByRole('button', { name: '查看全部行程' }))
   expect(result.emitted().showAll).toEqual([[]])
-  expect(screen.getAllByText('预报未开放').length).toBeGreaterThan(0)
+  // 08-06 之后超出 Provider 预报范围：明确提示。
+  expect(screen.getAllByText('该日期暂时超出天气预报范围，请临近出发时查看').length).toBeGreaterThan(0)
+  // 08-02 无事实但在预报范围内：待同步。
+  expect(screen.getAllByText('待同步').length).toBeGreaterThan(0)
 })
 
-test('keeps a past itinerary timeline bounded to its two-day buffer', () => {
+test('keeps a past itinerary timeline bounded to its trip dates', () => {
   const historyFact = {
     ...weatherFacts[0],
     id: 'weather-history',
@@ -81,7 +88,8 @@ test('keeps a past itinerary timeline bounded to its two-day buffer', () => {
 
   expect(screen.queryByRole('button', { name: '选择 2026-07-30 天气' })).toBeNull()
   expect(screen.getByText('阵雨')).toBeTruthy()
-  expect(screen.getAllByText('历史天气尚未同步').length).toBeGreaterThan(0)
+  // 07-26/07-27 无事实且在预报范围内：待同步。
+  expect(screen.getAllByText('待同步').length).toBeGreaterThan(0)
 })
 
 test('uses the structured effective date before statement text or observation time', () => {

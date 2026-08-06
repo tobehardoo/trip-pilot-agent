@@ -48,7 +48,7 @@ test('emits search, archive, and restore actions from the trip list', async () =
   expect(view.emitted('restoreTrip')?.[0]).toEqual(['trip-archived'])
 })
 
-test('prefills the selected template before opening the create dialog', async () => {
+test('opens the shared constraint form when creating a trip', async () => {
   const view = render(TripDashboard, {
     props: {
       user: { id: 'user-1', email: 'traveler@example.com', displayName: 'Traveler' },
@@ -59,9 +59,10 @@ test('prefills the selected template before opening the create dialog', async ()
     },
   })
 
-  const templateButtons = view.container.querySelectorAll('section button')
-  await fireEvent.click(templateButtons[1]!)
+  await fireEvent.click(view.getByText('创建旅行'))
 
-  expect(view.container.querySelector<HTMLInputElement>('#trip-title')?.value).not.toBe('')
-  expect(view.container.querySelector<HTMLInputElement>('#destination')?.value).not.toBe('广州')
+  expect(view.container.querySelector<HTMLInputElement>('#trip-title')).not.toBeNull()
+  expect(view.container.querySelector<HTMLInputElement>('#destination')).not.toBeNull()
+  // 三餐默认值直接可见（B1）。
+  expect(view.container.querySelector<HTMLInputElement>('#BREAKFAST-start')?.value).toBe('08:00')
 })

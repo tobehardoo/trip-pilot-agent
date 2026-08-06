@@ -11,6 +11,35 @@ export interface AuthSession {
   expiresIn: number
 }
 
+/** Structured AMap POI used as a trusted coordinate anchor for a place. */
+export interface StructuredPoi {
+  name: string
+  providerPoiId: string
+  fullAddress: string
+  longitude: number | null
+  latitude: number | null
+  city: string
+  district: string | null
+}
+
+export interface TripTravelAnchor {
+  placeName: string
+  time: string
+  poi?: StructuredPoi | null
+}
+
+export interface TripAccommodation {
+  placeName?: string
+  poi?: StructuredPoi | null
+}
+
+export interface TripMealWindow {
+  mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER'
+  startTime: string
+  endTime: string
+  source?: 'SYSTEM_DEFAULT' | 'USER_SET'
+}
+
 export interface TripConstraints {
   budgetAmount: number | null
   travelers: number
@@ -22,19 +51,17 @@ export interface TripConstraints {
     startTime: string
     endTime: string
   }>
-  arrival?: { placeName: string; time: string } | null
-  departure?: { placeName: string; time: string } | null
-  accommodation?: { placeName: string } | null
+  arrival?: TripTravelAnchor | null
+  departure?: TripTravelAnchor | null
+  accommodation?: TripAccommodation | null
   mustVisitPlaces?: string[]
   avoidPlaces?: string[]
-  mealWindows?: Array<{
-    mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER'
-    startTime: string
-    endTime: string
-  }>
+  mealWindows?: TripMealWindow[]
   mobilityLevel?: 'STANDARD' | 'REDUCED' | 'STEP_FREE'
   schemaVersion?: number
 }
+
+export type TripConfiguration = Omit<TripConstraints, 'schemaVersion'>
 
 export interface Trip {
   id: string
@@ -73,11 +100,31 @@ export interface CreateTripInput {
   destination: string
   startDate: string
   endDate: string
-  constraints: Omit<TripConstraints, 'schemaVersion'>
+  constraints: TripConfiguration
 }
 
-export interface UpdateTripConstraintsInput extends Omit<TripConstraints, 'schemaVersion'> {
+export interface UpdateTripConstraintsInput extends TripConfiguration {
   version: number
+}
+
+/** Unified configuration save: trip metadata plus constraints under one version bump. */
+export interface UpdateConfigurationInput {
+  version: number
+  title: string
+  destination: string
+  startDate: string
+  endDate: string
+  constraints: TripConfiguration
+}
+
+export interface SystemTime {
+  serverDate: string
+  timeZone: string
+}
+
+export interface PlaceSearchResponse {
+  results: StructuredPoi[]
+  status: 'AVAILABLE' | 'UNAVAILABLE'
 }
 
 export interface PlanningTask {
@@ -422,6 +469,8 @@ export interface Itinerary {
   knowledge: ItineraryKnowledge
   factImpacts?: ItineraryFactImpact[]
   rollbackFromVersionId?: string | null
+  /** True when the live constraints changed after this itinerary was planned. */
+  stale?: boolean
   createdAt: string
 }
 
@@ -702,6 +751,31 @@ export function updateTripConstraints(
     method: 'PUT',
     body: JSON.stringify(input),
   }, accessToken)
+}
+
+/** Atomically saves trip metadata plus constraints under one version bump. */
+export function updateTripConfiguration(
+  accessToken: string,
+  tripId: string,
+  input: UpdateConfigurationInput,
+): Promise<Trip> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/configuration`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  }, accessToken)
+}
+
+export function getSystemTime(): Promise<SystemTime> {
+  return request('/api/system/time')
+}
+
+export function searchPlaces(
+  accessToken: string,
+  keyword: string,
+  city: string,
+): Promise<PlaceSearchResponse> {
+  const query = new URLSearchParams({ keyword, city })
+  return request(`/api/places/search?${query}`, {}, accessToken)
 }
 
 export function listGuideImports(accessToken: string, tripId: string): Promise<GuideImport[]> {

@@ -22,6 +22,7 @@ import {
   downloadItineraryExport,
   getCurrentItinerary,
   getPlanningTask,
+  getSystemTime,
   getTrip,
   listTrips,
   searchTrips,
@@ -36,8 +37,10 @@ import {
   rollbackItinerary,
   revokeItineraryShare,
   restoreTrip,
+  searchPlaces,
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
+  updateTripConfiguration,
   updateTripConstraints,
   type AuthSession,
   type CreateTripInput,
@@ -50,12 +53,15 @@ import {
   type ItineraryShareStatus,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
+  type PlaceSearchResponse,
   type PlanEvaluation,
   type PlanningTask,
   type PlanningTaskEvent,
   type PlanningProgressStage,
   type PlanningProgressUpdate,
+  type StructuredPoi,
   type Trip,
+  type UpdateConfigurationInput,
   type UpdateTripConstraintsInput,
 } from '../lib/api'
 import { tripDetailPath, type AppRoute } from '../lib/routes'
@@ -72,6 +78,7 @@ const trips = ref<Trip[]>([])
 const destinationSearch = ref('')
 const includeArchived = ref(false)
 const selectedTrip = ref<Trip | null>(null)
+const serverDate = ref('')
 const route = computed<AppRoute>(() => {
   const tripId = typeof currentRoute.params.tripId === 'string'
     ? currentRoute.params.tripId
@@ -543,17 +550,42 @@ async function handleRouteChange() {
 
 async function handleCreateTrip(input: CreateTripInput) {
   error.value = null
+  let created: Trip
   try {
-    const created = await withAccessToken((token) => createTrip(token, input))
-    if (destinationSearch.value || includeArchived.value) {
-      await loadTrips(true)
-    } else {
-      listRequestSequence += 1
-      trips.value = [created, ...trips.value]
-    }
+    created = await withAccessToken((token) => createTrip(token, input))
   } catch (cause) {
     if (cause instanceof SessionChangedError) return
     error.value = errorMessage(cause)
+    throw cause
+  }
+  if (destinationSearch.value || includeArchived.value) {
+    await loadTrips(true)
+  } else {
+    listRequestSequence += 1
+    trips.value = [created, ...trips.value]
+  }
+  // 创建后自动开始规划并进入旅行详情。
+  void startPlanningForNewTrip(created.id)
+  await openTrip(created.id)
+}
+
+async function startPlanningForNewTrip(tripId: string) {
+  try {
+    await withAccessToken((token) => createPlanningTask(token, tripId, crypto.randomUUID()))
+  } catch (cause) {
+    if (cause instanceof SessionChangedError) return
+    // 规划启动失败不阻断进入详情；详情页会展示规划失败原因。
+    planningError.value = errorMessage(cause)
+  }
+}
+
+/** 统一配置保存：原子更新元数据与约束，行程自动转为 stale，等待重新规划。 */
+async function handleUpdateConfiguration(tripId: string, input: UpdateConfigurationInput) {
+  try {
+    await withAccessToken((token) => updateTripConfiguration(token, tripId, input))
+    await reloadSelectedTrip()
+  } catch (cause) {
+    if (cause instanceof SessionChangedError) return
     throw cause
   }
 }
@@ -966,6 +998,7 @@ async function logout() {
 }
 
 onMounted(() => {
+  void loadServerDate()
   removeNavigationHook = router.afterEach(() => {
     void handleRouteChange()
   })
@@ -975,6 +1008,23 @@ onMounted(() => {
   }
   void restoreSession()
 })
+
+async function loadServerDate() {
+  try {
+    const time = await getSystemTime()
+    serverDate.value = time.serverDate
+  } catch {
+    serverDate.value = ''
+  }
+}
+
+async function searchPlacesFor(keyword: string, city: string): Promise<PlaceSearchResponse> {
+  try {
+    return await withAccessToken((token) => searchPlaces(token, keyword, city))
+  } catch {
+    return { results: [], status: 'UNAVAILABLE' }
+  }
+}
 
 onUnmounted(() => {
   stopPlanningStream()
@@ -999,6 +1049,9 @@ onUnmounted(() => {
       :create-trip="handleCreateTrip"
       :destination-query="destinationSearch"
       :include-archived="includeArchived"
+      :server-date="serverDate"
+      :search-places="searchPlacesFor"
+      :auto-open-create="currentRoute.name === 'trip-create'"
       @logout="logout"
       @open-trip="openTrip"
       @search="handleTripSearch"
@@ -1045,6 +1098,9 @@ onUnmounted(() => {
       :start-planning="handleStartPlanning"
       :cancel-planning="handleCancelPlanning"
       :update-constraints="handleUpdateConstraints"
+      :update-configuration="handleUpdateConfiguration"
+      :server-date="serverDate"
+      :search-places="searchPlacesFor"
       :reload-trip="reloadSelectedTrip"
       @back="backToTrips"
       @logout="logout"

@@ -13,22 +13,15 @@ import {
   Users,
   Wallet,
   X,
-  Sparkles,
 } from 'lucide-vue-next'
-import { computed, reactive, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
-import type { CreateTripInput, Trip, User } from '../lib/api'
+import type { CreateTripInput, PlaceSearchResponse, Trip, User } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
 import Button from './ui/Button.vue'
 import Card from './ui/Card.vue'
 import Badge from './ui/Badge.vue'
-import TripTemplates from './TripTemplates.vue'
-
-import ConstraintCard from './ConstraintCard.vue'
-import NaturalLanguageInput from './NaturalLanguageInput.vue'
-import { createDefaultDraft, destinationToString, toCreateTripInput, type ConstraintDraft } from '../lib/constraint-draft'
-import { parseConstraint } from '../lib/constraint-parser'
-import type { ParseWarning } from '../lib/constraint-parser'
+import TripConstraintForm from './TripConstraintForm.vue'
 
 const props = withDefaults(defineProps<{
   user: User
@@ -38,86 +31,16 @@ const props = withDefaults(defineProps<{
   createTrip: (input: CreateTripInput) => Promise<void>
   destinationQuery?: string
   includeArchived?: boolean
+  serverDate?: string
+  searchPlaces?: (keyword: string, city: string) => Promise<PlaceSearchResponse>
+  autoOpenCreate?: boolean
 }>(), {
   destinationQuery: '',
   includeArchived: false,
+  serverDate: '',
+  searchPlaces: undefined,
+  autoOpenCreate: false,
 })
-
-// ── 自然语言约束输入 ──────────────────────────────────────
-const useNaturalLanguage = ref(true)
-const draft = ref<ConstraintDraft>(createDefaultDraft())
-const parseWarnings = ref<ParseWarning[]>([])
-const parseUnrecognized = ref<string[]>([])
-
-function handleParse(text: string) {
-  const result = parseConstraint(text)
-  parseWarnings.value = result.warnings
-  parseUnrecognized.value = result.unrecognized
-  applyOperations(result.operations)
-}
-
-function applyOperations(ops: ReturnType<typeof parseConstraint>['operations']) {
-  for (const op of ops) {
-    const field = draft.value[op.field as keyof ConstraintDraft] as { value: unknown; source: string } | undefined
-    if (!field) continue
-    switch (op.type) {
-      case 'set':
-        field.value = op.value
-        field.source = 'explicit'
-        break
-      case 'append':
-        if (Array.isArray(field.value) && !field.value.includes(op.value)) {
-          field.value = [...field.value, op.value]
-          field.source = 'explicit'
-        }
-        break
-      case 'remove':
-        if (Array.isArray(field.value)) {
-          field.value = field.value.filter((v: unknown) => v !== op.value)
-        }
-        break
-      case 'clear':
-        if (Array.isArray(field.value)) field.value = []
-        else field.value = null
-        field.source = 'unset'
-        break
-    }
-  }
-  // 同步到表单
-  syncDraftToForm()
-}
-
-function syncDraftToForm() {
-  const destination = destinationToString(draft.value.destination.value)
-  form.title = form.title || (destination ? `${destination}之旅` : '')
-  form.destination = destination || form.destination
-  form.startDate = draft.value.startDate.value || form.startDate
-  form.endDate = draft.value.endDate.value || form.endDate
-  form.budgetAmount = draft.value.budgetAmount.value ?? form.budgetAmount
-  form.travelers = draft.value.travelers.value
-  form.preferences = [...draft.value.preferences.value]
-}
-
-function handleCardEdit(field: string) {
-  // 切换到表单模式编辑
-  useNaturalLanguage.value = false
-}
-
-function handleCardRemove(field: string, value?: string) {
-  if (value) {
-    applyOperations([{ type: 'remove', field, value }])
-  }
-}
-
-function handleCardAppend(field: string) {
-  useNaturalLanguage.value = false
-}
-
-function handleDestinationChange(sel: { province: string; city: string; districts: string[] }) {
-  draft.value.destination.value = { province: sel.province, city: sel.city, districts: sel.districts }
-  draft.value.destination.source = 'explicit'
-  form.destination = sel.city
-}
 
 const emit = defineEmits<{
   logout: []
@@ -128,22 +51,12 @@ const emit = defineEmits<{
   restoreTrip: [tripId: string]
 }>()
 
-const preferenceOptions = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
 const dialogOpen = ref(false)
 const destinationQuery = ref(props.destinationQuery)
 const dialogElement = ref<HTMLElement | null>(null)
 const submitting = ref(false)
-const form = reactive({
-  title: '',
-  destination: '广州',
-  startDate: '',
-  endDate: '',
-  budgetAmount: 3000,
-  travelers: 1,
-  travelerType: 'SOLO' as 'SOLO' | 'COUPLE' | 'FAMILY' | 'FRIENDS' | 'BUSINESS',
-  pace: 'BALANCED' as 'RELAXED' | 'BALANCED' | 'INTENSIVE',
-  preferences: [] as string[],
-})
+const createFormKey = ref(0)
+const formError = ref<string | null>(null)
 
 // ── Destination gradient mapping ──
 const destinationGradientMap: Record<string, string> = {
@@ -192,74 +105,33 @@ function statusVariant(status: string): 'default' | 'secondary' | 'accent' | 'wa
   return { DRAFT: 'secondary', PLANNING: 'warning', READY: 'success', FAILED: 'danger' }[status] as any ?? 'secondary'
 }
 
-function resetForm() {
-  form.title = ''
-  form.destination = '广州'
-  form.startDate = ''
-  form.endDate = ''
-  form.budgetAmount = 3000
-  form.travelers = 1
-  form.travelerType = 'SOLO'
-  form.pace = 'BALANCED'
-  form.preferences = []
-}
-
 const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
   dialogOpen,
   dialogElement,
   () => { dialogOpen.value = false },
 )
 
-function openDialog(event?: Event, initial?: Pick<typeof form, 'title' | 'destination'>) {
+function openDialog(event?: Event) {
   rememberTrigger(event?.currentTarget)
-  resetForm()
-  draft.value = createDefaultDraft()
-  parseWarnings.value = []
-  parseUnrecognized.value = []
-  useNaturalLanguage.value = true
-  if (initial) {
-    form.title = initial.title
-    form.destination = initial.destination
-    draft.value.destination.value = initial.destination
-    draft.value.destination.source = 'explicit'
-  }
+  formError.value = null
+  // 重建共享表单，保证每次打开都是全新草稿。
+  createFormKey.value += 1
   dialogOpen.value = true
 }
 
-function togglePreference(preference: string) {
-  const index = form.preferences.indexOf(preference)
-  if (index >= 0) form.preferences.splice(index, 1)
-  else form.preferences.push(preference)
-}
+// /trips/new 直接落到统一创建表单。
+watch(() => props.autoOpenCreate, (shouldOpen) => {
+  if (shouldOpen) openDialog()
+}, { immediate: true })
 
-async function saveTrip() {
+async function handleFormSubmit(payload: CreateTripInput) {
   submitting.value = true
+  formError.value = null
   try {
-    const title = form.title || `${form.destination || draft.value.destination.value}之旅`
-    await props.createTrip({
-      title,
-      destination: form.destination,
-      startDate: form.startDate,
-      endDate: form.endDate,
-      constraints: {
-        budgetAmount: form.budgetAmount,
-        travelers: form.travelers,
-        travelerType: form.travelerType,
-        pace: form.pace,
-        preferences: [...form.preferences],
-        fixedSchedules: [],
-        arrival: null,
-        departure: null,
-        accommodation: null,
-        mustVisitPlaces: [],
-        avoidPlaces: [],
-        mealWindows: [],
-        mobilityLevel: 'STANDARD',
-      },
-    })
+    await props.createTrip(payload)
     dialogOpen.value = false
-  } catch {
-    // The parent renders the API error while the dialog remains open.
+  } catch (cause) {
+    formError.value = cause instanceof Error ? cause.message : '创建失败，请稍后重试'
   } finally {
     submitting.value = false
   }
@@ -354,14 +226,6 @@ async function saveTrip() {
 
         <!-- Content when loaded -->
         <template v-else>
-          <!-- Trip Templates (always show when not busy) -->
-          <TripTemplates
-            v-if="trips.length <= 2"
-            @select="(tmpl) => {
-              openDialog(undefined, tmpl)
-            }"
-          />
-
           <!-- Empty State -->
           <div
             v-if="trips.length === 0 && !busy"
@@ -369,7 +233,7 @@ async function saveTrip() {
           >
             <MapPin :size="36" stroke-width="1.5" aria-hidden="true" />
             <h2 class="text-lg font-semibold text-surface-500">还没有旅行</h2>
-            <p class="text-sm text-surface-400 -mt-2">选择上方模板快速开始，或点击创建旅行</p>
+            <p class="text-sm text-surface-400 -mt-2">点击创建旅行，填写约束后开始规划</p>
             <Button variant="outline" @click="openDialog">
               <Plus :size="16" /> 创建第一条旅行
             </Button>
@@ -509,114 +373,16 @@ async function saveTrip() {
             </button>
           </div>
 
-          <!-- 自然语言输入 -->
-          <div class="px-6 pt-5">
-            <NaturalLanguageInput
-              :warnings="parseWarnings"
-              :unrecognized="parseUnrecognized"
-              @parse="handleParse"
+          <div class="px-6 py-5">
+            <TripConstraintForm
+              :key="createFormKey"
+              :server-date="serverDate"
+              :search-places="searchPlaces"
+              :submitting="submitting"
+              :error="formError"
+              @submit="handleFormSubmit"
             />
           </div>
-
-          <!-- 约束卡片 -->
-          <div class="px-6 pt-4" v-if="draft.destination.source !== 'unset'">
-            <ConstraintCard
-              :draft="draft"
-              @edit="handleCardEdit"
-              @remove="handleCardRemove"
-              @append="handleCardAppend"
-              @destination-change="handleDestinationChange"
-            />
-          </div>
-
-          <!-- 传统表单（折叠） -->
-          <details class="px-6 pt-4" open>
-            <summary class="cursor-pointer text-xs font-semibold text-surface-500 hover:text-surface-700">
-              {{ useNaturalLanguage ? '展开完整表单编辑' : '收起完整表单' }}
-            </summary>
-
-          <form class="py-5" @submit.prevent="saveTrip">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div class="sm:col-span-2">
-                <label for="trip-title" class="block text-xs font-semibold text-surface-600 mb-1.5">旅行名称</label>
-                <input id="trip-title" v-model.trim="form.title" maxlength="120" required data-modal-initial-focus
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-              </div>
-              <div class="sm:col-span-2">
-                <label for="destination" class="block text-xs font-semibold text-surface-600 mb-1.5">目的地</label>
-                <input id="destination" v-model.trim="form.destination" maxlength="120" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-              </div>
-              <div>
-                <label for="start-date" class="block text-xs font-semibold text-surface-600 mb-1.5">开始日期</label>
-                <input id="start-date" v-model="form.startDate" type="date" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-              </div>
-              <div>
-                <label for="end-date" class="block text-xs font-semibold text-surface-600 mb-1.5">结束日期</label>
-                <input id="end-date" v-model="form.endDate" type="date" :min="form.startDate" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-              </div>
-              <div>
-                <label for="budget" class="block text-xs font-semibold text-surface-600 mb-1.5">预算</label>
-                <div class="flex items-center gap-2 h-10 rounded-xl border border-surface-200 bg-white px-3 focus-within:ring-2 focus-within:ring-primary-400/40 focus-within:border-primary-400 transition-shadow">
-                  <span class="text-surface-400 text-sm">¥</span>
-                  <input id="budget" v-model.number="form.budgetAmount" type="number" min="0" step="0.01" required
-                    class="w-full h-full border-0 bg-transparent text-sm text-surface-800 outline-0" />
-                </div>
-              </div>
-              <div>
-                <label for="travelers" class="block text-xs font-semibold text-surface-600 mb-1.5">同行人数</label>
-                <input id="travelers" v-model.number="form.travelers" type="number" min="1" max="50" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-              </div>
-              <div class="sm:col-span-2">
-                <label for="traveler-type" class="block text-xs font-semibold text-surface-600 mb-1.5">同行类型</label>
-                <select id="traveler-type" v-model="form.travelerType" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow">
-                  <option value="SOLO">独自出行</option>
-                  <option value="COUPLE">伴侣同行</option>
-                  <option value="FAMILY">家庭出行</option>
-                  <option value="FRIENDS">朋友同行</option>
-                  <option value="BUSINESS">商务出行</option>
-                </select>
-              </div>
-            </div>
-
-            <fieldset class="mt-5 border-0 p-0">
-              <legend class="text-xs font-semibold text-surface-600 mb-2">旅行节奏</legend>
-              <div class="grid grid-cols-3 rounded-xl bg-surface-100 p-1">
-                <label v-for="p in [{v:'RELAXED',l:'舒缓'},{v:'BALANCED',l:'均衡'},{v:'INTENSIVE',l:'紧凑'}]" :key="p.v"
-                  class="relative flex h-9 cursor-pointer items-center justify-center rounded-lg text-sm font-medium transition-all"
-                  :class="form.pace === p.v ? 'bg-white text-primary-700 shadow-sm' : 'text-surface-500 hover:text-surface-700'"
-                >
-                  <input v-model="form.pace" type="radio" :value="p.v" class="sr-only" />
-                  {{ p.l }}
-                </label>
-              </div>
-            </fieldset>
-
-            <fieldset class="mt-5 border-0 p-0">
-              <legend class="text-xs font-semibold text-surface-600 mb-2">偏好</legend>
-              <div class="flex flex-wrap gap-2">
-                <label v-for="preference in preferenceOptions" :key="preference"
-                  class="relative inline-flex cursor-pointer items-center rounded-xl border px-3 py-2 text-sm font-medium transition-all"
-                  :class="form.preferences.includes(preference) ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'"
-                >
-                  <input type="checkbox" :value="preference" :checked="form.preferences.includes(preference)" class="sr-only" @change="togglePreference(preference)" />
-                  {{ preference }}
-                </label>
-              </div>
-            </fieldset>
-
-            <p v-if="error" class="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ error }}</p>
-
-            <div class="flex items-center justify-end gap-3 mt-6 pt-5 border-t border-surface-100">
-              <Button variant="outline" size="sm" type="button" @click="dialogOpen = false">取消</Button>
-              <Button variant="primary" size="sm" type="submit" :disabled="submitting">保存旅行</Button>
-            </div>
-          </form>
-          </details>
         </div>
       </div>
     </div>

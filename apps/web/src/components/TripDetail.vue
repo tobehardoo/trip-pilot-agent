@@ -39,14 +39,17 @@ import {
   type ItineraryShareStatus,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
+  type PlaceSearchResponse,
   type PlanEvaluation,
   type PlanningProgressUpdate,
   type Trip,
+  type UpdateConfigurationInput,
   type UpdateTripConstraintsInput,
   type User,
 } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
 import { cn } from '../lib/utils'
+import TripConstraintForm, { type TripConfigurationPayload } from './TripConstraintForm.vue'
 import {
   estimateCommuteOptions,
   recommendedCommuteMode,
@@ -106,6 +109,9 @@ const props = withDefaults(defineProps<{
   startPlanning: () => Promise<void>
   cancelPlanning: () => Promise<void>
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
+  updateConfiguration?: (tripId: string, input: UpdateConfigurationInput) => Promise<void>
+  serverDate?: string
+  searchPlaces?: (keyword: string, city: string) => Promise<PlaceSearchResponse>
   reloadTrip: () => Promise<boolean>
   evaluation?: PlanEvaluation | null
   evaluationBusy?: boolean
@@ -154,7 +160,6 @@ const emit = defineEmits<{
   logout: []
 }>()
 
-const defaultPreferences = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
 const chinaTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   hour: '2-digit',
   minute: '2-digit',
@@ -335,31 +340,7 @@ watch(() => props.itinerary?.versionId, () => {
   Object.keys(lockedTransitLegs).forEach((legId) => { delete lockedTransitLegs[legId] })
   transitEditError.value = null
 })
-const form = reactive({
-  budgetAmount: '',
-  travelers: 1,
-  travelerType: 'SOLO' as Trip['constraints']['travelerType'],
-  pace: 'BALANCED' as Trip['constraints']['pace'],
-  preferences: [] as string[],
-  arrivalPlace: '',
-  arrivalTime: '',
-  departurePlace: '',
-  departureTime: '',
-  accommodationPlace: '',
-  mustVisitText: '',
-  avoidText: '',
-  breakfastStart: '',
-  breakfastEnd: '',
-  lunchStart: '',
-  lunchEnd: '',
-  dinnerStart: '',
-  dinnerEnd: '',
-  mobilityLevel: 'STANDARD' as NonNullable<Trip['constraints']['mobilityLevel']>,
-})
-
-const preferenceOptions = computed(() => [
-  ...new Set([...defaultPreferences, ...(props.trip?.constraints.preferences ?? [])]),
-])
+const configFormKey = ref(0)
 
 const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
   editing,
@@ -370,82 +351,25 @@ const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
 function openEditor(event?: Event) {
   if (!props.trip) return
   rememberTrigger(event?.currentTarget)
-  form.budgetAmount = props.trip.constraints.budgetAmount?.toString() ?? ''
-  form.travelers = props.trip.constraints.travelers
-  form.travelerType = props.trip.constraints.travelerType
-  form.pace = props.trip.constraints.pace
-  form.preferences = [...props.trip.constraints.preferences]
-  form.arrivalPlace = props.trip.constraints.arrival?.placeName ?? ''
-  form.arrivalTime = toChinaLocalInput(props.trip.constraints.arrival?.time)
-  form.departurePlace = props.trip.constraints.departure?.placeName ?? ''
-  form.departureTime = toChinaLocalInput(props.trip.constraints.departure?.time)
-  form.accommodationPlace = props.trip.constraints.accommodation?.placeName ?? ''
-  form.mustVisitText = (props.trip.constraints.mustVisitPlaces ?? []).join('、')
-  form.avoidText = (props.trip.constraints.avoidPlaces ?? []).join('、')
-  const windows = props.trip.constraints.mealWindows ?? []
-  for (const meal of ['BREAKFAST', 'LUNCH', 'DINNER'] as const) {
-    const window = windows.find((item) => item.mealType === meal)
-    const prefix = meal === 'BREAKFAST' ? 'breakfast' : meal.toLowerCase()
-    form[`${prefix}Start` as 'breakfastStart' | 'lunchStart' | 'dinnerStart'] = window?.startTime.slice(0, 5) ?? ''
-    form[`${prefix}End` as 'breakfastEnd' | 'lunchEnd' | 'dinnerEnd'] = window?.endTime.slice(0, 5) ?? ''
-  }
-  form.mobilityLevel = props.trip.constraints.mobilityLevel ?? 'STANDARD'
   formError.value = null
   versionConflict.value = false
+  configFormKey.value += 1
   editing.value = true
 }
 
-function togglePreference(preference: string) {
-  const index = form.preferences.indexOf(preference)
-  if (index >= 0) form.preferences.splice(index, 1)
-  else form.preferences.push(preference)
-}
-
-async function saveConstraints() {
+async function handleConfigSubmit(payload: TripConfigurationPayload) {
   if (!props.trip) return
-  if (Boolean(form.arrivalPlace) !== Boolean(form.arrivalTime)) {
-    formError.value = '请同时填写到达地点和到达时间'
-    return
-  }
-  if (Boolean(form.departurePlace) !== Boolean(form.departureTime)) {
-    formError.value = '请同时填写返程地点和返程时间'
-    return
-  }
-  const partialMeal = [
-    ['早餐', form.breakfastStart, form.breakfastEnd],
-    ['午餐', form.lunchStart, form.lunchEnd],
-    ['晚餐', form.dinnerStart, form.dinnerEnd],
-  ].find(([, start, end]) => Boolean(start) !== Boolean(end))
-  if (partialMeal) {
-    formError.value = `请同时填写${partialMeal[0]}窗口的开始和结束时间`
-    return
-  }
   submitting.value = true
   formError.value = null
   versionConflict.value = false
   try {
-    await props.updateConstraints({
-      version: props.trip.version,
-      budgetAmount: form.budgetAmount === '' ? null : Number(form.budgetAmount),
-      travelers: form.travelers,
-      travelerType: form.travelerType,
-      pace: form.pace,
-      preferences: [...form.preferences],
-      fixedSchedules: props.trip.constraints.fixedSchedules.map((schedule) => ({ ...schedule })),
-      arrival: form.arrivalPlace && form.arrivalTime
-        ? { placeName: form.arrivalPlace, time: `${form.arrivalTime}:00+08:00` }
-        : null,
-      departure: form.departurePlace && form.departureTime
-        ? { placeName: form.departurePlace, time: `${form.departureTime}:00+08:00` }
-        : null,
-      accommodation: form.accommodationPlace
-        ? { placeName: form.accommodationPlace }
-        : null,
-      mustVisitPlaces: splitPlaces(form.mustVisitText),
-      avoidPlaces: splitPlaces(form.avoidText),
-      mealWindows: buildMealWindows(),
-      mobilityLevel: form.mobilityLevel,
-    })
+    if (props.updateConfiguration) {
+      // 编辑流程 version 由共享表单携带（来自当前 trip.version）。
+      await props.updateConfiguration(props.trip.id, { ...payload, version: payload.version ?? props.trip.version })
+    } else {
+      const { version, constraints } = payload
+      await props.updateConstraints({ version: version ?? props.trip.version, ...constraints })
+    }
     editing.value = false
   } catch (cause) {
     if (cause instanceof ApiError && cause.status === 409) {
@@ -457,29 +381,6 @@ async function saveConstraints() {
   } finally {
     submitting.value = false
   }
-}
-
-function toChinaLocalInput(value?: string) {
-  if (!value) return ''
-  return new Date(value).toLocaleString('sv-SE', {
-    timeZone: 'Asia/Shanghai',
-    hour12: false,
-  }).replace(' ', 'T').slice(0, 16)
-}
-
-function splitPlaces(value: string) {
-  return [...new Set(value.split(/[,，、\n]/).map((item) => item.trim()).filter(Boolean))]
-}
-
-function buildMealWindows(): NonNullable<Trip['constraints']['mealWindows']> {
-  const values = [
-    ['BREAKFAST', form.breakfastStart, form.breakfastEnd],
-    ['LUNCH', form.lunchStart, form.lunchEnd],
-    ['DINNER', form.dinnerStart, form.dinnerEnd],
-  ] as const
-  return values
-    .filter(([, start, end]) => start && end)
-    .map(([mealType, startTime, endTime]) => ({ mealType, startTime, endTime }))
 }
 
 async function reloadLatestTrip() {
@@ -1521,118 +1422,16 @@ watch(() => props.itinerary, (nextItinerary) => {
           </button>
         </div>
 
-        <form class="px-6 py-5" @submit.prevent="saveConstraints">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label for="edit-budget" class="block text-xs font-semibold text-surface-600 mb-1.5">预算</label>
-              <div class="flex items-center gap-2 h-10 rounded-xl border border-surface-200 bg-white px-3 focus-within:ring-2 focus-within:ring-primary-400/40 focus-within:border-primary-400 transition-shadow">
-                <span class="text-surface-400 text-sm">¥</span>
-                <input id="edit-budget" v-model="form.budgetAmount" type="number" min="0" step="0.01" class="w-full h-full border-0 bg-transparent text-sm text-surface-800 outline-0 placeholder:text-surface-300" data-modal-initial-focus />
-              </div>
-            </div>
-            <div>
-              <label for="edit-travelers" class="block text-xs font-semibold text-surface-600 mb-1.5">同行人数</label>
-              <input id="edit-travelers" v-model.number="form.travelers" type="number" min="1" max="50" required class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-            </div>
-            <div class="sm:col-span-2">
-              <label for="edit-traveler-type" class="block text-xs font-semibold text-surface-600 mb-1.5">同行类型</label>
-              <select id="edit-traveler-type" v-model="form.travelerType" required class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow">
-                <option value="SOLO">独自出行</option>
-                <option value="COUPLE">伴侣同行</option>
-                <option value="FAMILY">家庭出行</option>
-                <option value="FRIENDS">朋友同行</option>
-                <option value="BUSINESS">商务出行</option>
-              </select>
-            </div>
-            <div>
-              <label for="arrival-place" class="block text-xs font-semibold text-surface-600 mb-1.5">到达地点</label>
-              <input id="arrival-place" v-model.trim="form.arrivalPlace" maxlength="120" class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-            </div>
-            <div>
-              <label for="arrival-time" class="block text-xs font-semibold text-surface-600 mb-1.5">到达时间（北京时间）</label>
-              <input id="arrival-time" v-model="form.arrivalTime" type="datetime-local" class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-            </div>
-            <div>
-              <label for="departure-place" class="block text-xs font-semibold text-surface-600 mb-1.5">返程地点</label>
-              <input id="departure-place" v-model.trim="form.departurePlace" maxlength="120" class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-            </div>
-            <div>
-              <label for="departure-time" class="block text-xs font-semibold text-surface-600 mb-1.5">返程时间（北京时间）</label>
-              <input id="departure-time" v-model="form.departureTime" type="datetime-local" class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-            </div>
-            <div class="sm:col-span-2">
-              <label for="accommodation-place" class="block text-xs font-semibold text-surface-600 mb-1.5">住宿锚点</label>
-              <input id="accommodation-place" v-model.trim="form.accommodationPlace" maxlength="120" class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-            </div>
-            <div>
-              <label for="must-visit" class="block text-xs font-semibold text-surface-600 mb-1.5">必去地点（用顿号分隔）</label>
-              <input id="must-visit" v-model="form.mustVisitText" maxlength="1000" class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-            </div>
-            <div>
-              <label for="avoid-places" class="block text-xs font-semibold text-surface-600 mb-1.5">排除地点（用顿号分隔）</label>
-              <input id="avoid-places" v-model="form.avoidText" maxlength="1000" class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-            </div>
-            <div class="sm:col-span-2">
-              <label for="mobility-level" class="block text-xs font-semibold text-surface-600 mb-1.5">行动能力</label>
-              <select id="mobility-level" v-model="form.mobilityLevel" class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow">
-                <option value="STANDARD">标准步行</option>
-                <option value="REDUCED">减少步行</option>
-                <option value="STEP_FREE">尽量无台阶（车行接驳，场地需确认）</option>
-              </select>
-            </div>
-
-            <!-- Meal Windows -->
-            <div v-for="meal in [
-              { key: 'breakfast', label: '早餐' },
-              { key: 'lunch', label: '午餐' },
-              { key: 'dinner', label: '晚餐' },
-            ]" :key="meal.key" class="sm:col-span-2">
-              <label class="block text-xs font-semibold text-surface-600 mb-1.5">{{ meal.label }}窗口</label>
-              <div class="flex items-center gap-3">
-                <input v-model="form[`${meal.key}Start` as 'breakfastStart' | 'lunchStart' | 'dinnerStart']" type="time" :aria-label="`${meal.label}开始时间`" class="flex-1 h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-                <span class="text-surface-400 text-sm">至</span>
-                <input v-model="form[`${meal.key}End` as 'breakfastEnd' | 'lunchEnd' | 'dinnerEnd']" type="time" :aria-label="`${meal.label}结束时间`" class="flex-1 h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-              </div>
-            </div>
-          </div>
-
-          <!-- Pace -->
-          <fieldset class="mt-5 border-0 p-0">
-            <legend class="text-xs font-semibold text-surface-600 mb-2">旅行节奏</legend>
-            <div class="grid grid-cols-3 rounded-xl bg-surface-100 p-1">
-              <label v-for="pace in [{v:'RELAXED',l:'舒缓'},{v:'BALANCED',l:'均衡'},{v:'INTENSIVE',l:'紧凑'}]" :key="pace.v"
-                class="relative flex h-9 cursor-pointer items-center justify-center rounded-lg text-sm font-medium transition-all"
-                :class="form.pace === pace.v ? 'bg-white text-primary-700 shadow-sm' : 'text-surface-500 hover:text-surface-700'"
-              >
-                <input v-model="form.pace" type="radio" :value="pace.v" class="sr-only" />
-                {{ pace.l }}
-              </label>
-            </div>
-          </fieldset>
-
-          <!-- Preferences -->
-          <fieldset class="mt-5 border-0 p-0">
-            <legend class="text-xs font-semibold text-surface-600 mb-2">偏好</legend>
-            <div class="flex flex-wrap gap-2">
-              <label v-for="preference in preferenceOptions" :key="preference"
-                class="relative inline-flex cursor-pointer items-center rounded-xl border px-3 py-2 text-sm font-medium transition-all"
-                :class="form.preferences.includes(preference) ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'"
-              >
-                <input
-                  type="checkbox"
-                  :value="preference"
-                  :checked="form.preferences.includes(preference)"
-                  class="sr-only"
-                  @change="togglePreference(preference)"
-                />
-                {{ preference }}
-              </label>
-            </div>
-          </fieldset>
-
-          <!-- Error -->
-          <p v-if="formError" class="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ formError }}</p>
-
+        <div class="px-6 py-5">
+          <TripConstraintForm
+            :key="configFormKey"
+            :initial="trip"
+            :server-date="serverDate"
+            :search-places="searchPlaces"
+            :submitting="submitting"
+            :error="formError"
+            @submit="handleConfigSubmit"
+          />
           <button
             v-if="versionConflict"
             class="mt-4 inline-flex h-10 items-center rounded-xl border border-red-200 bg-white px-4 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
@@ -1642,13 +1441,7 @@ watch(() => props.itinerary, (nextItinerary) => {
           >
             重新加载最新数据
           </button>
-
-          <!-- Actions -->
-          <div class="flex items-center justify-end gap-3 mt-6 pt-5 border-t border-surface-100">
-            <Button variant="outline" size="sm" type="button" @click="editing = false">取消</Button>
-            <Button variant="primary" size="sm" type="submit" :disabled="submitting">保存约束</Button>
-          </div>
-        </form>
+        </div>
       </div>
     </div>
   </div>

@@ -58,12 +58,24 @@ function defaultMeal(mealType: TripMealWindow['mealType']): TripMealWindow {
 
 function dateFromIso(value?: string): string {
   if (!value) return ''
-  return value.slice(0, 10)
+  return beijingParts(value)?.date ?? value.slice(0, 10)
 }
 
 function timeFromIso(value?: string): string {
   if (!value) return ''
-  return value.slice(11, 16)
+  return beijingParts(value)?.time ?? value.slice(11, 16)
+}
+
+/**
+ * 解析完整 ISO 时刻（后端以 UTC 存储），返回北京时间的
+ * 日期与 HH:mm，避免跨时区回填时时间偏差 8 小时。
+ */
+function beijingParts(value: string): { date: string; time: string } | null {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return null
+  const beijing = new Date(parsed.getTime() + 8 * 60 * 60 * 1000)
+  const iso = beijing.toISOString()
+  return { date: iso.slice(0, 10), time: iso.slice(11, 16) }
 }
 
 function emptyForm() {
@@ -170,11 +182,9 @@ function togglePreference(preference: string) {
 function onRegionChange(region: DestinationRegion | null) {
   const cityChanged = (form.destinationRegion?.cityCode ?? '') !== (region?.cityCode ?? '')
   form.destinationRegion = region
-  form.destination = region
-    ? region.cityName + (region.districts.length
-        ? region.districts.map((d) => d.districtName).join('、')
-        : '')
-    : ''
+  // destination 保留城市名即可：区县在 destinationRegion.districts 中，且
+  // Python 规划器会把 destination 当作 AMap 城市搜索参数，拼接区县会失效。
+  form.destination = region ? region.cityName : ''
   if (cityChanged) {
     form.arrivalPoi = null
     form.departurePoi = null

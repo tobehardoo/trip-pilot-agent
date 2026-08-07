@@ -84,6 +84,14 @@ function toggleDistrict(district: { name: string; adcode?: string }) {
 // 回填初始值。
 watch(() => props.modelValue, (region) => {
   if (!region) {
+    // 省份已选而城市未选时，父组件会把 null 写回（onProvinceChange 的中间态
+    // 回声）。此时省份是用户正在重选城市的有效输入，保留省份、只清空城市与
+    // 区县；只有省份也为空（真正的外部重置）才清空全部。
+    if (selectedProvinceName.value) {
+      selectedCityName.value = ''
+      selectedDistricts.value = []
+      return
+    }
     selectedProvinceName.value = ''
     selectedCityName.value = ''
     selectedDistricts.value = []

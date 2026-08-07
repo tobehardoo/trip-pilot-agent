@@ -41,7 +41,7 @@ class AmapPlaceSearchClientTest {
                         "citylimit", List.of("true"),
                         "city", List.of("长沙"),
                         "offset", List.of("8"),
-                        "types", List.of("120000|150302|150500")
+                        "types", List.of("150300|150301|150302|150400|150401|150402|150500|150600|150700|150800")
                 )))
                 .andRespond(withSuccess("""
                         {
@@ -54,7 +54,9 @@ class AmapPlaceSearchClientTest {
                             "address": "长沙市岳麓区枫林一路123号",
                             "pname": "湖南省",
                             "cityname": "长沙市",
-                            "adname": "岳麓区"
+                            "adname": "岳麓区",
+                            "type": "住宿服务;宾馆酒店;经济型酒店",
+                            "typecode": "120100"
                           }]
                         }
                         """, MediaType.APPLICATION_JSON));
@@ -69,6 +71,8 @@ class AmapPlaceSearchClientTest {
             assertThat(poi.latitude()).isEqualByComparingTo("28.1987");
             assertThat(poi.city()).isEqualTo("长沙市");
             assertThat(poi.district()).isEqualTo("岳麓区");
+            assertThat(poi.categoryName()).isEqualTo("经济型酒店");
+            assertThat(poi.categoryCode()).isEqualTo("120100");
         });
         server.verify();
     }

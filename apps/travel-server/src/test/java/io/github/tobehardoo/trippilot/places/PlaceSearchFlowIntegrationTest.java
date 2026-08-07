@@ -67,7 +67,7 @@ class PlaceSearchFlowIntegrationTest extends PostgresIntegrationTest {
                 new PlacePoi("长沙希尔顿酒店", "B0FFFABC12",
                         "长沙市岳麓区枫林一路123号",
                         new BigDecimal("112.9834"), new BigDecimal("28.1987"),
-                        "长沙市", "岳麓区", null)
+                        "长沙市", "岳麓区", null, "经济型酒店", "120100")
         ));
 
         mockMvc.perform(get("/api/places/search")
@@ -105,7 +105,7 @@ class PlaceSearchFlowIntegrationTest extends PostgresIntegrationTest {
         StubPlaceSearchClientConfig.CLIENT.set((keyword, city, limit) -> List.of(
                 new PlacePoi("广州南站", "BV10019725", "广州市番禺区南站北路",
                         new BigDecimal("113.269"), new BigDecimal("22.988"),
-                        "广州市", "番禺区", "440113")
+                        "广州市", "番禺区", "440113", "高铁站", "150302")
         ));
 
         mockMvc.perform(get("/api/places/suggest")

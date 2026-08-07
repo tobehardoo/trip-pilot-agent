@@ -49,13 +49,17 @@ public class PlaceSuggestService {
         }
         String cityName = RegionCatalog.cityName(cityCode);
         List<PlaceSuggestItem> items = new ArrayList<>();
+        // A suggestion is always actionable: clicking it re-searches the raw
+        // keyword. It never carries a POI id so it can never become an anchor.
+        items.add(PlaceSuggestItem.suggestion(normalized));
         items.addAll(regionMatches(normalized, cityCode));
         if (properties.amapKey() != null && !properties.amapKey().isBlank()) {
             try {
                 for (PlacePoi poi : client.searchScene(normalized, cityName,
                         properties.maxResults(), scene)) {
                     items.add(PlaceSuggestItem.poi(
-                            "AMAP", poi.providerPoiId(), poi.name(), categoryLabel(scene),
+                            "AMAP", poi.providerPoiId(), poi.name(),
+                            poi.categoryName(), poi.categoryCode(),
                             RegionCatalog.provinceOfCity(cityCode), cityCode,
                             poi.districtCode(), poi.district(), poi.fullAddress(),
                             poi.longitude(), poi.latitude()));
@@ -78,7 +82,7 @@ public class PlaceSuggestService {
             if (contains(keyword, districtName)) {
                 String districtCode = RegionCatalog.districtCodeOf(districtName, cityCode);
                 matches.add(new PlaceSuggestItem(
-                        "REGION", null, null, districtName, "区县",
+                        "REGION", null, null, districtName, "区县", null,
                         RegionCatalog.provinceOfCity(cityCode), cityCode,
                         districtCode, districtName, null, null, null));
             }
@@ -91,9 +95,5 @@ public class PlaceSuggestService {
             return false;
         }
         return candidate.contains(keyword) || keyword.contains(candidate);
-    }
-
-    private static String categoryLabel(String scene) {
-        return "HOTEL".equalsIgnoreCase(scene) ? "酒店" : "交通站场";
     }
 }

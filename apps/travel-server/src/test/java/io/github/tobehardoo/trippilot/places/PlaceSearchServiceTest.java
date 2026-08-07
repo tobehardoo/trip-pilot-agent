@@ -51,7 +51,7 @@ class PlaceSearchServiceTest {
                 new PlacePoi("长沙希尔顿酒店", "B0FFFABC12",
                         "长沙市岳麓区枫林一路123号",
                         new BigDecimal("112.9834"), new BigDecimal("28.1987"),
-                        "长沙市", "岳麓区", null)
+                        "长沙市", "岳麓区", null, "经济型酒店", "120100")
         ));
 
         PlaceSearchResponse response = service(100, client).search("希尔顿", "长沙");

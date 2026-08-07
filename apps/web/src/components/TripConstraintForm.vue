@@ -154,6 +154,9 @@ watch(() => form.endDate, (next, previous) => {
   if (form.departureDate === previous || form.departureDate === '') form.departureDate = next ?? ''
 })
 
+/** POI 搜索与后端城市匹配使用城市名而非包含区县的目的地字符串。 */
+const searchCity = computed(() => form.destinationRegion?.cityName || form.destination)
+
 const preferenceOptions = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
 const allPreferences = computed(() => [...new Set([...preferenceOptions, ...form.preferences])])
 
@@ -241,11 +244,11 @@ function handleSubmit() {
   const arrivalBeingSet = Boolean(arrivalPlace) || Boolean(form.arrivalTime)
   const departureBeingSet = Boolean(departurePlace) || Boolean(form.departureTime)
   if (arrivalBeingSet && (!form.arrivalDate || !arrivalPlace || !form.arrivalTime)) {
-    formError.value = '请完整填写到达日期、时间和地点'
+    formError.value = '请从列表中选择到达地点，并完整填写到达日期和时间'
     return
   }
   if (departureBeingSet && (!form.departureDate || !departurePlace || !form.departureTime)) {
-    formError.value = '请完整填写返程日期、时间和地点'
+    formError.value = '请从列表中选择返程地点，并完整填写返程日期和时间'
     return
   }
   if (arrivalBeingSet && form.arrivalDate
@@ -256,6 +259,11 @@ function handleSubmit() {
   if (departureBeingSet && form.departureDate
       && (form.departureDate < form.startDate || form.departureDate > form.endDate)) {
     formError.value = '返程日期必须在旅行日期范围内'
+    return
+  }
+  if (arrivalBeingSet && departureBeingSet && form.arrivalDate && form.departureDate
+      && `${form.arrivalDate}T${form.arrivalTime}` >= `${form.departureDate}T${form.departureTime}`) {
+    formError.value = '到达时间必须早于返程时间'
     return
   }
   for (const meal of [form.breakfast, form.lunch, form.dinner]) {
@@ -400,7 +408,7 @@ function handleSubmit() {
             <PlaceSearchField
               v-model="form.arrivalPoi"
               :legacy-place-name="form.arrivalPoi ? '' : form.arrivalPlace"
-              :city="form.destination"
+              :city="searchCity"
               :city-code="form.destinationRegion?.cityCode ?? ''"
               scene="ARRIVAL"
               :search-places="searchPlaces"
@@ -427,7 +435,7 @@ function handleSubmit() {
             <PlaceSearchField
               v-model="form.departurePoi"
               :legacy-place-name="form.departurePoi ? '' : form.departurePlace"
-              :city="form.destination"
+              :city="searchCity"
               :city-code="form.destinationRegion?.cityCode ?? ''"
               scene="DEPARTURE"
               :search-places="searchPlaces"
@@ -447,7 +455,7 @@ function handleSubmit() {
       <PlaceSearchField
         v-model="form.accommodationPoi"
         :legacy-place-name="form.accommodationPoi ? '' : form.accommodationPlace"
-        :city="form.destination"
+        :city="searchCity"
         :city-code="form.destinationRegion?.cityCode ?? ''"
         scene="HOTEL"
         :search-places="searchPlaces"

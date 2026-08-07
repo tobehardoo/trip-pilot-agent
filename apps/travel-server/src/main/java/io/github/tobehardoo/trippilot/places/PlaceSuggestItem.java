@@ -13,6 +13,7 @@ public record PlaceSuggestItem(
         String providerPoiId,
         String name,
         String category,
+        String categoryCode,
         String provinceCode,
         String cityCode,
         String districtCode,
@@ -23,16 +24,22 @@ public record PlaceSuggestItem(
 ) {
 
     public static PlaceSuggestItem poi(String provider, String providerPoiId, String name, String category,
-                                       String provinceCode, String cityCode, String districtCode,
-                                       String districtName, String fullAddress,
+                                       String categoryCode, String provinceCode, String cityCode,
+                                       String districtCode, String districtName, String fullAddress,
                                        BigDecimal longitude, BigDecimal latitude) {
-        return new PlaceSuggestItem("POI", provider, providerPoiId, name, category,
+        return new PlaceSuggestItem("POI", provider, providerPoiId, name, category, categoryCode,
                 provinceCode, cityCode, districtCode, districtName, fullAddress, longitude, latitude);
     }
 
     public static PlaceSuggestItem region(String name, String category,
                                           String provinceCode, String cityCode) {
-        return new PlaceSuggestItem("REGION", null, null, name, category,
+        return new PlaceSuggestItem("REGION", null, null, name, category, null,
                 provinceCode, cityCode, null, null, null, null, null);
+    }
+
+    /** Suggestion entry: clicking it re-searches the raw keyword. Never an anchor. */
+    public static PlaceSuggestItem suggestion(String keyword) {
+        return new PlaceSuggestItem("SUGGESTION", null, null, keyword, "搜索建议", null,
+                null, null, null, null, null, null, null);
     }
 }

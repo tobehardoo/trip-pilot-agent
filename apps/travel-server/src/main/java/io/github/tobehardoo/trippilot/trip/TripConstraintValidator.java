@@ -69,10 +69,10 @@ public class TripConstraintValidator {
     ) {
         validateAnchor(input.arrival(), startDate, endDate);
         validateAnchor(input.departure(), startDate, endDate);
-        validatePoi(input.arrival() == null ? null : input.arrival().poi(), destination);
-        validatePoi(input.departure() == null ? null : input.departure().poi(), destination);
+        validatePoi(input.arrival() == null ? null : input.arrival().poi(), destination, "TRANSPORT");
+        validatePoi(input.departure() == null ? null : input.departure().poi(), destination, "TRANSPORT");
         if (input.accommodation() != null) {
-            validatePoi(input.accommodation().poi(), destination);
+            validatePoi(input.accommodation().poi(), destination, "HOTEL");
         }
         if (input.arrival() != null && input.departure() != null
                 && !input.departure().time().isAfter(input.arrival().time())) {
@@ -107,13 +107,17 @@ public class TripConstraintValidator {
 
     /**
      * Structured POIs are the only trusted coordinate anchors. A POI must
-     * carry both coordinates, an address, and a city that matches the trip
-     * destination so a result from a different city cannot be passed off as
-     * the destination's.
+     * carry a provider, both coordinates, an address, and a city that matches
+     * the trip destination; its category code must fit the scene (transport for
+     * arrival/departure, lodging for the hotel). Anything else fails closed
+     * with a clear 400 instead of silently degrading to free text.
      */
-    private void validatePoi(StructuredPoi poi, String destination) {
+    private void validatePoi(StructuredPoi poi, String destination, String scene) {
         if (poi == null) {
             return;
+        }
+        if (poi.provider() == null || poi.provider().isBlank()) {
+            throw failure("Structured POI must include a provider");
         }
         if ((poi.longitude() == null) != (poi.latitude() == null)) {
             throw failure("Structured POI longitude and latitude must be provided together");
@@ -127,6 +131,31 @@ public class TripConstraintValidator {
         if (!sameCity(destination, poi.city())) {
             throw failure("Structured POI city must match the trip destination");
         }
+        if (poi.categoryCode() == null || poi.categoryCode().isBlank()) {
+            throw failure("Structured POI must include a category code");
+        }
+        if (!belongsToScene(poi.categoryCode(), scene)) {
+            throw failure(poi.categoryCode() + " is not a valid "
+                    + ("HOTEL".equals(scene) ? "lodging" : "transport") + " category for this place");
+        }
+    }
+
+    /**
+     * AMap type-code allowlists, aligned with the category filters the search
+     * client applies per scene so a saved anchor can never come from outside
+     * its scene. Transport covers railway (1503), bus (1504), port (1505),
+     * metro (1506), light rail (1507), and airport (1508); lodging starts at 12.
+     */
+    private static boolean belongsToScene(String categoryCode, String scene) {
+        if ("HOTEL".equals(scene)) {
+            return categoryCode.startsWith("12");
+        }
+        return categoryCode.startsWith("1503")
+                || categoryCode.startsWith("1504")
+                || categoryCode.startsWith("1505")
+                || categoryCode.startsWith("1506")
+                || categoryCode.startsWith("1507")
+                || categoryCode.startsWith("1508");
     }
 
     private static boolean sameCity(String destination, String poiCity) {

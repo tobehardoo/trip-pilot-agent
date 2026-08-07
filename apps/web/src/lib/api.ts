@@ -20,6 +20,15 @@ export interface StructuredPoi {
   latitude: number | null
   city: string
   district: string | null
+  /** Anchor provider; always AMAP for user-selected POIs. */
+  provider?: string | null
+  /** Specific AMap category label, e.g. "高铁站". */
+  category?: string | null
+  /** AMap type code, e.g. "150302"; backend re-validates it per scene. */
+  categoryCode?: string | null
+  provinceCode?: string | null
+  cityCode?: string | null
+  districtCode?: string | null
 }
 
 export interface TripTravelAnchor {
@@ -142,6 +151,8 @@ export interface PlaceSuggestItem {
   providerPoiId?: string | null
   name: string
   category?: string | null
+  /** AMap type code, e.g. "150302"; backend re-validates it per scene. */
+  categoryCode?: string | null
   provinceCode?: string | null
   cityCode?: string | null
   districtCode?: string | null

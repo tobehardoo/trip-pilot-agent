@@ -24,12 +24,12 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
 
     private static final String ENDPOINT = "https://restapi.amap.com/v3/place/text";
     /**
-     * Hotel (120000), railway station (150302), and airport (150500) POI
-     * categories. Keeps results structural instead of free-form.
+     * Stations, ports, and airports for ARRIVAL/DEPARTURE anchors. Covers
+     * railway (1503xx), bus (1504xx), port (1505xx), metro (1506xx), light
+     * rail (1507xx), and airport (1508xx) categories.
      */
-    private static final String TYPE_FILTER = "120000|150302|150500";
-    /** Stations, ports, and airports for ARRIVAL/DEPARTURE anchors. */
-    private static final String STATION_TYPES = "150300|150301|150302|150400|150401|150402|150500|150600|150700";
+    private static final String STATION_TYPES =
+            "150300|150301|150302|150400|150401|150402|150500|150600|150700|150800";
     /** Lodging only for HOTEL anchors. */
     private static final String HOTEL_TYPES = "120000|141200";
     private static final int MAX_RETRIES = 1;
@@ -126,8 +126,24 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
                 latitude,
                 cityValue,
                 textOrNull(poi.path("adname")),
-                textOrNull(poi.path("adcode"))
+                textOrNull(poi.path("adcode")),
+                categoryLabel(poi.path("type").asText(null)),
+                textOrNull(poi.path("typecode"))
         );
+    }
+
+    /**
+     * The AMap {@code type} field is hierarchical ("大类;中类;小类"); the most
+     * specific segment (e.g. "高铁站") is what the UI shows next to a POI.
+     */
+    private static String categoryLabel(String type) {
+        if (type == null || type.isBlank()) {
+            return null;
+        }
+        int separator = type.lastIndexOf(';');
+        String specific = separator >= 0 ? type.substring(separator + 1) : type;
+        String trimmed = specific.trim();
+        return trimmed.isEmpty() ? type.trim() : trimmed;
     }
 
     /** AMap returns {@code []} for the cityname of municipalities; only a plain string is usable. */

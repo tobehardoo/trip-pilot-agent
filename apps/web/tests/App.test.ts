@@ -1399,7 +1399,7 @@ describe('TripPilot application shell', () => {
     await fireEvent.update(screen.getByLabelText('到达时间'), '11:00')
     await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
 
-    expect((await screen.findByRole('alert')).textContent).toContain('请完整填写到达日期、时间和地点')
+    expect((await screen.findByRole('alert')).textContent).toContain('请从列表中选择到达地点，并完整填写到达日期和时间')
     expect((screen.getByLabelText('到达时间') as HTMLInputElement).value).toBe('11:00')
     expect((document.querySelector('#LUNCH-start') as HTMLInputElement).value).toBe('12:00')
     expect(fetchMock).not.toHaveBeenCalledWith(

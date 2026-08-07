@@ -196,7 +196,13 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                     "longitude": 113.2673,
                     "latitude": 22.9923,
                     "city": "广州市",
-                    "district": "番禺区"
+                    "district": "番禺区",
+                    "provider": "AMAP",
+                    "category": "高铁站",
+                    "categoryCode": "150302",
+                    "provinceCode": "440000",
+                    "cityCode": "440100",
+                    "districtCode": "440113"
                   }
                 },
                 "departure": {
@@ -209,7 +215,13 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                     "longitude": 113.3047,
                     "latitude": 23.3923,
                     "city": "广州市",
-                    "district": "白云区"
+                    "district": "白云区",
+                    "provider": "AMAP",
+                    "category": "机场",
+                    "categoryCode": "150800",
+                    "provinceCode": "440000",
+                    "cityCode": "440100",
+                    "districtCode": "440116"
                   }
                 },
                 "accommodation": {
@@ -221,7 +233,13 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                     "longitude": 113.3237,
                     "latitude": 23.1376,
                     "city": "广州市",
-                    "district": "天河区"
+                    "district": "天河区",
+                    "provider": "AMAP",
+                    "category": "星级酒店",
+                    "categoryCode": "120100",
+                    "provinceCode": "440000",
+                    "cityCode": "440100",
+                    "districtCode": "440106"
                   }
                 }
                 """).andReturn()).get("id").asText();

@@ -126,6 +126,11 @@ final class TripRequests {
     ) {
     }
 
+    /**
+     * A trusted POI anchor chosen from the structured search list. The backend
+     * re-validates the scene category and the city binding instead of trusting
+     * the client; a POI without a provider id is never accepted as an anchor.
+     */
     record StructuredPoi(
             @NotBlank @Size(max = 200) String name,
             @NotBlank @Size(max = 100) String providerPoiId,
@@ -133,7 +138,13 @@ final class TripRequests {
             BigDecimal longitude,
             BigDecimal latitude,
             @Size(max = 60) String city,
-            @Size(max = 60) String district
+            @Size(max = 60) String district,
+            @Pattern(regexp = "AMAP|DEMO") @Size(max = 20) String provider,
+            @Size(max = 60) String category,
+            @Size(max = 20) String categoryCode,
+            @Size(max = 12) String provinceCode,
+            @Size(max = 12) String cityCode,
+            @Size(max = 12) String districtCode
     ) {
     }
 

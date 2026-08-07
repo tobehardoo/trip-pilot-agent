@@ -107,6 +107,12 @@ class StructuredPoi(InboundMessageModel):
     latitude: Decimal | None = Field(default=None, ge=-90, le=90)
     city: ShortText | None = None
     district: ShortText | None = None
+    provider: ShortText | None = None
+    category: ShortText | None = None
+    category_code: ShortText | None = None
+    province_code: ShortText | None = None
+    city_code: ShortText | None = None
+    district_code: ShortText | None = None
 
     @model_validator(mode="after")
     def validate_coordinate_pair(self) -> Self:

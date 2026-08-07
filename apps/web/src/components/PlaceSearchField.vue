@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { CheckCircle2, LoaderCircle, MapPin, RefreshCcw, Search } from 'lucide-vue-next'
+import { CheckCircle2, CornerDownLeft, LoaderCircle, MapPin, RefreshCcw, Search } from 'lucide-vue-next'
 
 import type { PlaceSearchFn, PlaceSuggestFn, PlaceSuggestItem, StructuredPoi } from '../lib/api'
 
@@ -40,13 +40,16 @@ interface Suggestion {
 // 状态拆分：输入文本与已选 POI 分离，searchStatus 明确搜索阶段。
 const inputText = ref('')
 const results = ref<Suggestion[]>([])
-const searchStatus = ref<'idle' | 'loading' | 'available' | 'unavailable' | 'no-results'>('idle')
+const searchStatus = ref<'idle' | 'short' | 'loading' | 'available' | 'unavailable' | 'no-results'>('idle')
 const requestSequence = ref(0)
 let controller: AbortController | null = null
 let debounceTimer: number | undefined
 
+const MIN_KEYWORD = 2
+
 const locked = computed(() => props.modelValue !== null)
 const cityReady = computed(() => Boolean(props.city.trim()))
+const tooShort = computed(() => searchStatus.value === 'short')
 
 function select(poi: StructuredPoi) {
   emit('update:modelValue', poi)
@@ -62,8 +65,9 @@ function clear() {
   searchStatus.value = 'idle'
 }
 
-function selectPoi(item: PlaceSuggestItem) {
-  select({
+/** 仅具体 POI 携带 provider id；REGION/SUGGESTION 无法经由此路径成为锚点。 */
+function toStructuredPoi(item: PlaceSuggestItem): StructuredPoi {
+  return {
     name: item.name,
     providerPoiId: item.providerPoiId ?? '',
     fullAddress: item.fullAddress ?? '',
@@ -71,12 +75,45 @@ function selectPoi(item: PlaceSuggestItem) {
     latitude: item.latitude ?? null,
     city: props.city,
     district: item.districtName ?? null,
-  })
+    provider: 'AMAP',
+    category: item.category ?? null,
+    categoryCode: item.categoryCode ?? null,
+    provinceCode: item.provinceCode ?? null,
+    cityCode: item.cityCode ?? null,
+    districtCode: item.districtCode ?? null,
+  }
+}
+
+function selectPoi(item: PlaceSuggestItem) {
+  select(toStructuredPoi(item))
+}
+
+/**
+ * REGION 与 SUGGESTION 只能改写关键词并发起二次搜索，不能保存为路线锚点。
+ * 写回关键词后立即搜索，并让 watch 感知到已消费的 lastQuery 以免重复请求。
+ */
+function applyKeyword(name: string) {
+  window.clearTimeout(debounceTimer)
+  lastQuery = name.trim()
+  inputText.value = name
+  requestSequence.value += 1
+  controller?.abort()
+  results.value = []
+  searchStatus.value = 'loading'
+  void runSearch()
 }
 
 async function runSearch() {
   const query = inputText.value.trim()
-  if (!query || !cityReady.value) return
+  if (!query || !cityReady.value) {
+    searchStatus.value = 'idle'
+    return
+  }
+  if (query.length < MIN_KEYWORD) {
+    searchStatus.value = 'short'
+    results.value = []
+    return
+  }
   const seq = ++requestSequence.value
   controller?.abort()
   controller = new AbortController()
@@ -85,13 +122,12 @@ async function runSearch() {
     if (props.suggestPlaces && props.cityCode) {
       const response = await props.suggestPlaces(query, props.cityCode, props.scene, controller.signal)
       if (seq !== requestSequence.value) return // 旧请求结果不得覆盖新请求
-      const items = response.items.filter((item) => item.itemType !== 'SUGGESTION')
-      if (items.length === 0) {
+      if (response.items.length === 0) {
         searchStatus.value = 'no-results'
         results.value = []
       } else {
         searchStatus.value = 'available'
-        results.value = items.map((item) => ({ item }))
+        results.value = response.items.map((item) => ({ item }))
       }
       return
     }
@@ -110,7 +146,21 @@ async function runSearch() {
     } else {
       searchStatus.value = 'available'
       results.value = response.results.map((poi) => ({
-        item: { itemType: 'POI', providerPoiId: poi.providerPoiId, name: poi.name, fullAddress: poi.fullAddress, districtName: poi.district, longitude: poi.longitude, latitude: poi.latitude },
+        item: {
+          itemType: 'POI' as const,
+          provider: poi.provider ?? 'AMAP',
+          providerPoiId: poi.providerPoiId,
+          name: poi.name,
+          category: poi.category,
+          categoryCode: poi.categoryCode,
+          provinceCode: poi.provinceCode,
+          cityCode: poi.cityCode,
+          districtCode: poi.districtCode,
+          fullAddress: poi.fullAddress,
+          districtName: poi.district,
+          longitude: poi.longitude,
+          latitude: poi.latitude,
+        },
       }))
     }
   } catch (cause) {
@@ -141,9 +191,25 @@ watch(inputText, (value) => {
     searchStatus.value = 'idle'
     return
   }
+  if (query.length < MIN_KEYWORD) {
+    requestSequence.value += 1
+    controller?.abort()
+    results.value = []
+    searchStatus.value = 'short'
+    return
+  }
   debounceTimer = window.setTimeout(() => {
     void runSearch()
   }, 300)
+})
+
+// 切换城市时丢弃旧结果并取消在途请求，防止跨城市结果串台。
+watch(() => props.cityCode, () => {
+  if (locked.value) return
+  requestSequence.value += 1
+  controller?.abort()
+  results.value = []
+  searchStatus.value = 'idle'
 })
 
 onBeforeUnmount(() => {
@@ -162,7 +228,10 @@ onBeforeUnmount(() => {
             <CheckCircle2 :size="15" aria-hidden="true" />
             <span class="truncate">{{ modelValue?.name }}</span>
           </div>
-          <p class="mt-0.5 truncate text-xs text-surface-500">{{ modelValue?.fullAddress }}</p>
+          <p v-if="modelValue?.category || modelValue?.district" class="mt-0.5 truncate text-xs text-surface-500">
+            {{ [modelValue?.category, modelValue?.district].filter(Boolean).join(' · ') }}
+          </p>
+          <p class="mt-0.5 truncate text-xs text-surface-400">{{ modelValue?.fullAddress }}</p>
         </div>
         <div class="flex shrink-0 items-center gap-1">
           <button
@@ -218,6 +287,7 @@ onBeforeUnmount(() => {
       </div>
 
       <p v-if="!cityReady" class="mt-1.5 text-xs text-surface-400">请先选择目的城市</p>
+      <p v-else-if="tooShort" class="mt-1.5 text-xs text-surface-400">请输入至少 2 个字符后搜索</p>
       <p v-else-if="searchStatus === 'unavailable'" class="mt-1.5 text-xs text-amber-600" role="alert">
         地点搜索暂时不可用，请稍后重试；可暂不设置。
       </p>
@@ -239,19 +309,26 @@ onBeforeUnmount(() => {
               {{ suggestion.item.districtName || suggestion.item.category }}
             </span>
           </button>
-          <div
+          <button
             v-else
-            class="flex w-full items-start gap-2 px-3 py-2.5"
+            type="button"
+            class="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-surface-50"
+            data-testid="poi-suggestion-row"
+            @click="applyKeyword(suggestion.item.name)"
           >
-            <span class="mt-0.5 shrink-0 text-surface-300"><MapPin :size="14" aria-hidden="true" /></span>
+            <span class="mt-0.5 shrink-0 text-surface-300"><CornerDownLeft :size="14" aria-hidden="true" /></span>
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm font-medium text-surface-700">{{ suggestion.item.name }}</span>
-              <span class="mt-0.5 block truncate text-xs text-surface-400">{{ suggestion.item.category || '行政区' }}（仅用于调整搜索范围，不能直接设为地点）</span>
+              <span class="mt-0.5 block truncate text-xs text-surface-400">
+                {{ suggestion.item.itemType === 'REGION'
+                  ? '切换搜索到该区域（不能直接设为地点）'
+                  : '按此关键词搜索（不能直接设为地点）' }}
+              </span>
             </span>
             <span class="mt-0.5 shrink-0 rounded bg-primary-50 px-1.5 py-0.5 text-[11px] font-medium text-primary-600">
               {{ suggestion.item.itemType === 'REGION' ? '区域' : '建议' }}
             </span>
-          </div>
+          </button>
         </li>
       </ul>
       <p v-else-if="searchStatus === 'no-results'" class="mt-1.5 text-xs text-surface-400">未找到匹配地点，换个关键词试试</p>

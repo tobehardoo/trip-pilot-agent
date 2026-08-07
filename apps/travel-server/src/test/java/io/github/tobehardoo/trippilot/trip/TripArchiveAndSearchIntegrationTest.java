@@ -27,8 +27,8 @@ class TripArchiveAndSearchIntegrationTest extends PostgresIntegrationTest {
     @Test
     void searchesPagedTripsAndHidesArchivedTripsUnlessRequested() throws Exception {
         String token = registerAndGetAccessToken("trip-search@example.com");
-        UUID shanghaiId = createTrip(token, "Shanghai weekend", "Shanghai", "2026-08-01", "2026-08-02");
-        createTrip(token, "Beijing week", "Beijing", "2026-08-05", "2026-08-07");
+        UUID shanghaiId = createTrip(token, "Shanghai weekend", "Shanghai", "2026-09-01", "2026-09-02");
+        createTrip(token, "Beijing week", "Beijing", "2026-09-05", "2026-09-07");
 
         mockMvc.perform(get("/api/trips/search")
                         .header("Authorization", bearer(token))
@@ -61,8 +61,8 @@ class TripArchiveAndSearchIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(get("/api/trips/search")
                         .header("Authorization", bearer(token))
                         .param("includeArchived", "true")
-                        .param("startDate", "2026-08-02")
-                        .param("endDate", "2026-08-02")
+                        .param("startDate", "2026-09-02")
+                        .param("endDate", "2026-09-02")
                         .param("page", "0")
                         .param("size", "10"))
                 .andExpect(status().isOk())

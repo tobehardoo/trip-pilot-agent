@@ -119,7 +119,8 @@ public interface ItineraryMapper {
                    itinerary_version.parent_version_id, itinerary_version.title,
                    itinerary_version.estimated_total_cost, itinerary_version.provider,
                    itinerary_version.created_at,
-                   itinerary_version.rollback_from_version_id
+                   itinerary_version.rollback_from_version_id,
+                   trip.version AS trip_version
             FROM business.itinerary
             JOIN business.trip ON trip.id = itinerary.trip_id
             JOIN business.itinerary_version
@@ -135,7 +136,8 @@ public interface ItineraryMapper {
                    itinerary_version.parent_version_id, itinerary_version.title,
                    itinerary_version.estimated_total_cost, itinerary_version.provider,
                    itinerary_version.created_at,
-                   itinerary_version.rollback_from_version_id
+                   itinerary_version.rollback_from_version_id,
+                   trip.version AS trip_version
             FROM business.itinerary_version
             JOIN business.itinerary
               ON itinerary.id = itinerary_version.itinerary_id
@@ -149,6 +151,34 @@ public interface ItineraryMapper {
             @Param("versionId") UUID versionId,
             @Param("ownerId") UUID ownerId
     );
+
+    /**
+     * The trip version the given itinerary version was planned against.
+     *
+     * Edited and rolled-back versions carry no planning task of their own, so
+     * the parent chain is walked up to the nearest planning version that the
+     * itinerary is ultimately derived from. Returns 0 when no planning
+     * ancestor exists.
+     */
+    @Select("""
+            WITH RECURSIVE chain AS (
+                SELECT iv.id, iv.parent_version_id, iv.planning_task_id
+                FROM business.itinerary_version iv
+                WHERE iv.id = #{versionId}
+                UNION ALL
+                SELECT p.id, p.parent_version_id, p.planning_task_id
+                FROM business.itinerary_version p
+                JOIN chain c ON p.id = c.parent_version_id
+            )
+            SELECT COALESCE(MAX(task.baseline_trip_version), 0)
+            FROM business.planning_task task
+            WHERE task.id IN (
+                SELECT c.planning_task_id
+                FROM chain c
+                WHERE c.planning_task_id IS NOT NULL
+            )
+            """)
+    int findPlanningBaseline(@Param("versionId") UUID versionId);
 
     @Select("""
             SELECT itinerary.id AS itinerary_id,
@@ -376,7 +406,8 @@ public interface ItineraryMapper {
             BigDecimal estimatedTotalCost,
             String provider,
             Instant createdAt,
-            UUID rollbackFromVersionId
+            UUID rollbackFromVersionId,
+            int tripVersion
     ) {
     }
 

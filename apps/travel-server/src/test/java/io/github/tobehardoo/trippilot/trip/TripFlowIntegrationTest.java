@@ -81,7 +81,7 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                 .containsEntry("event_type", "CITY_INTELLIGENCE_REFRESH_REQUESTED")
                 .containsEntry("routing_key", "city-intelligence.refresh")
                 .containsEntry("city", "广州")
-                .containsEntry("start_date", "2026-08-01");
+                .containsEntry("start_date", "2026-09-01");
 
         mockMvc.perform(get("/api/trips/{tripId}/city-intelligence", tripId)
                         .header("Authorization", bearer(accessToken)))
@@ -320,8 +320,8 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                 {
                   "title": "Invalid trip",
                   "destination": "",
-                  "startDate": "2026-08-05",
-                  "endDate": "2026-08-01",
+                  "startDate": "2026-09-05",
+                  "endDate": "2026-09-01",
                   "constraints": {
                     "budgetAmount": -1,
                     "travelers": 0,
@@ -351,8 +351,8 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                 {
                   "title": "广州四日慢游",
                   "destination": "广州",
-                  "startDate": "2026-08-01",
-                  "endDate": "2026-08-04",
+                  "startDate": "2026-09-01",
+                  "endDate": "2026-09-04",
                   "constraints": {%s}
                 }
                 """.formatted(constraints);
@@ -404,8 +404,8 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                                 {
                                   "title": "广州无障碍周末",
                                   "destination": "广州",
-                                  "startDate": "2026-08-01",
-                                  "endDate": "2026-08-02",
+                                  "startDate": "2026-09-01",
+                                  "endDate": "2026-09-02",
                                   "constraints": {
                                     "budgetAmount": 3000,
                                     "travelers": 2,
@@ -415,11 +415,11 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                                     "fixedSchedules": [],
                                     "arrival": {
                                       "placeName": "广州南站",
-                                      "time": "2026-08-01T11:00:00+08:00"
+                                      "time": "2026-09-01T11:00:00+08:00"
                                     },
                                     "departure": {
                                       "placeName": "广州白云机场",
-                                      "time": "2026-08-02T17:00:00+08:00"
+                                      "time": "2026-09-02T17:00:00+08:00"
                                     },
                                     "accommodation": {"placeName": "北京路附近酒店"},
                                     "mustVisitPlaces": ["陈家祠"],
@@ -437,7 +437,7 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.constraints.schemaVersion").value(2))
                 .andExpect(jsonPath("$.constraints.arrival.placeName").value("广州南站"))
                 .andExpect(jsonPath("$.constraints.departure.time")
-                        .value("2026-08-02T09:00:00Z"))
+                        .value("2026-09-02T09:00:00Z"))
                 .andExpect(jsonPath("$.constraints.accommodation.placeName").value("北京路附近酒店"))
                 .andExpect(jsonPath("$.constraints.mustVisitPlaces[0]").value("陈家祠"))
                 .andExpect(jsonPath("$.constraints.avoidPlaces[0]").value("广州塔"))
@@ -460,8 +460,8 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                 {
                   "title": "错误上下文",
                   "destination": "广州",
-                  "startDate": "2026-08-01",
-                  "endDate": "2026-08-02",
+                  "startDate": "2026-09-01",
+                  "endDate": "2026-09-02",
                   "constraints": {
                     "budgetAmount": 3000,
                     "travelers": 1,
@@ -492,7 +492,7 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                         .content(base.formatted("""
                                 "arrival": {
                                   "placeName": "跨时区车站",
-                                  "time": "2026-08-01T01:00:00+14:00"
+                                  "time": "2026-09-01T01:00:00+14:00"
                                 }
                                 """)))
                 .andExpect(status().isBadRequest())
@@ -504,8 +504,8 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                         .content(base.formatted("""
                                 "fixedSchedules": [{
                                   "placeName": "跨时区安排",
-                                  "startTime": "2026-08-01T01:00:00+14:00",
-                                  "endTime": "2026-08-01T02:00:00+14:00"
+                                  "startTime": "2026-09-01T01:00:00+14:00",
+                                  "endTime": "2026-09-01T02:00:00+14:00"
                                 }]
                                 """)))
                 .andExpect(status().isBadRequest())
@@ -553,8 +553,8 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                                 {
                                   "title": "超长旅行",
                                   "destination": "广州",
-                                  "startDate": "2026-08-01",
-                                  "endDate": "2026-08-08",
+                                  "startDate": "2026-09-01",
+                                  "endDate": "2026-09-08",
                                   "constraints": {
                                     "budgetAmount": 3000,
                                     "travelers": 1,
@@ -577,8 +577,8 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                         {
                           "title": "广州四日慢游",
                           "destination": "广州",
-                          "startDate": "2026-08-01",
-                          "endDate": "2026-08-04",
+                          "startDate": "2026-09-01",
+                          "endDate": "2026-09-04",
                           "constraints": {
                             "budgetAmount": 6000,
                             "travelers": 2,
@@ -587,8 +587,8 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
                             "preferences": ["美食", "历史"],
                             "fixedSchedules": [{
                               "placeName": "广州塔",
-                              "startTime": "2026-08-02T19:00:00+08:00",
-                              "endTime": "2026-08-02T21:00:00+08:00"
+                              "startTime": "2026-09-02T19:00:00+08:00",
+                              "endTime": "2026-09-02T21:00:00+08:00"
                             }]
                           }
                         }

@@ -357,7 +357,7 @@ test('keeps a selected commute mode in the itinerary timeline', async () => {
   expect(view.getByTestId('transit-option-DRIVING').getAttribute('aria-pressed')).toBe('true')
 })
 
-test('stages the recommended transit as a reviewed default instead of retaining a 70-minute walk', async () => {
+test('recommends a faster transit for a long walk without silently staging an edit', async () => {
   const longWalk = {
     ...itineraryWithTransit,
     days: [{
@@ -374,10 +374,16 @@ test('stages the recommended transit as a reviewed default instead of retaining 
     },
   })
   await fireEvent.click(view.getByTestId('transit-leg-open-44444444-4444-4444-4444-444444444444'))
-  await waitFor(() => {
-    expect(view.getByTestId('transit-option-TRANSIT').getAttribute('aria-pressed')).toBe('true')
-    expect(view.getByTestId('save-itinerary-draft')).toBeTruthy()
-  })
+
+  // 不自动把 70 分钟步行改成公交：仍保持步行，仅展示推荐，不产生草稿编辑。
+  expect(view.getByTestId('transit-option-WALKING').getAttribute('aria-pressed')).toBe('true')
+  expect(view.getByTestId('transit-option-TRANSIT').getAttribute('aria-pressed')).toBe('false')
+  expect(view.getByText(/推荐.*公交/)).toBeTruthy()
+  expect(view.queryByTestId('save-itinerary-draft')).toBeNull()
+
+  // 用户显式选择公交后才进入草稿。
+  await fireEvent.click(view.getByTestId('transit-option-TRANSIT'))
+  expect(view.getByTestId('save-itinerary-draft')).toBeTruthy()
 
   await fireEvent.click(view.getByTestId('save-itinerary-draft'))
   expect(commitEdits).toHaveBeenCalledWith(longWalk.versionId, [expect.objectContaining({

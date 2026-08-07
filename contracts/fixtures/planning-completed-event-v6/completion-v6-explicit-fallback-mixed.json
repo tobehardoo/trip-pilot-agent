@@ -6,19 +6,19 @@
   "taskId": "03000000-0000-4000-8000-000000000004",
   "tripId": "04000000-0000-4000-8000-000000000004",
   "runId": "05000000-0000-4000-8000-000000000004",
-  "occurredAt": "2026-08-01T01:00:00Z",
+  "occurredAt": "2026-09-01T01:00:00Z",
   "payload": {
     "provider": "AMAP",
     "itinerary": {
       "title": "Mixed route itinerary",
       "days": [{
-        "date": "2026-08-01",
+        "date": "2026-09-01",
         "activities": [
           {
             "activityId": "10000000-0000-4000-8000-000000000021",
             "title": "Museum",
-            "startTime": "2026-08-01T09:00:00+08:00",
-            "endTime": "2026-08-01T10:00:00+08:00",
+            "startTime": "2026-09-01T09:00:00+08:00",
+            "endTime": "2026-09-01T10:00:00+08:00",
             "estimatedCost": 0,
             "source": "AMAP",
             "providerPoiId": "POI-MIXED-1",
@@ -28,8 +28,8 @@
           {
             "activityId": "10000000-0000-4000-8000-000000000022",
             "title": "Tower",
-            "startTime": "2026-08-01T11:00:00+08:00",
-            "endTime": "2026-08-01T12:00:00+08:00",
+            "startTime": "2026-09-01T11:00:00+08:00",
+            "endTime": "2026-09-01T12:00:00+08:00",
             "estimatedCost": 0,
             "source": "AMAP",
             "providerPoiId": "POI-MIXED-2",

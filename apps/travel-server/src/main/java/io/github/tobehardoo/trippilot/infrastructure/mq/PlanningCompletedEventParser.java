@@ -819,6 +819,17 @@ public class PlanningCompletedEventParser {
             // unresolved meal slot); it carries no fake provider metadata.
             return;
         }
+        if (structural) {
+            // A structural anchor resolved to an AMap POI whose street address
+            // is often empty (stations and hotels). The address is a display
+            // field, so the anchor contract is the provider id + coordinate
+            // pair; the address may be absent.
+            if (validText(activity.providerPoiId(), 100)
+                    && validCoordinates(activity.coordinates())) {
+                return;
+            }
+            throw invalid("AMAP activity requires valid provider metadata");
+        }
         if (!validText(activity.providerPoiId(), 100)
                 || !validText(activity.address(), 300)
                 || !validCoordinates(activity.coordinates())) {

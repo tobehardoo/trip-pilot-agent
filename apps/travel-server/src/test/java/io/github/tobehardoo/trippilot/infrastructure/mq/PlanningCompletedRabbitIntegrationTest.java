@@ -140,8 +140,8 @@ class PlanningCompletedRabbitIntegrationTest {
                                 {
                                   "title": "广州一日游",
                                   "destination": "广州",
-                                  "startDate": "2026-08-01",
-                                  "endDate": "2026-08-01",
+                                  "startDate": "2026-09-01",
+                                  "endDate": "2026-09-01",
                                   "constraints": {
                                     "budgetAmount": 1000,
                                     "travelers": 2,

@@ -275,3 +275,96 @@ def test_planning_failed_event_model_matches_its_json_schema() -> None:
 
     schema = _load_schema("planning-failed-event-v1.schema.json")
     Draft202012Validator(schema).validate(event.model_dump(mode="json", by_alias=True))
+
+
+def test_amap_activity_blank_optional_strings_normalized_to_none() -> None:
+    """P4-F2 regression: blank optional strings (address, type_name) are
+    normalized to None; a blank type label must never survive as an empty
+    string, and a blank address must not trip the AddressText min-length
+    constraint before structural-anchor rules apply."""
+    activity = ItineraryActivity(
+        title="Guangzhou South",
+        start_time=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
+        end_time=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
+        estimated_cost=Decimal("0"),
+        source="AMAP",
+        provider_poi_id="B00140VAP3",
+        coordinates=ActivityCoordinates(
+            longitude=Decimal("113.269097"),
+            latitude=Decimal("22.988344"),
+        ),
+        address="X",
+        type_code="150200",
+        type_name="  ",
+        kind="ATTRACTION",
+        time_fixed=False,
+    )
+    assert activity.type_name is None
+    assert activity.address == "X"
+
+    with pytest.raises(ValueError, match="AMAP activity requires provider metadata"):
+        # A non-structural activity with a blank address stays rejected:
+        # candidates without an address are filtered upstream (EMPTY_ADDRESS),
+        # so failing closed here is the correct contract.
+        ItineraryActivity(
+            title="No Address",
+            start_time=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
+            end_time=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
+            estimated_cost=Decimal("0"),
+            source="AMAP",
+            provider_poi_id="B00140VAP3",
+            coordinates=ActivityCoordinates(
+                longitude=Decimal("113.269097"),
+                latitude=Decimal("22.988344"),
+            ),
+            address="",
+            type_code="150200",
+            type_name="",
+            kind="ATTRACTION",
+            time_fixed=False,
+        )
+
+
+def test_amap_structural_anchor_allows_empty_address() -> None:
+    """P4-F2 regression: an ARRIVAL anchor resolved to an AMap POI whose
+    street address is empty must still validate; the address is display-only
+    and the provider id + coordinate pair is the anchor contract."""
+    activity = ItineraryActivity(
+        title="Baiyun Airport",
+        start_time=datetime(2026, 8, 10, 8, 0, tzinfo=UTC),
+        end_time=datetime(2026, 8, 10, 9, 0, tzinfo=UTC),
+        estimated_cost=Decimal("0"),
+        source="AMAP",
+        provider_poi_id="B00140NZIQ",
+        coordinates=ActivityCoordinates(
+            longitude=Decimal("113.304651"),
+            latitude=Decimal("23.377894"),
+        ),
+        address=None,
+        type_code="150104",
+        type_name="飞机场",
+        kind="ARRIVAL",
+        time_fixed=True,
+    )
+    assert activity.address is None
+    assert activity.provider_poi_id == "B00140NZIQ"
+
+
+def test_amap_structural_anchor_rejects_lone_coordinate_pair() -> None:
+    """A structural anchor must carry both provider id and coordinates, not
+    just one of them."""
+    with pytest.raises(ValueError, match="requires both provider id and coordinates"):
+        ItineraryActivity(
+            title="Split Anchor",
+            start_time=datetime(2026, 8, 10, 8, 0, tzinfo=UTC),
+            end_time=datetime(2026, 8, 10, 9, 0, tzinfo=UTC),
+            estimated_cost=Decimal("0"),
+            source="AMAP",
+            provider_poi_id="B00140NZIQ",
+            coordinates=None,
+            address=None,
+            type_code="150104",
+            type_name="飞机场",
+            kind="ARRIVAL",
+            time_fixed=True,
+        )

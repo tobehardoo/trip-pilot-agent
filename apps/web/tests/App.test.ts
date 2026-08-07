@@ -330,6 +330,12 @@ describe('TripPilot application shell', () => {
         expect(init.headers).toMatchObject({ Authorization: 'Bearer renewed-access-token' })
         return response(tripResponse, 201)
       }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response(planningTaskResponse, 202)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
       if (url.endsWith('/api/trips')) return response([])
       throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
     })
@@ -337,13 +343,15 @@ describe('TripPilot application shell', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '我的旅行' })
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), '广州周末四日')
-    await fireEvent.update(screen.getByLabelText('目的地'), '广州')
+    await fireEvent.update(screen.getByLabelText('省份'), '广东省')
+    await fireEvent.update(screen.getByLabelText('城市'), '广州')
     await fireEvent.update(screen.getByLabelText('开始日期'), '2026-07-18')
     await fireEvent.update(screen.getByLabelText('结束日期'), '2026-07-21')
-    await fireEvent.click(screen.getByRole('button', { name: '保存旅行' }))
+    await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
 
-    expect(await screen.findByRole('heading', { name: '广州周末四日' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '广州周末四日', level: 1 })).toBeTruthy()
     expect(createAttempts).toBe(2)
   })
 
@@ -440,6 +448,12 @@ describe('TripPilot application shell', () => {
       const url = urlOf(input)
       if (url.endsWith('/api/auth/login')) return response(authResponse)
       if (url.endsWith('/api/trips') && init?.method === 'POST') return response(createdTrip, 201)
+      if (url.endsWith(`/api/trips/${createdTrip.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({ ...planningTaskResponse, tripId: createdTrip.id }, 202)
+      }
+      if (url.endsWith(`/api/trips/${createdTrip.id}`)) return response(createdTrip)
+      if (url.endsWith(`/api/trips/${createdTrip.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${createdTrip.id}/itinerary/shares`)) return response([])
       if (url.endsWith('/api/trips')) {
         listLoads += 1
         return listLoads === 1 ? response([tripResponse]) : staleList
@@ -453,14 +467,16 @@ describe('TripPilot application shell', () => {
     await waitFor(() => expect(listLoads).toBe(2))
 
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), createdTrip.title)
-    await fireEvent.update(screen.getByLabelText('目的地'), createdTrip.destination)
+    await fireEvent.update(screen.getByLabelText('省份'), '浙江省')
+    await fireEvent.update(screen.getByLabelText('城市'), createdTrip.destination)
     await fireEvent.update(screen.getByLabelText('开始日期'), createdTrip.startDate)
     await fireEvent.update(screen.getByLabelText('结束日期'), createdTrip.endDate)
-    await fireEvent.click(screen.getByRole('button', { name: '保存旅行' }))
+    await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     resolveStaleList(response([tripResponse]))
-    expect(await screen.findByRole('heading', { name: createdTrip.title })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: createdTrip.title, level: 1 })).toBeTruthy()
   })
 
   test('creates a trip with structured constraints and adds it to the list', async () => {
@@ -472,6 +488,12 @@ describe('TripPilot application shell', () => {
         submittedBody = JSON.parse(String(init.body))
         return response(tripResponse, 201)
       }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response(planningTaskResponse, 202)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
       if (url.endsWith('/api/trips')) return response([])
       throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
     })
@@ -479,8 +501,10 @@ describe('TripPilot application shell', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '我的旅行' })
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), '广州周末四日')
-    await fireEvent.update(screen.getByLabelText('目的地'), '广州')
+    await fireEvent.update(screen.getByLabelText('省份'), '广东省')
+    await fireEvent.update(screen.getByLabelText('城市'), '广州')
     await fireEvent.update(screen.getByLabelText('开始日期'), '2026-07-18')
     await fireEvent.update(screen.getByLabelText('结束日期'), '2026-07-21')
     await fireEvent.update(screen.getByLabelText('预算'), '4000')
@@ -488,14 +512,21 @@ describe('TripPilot application shell', () => {
     await fireEvent.update(screen.getByLabelText('同行类型'), 'FRIENDS')
     await fireEvent.click(screen.getByLabelText('岭南文化'))
     await fireEvent.click(screen.getByLabelText('本地美食'))
-    await fireEvent.click(screen.getByRole('button', { name: '保存旅行' }))
+    await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
 
-    expect(await screen.findByRole('heading', { name: '广州周末四日' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '广州周末四日', level: 1 })).toBeTruthy()
     expect(submittedBody).toEqual({
       title: '广州周末四日',
       destination: '广州',
       startDate: '2026-07-18',
       endDate: '2026-07-21',
+      destinationRegion: {
+        provinceCode: '440000',
+        provinceName: '广东省',
+        cityCode: '440100',
+        cityName: '广州',
+        districts: [],
+      },
       constraints: {
         budgetAmount: 4000,
         travelers: 2,
@@ -508,7 +539,11 @@ describe('TripPilot application shell', () => {
         accommodation: null,
         mustVisitPlaces: [],
         avoidPlaces: [],
-        mealWindows: [],
+        mealWindows: [
+          { mealType: 'BREAKFAST', startTime: '08:00', endTime: '09:00', source: 'SYSTEM_DEFAULT' },
+          { mealType: 'LUNCH', startTime: '12:00', endTime: '13:00', source: 'SYSTEM_DEFAULT' },
+          { mealType: 'DINNER', startTime: '18:00', endTime: '19:00', source: 'SYSTEM_DEFAULT' },
+        ],
         mobilityLevel: 'STANDARD',
       },
     })
@@ -1284,14 +1319,16 @@ describe('TripPilot application shell', () => {
       },
     }
     let submittedBody: unknown
+    let updated = false
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = urlOf(input)
       if (url.endsWith('/api/auth/login')) return response(authResponse)
-      if (url.endsWith(`/api/trips/${tripResponse.id}/constraints`) && init?.method === 'PUT') {
+      if (url.endsWith(`/api/trips/${tripResponse.id}/configuration`) && init?.method === 'PUT') {
         submittedBody = JSON.parse(String(init.body))
+        updated = true
         return response(updatedTrip)
       }
-      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(detailTrip)
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(updated ? updatedTrip : detailTrip)
       if (url.endsWith('/api/trips')) return response([tripResponse])
       throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
     })
@@ -1304,37 +1341,43 @@ describe('TripPilot application shell', () => {
     await fireEvent.update(screen.getByLabelText('预算'), '5200')
     await fireEvent.update(screen.getByLabelText('同行人数'), '3')
     await fireEvent.update(screen.getByLabelText('同行类型'), 'FAMILY')
-    await fireEvent.update(screen.getByLabelText('到达地点'), '广州南站')
-    await fireEvent.update(screen.getByLabelText('到达时间（北京时间）'), '2026-07-18T11:00')
-    await fireEvent.update(screen.getByLabelText('返程地点'), '广州白云机场')
-    await fireEvent.update(screen.getByLabelText('返程时间（北京时间）'), '2026-07-21T17:00')
-    await fireEvent.update(screen.getByLabelText('住宿锚点'), '北京路附近酒店')
-    await fireEvent.update(screen.getByLabelText('必去地点（用顿号分隔）'), '陈家祠、沙面')
-    await fireEvent.update(screen.getByLabelText('排除地点（用顿号分隔）'), '广州塔')
+    await fireEvent.update(screen.getByLabelText('必去地点（顿号分隔）'), '陈家祠、沙面')
+    await fireEvent.update(screen.getByLabelText('避开地点'), '广州塔')
     await fireEvent.update(screen.getByLabelText('行动能力'), 'REDUCED')
-    await fireEvent.update(screen.getByLabelText('午餐开始时间'), '12:00')
-    await fireEvent.update(screen.getByLabelText('午餐结束时间'), '13:00')
+    await fireEvent.update(document.querySelector('#LUNCH-start') as HTMLInputElement, '12:00')
+    await fireEvent.update(document.querySelector('#LUNCH-end') as HTMLInputElement, '13:00')
     await fireEvent.click(screen.getByLabelText('舒缓'))
-    await fireEvent.click(screen.getByRole('button', { name: '保存约束' }))
+    await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
 
     expect(await screen.findByText('版本 1')).toBeTruthy()
     expect(screen.getByText('¥5200')).toBeTruthy()
     expect(screen.getByText('3 人 · 家庭出行')).toBeTruthy()
     expect(submittedBody).toEqual({
       version: 0,
-      budgetAmount: 5200,
-      travelers: 3,
-      travelerType: 'FAMILY',
-      pace: 'RELAXED',
-      preferences: ['岭南文化', '本地美食'],
-      fixedSchedules,
-      arrival: { placeName: '广州南站', time: '2026-07-18T11:00:00+08:00' },
-      departure: { placeName: '广州白云机场', time: '2026-07-21T17:00:00+08:00' },
-      accommodation: { placeName: '北京路附近酒店' },
-      mustVisitPlaces: ['陈家祠', '沙面'],
-      avoidPlaces: ['广州塔'],
-      mealWindows: [{ mealType: 'LUNCH', startTime: '12:00', endTime: '13:00' }],
-      mobilityLevel: 'REDUCED',
+      title: '广州周末四日',
+      destination: '广州',
+      startDate: '2026-07-18',
+      endDate: '2026-07-21',
+      destinationRegion: null,
+      constraints: {
+        budgetAmount: 5200,
+        travelers: 3,
+        travelerType: 'FAMILY',
+        pace: 'RELAXED',
+        preferences: ['岭南文化', '本地美食'],
+        fixedSchedules,
+        mustVisitPlaces: ['陈家祠', '沙面'],
+        avoidPlaces: ['广州塔'],
+        mealWindows: [
+          { mealType: 'BREAKFAST', startTime: '08:00', endTime: '09:00', source: 'SYSTEM_DEFAULT' },
+          { mealType: 'LUNCH', startTime: '12:00', endTime: '13:00', source: 'USER_SET' },
+          { mealType: 'DINNER', startTime: '18:00', endTime: '19:00', source: 'SYSTEM_DEFAULT' },
+        ],
+        mobilityLevel: 'REDUCED',
+        arrival: null,
+        departure: null,
+        accommodation: null,
+      },
     })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
@@ -1353,15 +1396,14 @@ describe('TripPilot application shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: '打开 广州周末四日' }))
     await screen.findByRole('heading', { name: '结构化约束' })
     await fireEvent.click(screen.getByRole('button', { name: '编辑约束' }))
-    await fireEvent.update(screen.getByLabelText('到达地点'), '广州南站')
-    await fireEvent.update(screen.getByLabelText('午餐开始时间'), '12:00')
-    await fireEvent.click(screen.getByRole('button', { name: '保存约束' }))
+    await fireEvent.update(screen.getByLabelText('到达时间'), '11:00')
+    await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
 
-    expect((await screen.findByRole('alert')).textContent).toContain('请同时填写到达地点和到达时间')
-    expect((screen.getByLabelText('到达地点') as HTMLInputElement).value).toBe('广州南站')
-    expect((screen.getByLabelText('午餐开始时间') as HTMLInputElement).value).toBe('12:00')
+    expect((await screen.findByRole('alert')).textContent).toContain('请从列表中选择到达地点，并完整填写到达日期和时间')
+    expect((screen.getByLabelText('到达时间') as HTMLInputElement).value).toBe('11:00')
+    expect((document.querySelector('#LUNCH-start') as HTMLInputElement).value).toBe('12:00')
     expect(fetchMock).not.toHaveBeenCalledWith(
-      `/api/trips/${tripResponse.id}/constraints`,
+      `/api/trips/${tripResponse.id}/configuration`,
       expect.objectContaining({ method: 'PUT' }),
     )
   })
@@ -1376,14 +1418,14 @@ describe('TripPilot application shell', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = urlOf(input)
       if (url.endsWith('/api/auth/login')) return response(authResponse)
-      if (url.endsWith(`/api/trips/${tripResponse.id}/constraints`) && init?.method === 'PUT') {
+      if (url.endsWith(`/api/trips/${tripResponse.id}/configuration`) && init?.method === 'PUT') {
         return response({ code: 'TRIP_VERSION_CONFLICT', message: '旅行约束已被其他请求更新' }, 409)
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}`)) {
         detailLoads += 1
         return response(detailLoads === 1 ? tripResponse : latestTrip)
       }
-      if (url.endsWith('/api/trips')) return response([tripResponse])
+      if (url.endsWith('/api/trips')) return response(detailLoads >= 2 ? [latestTrip] : [tripResponse])
       throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
     })
 
@@ -1393,7 +1435,7 @@ describe('TripPilot application shell', () => {
     await screen.findByRole('heading', { name: '结构化约束' })
     await fireEvent.click(screen.getByRole('button', { name: '编辑约束' }))
     await fireEvent.update(screen.getByLabelText('预算'), '5200')
-    await fireEvent.click(screen.getByRole('button', { name: '保存约束' }))
+    await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('数据已更新')
     expect((screen.getByLabelText('预算') as HTMLInputElement).value).toBe('5200')
@@ -1470,7 +1512,7 @@ describe('TripPilot application shell', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = urlOf(input)
       if (url.endsWith('/api/auth/login')) return response(authResponse)
-      if (url.endsWith(`/api/trips/${tripResponse.id}/constraints`) && init?.method === 'PUT') {
+      if (url.endsWith(`/api/trips/${tripResponse.id}/configuration`) && init?.method === 'PUT') {
         return response({ code: 'TRIP_VERSION_CONFLICT', message: '旅行约束已被其他请求更新' }, 409)
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}`)) {
@@ -1489,7 +1531,7 @@ describe('TripPilot application shell', () => {
     await screen.findByRole('heading', { name: '结构化约束' })
     await fireEvent.click(screen.getByRole('button', { name: '编辑约束' }))
     await fireEvent.update(screen.getByLabelText('预算'), '5200')
-    await fireEvent.click(screen.getByRole('button', { name: '保存约束' }))
+    await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
     await screen.findByRole('button', { name: '重新加载最新数据' })
     await fireEvent.click(screen.getByRole('button', { name: '重新加载最新数据' }))
 
@@ -1592,12 +1634,14 @@ describe('TripPilot application shell', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '广州周末四日' })
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
-    expect((screen.getByLabelText('预算') as HTMLInputElement).step).toBe('0.01')
-    await fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(((await screen.findByLabelText('预算')) as HTMLInputElement).step).toBe('0.01')
+    await fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await screen.findByRole('button', { name: '打开 广州周末四日' })
     await fireEvent.click(screen.getByRole('button', { name: '打开 广州周末四日' }))
     await screen.findByRole('heading', { name: '结构化约束' })
     await fireEvent.click(screen.getByRole('button', { name: '编辑约束' }))
-    expect((screen.getByLabelText('预算') as HTMLInputElement).step).toBe('0.01')
+    expect(((await screen.findByLabelText('预算')) as HTMLInputElement).step).toBe('0.01')
   })
 
   test('moves focus into the create dialog and restores it after Escape', async () => {
@@ -1633,10 +1677,10 @@ describe('TripPilot application shell', () => {
     await screen.findByRole('heading', { name: '结构化约束' })
     const editButton = screen.getByRole('button', { name: '编辑约束' })
     await fireEvent.click(editButton)
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('预算')))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('旅行名称')))
 
     const dialog = screen.getByRole('dialog')
-    const saveButton = screen.getByRole('button', { name: '保存约束' })
+    const saveButton = screen.getByRole('button', { name: '保存并开始规划' })
     saveButton.focus()
     await fireEvent.keyDown(dialog, { key: 'Tab' })
     expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭' }))

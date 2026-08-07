@@ -10,12 +10,14 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.cityintelligence.CityIntelligencePrewarmService;
 import io.github.tobehardoo.trippilot.common.ApiException;
+import io.github.tobehardoo.trippilot.trip.TripRequests.Accommodation;
 import io.github.tobehardoo.trippilot.trip.TripRequests.ConstraintInput;
 import io.github.tobehardoo.trippilot.trip.TripRequests.CreateTripRequest;
+import io.github.tobehardoo.trippilot.trip.TripRequests.DestinationRegion;
 import io.github.tobehardoo.trippilot.trip.TripRequests.FixedSchedule;
 import io.github.tobehardoo.trippilot.trip.TripRequests.MealWindow;
-import io.github.tobehardoo.trippilot.trip.TripRequests.PlaceAnchor;
 import io.github.tobehardoo.trippilot.trip.TripRequests.TravelAnchor;
+import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConfigurationRequest;
 import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConstraintRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -31,29 +33,36 @@ public class TripService {
     private final TripMapper tripMapper;
     private final ObjectMapper objectMapper;
     private final TripConstraintValidator validator;
+    private final TripDatePolicy datePolicy;
     private final CityIntelligencePrewarmService cityIntelligencePrewarmService;
 
     public TripService(
             TripMapper tripMapper,
             ObjectMapper objectMapper,
             TripConstraintValidator validator,
+            TripDatePolicy datePolicy,
             CityIntelligencePrewarmService cityIntelligencePrewarmService
     ) {
         this.tripMapper = tripMapper;
         this.objectMapper = objectMapper;
         this.validator = validator;
+        this.datePolicy = datePolicy;
         this.cityIntelligencePrewarmService = cityIntelligencePrewarmService;
     }
 
     @Transactional
     public TripResponse create(UUID ownerId, CreateTripRequest request) {
+        datePolicy.validateNewTripStartDate(request.startDate());
         validator.validateDateRange(request.startDate(), request.endDate());
         validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
-        validator.validateContext(request.constraints(), request.startDate(), request.endDate());
+        validator.validateContext(request.constraints(), cityForPoiValidation(request.destinationRegion(), request.destination()),
+                request.startDate(), request.endDate());
         UUID tripId = UUID.randomUUID();
         TripRecord trip = new TripRecord(
                 tripId, ownerId, request.title().trim(), request.destination().trim(),
-                request.startDate(), request.endDate(), "DRAFT", 0, null, null, null
+                request.startDate(), request.endDate(), "DRAFT", 0,
+                writeNullableJson(validateDestinationRegion(request.destinationRegion())),
+                null, null, null
         );
         tripMapper.insertTrip(trip);
         tripMapper.insertConstraint(toRecord(tripId, request.constraints()));
@@ -100,12 +109,41 @@ public class TripService {
     public TripResponse updateConstraints(UUID ownerId, UUID tripId, UpdateConstraintRequest request) {
         TripRecord trip = findOwned(ownerId, tripId);
         validator.validateSchedules(request.fixedSchedules(), trip.startDate(), trip.endDate());
-        validator.validateContext(request.asConstraintInput(), trip.startDate(), trip.endDate());
+        DestinationRegion existingRegion = readNullableJson(trip.destinationRegionJson(), DestinationRegion.class);
+        validator.validateContext(request.asConstraintInput(),
+                cityForPoiValidation(existingRegion, trip.destination()), trip.startDate(), trip.endDate());
         if (tripMapper.incrementVersion(tripId, ownerId, request.version()) != 1) {
             throw new ApiException(HttpStatus.CONFLICT, "TRIP_VERSION_CONFLICT",
                     "Trip was updated by another request; reload it before retrying");
         }
         tripMapper.updateConstraint(toRecord(tripId, request.asConstraintInput()));
+        return get(ownerId, tripId);
+    }
+
+    /**
+     * Updates trip metadata and constraints atomically under a single
+     * optimistic-lock version bump. If either the metadata write or the
+     * constraint write fails, the whole transaction rolls back so the trip can
+     * never observe a half-applied configuration. Replanning stays a separate
+     * operation; the current itinerary is implicitly stale until a replan
+     * completes against the new version.
+     */
+    @Transactional
+    public TripResponse updateConfiguration(UUID ownerId, UUID tripId, UpdateConfigurationRequest request) {
+        TripRecord trip = findOwned(ownerId, tripId);
+        validator.validateDateRange(request.startDate(), request.endDate());
+        validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
+        validator.validateContext(request.constraints(), cityForPoiValidation(request.destinationRegion(), request.destination()),
+                request.startDate(), request.endDate());
+        if (tripMapper.updateConfigurationMetadata(
+                tripId, ownerId, request.version(),
+                request.title().trim(), request.destination().trim(),
+                request.startDate(), request.endDate(),
+                writeNullableJson(validateDestinationRegion(request.destinationRegion()))) != 1) {
+            throw new ApiException(HttpStatus.CONFLICT, "TRIP_VERSION_CONFLICT",
+                    "Trip was updated by another request; reload it before retrying");
+        }
+        tripMapper.updateConstraint(toRecord(tripId, request.constraints()));
         return get(ownerId, tripId);
     }
 
@@ -121,6 +159,49 @@ public class TripService {
         tripMapper.restoreOwned(tripId, ownerId);
     }
 
+    /**
+     * Validates a structured destination region against the static catalog:
+     * province exists, city belongs to the province, every district belongs to
+     * the city, and names match the codes. Rejects forged or unknown codes with
+     * a clear 400. A null region (legacy free-text destination) is allowed.
+     */
+    private DestinationRegion validateDestinationRegion(DestinationRegion region) {
+        if (region == null) {
+            return null;
+        }
+        if (!RegionCatalog.hasProvince(region.provinceCode())
+                || !region.provinceName().equals(RegionCatalog.provinceName(region.provinceCode()))) {
+            throw invalidRegion("Province code or name does not match the region catalog");
+        }
+        if (!RegionCatalog.hasCity(region.cityCode())
+                || !region.provinceCode().equals(RegionCatalog.provinceOfCity(region.cityCode()))
+                || !region.cityName().equals(RegionCatalog.cityName(region.cityCode()))) {
+            throw invalidRegion("City code must belong to the selected province and match its name");
+        }
+        for (DestinationRegion.DistrictRef district : region.districts()) {
+            if (!RegionCatalog.hasDistrict(district.districtCode())
+                    || !region.cityCode().equals(RegionCatalog.cityOfDistrict(district.districtCode()))
+                    || !district.districtName().equals(RegionCatalog.districtName(district.districtCode()))) {
+                throw invalidRegion("District code must belong to the selected city and match its name");
+            }
+        }
+        return region;
+    }
+
+    private ApiException invalidRegion(String message) {
+        return new ApiException(
+                HttpStatus.BAD_REQUEST, "INVALID_DESTINATION_REGION", message
+        );
+    }
+
+    /** POI 城市校验应以城市名为准；结构化目的地用 cityName，否则回退整个目的地字符串。 */
+    private static String cityForPoiValidation(DestinationRegion region, String destination) {
+        if (region != null && region.cityName() != null && !region.cityName().isBlank()) {
+            return region.cityName();
+        }
+        return destination;
+    }
+
     private TripRecord findOwned(UUID ownerId, UUID tripId) {
         return tripMapper.findOwnedById(tripId, ownerId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "TRIP_NOT_FOUND", "Trip was not found"));
@@ -131,10 +212,26 @@ public class TripService {
                 tripId, input.budgetAmount(), input.travelers(), input.travelerType(), input.pace(),
                 writeJson(input.preferences()), writeJson(input.fixedSchedules()),
                 writeNullableJson(input.arrival()), writeNullableJson(input.departure()),
-                writeNullableJson(input.accommodation()), writeJson(input.mustVisitPlaces()),
+                writeNullableJson(normalizeAccommodation(input.accommodation())),
+                writeJson(input.mustVisitPlaces()),
                 writeJson(input.avoidPlaces()), writeJson(input.mealWindows()),
                 input.mobilityLevel(), 2, null
         );
+    }
+
+    private static Accommodation normalizeAccommodation(Accommodation accommodation) {
+        if (accommodation == null) {
+            return null;
+        }
+        if (accommodation.poi() == null) {
+            return accommodation;
+        }
+        // Always persist a display name so legacy consumers (which only know
+        // placeName) still see something readable.
+        String effectiveName = accommodation.placeName() != null
+                && !accommodation.placeName().isBlank()
+                ? accommodation.placeName() : accommodation.poi().name();
+        return new Accommodation(effectiveName, accommodation.poi());
     }
 
     private TripResponse toResponse(TripRecord trip) {
@@ -146,17 +243,18 @@ public class TripService {
                 readJson(constraint.fixedSchedulesJson(), SCHEDULE_LIST),
                 readNullableJson(constraint.arrivalJson(), TravelAnchor.class),
                 readNullableJson(constraint.departureJson(), TravelAnchor.class),
-                readNullableJson(constraint.accommodationJson(), PlaceAnchor.class),
+                readNullableJson(constraint.accommodationJson(), Accommodation.class),
                 readJson(constraint.mustVisitPlacesJson(), STRING_LIST),
                 readJson(constraint.avoidPlacesJson(), STRING_LIST),
-                readJson(constraint.mealWindowsJson(), MEAL_WINDOW_LIST),
+                effectiveMealWindows(readJson(constraint.mealWindowsJson(), MEAL_WINDOW_LIST)),
                 constraint.mobilityLevel(),
                 constraint.schemaVersion()
         );
         return new TripResponse(
                 trip.id(), trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
-                trip.status(), trip.version(), constraintResponse, trip.createdAt(), trip.updatedAt(),
-                trip.archivedAt()
+                trip.status(), trip.version(), constraintResponse,
+                readNullableJson(trip.destinationRegionJson(), DestinationRegion.class),
+                trip.createdAt(), trip.updatedAt(), trip.archivedAt()
         );
     }
 
@@ -167,18 +265,36 @@ public class TripService {
                 readJson(snapshot.fixedSchedulesJson(), SCHEDULE_LIST),
                 readNullableJson(snapshot.arrivalJson(), TravelAnchor.class),
                 readNullableJson(snapshot.departureJson(), TravelAnchor.class),
-                readNullableJson(snapshot.accommodationJson(), PlaceAnchor.class),
+                readNullableJson(snapshot.accommodationJson(), Accommodation.class),
                 readJson(snapshot.mustVisitPlacesJson(), STRING_LIST),
                 readJson(snapshot.avoidPlacesJson(), STRING_LIST),
-                readJson(snapshot.mealWindowsJson(), MEAL_WINDOW_LIST),
+                effectiveMealWindows(readJson(snapshot.mealWindowsJson(), MEAL_WINDOW_LIST)),
                 snapshot.mobilityLevel(),
                 snapshot.schemaVersion()
         );
         return new TripResponse(
                 snapshot.id(), snapshot.title(), snapshot.destination(),
                 snapshot.startDate(), snapshot.endDate(), snapshot.status(), snapshot.version(),
-                constraintResponse, snapshot.createdAt(), snapshot.updatedAt(), snapshot.archivedAt()
+                constraintResponse,
+                readNullableJson(snapshot.destinationRegionJson(), DestinationRegion.class),
+                snapshot.createdAt(), snapshot.updatedAt(), snapshot.archivedAt()
         );
+    }
+
+    /**
+     * Returns the effective meal windows for display: trips created before
+     * defaults were normalized get the system defaults; legacy windows without
+     * an explicit source are treated as user-set.
+     */
+    private static List<MealWindow> effectiveMealWindows(List<MealWindow> stored) {
+        if (stored == null || stored.isEmpty()) {
+            return TripRequests.DEFAULT_MEAL_WINDOWS;
+        }
+        return stored.stream()
+                .map(window -> window.source() == null
+                        ? new MealWindow(window.mealType(), window.startTime(), window.endTime(), "USER_SET")
+                        : window)
+                .toList();
     }
 
     private TripSearch normalizeSearch(TripSearch search) {
@@ -239,6 +355,7 @@ public class TripService {
             String status,
             int version,
             ConstraintResponse constraints,
+            DestinationRegion destinationRegion,
             java.time.Instant createdAt,
             java.time.Instant updatedAt,
             java.time.Instant archivedAt
@@ -274,7 +391,7 @@ public class TripService {
             List<FixedSchedule> fixedSchedules,
             TravelAnchor arrival,
             TravelAnchor departure,
-            PlaceAnchor accommodation,
+            Accommodation accommodation,
             List<String> mustVisitPlaces,
             List<String> avoidPlaces,
             List<MealWindow> mealWindows,

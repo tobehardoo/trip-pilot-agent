@@ -287,7 +287,7 @@ class PlanningCompletedEventParserTest {
         impacts.addObject()
                 .put("factId", "fact_0123456789abcdef0123456789abcdef")
                 .put("category", "WEATHER")
-                .put("date", "2026-08-01")
+                .put("date", "2026-09-01")
                 .put("effect", "OUTDOOR_POI_DOWNRANKED")
                 .put("targetName", "广州塔")
                 .put("reason", "对应日期预计降雨，露天候选降低优先级")
@@ -310,7 +310,7 @@ class PlanningCompletedEventParserTest {
                 .satisfies(impact -> {
                     assertThat(impact.category()).isEqualTo("WEATHER");
                     assertThat(impact.date()).isEqualTo(
-                            java.time.LocalDate.of(2026, 8, 1)
+                            java.time.LocalDate.of(2026, 9, 1)
                     );
                     assertThat(impact.stale()).isFalse();
                     assertThat(impact.evidence()).contains("预计有雨");
@@ -357,8 +357,8 @@ class PlanningCompletedEventParserTest {
         ArrayNode activities = (ArrayNode) reordered.at("/payload/itinerary/days/0/activities");
         ObjectNode thirdActivity = activities.get(1).deepCopy();
         thirdActivity.put("title", "Late stop");
-        thirdActivity.put("startTime", "2026-08-01T17:00:00+08:00");
-        thirdActivity.put("endTime", "2026-08-01T19:00:00+08:00");
+        thirdActivity.put("startTime", "2026-09-01T17:00:00+08:00");
+        thirdActivity.put("endTime", "2026-09-01T19:00:00+08:00");
         activities.add(thirdActivity);
         ArrayNode transitLegs = (ArrayNode) reordered.at("/payload/itinerary/days/0/transitLegs");
         ObjectNode firstLeg = transitLegs.get(0).deepCopy();
@@ -462,6 +462,32 @@ class PlanningCompletedEventParserTest {
     }
 
     @Test
+    void acceptsV8StructuralArrivalAnchorWithEmptyAddress() throws Exception {
+        ObjectNode event = amapV2Event();
+        ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");
+        activity.put("kind", "ARRIVAL");
+        activity.remove("address");
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+        PlanningCompletedEvent.Activity parsedActivity =
+                parsed.payload().itinerary().days().getFirst().activities().getFirst();
+        assertThat(parsedActivity.address()).isNull();
+        assertThat(parsedActivity.providerPoiId()).isEqualTo("B00140TWHT");
+        assertThat(parsedActivity.coordinates()).isNotNull();
+    }
+
+    @Test
+    void rejectsV2NonStructuralAmapActivityWithEmptyAddress() throws Exception {
+        ObjectNode event = amapV2Event();
+        ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");
+        activity.remove("address");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("AMAP activity requires valid provider metadata");
+    }
+
+    @Test
     void rejectsV2AmapActivityWithoutCoordinates() throws Exception {
         ObjectNode event = amapV2Event();
         ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");
@@ -540,7 +566,7 @@ class PlanningCompletedEventParserTest {
     void rejectsAnActivityWhoseEndIsNotAfterItsStart() throws Exception {
         ObjectNode event = (ObjectNode) objectMapper.readTree(eventJson());
         ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");
-        activity.put("endTime", "2026-08-01T08:00:00+08:00");
+        activity.put("endTime", "2026-09-01T08:00:00+08:00");
 
         assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
                 .isInstanceOf(PlanningEventContractException.class)
@@ -573,8 +599,8 @@ class PlanningCompletedEventParserTest {
         ObjectNode event = (ObjectNode) objectMapper.readTree(eventJson());
         ArrayNode activities = (ArrayNode) event.at("/payload/itinerary/days/0/activities");
         ObjectNode overlapping = activities.get(0).deepCopy();
-        overlapping.put("startTime", "2026-08-01T10:00:00+08:00");
-        overlapping.put("endTime", "2026-08-01T12:00:00+08:00");
+        overlapping.put("startTime", "2026-09-01T10:00:00+08:00");
+        overlapping.put("endTime", "2026-09-01T12:00:00+08:00");
         activities.add(overlapping);
 
         assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))

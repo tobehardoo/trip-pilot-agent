@@ -14,6 +14,7 @@ import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.trip.TripRequests.ConstraintInput;
 import io.github.tobehardoo.trippilot.trip.TripRequests.FixedSchedule;
 import io.github.tobehardoo.trippilot.trip.TripRequests.MealWindow;
+import io.github.tobehardoo.trippilot.trip.TripRequests.StructuredPoi;
 import io.github.tobehardoo.trippilot.trip.TripRequests.TravelAnchor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -62,11 +63,17 @@ public class TripConstraintValidator {
 
     public void validateContext(
             ConstraintInput input,
+            String destination,
             LocalDate startDate,
             LocalDate endDate
     ) {
         validateAnchor(input.arrival(), startDate, endDate);
         validateAnchor(input.departure(), startDate, endDate);
+        validatePoi(input.arrival() == null ? null : input.arrival().poi(), destination, "TRANSPORT");
+        validatePoi(input.departure() == null ? null : input.departure().poi(), destination, "TRANSPORT");
+        if (input.accommodation() != null) {
+            validatePoi(input.accommodation().poi(), destination, "HOTEL");
+        }
         if (input.arrival() != null && input.departure() != null
                 && !input.departure().time().isAfter(input.arrival().time())) {
             throw failure("Departure time must be after arrival time");
@@ -97,6 +104,64 @@ public class TripConstraintValidator {
     }
 
     // --- internal helpers ---------------------------------------------------
+
+    /**
+     * Structured POIs are the only trusted coordinate anchors. A POI must
+     * carry a provider, both coordinates, and a city that matches the trip
+     * destination; its category code must fit the scene (transport for
+     * arrival/departure, lodging for the hotel). The AMap street address is
+     * often empty for stations and hotels, so it is a display field, not a
+     * validity requirement. Anything else fails closed with a clear 400
+     * instead of silently degrading to free text.
+     */
+    private void validatePoi(StructuredPoi poi, String destination, String scene) {
+        if (poi == null) {
+            return;
+        }
+        if (poi.provider() == null || poi.provider().isBlank()) {
+            throw failure("Structured POI must include a provider");
+        }
+        if ((poi.longitude() == null) != (poi.latitude() == null)) {
+            throw failure("Structured POI longitude and latitude must be provided together");
+        }
+        if (poi.city() == null || poi.city().isBlank()) {
+            throw failure("Structured POI must include a city");
+        }
+        if (!sameCity(destination, poi.city())) {
+            throw failure("Structured POI city must match the trip destination");
+        }
+        if (poi.categoryCode() == null || poi.categoryCode().isBlank()) {
+            throw failure("Structured POI must include a category code");
+        }
+        if (!belongsToScene(poi.categoryCode(), scene)) {
+            throw failure(poi.categoryCode() + " is not a valid "
+                    + ("HOTEL".equals(scene) ? "lodging" : "transport") + " category for this place");
+        }
+    }
+
+    /**
+     * AMap type-code allowlists, aligned with the category filters the search
+     * client applies per scene so a saved anchor can never come from outside
+     * its scene. Transport is the level-1 交通设施服务 prefix (150xxx) covering
+     * railway, airport, port, bus, and metro; lodging is 住宿服务 (100xxx).
+     */
+    private static boolean belongsToScene(String categoryCode, String scene) {
+        if ("HOTEL".equals(scene)) {
+            return categoryCode.startsWith("100");
+        }
+        return categoryCode.startsWith("150");
+    }
+
+    private static boolean sameCity(String destination, String poiCity) {
+        return normalizeCity(destination).equals(normalizeCity(poiCity));
+    }
+
+    private static String normalizeCity(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.trim().replaceAll("[市]$", "").toLowerCase(Locale.ROOT);
+    }
 
     private void validateAnchor(
             TravelAnchor anchor,

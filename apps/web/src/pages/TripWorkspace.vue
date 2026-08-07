@@ -22,6 +22,7 @@ import {
   downloadItineraryExport,
   getCurrentItinerary,
   getPlanningTask,
+  getSystemTime,
   getTrip,
   listTrips,
   searchTrips,
@@ -36,8 +37,11 @@ import {
   rollbackItinerary,
   revokeItineraryShare,
   restoreTrip,
+  searchPlaces,
+  suggestPlaces,
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
+  updateTripConfiguration,
   updateTripConstraints,
   type AuthSession,
   type CreateTripInput,
@@ -50,12 +54,16 @@ import {
   type ItineraryShareStatus,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
+  type PlaceSearchResponse,
+  type PlaceSuggestResponse,
   type PlanEvaluation,
   type PlanningTask,
   type PlanningTaskEvent,
   type PlanningProgressStage,
   type PlanningProgressUpdate,
+  type StructuredPoi,
   type Trip,
+  type UpdateConfigurationInput,
   type UpdateTripConstraintsInput,
 } from '../lib/api'
 import { tripDetailPath, type AppRoute } from '../lib/routes'
@@ -72,6 +80,7 @@ const trips = ref<Trip[]>([])
 const destinationSearch = ref('')
 const includeArchived = ref(false)
 const selectedTrip = ref<Trip | null>(null)
+const serverDate = ref('')
 const route = computed<AppRoute>(() => {
   const tripId = typeof currentRoute.params.tripId === 'string'
     ? currentRoute.params.tripId
@@ -521,6 +530,16 @@ async function openTrip(tripId: string) {
   await navigate(tripDetailPath(tripId))
 }
 
+async function openCreateDialog() {
+  await navigate('/trips/new')
+}
+
+async function closeCreateDialog() {
+  if (currentRoute.name === 'trip-create') {
+    await navigate('/trips')
+  }
+}
+
 async function backToTrips() {
   stopPlanningStream()
   await navigate('/trips')
@@ -543,17 +562,45 @@ async function handleRouteChange() {
 
 async function handleCreateTrip(input: CreateTripInput) {
   error.value = null
+  let created: Trip
   try {
-    const created = await withAccessToken((token) => createTrip(token, input))
-    if (destinationSearch.value || includeArchived.value) {
-      await loadTrips(true)
-    } else {
-      listRequestSequence += 1
-      trips.value = [created, ...trips.value]
-    }
+    created = await withAccessToken((token) => createTrip(token, input))
   } catch (cause) {
     if (cause instanceof SessionChangedError) return
     error.value = errorMessage(cause)
+    throw cause
+  }
+  if (destinationSearch.value || includeArchived.value) {
+    await loadTrips(true)
+  } else {
+    listRequestSequence += 1
+    trips.value = [created, ...trips.value]
+  }
+  // 先进入旅行详情（等待 selectedTrip 就绪），再用统一规划流程启动并
+  // 跟踪规划任务，避免“创建后立即导航”导致详情页丢失正在进行的规划。
+  await openTrip(created.id)
+  await startPlanningForNewTrip(created.id)
+}
+
+async function startPlanningForNewTrip(tripId: string) {
+  // 导航后 loadTrip 异步设置 selectedTrip；等待它就绪再启动规划。
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (selectedTrip.value?.id === tripId) break
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  if (selectedTrip.value?.id !== tripId) return
+  await runPlanningTask((token, idempotencyKey) => (
+    createPlanningTask(token, tripId, idempotencyKey)
+  ))
+}
+
+/** 统一配置保存：原子更新元数据与约束，行程自动转为 stale，等待重新规划。 */
+async function handleUpdateConfiguration(tripId: string, input: UpdateConfigurationInput) {
+  try {
+    await withAccessToken((token) => updateTripConfiguration(token, tripId, input))
+    await reloadSelectedTrip()
+  } catch (cause) {
+    if (cause instanceof SessionChangedError) return
     throw cause
   }
 }
@@ -966,6 +1013,7 @@ async function logout() {
 }
 
 onMounted(() => {
+  void loadServerDate()
   removeNavigationHook = router.afterEach(() => {
     void handleRouteChange()
   })
@@ -975,6 +1023,37 @@ onMounted(() => {
   }
   void restoreSession()
 })
+
+async function loadServerDate() {
+  try {
+    const time = await getSystemTime()
+    serverDate.value = time.serverDate
+  } catch {
+    serverDate.value = ''
+  }
+}
+
+async function searchPlacesFor(keyword: string, city: string, signal?: AbortSignal): Promise<PlaceSearchResponse> {
+  try {
+    return await withAccessToken((token) => searchPlaces(token, keyword, city, signal))
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') {
+      throw cause
+    }
+    return { results: [], status: 'UNAVAILABLE' }
+  }
+}
+
+async function suggestPlacesFor(keyword: string, cityCode: string, scene: string, signal?: AbortSignal): Promise<PlaceSuggestResponse> {
+  try {
+    return await withAccessToken((token) => suggestPlaces(token, keyword, cityCode, scene, signal))
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') {
+      throw cause
+    }
+    return { items: [] }
+  }
+}
 
 onUnmounted(() => {
   stopPlanningStream()
@@ -999,12 +1078,18 @@ onUnmounted(() => {
       :create-trip="handleCreateTrip"
       :destination-query="destinationSearch"
       :include-archived="includeArchived"
+      :server-date="serverDate"
+      :search-places="searchPlacesFor"
+      :suggest-places="suggestPlacesFor"
+      :create-dialog-open="currentRoute.name === 'trip-create'"
       @logout="logout"
       @open-trip="openTrip"
       @search="handleTripSearch"
       @include-archived="handleIncludeArchived"
       @archive-trip="handleArchiveTrip"
       @restore-trip="handleRestoreTrip"
+      @request-create="openCreateDialog"
+      @close-create="closeCreateDialog"
     />
     <TripDetail
       v-else-if="phase === 'authenticated' && user && route.name === 'trip-detail'"
@@ -1045,6 +1130,10 @@ onUnmounted(() => {
       :start-planning="handleStartPlanning"
       :cancel-planning="handleCancelPlanning"
       :update-constraints="handleUpdateConstraints"
+      :update-configuration="handleUpdateConfiguration"
+      :server-date="serverDate"
+      :search-places="searchPlacesFor"
+      :suggest-places="suggestPlacesFor"
       :reload-trip="reloadSelectedTrip"
       @back="backToTrips"
       @logout="logout"

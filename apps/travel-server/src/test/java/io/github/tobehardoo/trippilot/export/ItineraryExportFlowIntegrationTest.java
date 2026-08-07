@@ -44,7 +44,7 @@ class ItineraryExportFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString(".ics")))
                 .andReturn();
         String ics = calendar.getResponse().getContentAsString(StandardCharsets.UTF_8);
-        assertThat(ics).contains("BEGIN:VCALENDAR", "BEGIN:VEVENT", "DTSTART:20260801T010000Z",
+        assertThat(ics).contains("BEGIN:VCALENDAR", "BEGIN:VEVENT", "DTSTART:20260901T010000Z",
                 "LOCATION:Guangzhou Museum", "END:VCALENDAR");
         assertThat(ics).contains("\r\n ");
         assertThat(ics.split("\r\n"))
@@ -76,14 +76,14 @@ class ItineraryExportFlowIntegrationTest extends PostgresIntegrationTest {
                 """, versionId, itineraryId);
         jdbcTemplate.update("""
                 INSERT INTO business.itinerary_day(id, itinerary_version_id, day_date, day_index)
-                VALUES (?, ?, DATE '2026-08-01', 0)
+                VALUES (?, ?, DATE '2026-09-01', 0)
                 """, dayId, versionId);
         jdbcTemplate.update("""
                 INSERT INTO business.activity(
                     id, itinerary_day_id, activity_order, title, start_time, end_time,
                     estimated_cost, source, provider_poi_id, longitude, latitude, address, locked
-                ) VALUES (?, ?, 0, 'Museum visit', '2026-08-01T09:00:00+08:00',
-                    '2026-08-01T10:00:00+08:00', 25, 'AMAP', 'museum-1',
+                ) VALUES (?, ?, 0, 'Museum visit', '2026-09-01T09:00:00+08:00',
+                    '2026-09-01T10:00:00+08:00', 25, 'AMAP', 'museum-1',
                     113.2644, 23.1291,
                     'Guangzhou Museum, 123 Cultural Avenue, Yuexiu District, Guangzhou, Guangdong, China', FALSE)
                 """, UUID.randomUUID(), dayId);
@@ -98,7 +98,7 @@ class ItineraryExportFlowIntegrationTest extends PostgresIntegrationTest {
                         .content("""
                                 {
                                   "title":"Export test trip", "destination":"Guangzhou",
-                                  "startDate":"2026-08-01", "endDate":"2026-08-01",
+                                  "startDate":"2026-09-01", "endDate":"2026-09-01",
                                   "constraints":{"budgetAmount":1000,"travelers":1,
                                   "travelerType":"SOLO","pace":"BALANCED",
                                   "preferences":[],"fixedSchedules":[]}

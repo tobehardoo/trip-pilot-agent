@@ -13,6 +13,7 @@ public record TripRecord(
         LocalDate endDate,
         String status,
         int version,
+        String destinationRegionJson,
         Instant createdAt,
         Instant updatedAt,
         Instant archivedAt

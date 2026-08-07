@@ -104,6 +104,7 @@ class DemoPlanningProvider:
             trip_date, trip.start_date, trip.end_date, arrival, departure,
         )
         activities: list[ItineraryActivity] = []
+        structural_end: datetime | None = None
         if day_type == "ARRIVAL_DAY" and arrival is not None:
             local = arrival.astimezone(CHINA_TIME_ZONE)
             start = datetime.combine(
@@ -111,15 +112,17 @@ class DemoPlanningProvider:
                 time(hour=local.hour, minute=local.minute),
                 tzinfo=CHINA_TIME_ZONE,
             )
+            arrival_end = start + timedelta(minutes=30)
             activities.append(ItineraryActivity(
                 title="到达",
                 start_time=start,
-                end_time=start + timedelta(minutes=30),
+                end_time=arrival_end,
                 estimated_cost=Decimal("0"),
                 source="DEMO",
                 kind="ARRIVAL",
                 time_fixed=True,
             ))
+            structural_end = max(structural_end or arrival_end, arrival_end)
         if day_type == "DEPARTURE_DAY" and departure is not None:
             local = departure.astimezone(CHINA_TIME_ZONE)
             end = datetime.combine(
@@ -136,8 +139,12 @@ class DemoPlanningProvider:
                 kind="DEPARTURE",
                 time_fixed=True,
             ))
+            structural_end = max(structural_end or end, end)
         cursor = minute_datetime(trip_date, available_start)
         window_end = minute_datetime(trip_date, available_end)
+        # 探索时段从到达/离开锚点结束后开始，避免活动重叠。
+        if structural_end is not None and structural_end > cursor:
+            cursor = structural_end
         if window_end - cursor >= timedelta(hours=2):
             activities.append(ItineraryActivity(
                 title="自主探索时段（演示）",

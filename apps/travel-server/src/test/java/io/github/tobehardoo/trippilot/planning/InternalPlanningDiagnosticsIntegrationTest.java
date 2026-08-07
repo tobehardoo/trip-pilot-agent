@@ -89,7 +89,7 @@ class InternalPlanningDiagnosticsIntegrationTest extends PostgresIntegrationTest
                         .content("""
                                 {
                                   "title":"Diagnostics trip", "destination":"Guangzhou",
-                                  "startDate":"2026-08-01", "endDate":"2026-08-02",
+                                  "startDate":"2026-09-01", "endDate":"2026-09-02",
                                   "constraints":{"budgetAmount":1000,"travelers":1,
                                   "travelerType":"SOLO","pace":"BALANCED",
                                   "preferences":[],"fixedSchedules":[]}

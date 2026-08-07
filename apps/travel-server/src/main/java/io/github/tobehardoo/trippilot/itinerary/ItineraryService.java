@@ -84,7 +84,7 @@ public class ItineraryService {
                 .orElseThrow(this::itineraryNotFound);
         return toItineraryResponse(new ItineraryMapper.CurrentVersion(
                 version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
-                version.estimatedTotalCost(), version.provider(), version.createdAt(), null
+                version.estimatedTotalCost(), version.provider(), version.createdAt(), null, 0
         ));
     }
 
@@ -256,6 +256,7 @@ public class ItineraryService {
                         day.dayType()
                 ))
                 .toList();
+        boolean stale = version.tripVersion() > itineraryMapper.findPlanningBaseline(version.id());
         return new ItineraryResponse(
             version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
                 version.estimatedTotalCost(), responseProvider(version.provider(), days), days,
@@ -271,7 +272,8 @@ public class ItineraryService {
                                 impact.conflicted(), impact.refreshFailed()
                         ))
                         .toList(),
-                version.createdAt(), version.rollbackFromVersionId()
+                version.createdAt(), version.rollbackFromVersionId(),
+                stale
         );
     }
 
@@ -371,11 +373,26 @@ public class ItineraryService {
             ActivityLocation from = itinerary.findActivity(location.leg().fromActivityId());
             ActivityLocation to = itinerary.findActivity(location.leg().toActivityId());
             int durationSeconds = estimatedTransitDuration(request.transitMode(), location.leg().distanceMeters());
-            if (from == null || to == null
-                    || Duration.between(from.activity().endTime(), to.activity().startTime()).getSeconds()
+            if (from != null && to != null
+                    && Duration.between(from.activity().endTime(), to.activity().startTime()).getSeconds()
                     < durationSeconds) {
-                return EditEvaluation.blocked("ITINERARY_TRANSIT_CONFLICT",
-                        "The selected transit mode does not fit between its activities");
+                // A short time gap in the current itinerary does not mean the mode is
+                // unavailable. Only a fixed schedule on the destination activity is a
+                // hard constraint that genuinely forbids a slower mode. Otherwise allow
+                // the selection and surface a "needs replan" warning so the affected
+                // activities can be re-timed by local replanning.
+                if (to.activity().timeFixed()) {
+                    return EditEvaluation.blocked("ITINERARY_TRANSIT_CONFLICT",
+                            "The selected transit mode would miss the fixed schedule of the next activity");
+                }
+                return EditEvaluation.allowed(
+                        EditOperation.UPDATE_TRANSIT_LEG,
+                        new EditImpact(
+                                List.of(location.day().date()),
+                                List.of(location.leg().fromActivityId(), location.leg().toActivityId()),
+                                List.of("The selected transit mode needs more time than the current gap; "
+                                        + "adjust the following activities or replan this day"))
+                );
             }
             BigDecimal updatedCost = estimatedTransitCost(request.transitMode(), location.leg().distanceMeters());
             BigDecimal existingLegCost = location.leg().estimatedCost();
@@ -740,7 +757,8 @@ public class ItineraryService {
             KnowledgeResponse knowledge,
             List<FactImpactResponse> factImpacts,
             Instant createdAt,
-            UUID rollbackFromVersionId
+            UUID rollbackFromVersionId,
+            boolean stale
     ) {
     }
 

@@ -11,6 +11,45 @@ export interface AuthSession {
   expiresIn: number
 }
 
+/** Structured AMap POI used as a trusted coordinate anchor for a place. */
+export interface StructuredPoi {
+  name: string
+  providerPoiId: string
+  /** AMap omits street addresses for many stations and hotels; null when absent. */
+  fullAddress: string | null
+  longitude: number | null
+  latitude: number | null
+  city: string
+  district: string | null
+  /** Anchor provider; always AMAP for user-selected POIs. */
+  provider?: string | null
+  /** Specific AMap category label, e.g. "高铁站". */
+  category?: string | null
+  /** AMap type code, e.g. "150302"; backend re-validates it per scene. */
+  categoryCode?: string | null
+  provinceCode?: string | null
+  cityCode?: string | null
+  districtCode?: string | null
+}
+
+export interface TripTravelAnchor {
+  placeName: string
+  time: string
+  poi?: StructuredPoi | null
+}
+
+export interface TripAccommodation {
+  placeName?: string
+  poi?: StructuredPoi | null
+}
+
+export interface TripMealWindow {
+  mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER'
+  startTime: string
+  endTime: string
+  source?: 'SYSTEM_DEFAULT' | 'USER_SET'
+}
+
 export interface TripConstraints {
   budgetAmount: number | null
   travelers: number
@@ -22,19 +61,17 @@ export interface TripConstraints {
     startTime: string
     endTime: string
   }>
-  arrival?: { placeName: string; time: string } | null
-  departure?: { placeName: string; time: string } | null
-  accommodation?: { placeName: string } | null
+  arrival?: TripTravelAnchor | null
+  departure?: TripTravelAnchor | null
+  accommodation?: TripAccommodation | null
   mustVisitPlaces?: string[]
   avoidPlaces?: string[]
-  mealWindows?: Array<{
-    mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER'
-    startTime: string
-    endTime: string
-  }>
+  mealWindows?: TripMealWindow[]
   mobilityLevel?: 'STANDARD' | 'REDUCED' | 'STEP_FREE'
   schemaVersion?: number
 }
+
+export type TripConfiguration = Omit<TripConstraints, 'schemaVersion'>
 
 export interface Trip {
   id: string
@@ -45,6 +82,7 @@ export interface Trip {
   status: string
   version: number
   constraints: TripConstraints
+  destinationRegion?: DestinationRegion | null
   createdAt: string
   updatedAt: string
   archivedAt: string | null
@@ -73,11 +111,81 @@ export interface CreateTripInput {
   destination: string
   startDate: string
   endDate: string
-  constraints: Omit<TripConstraints, 'schemaVersion'>
+  constraints: TripConfiguration
+  destinationRegion?: DestinationRegion | null
 }
 
-export interface UpdateTripConstraintsInput extends Omit<TripConstraints, 'schemaVersion'> {
+export interface UpdateTripConstraintsInput extends TripConfiguration {
   version: number
+}
+
+/** Unified configuration save: trip metadata plus constraints under one version bump. */
+export interface UpdateConfigurationInput {
+  version: number
+  title: string
+  destination: string
+  startDate: string
+  endDate: string
+  constraints: TripConfiguration
+  destinationRegion?: DestinationRegion | null
+}
+
+export interface SystemTime {
+  serverDate: string
+  timeZone: string
+}
+
+export interface PlaceSearchResponse {
+  results: StructuredPoi[]
+  status: 'AVAILABLE' | 'UNAVAILABLE'
+}
+
+export type PlaceSearchFn = (
+  keyword: string,
+  city: string,
+  signal?: AbortSignal,
+) => Promise<PlaceSearchResponse>
+
+export interface PlaceSuggestItem {
+  itemType: 'POI' | 'REGION' | 'SUGGESTION'
+  provider?: string | null
+  providerPoiId?: string | null
+  name: string
+  category?: string | null
+  /** AMap type code, e.g. "150302"; backend re-validates it per scene. */
+  categoryCode?: string | null
+  provinceCode?: string | null
+  cityCode?: string | null
+  districtCode?: string | null
+  districtName?: string | null
+  fullAddress?: string | null
+  longitude?: number | null
+  latitude?: number | null
+}
+
+export interface PlaceSuggestResponse {
+  items: PlaceSuggestItem[]
+}
+
+export type PlaceSuggestFn = (
+  keyword: string,
+  cityCode: string,
+  scene: string,
+  signal?: AbortSignal,
+) => Promise<PlaceSuggestResponse>
+
+export interface DestinationDistrict {
+  districtCode: string
+  districtName: string
+}
+
+/** 结构化目的地省市区，编码为高德 adcode。 */
+export interface DestinationRegion {
+  provinceCode: string
+  provinceName: string
+  cityCode: string
+  cityName: string
+  districts: DestinationDistrict[]
 }
 
 export interface PlanningTask {
@@ -422,6 +530,8 @@ export interface Itinerary {
   knowledge: ItineraryKnowledge
   factImpacts?: ItineraryFactImpact[]
   rollbackFromVersionId?: string | null
+  /** True when the live constraints changed after this itinerary was planned. */
+  stale?: boolean
   createdAt: string
 }
 
@@ -614,7 +724,7 @@ async function request<T>(path: string, options: RequestInit = {}, accessToken?:
   }
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`
 
-  const result = await fetch(path, { ...options, headers })
+  const result = await fetch(path, { ...options, headers, signal: options.signal })
   let body: T | ApiErrorBody = {}
   try {
     body = (await result.json()) as T | ApiErrorBody
@@ -702,6 +812,43 @@ export function updateTripConstraints(
     method: 'PUT',
     body: JSON.stringify(input),
   }, accessToken)
+}
+
+/** Atomically saves trip metadata plus constraints under one version bump. */
+export function updateTripConfiguration(
+  accessToken: string,
+  tripId: string,
+  input: UpdateConfigurationInput,
+): Promise<Trip> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/configuration`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  }, accessToken)
+}
+
+export function getSystemTime(): Promise<SystemTime> {
+  return request('/api/system/time')
+}
+
+export function searchPlaces(
+  accessToken: string,
+  keyword: string,
+  city: string,
+  signal?: AbortSignal,
+): Promise<PlaceSearchResponse> {
+  const query = new URLSearchParams({ keyword, city })
+  return request(`/api/places/search?${query}`, { signal }, accessToken)
+}
+
+export function suggestPlaces(
+  accessToken: string,
+  keyword: string,
+  cityCode: string,
+  scene: string,
+  signal?: AbortSignal,
+): Promise<PlaceSuggestResponse> {
+  const query = new URLSearchParams({ keyword, cityCode, scene })
+  return request(`/api/places/suggest?${query}`, { signal }, accessToken)
 }
 
 export function listGuideImports(accessToken: string, tripId: string): Promise<GuideImport[]> {

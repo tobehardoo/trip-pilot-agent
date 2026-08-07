@@ -33,7 +33,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(
                                 "/api/health", "/actuator/health", "/actuator/prometheus", "/api/auth/**",
-                                "/api/shares/**", "/api/internal/diagnostics/**"
+                                "/api/shares/**", "/api/internal/diagnostics/**", "/api/system/time"
                         ).permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(resourceServer -> resourceServer

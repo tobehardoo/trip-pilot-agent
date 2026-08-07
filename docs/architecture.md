@@ -42,7 +42,7 @@ sequenceDiagram
 ## 领域边界
 
 - Identity：用户、JWT Access Token、HttpOnly Refresh Cookie 和会话轮换。
-- Trip：旅行基础信息、结构化约束、归档状态和用户所有权。
+- Trip：旅行基础信息、结构化约束（目的地行政区 + POI 锚点 + 到返时间 + 三餐 + 偏好）、归档状态和用户所有权。
 - Planning：任务状态、幂等键、取消、进度事件和失败诊断。
 - Itinerary：不可变版本、天、活动、交通段、编辑、差异和回滚。
 - Knowledge：城市知识文档、片段、嵌入和检索结果。
@@ -50,6 +50,19 @@ sequenceDiagram
 - Share/Export：固定版本的匿名只读分享、PDF 和 ICS。
 
 Java 拥有用户可见业务事实和事务一致性；Python 只消费冻结输入、产出规划事件和候选结果。Worker 不直接修改用户业务表。
+
+### 旅行约束与地点搜索
+
+权威需求基线见 [`docs/architecture/trip-constraints-and-place-search.md`](architecture/trip-constraints-and-place-search.md)。领域边界：
+
+- **DestinationRegion ≠ StructuredPoi**。`DestinationRegion`（省/市/区县，adcode）负责旅行规划范围；`StructuredPoi`（provider、providerPoiId、坐标、地址、类别码）负责精确路线锚点。
+- 目的地使用静态行政区数据（`trip/RegionCatalog.java`、`apps/web/src/lib/china-divisions.ts`），级联选择，禁止自由文本伪造权威目的地。
+- 到达/返程/酒店必须是联想列表选中的 POI；后端按场景类别码（交通 `150*`、住宿 `100*`）重新校验，未选中的自由文本不得成为可信锚点。
+- 到达/返程保存完整 `OffsetDateTime`（业务时区 `Asia/Shanghai`），锚点日期必须在行程范围内、返程晚于到达。
+- 三餐默认 `08:00–09:00 / 12:00–13:00 / 18:00–19:00`，来源 `SYSTEM_DEFAULT`/`USER_SET`。
+- 创建与编辑共用同一约束模型；`PUT /api/trips/{tripId}/configuration` 原子更新配置。
+- 地点搜索经 Java 受限代理（`GET /api/places/search`、`/api/places/suggest`），浏览器不直接持有 AMap Key；失败 fail-closed。
+- 业务时区 `Asia/Shanghai`，可注入 `Clock`，`GET /api/system/time` 向浏览器提供北京日历锚点。
 
 ## 数据所有权
 

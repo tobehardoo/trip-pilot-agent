@@ -13,10 +13,12 @@ import { computed, ref, watch } from 'vue'
 
 import type { ItineraryTransitLeg } from '../lib/api'
 import {
+  commuteModeStatus,
   estimateCommuteOptions,
   recommendedCommuteMode,
   type CommuteEstimate,
   type CommuteMode,
+  type CommuteModeStatus,
   type ConcreteCommuteMode,
 } from '../lib/transit'
 
@@ -53,8 +55,13 @@ const durationDeltaMinutes = computed(() => Math.round(
   (selectedEstimate.value.durationSeconds - currentEstimate.value.durationSeconds) / 60,
 ))
 const costDelta = computed(() => selectedEstimate.value.cost - currentEstimate.value.cost)
-const hasConflict = computed(() => props.availableSeconds !== undefined
+
+/** 当前选中方式是否超出可用时间空档（REQUIRES_REPLAN），用于提示而非禁用。 */
+const requiresReplan = computed(() => props.availableSeconds !== undefined
   && selectedEstimate.value.durationSeconds > props.availableSeconds)
+const requiresReplanDelta = computed(() => Math.max(1, Math.round(
+  (selectedEstimate.value.durationSeconds - (props.availableSeconds ?? 0)) / 60,
+)))
 
 watch(() => props.selectedMode, (mode) => { activeMode.value = mode })
 
@@ -62,16 +69,22 @@ function optionFor(mode: ConcreteCommuteMode): CommuteEstimate {
   return options.value.find((option) => option.mode === mode) ?? options.value[0]
 }
 
-function selectMode(mode: CommuteMode) {
-  if (props.locked || modeHasConflict(mode)) return
-  activeMode.value = mode
-  emit('select', mode === 'AUTO' ? recommendedMode.value : mode)
+/**
+ * 三态语义：
+ * - AVAILABLE：时间空档足够，正常可选；
+ * - REQUIRES_REPLAN：真实可用但空档不足，仍然可选，仅提示需要调整行程；
+ * - UNAVAILABLE：真实不可用（Provider 无路线/业务规则/数据缺失），此时才禁用。
+ * 空档不足绝不等于该方式不存在。
+ */
+function modeStatusFor(mode: CommuteMode): CommuteModeStatus {
+  const concrete = mode === 'AUTO' ? recommendedMode.value : mode
+  return commuteModeStatus(concrete, options.value, props.availableSeconds)
 }
 
-function modeHasConflict(mode: CommuteMode) {
-  if (props.availableSeconds === undefined) return false
-  const concreteMode = mode === 'AUTO' ? recommendedMode.value : mode
-  return optionFor(concreteMode).durationSeconds > props.availableSeconds
+function selectMode(mode: CommuteMode) {
+  if (props.locked || modeStatusFor(mode) === 'UNAVAILABLE') return
+  activeMode.value = mode
+  emit('select', mode === 'AUTO' ? recommendedMode.value : mode)
 }
 
 function modeLabel(mode: ConcreteCommuteMode) {
@@ -157,7 +170,7 @@ function deltaText() {
             : 'bg-surface-50 border-surface-200 text-surface-500 hover:bg-surface-100 hover:text-surface-700'"
           type="button"
           :aria-pressed="activeMode === mode"
-          :disabled="(locked && activeMode !== mode) || (activeMode !== mode && modeHasConflict(mode))"
+          :disabled="(locked && activeMode !== mode) || modeStatusFor(mode) === 'UNAVAILABLE'"
           :data-testid="`transit-option-${mode}`"
           @click="selectMode(mode)"
         >
@@ -166,6 +179,15 @@ function deltaText() {
           <BusFront v-else-if="mode === 'TRANSIT'" :size="14" aria-hidden="true" />
           <CarFront v-else :size="14" aria-hidden="true" />
           <span class="text-[10px]">{{ mode === 'AUTO' ? '自动' : modeLabel(mode) }}</span>
+          <span
+            v-if="modeStatusFor(mode) === 'REQUIRES_REPLAN'"
+            class="text-[9px] font-medium text-amber-600"
+            data-testid="transit-requires-replan"
+          >需要调整行程</span>
+          <span
+            v-else-if="modeStatusFor(mode) === 'UNAVAILABLE'"
+            class="text-[9px] font-medium text-surface-400"
+          >当前不可用</span>
           <Check v-if="activeMode === mode" :size="11" class="text-primary-600" aria-hidden="true" />
         </button>
       </div>
@@ -180,9 +202,9 @@ function deltaText() {
       <!-- Delta -->
       <p :data-testid="`transit-change-${leg.id}`" class="text-xs font-semibold text-primary-700 m-0">{{ deltaText() }}</p>
 
-      <!-- Conflict Warning -->
-      <p v-if="hasConflict" class="rounded-lg bg-red-50 border-l-4 border-red-400 px-3 py-2 text-xs text-red-700 m-0" role="alert">
-        当前方式超过两个活动之间的可用时间，活动时间保持不变，请选择更快的方式。
+      <!-- REQUIRES_REPLAN: 空档不足，方式仍可选，需要调整后续行程 -->
+      <p v-if="requiresReplan" class="rounded-lg bg-amber-50 border-l-4 border-amber-400 px-3 py-2 text-xs text-amber-800 m-0" role="status" data-testid="transit-requires-replan-note">
+        此方式比当前可用时间多 {{ requiresReplanDelta }} 分钟，需要调整后续活动时间；保存后建议重新规划该天。
       </p>
 
       <!-- Lock -->

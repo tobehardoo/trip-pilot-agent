@@ -6,16 +6,16 @@
   "taskId": "e3000000-0000-4000-8000-000000000004",
   "tripId": "e4000000-0000-4000-8000-000000000004",
   "runId": "e5000000-0000-4000-8000-000000000004",
-  "occurredAt": "2026-08-02T00:00:00Z",
+  "occurredAt": "2026-09-02T00:00:00Z",
   "payload": {
     "provider": "AMAP",
     "itinerary": {
       "title": "Fixed Appointment Itinerary",
       "days": [{
-        "date": "2026-08-02",
+        "date": "2026-09-02",
         "activities": [
-          {"activityId": "ea000001-0000-4000-8000-000000000004", "title": "Guangdong Museum", "startTime": "2026-08-02T09:00:00+08:00", "endTime": "2026-08-02T11:00:00+08:00", "estimatedCost": 30, "source": "AMAP", "providerPoiId": "POI-FIX-1", "coordinates": {"longitude": 113.30, "latitude": 23.10}, "address": "Fix St 1"},
-          {"activityId": "ea000002-0000-4000-8000-000000000004", "title": "Canton Tower", "startTime": "2026-08-02T13:00:00+08:00", "endTime": "2026-08-02T15:00:00+08:00", "estimatedCost": 50, "source": "AMAP", "providerPoiId": "POI-FIX-2", "coordinates": {"longitude": 113.32, "latitude": 23.12}, "address": "Fix St 2"}
+          {"activityId": "ea000001-0000-4000-8000-000000000004", "title": "Guangdong Museum", "startTime": "2026-09-02T09:00:00+08:00", "endTime": "2026-09-02T11:00:00+08:00", "estimatedCost": 30, "source": "AMAP", "providerPoiId": "POI-FIX-1", "coordinates": {"longitude": 113.30, "latitude": 23.10}, "address": "Fix St 1"},
+          {"activityId": "ea000002-0000-4000-8000-000000000004", "title": "Canton Tower", "startTime": "2026-09-02T13:00:00+08:00", "endTime": "2026-09-02T15:00:00+08:00", "estimatedCost": 50, "source": "AMAP", "providerPoiId": "POI-FIX-2", "coordinates": {"longitude": 113.32, "latitude": 23.12}, "address": "Fix St 2"}
         ],
         "transitLegs": [
           {"transitId": "e7000001-0000-4000-8000-000000000004", "fromActivityIndex": 0, "toActivityIndex": 1, "mode": "DRIVING", "distanceMeters": 2000, "durationSeconds": 600, "provider": "AMAP", "estimated": false, "polyline": [{"longitude": 113.30, "latitude": 23.10}, {"longitude": 113.32, "latitude": 23.12}]}
@@ -68,7 +68,7 @@
         }
       ],
       "summary": "行程整体质量 97/100，满足 1 个固定预约。",
-      "evaluatedAt": "2026-08-02T00:00:00Z"
+      "evaluatedAt": "2026-09-02T00:00:00Z"
     }
   }
 }

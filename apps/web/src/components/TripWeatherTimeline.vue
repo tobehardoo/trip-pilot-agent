@@ -30,8 +30,11 @@ interface WeatherDay {
   date: string
   summary: WeatherSummary | null
   inTrip: boolean
-  availability: 'available' | 'historical' | 'pending' | 'unavailable'
+  availability: 'available' | 'pending' | 'unavailable'
 }
+
+/** Provider forecast coverage from the reference (Beijing-today) date. */
+const FORECAST_HORIZON_DAYS = 7
 
 function addDays(date: string, amount: number) {
   const value = new Date(`${date}T00:00:00Z`)
@@ -76,18 +79,20 @@ const summariesByDate = computed(() => {
 })
 
 const weatherDays = computed<WeatherDay[]>(() => {
-  const firstDate = addDays(props.startDate, -2)
-  const lastDate = addDays(props.endDate, 2)
+  // 只展示行程日期范围内的天气，旧范围（改期前）的 facts 不再渲染。
   const days: WeatherDay[] = []
-  for (let date = firstDate; date <= lastDate; date = addDays(date, 1)) {
+  for (let date = props.startDate; date <= props.endDate; date = addDays(date, 1)) {
+    const hasFact = summariesByDate.value.has(date)
+    // 结合旅行日期、已返回事实覆盖、Provider 预报覆盖范围共同判定：
+    // 有事实直接显示；无事实且超出预报范围才算“暂时超出预报”；否则待同步。
+    const beyondForecastCoverage = date > addDays(referenceDate.value, FORECAST_HORIZON_DAYS)
     days.push({
       date,
       summary: summariesByDate.value.get(date) ?? null,
-      inTrip: date >= props.startDate && date <= props.endDate,
-      availability: summariesByDate.value.has(date)
+      inTrip: true,
+      availability: hasFact
         ? 'available'
-        : date < referenceDate.value ? 'historical'
-        : date > addDays(referenceDate.value, 4) ? 'unavailable' : 'pending',
+        : beyondForecastCoverage ? 'unavailable' : 'pending',
     })
   }
   return days
@@ -129,7 +134,7 @@ function scrollTimeline(direction: -1 | 1) {
         </span>
         <div>
           <h3 class="m-0 text-sm font-bold text-surface-800">行程天气</h3>
-          <p class="m-0 text-[10px] text-surface-400">行程前后各两天；点击日期定位当天路线</p>
+          <p class="m-0 text-[10px] text-surface-400">仅显示行程日期；点击日期定位当天路线</p>
         </div>
       </div>
       <div class="flex items-center gap-1">
@@ -180,9 +185,9 @@ function scrollTimeline(direction: -1 | 1) {
           <Sun :size="13" class="text-amber-500" aria-hidden="true" />{{ weatherDay.summary.condition }}
         </strong>
         <strong v-else class="mt-1 block text-xs text-surface-400">
-          {{ weatherDay.availability === 'historical'
-            ? '历史天气尚未同步'
-            : weatherDay.availability === 'unavailable' ? '预报未开放' : '待同步' }}
+          {{ weatherDay.availability === 'unavailable'
+            ? '暂时超出天气预报范围'
+            : '待同步' }}
         </strong>
         <span v-if="weatherDay.summary" class="mt-0.5 block text-xs font-semibold text-surface-700">
           {{ weatherDay.summary.temperature }}
@@ -191,10 +196,10 @@ function scrollTimeline(direction: -1 | 1) {
           {{ weatherDay.summary.wind }}
         </span>
         <span v-else-if="weatherDay.availability === 'unavailable'" class="mt-0.5 block text-[10px] text-surface-400">
-          出行前约 4 天可查看
+          该日期暂时超出天气预报范围，请临近出发时查看
         </span>
-        <span v-else-if="weatherDay.availability === 'historical'" class="mt-0.5 block text-[10px] text-surface-400">
-          请重新同步城市情报
+        <span v-else-if="weatherDay.availability === 'pending'" class="mt-0.5 block text-[10px] text-surface-400">
+          出行临近时同步天气
         </span>
       </button>
     </div>

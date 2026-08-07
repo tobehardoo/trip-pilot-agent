@@ -75,7 +75,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.operation").value("DELETE_ACTIVITY"))
                 .andExpect(jsonPath("$.canApply").value(true))
-                .andExpect(jsonPath("$.impactedDates[0]").value("2026-08-01"))
+                .andExpect(jsonPath("$.impactedDates[0]").value("2026-09-01"))
                 .andExpect(jsonPath("$.impactedActivityIds[0]").value(activityId.toString()))
                 .andExpect(jsonPath("$.warnings[0]").isNotEmpty())
                 .andExpect(jsonPath("$.blockingReasons").isEmpty());
@@ -310,8 +310,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 INSERT INTO business.activity(
                     id, itinerary_day_id, activity_order, title, start_time, end_time,
                     estimated_cost, source, provider_poi_id, longitude, latitude, address, locked
-                ) VALUES (?, ?, 2, 'Third stop', '2026-08-01T16:00:00+08:00',
-                    '2026-08-01T17:00:00+08:00', 0, 'AMAP', 'THIRD-STOP',
+                ) VALUES (?, ?, 2, 'Third stop', '2026-09-01T16:00:00+08:00',
+                    '2026-09-01T17:00:00+08:00', 0, 'AMAP', 'THIRD-STOP',
                     113.3300000, 23.1000000, 'Third stop address', false)
                 """, thirdActivityId, sourceDayId);
         jdbcTemplate.update("""
@@ -612,10 +612,10 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID lockedActivityId = uuid(locked.at("/days/0/activities/0"), "id");
         String move = """
                 ,
-                "targetDate": "2026-08-01",
+                "targetDate": "2026-09-01",
                 "targetOrder": 1,
-                "targetStartTime": "2026-08-01T15:30:00+08:00",
-                "targetEndTime": "2026-08-01T17:30:00+08:00"
+                "targetStartTime": "2026-09-01T15:30:00+08:00",
+                "targetEndTime": "2026-09-01T17:30:00+08:00"
                 """;
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
@@ -703,8 +703,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void rejectsTransitModeThatCannotFitBetweenItsActivities() throws Exception {
-        PlanningContext context = completedItinerary("edit-transit-conflict@example.com");
+    void allowsSlowerTransitModeWithAReplanWarning() throws Exception {
+        PlanningContext context = completedItinerary("edit-transit-replan@example.com");
         JsonNode current = currentItinerary(context);
         UUID versionId = uuid(current, "versionId");
         UUID legId = uuid(current.at("/days/0/transitLegs/0"), "id");
@@ -716,7 +716,45 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 SET start_time = (SELECT end_time + INTERVAL '10 minutes'
                                   FROM business.activity WHERE id = ?),
                     end_time = (SELECT end_time + INTERVAL '70 minutes'
-                                FROM business.activity WHERE id = ?)
+                                FROM business.activity WHERE id = ?),
+                    time_fixed = FALSE
+                WHERE id = ?
+                """, firstActivityId, firstActivityId, secondActivityId);
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(versionId, legId, "TRANSIT", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canApply").value(true))
+                .andExpect(jsonPath("$.blockingReasons").isEmpty())
+                .andExpect(jsonPath("$.warnings[0]").exists());
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(versionId, legId, "TRANSIT", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.days[0].transitLegs[0].mode").value("TRANSIT"));
+    }
+
+    @Test
+    void rejectsSlowerTransitModeAgainstAFixedSchedule() throws Exception {
+        PlanningContext context = completedItinerary("edit-transit-fixed@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID versionId = uuid(current, "versionId");
+        UUID legId = uuid(current.at("/days/0/transitLegs/0"), "id");
+        UUID firstActivityId = uuid(current.at("/days/0/activities/0"), "id");
+        UUID secondActivityId = uuid(current.at("/days/0/activities/1"), "id");
+        jdbcTemplate.update("UPDATE business.transit_leg SET distance_meters = 20000 WHERE id = ?", legId);
+        jdbcTemplate.update("""
+                UPDATE business.activity
+                SET start_time = (SELECT end_time + INTERVAL '10 minutes'
+                                  FROM business.activity WHERE id = ?),
+                    end_time = (SELECT end_time + INTERVAL '70 minutes'
+                                FROM business.activity WHERE id = ?),
+                    time_fixed = TRUE
                 WHERE id = ?
                 """, firstActivityId, firstActivityId, secondActivityId);
 
@@ -726,15 +764,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .content(transitEditJson(versionId, legId, "TRANSIT", false)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.canApply").value(false))
-                .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_TRANSIT_CONFLICT"));
-
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
-                        .header("Authorization", bearer(context.accessToken()))
-                        .header("Idempotency-Key", nextIdempotencyKey().toString())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(transitEditJson(versionId, legId, "TRANSIT", false)))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.code").value("ITINERARY_TRANSIT_CONFLICT"));
+                .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_TRANSIT_CONFLICT"))
+                .andExpect(jsonPath("$.blockingReasons[0].message").isNotEmpty());
     }
 
     @Test
@@ -766,10 +797,10 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID activityId = uuid(current.at("/days/0/activities/1"), "id");
         String validMove = """
                 ,
-                "targetDate": "2026-08-01",
+                "targetDate": "2026-09-01",
                 "targetOrder": 0,
-                "targetStartTime": "2026-08-01T06:30:00+08:00",
-                "targetEndTime": "2026-08-01T08:30:00+08:00"
+                "targetStartTime": "2026-09-01T06:30:00+08:00",
+                "targetEndTime": "2026-09-01T08:30:00+08:00"
                 """;
 
         MvcResult movedResult = mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
@@ -780,7 +811,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.versionNumber").value(2))
                 .andExpect(jsonPath("$.days[0].activities[0].startTime")
-                        .value("2026-07-31T22:30:00Z"))
+                        .value("2026-08-31T22:30:00Z"))
                 .andReturn();
 
         JsonNode moved = json(movedResult);
@@ -788,10 +819,10 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID movedActivityId = uuid(moved.at("/days/0/activities/0"), "id");
         String overlappingMove = """
                 ,
-                "targetDate": "2026-08-01",
+                "targetDate": "2026-09-01",
                 "targetOrder": 0,
-                "targetStartTime": "2026-08-01T09:30:00+08:00",
-                "targetEndTime": "2026-08-01T10:30:00+08:00"
+                "targetStartTime": "2026-09-01T09:30:00+08:00",
+                "targetEndTime": "2026-09-01T10:30:00+08:00"
                 """;
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
@@ -880,10 +911,10 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID activityToMove = uuid(locked.at("/days/0/activities/1"), "id");
         String move = """
                 ,
-                "targetDate": "2026-08-01",
+                "targetDate": "2026-09-01",
                 "targetOrder": 0,
-                "targetStartTime": "2026-08-01T06:30:00+08:00",
-                "targetEndTime": "2026-08-01T08:30:00+08:00"
+                "targetStartTime": "2026-09-01T06:30:00+08:00",
+                "targetEndTime": "2026-09-01T08:30:00+08:00"
                 """;
         JsonNode edited = json(mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
@@ -899,13 +930,13 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(replanJson(uuid(edited, "versionId"), "2026-08-01")))
+                        .content(replanJson(uuid(edited, "versionId"), "2026-09-01")))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.taskType").value("REPLAN"))
                 .andReturn();
         UUID taskId = uuid(json(taskResult), "taskId");
         JsonNode command = replanCommand(taskId);
-        assertThat(command.at("/payload/impactedDates/0").asText()).isEqualTo("2026-08-01");
+        assertThat(command.at("/payload/impactedDates/0").asText()).isEqualTo("2026-09-01");
         assertThat(command.at("/payload/itinerary/days/1/transitLegs/0/distanceMeters").asInt())
                 .isEqualTo(910);
 
@@ -939,8 +970,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 INSERT INTO business.activity(
                     id, itinerary_day_id, activity_order, title, start_time, end_time,
                     estimated_cost, source, provider_poi_id, longitude, latitude, address, locked
-                ) VALUES (?, ?, 2, 'Third stop', '2026-08-01T16:00:00+08:00',
-                    '2026-08-01T17:00:00+08:00', 0, 'AMAP', 'THIRD-STOP',
+                ) VALUES (?, ?, 2, 'Third stop', '2026-09-01T16:00:00+08:00',
+                    '2026-09-01T17:00:00+08:00', 0, 'AMAP', 'THIRD-STOP',
                     113.3300000, 23.1000000, 'Third stop address', false)
                 """, thirdActivityId, sourceDayId);
         jdbcTemplate.update("UPDATE business.transit_leg SET leg_order = 2 WHERE id = ?", firstTransitLegId);
@@ -960,7 +991,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(replanJson(sourceVersionId, "2026-08-01")))
+                        .content(replanJson(sourceVersionId, "2026-09-01")))
                 .andExpect(status().isAccepted())
                 .andReturn();
         UUID taskId = uuid(json(taskResult), "taskId");
@@ -1007,7 +1038,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(replanJson(sourceVersionId, "2026-08-01")))
+                        .content(replanJson(sourceVersionId, "2026-09-01")))
                 .andExpect(status().isAccepted())
                 .andReturn();
         UUID taskId = uuid(json(taskResult), "taskId");
@@ -1028,7 +1059,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", UUID.randomUUID())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(replanJson(uuid(baseline, "versionId"), "2026-08-01")))
+                        .content(replanJson(uuid(baseline, "versionId"), "2026-09-01")))
                 .andExpect(status().isAccepted())
                 .andReturn();
         UUID taskId = uuid(json(taskResult), "taskId");
@@ -1080,7 +1111,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     private PlanningContext completedTwoDayItinerary(String email) throws Exception {
         String accessToken = registerAndGetAccessToken(email);
-        UUID tripId = createTrip(accessToken, "2026-08-02");
+        UUID tripId = createTrip(accessToken, "2026-09-02");
         MvcResult taskResult = mockMvc.perform(post("/api/trips/{tripId}/planning-tasks", tripId)
                         .header("Authorization", bearer(accessToken))
                         .header("Idempotency-Key", UUID.randomUUID()))
@@ -1099,7 +1130,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     private UUID createTrip(String accessToken) throws Exception {
-        return createTrip(accessToken, "2026-08-01");
+        return createTrip(accessToken, "2026-09-01");
     }
 
     private UUID createTrip(String accessToken, String endDate) throws Exception {
@@ -1110,7 +1141,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                                 {
                                   "title": "Guangzhou day trip",
                                   "destination": "Guangzhou",
-                                  "startDate": "2026-08-01",
+                                  "startDate": "2026-09-01",
                                   "endDate": "%s",
                                   "constraints": {
                                     "budgetAmount": 1000,

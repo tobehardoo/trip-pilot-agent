@@ -17,6 +17,7 @@
 | [2026-08-02 可执行路线图](roadmap-2026-08-02.md) | 面向当前交付：双线收口、组合验证、发布候选、生产验收和产品演进 |
 | [下一阶段执行计划](next-stage-execution-plan.md) | 面向执行：稳定性优先的原子切片、验收和回滚要求 |
 | [交付基线](project-delivery-baseline.md) | 面向交付：当前可做、不可承诺、风险和适用性 |
+| [旅行约束与地点搜索](architecture/trip-constraints-and-place-search.md) | 权威需求基线：创建唯一入口、目的地行政区、POI 联想/锁定/fail-closed、到返时间、三餐默认、北京时间、工作台、全链路与验收 F1–F5 |
 | [PlanEvaluation ADR](adr/plan-evaluation-and-explanation-policy.md) | 质量评分、解释、版本、持久化、兼容与回滚策略 |
 
 ## 归档文档
@@ -33,6 +34,7 @@
 - 当前能力只写入顶层维护文档；归档文档不再更新当前状态。
 - 新功能改变用户范围时，更新 [产品与范围](product.md) 和 [发布状态](release.md)。
 - 新功能改变服务边界、数据模型、规划流程或可靠性时，更新 [系统架构](architecture.md)。
+- 旅行创建、目的地、地点搜索、约束校验或规划时序变化时，更新 [旅行约束与地点搜索](architecture/trip-constraints-and-place-search.md) 并同步 [事件契约](architecture/事件契约.md)。
 - 新增或修改 HTTP、消息、SSE、错误码或幂等语义时，更新 [接口与契约](api.md)。
 - 部署变量、启动方式、测试门禁、备份恢复或发布条件变化时，更新 [部署与运维](deployment.md)。
 - 只有长期有效且会约束后续实现的取舍才进入 [技术决策](decision-record.md)。

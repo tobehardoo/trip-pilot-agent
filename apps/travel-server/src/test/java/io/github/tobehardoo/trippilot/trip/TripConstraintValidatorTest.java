@@ -76,7 +76,7 @@ class TripConstraintValidatorTest {
     @Test
     void acceptsAValidHotelAnchor() {
         assertThatCode(() -> validator.validateContext(
-                input(null, null, poi("广州市", "AMAP", "120100")), "广州", START, END))
+                input(null, null, poi("广州市", "AMAP", "100103")), "广州", START, END))
                 .doesNotThrowAnyException();
     }
 
@@ -91,9 +91,9 @@ class TripConstraintValidatorTest {
     @Test
     void rejectsHotelPoiForTheArrivalScene() {
         assertThatThrownBy(() -> validator.validateContext(
-                input(poi("广州市", "AMAP", "120100"), null, null), "广州", START, END))
+                input(poi("广州市", "AMAP", "100103"), null, null), "广州", START, END))
                 .isInstanceOf(ApiException.class)
-                .hasMessageContaining("120100 is not a valid transport category");
+                .hasMessageContaining("100103 is not a valid transport category");
     }
 
     @Test

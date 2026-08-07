@@ -24,14 +24,14 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
 
     private static final String ENDPOINT = "https://restapi.amap.com/v3/place/text";
     /**
-     * Stations, ports, and airports for ARRIVAL/DEPARTURE anchors. Covers
-     * railway (1503xx), bus (1504xx), port (1505xx), metro (1506xx), light
-     * rail (1507xx), and airport (1508xx) categories.
+     * ARRIVAL/DEPARTURE anchors use the AMap level-1 transport category
+     * (150000 = 交通设施服务), which covers railway stations, airports,
+     * ports, bus stops, and metro. Observed AMap codes: airport 150104,
+     * railway station 150200, metro 150500, bus stop 150700.
      */
-    private static final String STATION_TYPES =
-            "150300|150301|150302|150400|150401|150402|150500|150600|150700|150800";
-    /** Lodging only for HOTEL anchors. */
-    private static final String HOTEL_TYPES = "120000|141200";
+    private static final String STATION_TYPES = "150000";
+    /** HOTEL anchors use the AMap level-1 lodging category (100000 = 住宿服务). */
+    private static final String HOTEL_TYPES = "100000";
     private static final int MAX_RETRIES = 1;
 
     private final RestClient restClient;
@@ -121,7 +121,7 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
         return new PlacePoi(
                 name,
                 id,
-                poi.path("address").asText(""),
+                textOrNull(poi.path("address")),
                 longitude,
                 latitude,
                 cityValue,

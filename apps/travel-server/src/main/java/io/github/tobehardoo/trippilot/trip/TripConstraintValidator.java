@@ -107,10 +107,12 @@ public class TripConstraintValidator {
 
     /**
      * Structured POIs are the only trusted coordinate anchors. A POI must
-     * carry a provider, both coordinates, an address, and a city that matches
-     * the trip destination; its category code must fit the scene (transport for
-     * arrival/departure, lodging for the hotel). Anything else fails closed
-     * with a clear 400 instead of silently degrading to free text.
+     * carry a provider, both coordinates, and a city that matches the trip
+     * destination; its category code must fit the scene (transport for
+     * arrival/departure, lodging for the hotel). The AMap street address is
+     * often empty for stations and hotels, so it is a display field, not a
+     * validity requirement. Anything else fails closed with a clear 400
+     * instead of silently degrading to free text.
      */
     private void validatePoi(StructuredPoi poi, String destination, String scene) {
         if (poi == null) {
@@ -121,9 +123,6 @@ public class TripConstraintValidator {
         }
         if ((poi.longitude() == null) != (poi.latitude() == null)) {
             throw failure("Structured POI longitude and latitude must be provided together");
-        }
-        if (poi.fullAddress() == null || poi.fullAddress().isBlank()) {
-            throw failure("Structured POI must include a full address");
         }
         if (poi.city() == null || poi.city().isBlank()) {
             throw failure("Structured POI must include a city");
@@ -143,19 +142,14 @@ public class TripConstraintValidator {
     /**
      * AMap type-code allowlists, aligned with the category filters the search
      * client applies per scene so a saved anchor can never come from outside
-     * its scene. Transport covers railway (1503), bus (1504), port (1505),
-     * metro (1506), light rail (1507), and airport (1508); lodging starts at 12.
+     * its scene. Transport is the level-1 交通设施服务 prefix (150xxx) covering
+     * railway, airport, port, bus, and metro; lodging is 住宿服务 (100xxx).
      */
     private static boolean belongsToScene(String categoryCode, String scene) {
         if ("HOTEL".equals(scene)) {
-            return categoryCode.startsWith("12");
+            return categoryCode.startsWith("100");
         }
-        return categoryCode.startsWith("1503")
-                || categoryCode.startsWith("1504")
-                || categoryCode.startsWith("1505")
-                || categoryCode.startsWith("1506")
-                || categoryCode.startsWith("1507")
-                || categoryCode.startsWith("1508");
+        return categoryCode.startsWith("150");
     }
 
     private static boolean sameCity(String destination, String poiCity) {

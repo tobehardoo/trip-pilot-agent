@@ -15,7 +15,8 @@ export interface AuthSession {
 export interface StructuredPoi {
   name: string
   providerPoiId: string
-  fullAddress: string
+  /** AMap omits street addresses for many stations and hotels; null when absent. */
+  fullAddress: string | null
   longitude: number | null
   latitude: number | null
   city: string

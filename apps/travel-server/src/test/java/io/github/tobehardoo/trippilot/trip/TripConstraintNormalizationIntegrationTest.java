@@ -236,7 +236,7 @@ class TripConstraintNormalizationIntegrationTest extends PostgresIntegrationTest
                     "district": "天河区",
                     "provider": "AMAP",
                     "category": "星级酒店",
-                    "categoryCode": "120100",
+                    "categoryCode": "100103",
                     "provinceCode": "440000",
                     "cityCode": "440100",
                     "districtCode": "440106"

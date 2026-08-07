@@ -41,7 +41,7 @@ class AmapPlaceSearchClientTest {
                         "citylimit", List.of("true"),
                         "city", List.of("长沙"),
                         "offset", List.of("8"),
-                        "types", List.of("150300|150301|150302|150400|150401|150402|150500|150600|150700|150800")
+                        "types", List.of("150000")
                 )))
                 .andRespond(withSuccess("""
                         {

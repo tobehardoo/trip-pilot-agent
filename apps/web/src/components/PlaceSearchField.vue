@@ -70,7 +70,7 @@ function toStructuredPoi(item: PlaceSuggestItem): StructuredPoi {
   return {
     name: item.name,
     providerPoiId: item.providerPoiId ?? '',
-    fullAddress: item.fullAddress ?? '',
+    fullAddress: item.fullAddress ?? null,
     longitude: item.longitude ?? null,
     latitude: item.latitude ?? null,
     city: props.city,
@@ -298,6 +298,7 @@ onBeforeUnmount(() => {
             v-if="suggestion.item.itemType === 'POI'"
             type="button"
             class="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-surface-50"
+            data-testid="poi-row"
             @click="selectPoi(suggestion.item)"
           >
             <span class="mt-0.5 shrink-0 text-surface-300"><MapPin :size="14" aria-hidden="true" /></span>

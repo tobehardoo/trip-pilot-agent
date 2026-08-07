@@ -13,6 +13,7 @@ import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.trip.TripRequests.Accommodation;
 import io.github.tobehardoo.trippilot.trip.TripRequests.ConstraintInput;
 import io.github.tobehardoo.trippilot.trip.TripRequests.CreateTripRequest;
+import io.github.tobehardoo.trippilot.trip.TripRequests.DestinationRegion;
 import io.github.tobehardoo.trippilot.trip.TripRequests.FixedSchedule;
 import io.github.tobehardoo.trippilot.trip.TripRequests.MealWindow;
 import io.github.tobehardoo.trippilot.trip.TripRequests.TravelAnchor;
@@ -54,11 +55,14 @@ public class TripService {
         datePolicy.validateNewTripStartDate(request.startDate());
         validator.validateDateRange(request.startDate(), request.endDate());
         validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
-        validator.validateContext(request.constraints(), request.destination(), request.startDate(), request.endDate());
+        validator.validateContext(request.constraints(), cityForPoiValidation(request.destinationRegion(), request.destination()),
+                request.startDate(), request.endDate());
         UUID tripId = UUID.randomUUID();
         TripRecord trip = new TripRecord(
                 tripId, ownerId, request.title().trim(), request.destination().trim(),
-                request.startDate(), request.endDate(), "DRAFT", 0, null, null, null
+                request.startDate(), request.endDate(), "DRAFT", 0,
+                writeNullableJson(validateDestinationRegion(request.destinationRegion())),
+                null, null, null
         );
         tripMapper.insertTrip(trip);
         tripMapper.insertConstraint(toRecord(tripId, request.constraints()));
@@ -105,7 +109,9 @@ public class TripService {
     public TripResponse updateConstraints(UUID ownerId, UUID tripId, UpdateConstraintRequest request) {
         TripRecord trip = findOwned(ownerId, tripId);
         validator.validateSchedules(request.fixedSchedules(), trip.startDate(), trip.endDate());
-        validator.validateContext(request.asConstraintInput(), trip.destination(), trip.startDate(), trip.endDate());
+        DestinationRegion existingRegion = readNullableJson(trip.destinationRegionJson(), DestinationRegion.class);
+        validator.validateContext(request.asConstraintInput(),
+                cityForPoiValidation(existingRegion, trip.destination()), trip.startDate(), trip.endDate());
         if (tripMapper.incrementVersion(tripId, ownerId, request.version()) != 1) {
             throw new ApiException(HttpStatus.CONFLICT, "TRIP_VERSION_CONFLICT",
                     "Trip was updated by another request; reload it before retrying");
@@ -127,11 +133,13 @@ public class TripService {
         TripRecord trip = findOwned(ownerId, tripId);
         validator.validateDateRange(request.startDate(), request.endDate());
         validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
-        validator.validateContext(request.constraints(), request.destination(), request.startDate(), request.endDate());
+        validator.validateContext(request.constraints(), cityForPoiValidation(request.destinationRegion(), request.destination()),
+                request.startDate(), request.endDate());
         if (tripMapper.updateConfigurationMetadata(
                 tripId, ownerId, request.version(),
                 request.title().trim(), request.destination().trim(),
-                request.startDate(), request.endDate()) != 1) {
+                request.startDate(), request.endDate(),
+                writeNullableJson(validateDestinationRegion(request.destinationRegion()))) != 1) {
             throw new ApiException(HttpStatus.CONFLICT, "TRIP_VERSION_CONFLICT",
                     "Trip was updated by another request; reload it before retrying");
         }
@@ -149,6 +157,49 @@ public class TripService {
     public void restore(UUID ownerId, UUID tripId) {
         findOwned(ownerId, tripId);
         tripMapper.restoreOwned(tripId, ownerId);
+    }
+
+    /**
+     * Validates a structured destination region against the static catalog:
+     * province exists, city belongs to the province, every district belongs to
+     * the city, and names match the codes. Rejects forged or unknown codes with
+     * a clear 400. A null region (legacy free-text destination) is allowed.
+     */
+    private DestinationRegion validateDestinationRegion(DestinationRegion region) {
+        if (region == null) {
+            return null;
+        }
+        if (!RegionCatalog.hasProvince(region.provinceCode())
+                || !region.provinceName().equals(RegionCatalog.provinceName(region.provinceCode()))) {
+            throw invalidRegion("Province code or name does not match the region catalog");
+        }
+        if (!RegionCatalog.hasCity(region.cityCode())
+                || !region.provinceCode().equals(RegionCatalog.provinceOfCity(region.cityCode()))
+                || !region.cityName().equals(RegionCatalog.cityName(region.cityCode()))) {
+            throw invalidRegion("City code must belong to the selected province and match its name");
+        }
+        for (DestinationRegion.DistrictRef district : region.districts()) {
+            if (!RegionCatalog.hasDistrict(district.districtCode())
+                    || !region.cityCode().equals(RegionCatalog.cityOfDistrict(district.districtCode()))
+                    || !district.districtName().equals(RegionCatalog.districtName(district.districtCode()))) {
+                throw invalidRegion("District code must belong to the selected city and match its name");
+            }
+        }
+        return region;
+    }
+
+    private ApiException invalidRegion(String message) {
+        return new ApiException(
+                HttpStatus.BAD_REQUEST, "INVALID_DESTINATION_REGION", message
+        );
+    }
+
+    /** POI 城市校验应以城市名为准；结构化目的地用 cityName，否则回退整个目的地字符串。 */
+    private static String cityForPoiValidation(DestinationRegion region, String destination) {
+        if (region != null && region.cityName() != null && !region.cityName().isBlank()) {
+            return region.cityName();
+        }
+        return destination;
     }
 
     private TripRecord findOwned(UUID ownerId, UUID tripId) {
@@ -201,8 +252,9 @@ public class TripService {
         );
         return new TripResponse(
                 trip.id(), trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
-                trip.status(), trip.version(), constraintResponse, trip.createdAt(), trip.updatedAt(),
-                trip.archivedAt()
+                trip.status(), trip.version(), constraintResponse,
+                readNullableJson(trip.destinationRegionJson(), DestinationRegion.class),
+                trip.createdAt(), trip.updatedAt(), trip.archivedAt()
         );
     }
 
@@ -223,7 +275,9 @@ public class TripService {
         return new TripResponse(
                 snapshot.id(), snapshot.title(), snapshot.destination(),
                 snapshot.startDate(), snapshot.endDate(), snapshot.status(), snapshot.version(),
-                constraintResponse, snapshot.createdAt(), snapshot.updatedAt(), snapshot.archivedAt()
+                constraintResponse,
+                readNullableJson(snapshot.destinationRegionJson(), DestinationRegion.class),
+                snapshot.createdAt(), snapshot.updatedAt(), snapshot.archivedAt()
         );
     }
 
@@ -301,6 +355,7 @@ public class TripService {
             String status,
             int version,
             ConstraintResponse constraints,
+            DestinationRegion destinationRegion,
             java.time.Instant createdAt,
             java.time.Instant updatedAt,
             java.time.Instant archivedAt

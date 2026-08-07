@@ -345,7 +345,8 @@ describe('TripPilot application shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
     await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), '广州周末四日')
-    await fireEvent.update(screen.getByLabelText('目的地'), '广州')
+    await fireEvent.update(screen.getByLabelText('省份'), '广东省')
+    await fireEvent.update(screen.getByLabelText('城市'), '广州')
     await fireEvent.update(screen.getByLabelText('开始日期'), '2026-07-18')
     await fireEvent.update(screen.getByLabelText('结束日期'), '2026-07-21')
     await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
@@ -468,7 +469,8 @@ describe('TripPilot application shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
     await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), createdTrip.title)
-    await fireEvent.update(screen.getByLabelText('目的地'), createdTrip.destination)
+    await fireEvent.update(screen.getByLabelText('省份'), '浙江省')
+    await fireEvent.update(screen.getByLabelText('城市'), createdTrip.destination)
     await fireEvent.update(screen.getByLabelText('开始日期'), createdTrip.startDate)
     await fireEvent.update(screen.getByLabelText('结束日期'), createdTrip.endDate)
     await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
@@ -501,7 +503,8 @@ describe('TripPilot application shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
     await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), '广州周末四日')
-    await fireEvent.update(screen.getByLabelText('目的地'), '广州')
+    await fireEvent.update(screen.getByLabelText('省份'), '广东省')
+    await fireEvent.update(screen.getByLabelText('城市'), '广州')
     await fireEvent.update(screen.getByLabelText('开始日期'), '2026-07-18')
     await fireEvent.update(screen.getByLabelText('结束日期'), '2026-07-21')
     await fireEvent.update(screen.getByLabelText('预算'), '4000')
@@ -517,6 +520,13 @@ describe('TripPilot application shell', () => {
       destination: '广州',
       startDate: '2026-07-18',
       endDate: '2026-07-21',
+      destinationRegion: {
+        provinceCode: '440000',
+        provinceName: '广东省',
+        cityCode: '440100',
+        cityName: '广州',
+        districts: [],
+      },
       constraints: {
         budgetAmount: 4000,
         travelers: 2,
@@ -1348,6 +1358,7 @@ describe('TripPilot application shell', () => {
       destination: '广州',
       startDate: '2026-07-18',
       endDate: '2026-07-21',
+      destinationRegion: null,
       constraints: {
         budgetAmount: 5200,
         travelers: 3,

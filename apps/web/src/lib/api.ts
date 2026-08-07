@@ -72,6 +72,7 @@ export interface Trip {
   status: string
   version: number
   constraints: TripConstraints
+  destinationRegion?: DestinationRegion | null
   createdAt: string
   updatedAt: string
   archivedAt: string | null
@@ -101,6 +102,7 @@ export interface CreateTripInput {
   startDate: string
   endDate: string
   constraints: TripConfiguration
+  destinationRegion?: DestinationRegion | null
 }
 
 export interface UpdateTripConstraintsInput extends TripConfiguration {
@@ -115,6 +117,7 @@ export interface UpdateConfigurationInput {
   startDate: string
   endDate: string
   constraints: TripConfiguration
+  destinationRegion?: DestinationRegion | null
 }
 
 export interface SystemTime {
@@ -132,6 +135,20 @@ export type PlaceSearchFn = (
   city: string,
   signal?: AbortSignal,
 ) => Promise<PlaceSearchResponse>
+
+export interface DestinationDistrict {
+  districtCode: string
+  districtName: string
+}
+
+/** 结构化目的地省市区，编码为高德 adcode。 */
+export interface DestinationRegion {
+  provinceCode: string
+  provinceName: string
+  cityCode: string
+  cityName: string
+  districts: DestinationDistrict[]
+}
 
 export interface PlanningTask {
   taskId: string

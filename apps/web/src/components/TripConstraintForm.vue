@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { CircleGauge, Landmark, MapPin, Plane, Utensils } from 'lucide-vue-next'
 
 import type {
+  DestinationRegion,
   PlaceSearchFn,
   StructuredPoi,
   Trip,
   TripConfiguration,
   TripMealWindow,
 } from '../lib/api'
+import DestinationRegionSelector from './DestinationRegionSelector.vue'
 import PlaceSearchField from './PlaceSearchField.vue'
 import Button from './ui/Button.vue'
 
@@ -19,6 +21,7 @@ export interface TripConfigurationPayload {
   startDate: string
   endDate: string
   constraints: TripConfiguration
+  destinationRegion?: DestinationRegion | null
 }
 
 const props = withDefaults(defineProps<{
@@ -64,7 +67,7 @@ function timeFromIso(value?: string): string {
 function emptyForm() {
   return {
     title: '',
-    destination: '广州',
+    destination: '',
     startDate: props.serverDate,
     endDate: props.serverDate,
     budgetAmount: '',
@@ -75,6 +78,7 @@ function emptyForm() {
     preferences: [] as string[],
     mustVisitText: '',
     avoidText: '',
+    destinationRegion: null as DestinationRegion | null,
     arrivalPlace: '',
     arrivalDate: props.serverDate,
     arrivalTime: '',
@@ -101,6 +105,7 @@ function load(initial: Trip | null) {
   const c = initial.constraints
   form.title = initial.title
   form.destination = initial.destination
+  form.destinationRegion = initial.destinationRegion ?? null
   form.startDate = initial.startDate
   form.endDate = initial.endDate
   form.budgetAmount = c.budgetAmount?.toString() ?? ''
@@ -139,6 +144,14 @@ load(props.initial)
 
 defineExpose({ load, reset: () => load(props.initial) })
 
+// 到返默认日期跟随行程日期：改行程日期时，未被用户显式设置的到返日期同步。
+watch(() => form.startDate, (next, previous) => {
+  if (form.arrivalDate === previous || form.arrivalDate === '') form.arrivalDate = next ?? ''
+})
+watch(() => form.endDate, (next, previous) => {
+  if (form.departureDate === previous || form.departureDate === '') form.departureDate = next ?? ''
+})
+
 const preferenceOptions = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
 const allPreferences = computed(() => [...new Set([...preferenceOptions, ...form.preferences])])
 
@@ -146,6 +159,25 @@ function togglePreference(preference: string) {
   const index = form.preferences.indexOf(preference)
   if (index >= 0) form.preferences.splice(index, 1)
   else form.preferences.push(preference)
+}
+
+/** 结构化目的地变更：城市改变时清空跨城到达/返程/酒店 POI。 */
+function onRegionChange(region: DestinationRegion | null) {
+  const cityChanged = (form.destinationRegion?.cityCode ?? '') !== (region?.cityCode ?? '')
+  form.destinationRegion = region
+  form.destination = region
+    ? region.cityName + (region.districts.length
+        ? region.districts.map((d) => d.districtName).join('、')
+        : '')
+    : ''
+  if (cityChanged) {
+    form.arrivalPoi = null
+    form.departurePoi = null
+    form.accommodationPoi = null
+    form.arrivalPlace = ''
+    form.departurePlace = ''
+    form.accommodationPlace = ''
+  }
 }
 
 function setMealTime(meal: { source?: 'SYSTEM_DEFAULT' | 'USER_SET' }, value: string, key: 'startTime' | 'endTime') {
@@ -214,11 +246,13 @@ function handleSubmit() {
     formError.value = '请完整填写返程日期、时间和地点'
     return
   }
-  if (form.arrivalDate && (form.arrivalDate < form.startDate || form.arrivalDate > form.endDate)) {
+  if (arrivalBeingSet && form.arrivalDate
+      && (form.arrivalDate < form.startDate || form.arrivalDate > form.endDate)) {
     formError.value = '到达日期必须在旅行日期范围内'
     return
   }
-  if (form.departureDate && (form.departureDate < form.startDate || form.departureDate > form.endDate)) {
+  if (departureBeingSet && form.departureDate
+      && (form.departureDate < form.startDate || form.departureDate > form.endDate)) {
     formError.value = '返程日期必须在旅行日期范围内'
     return
   }
@@ -256,6 +290,7 @@ function handleSubmit() {
     startDate: form.startDate,
     endDate: form.endDate,
     constraints,
+    destinationRegion: form.destinationRegion,
   })
 }
 </script>
@@ -274,9 +309,12 @@ function handleSubmit() {
             class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
         </div>
         <div class="sm:col-span-2">
-          <label for="destination" class="block text-xs font-semibold text-surface-600 mb-1.5">目的地</label>
-          <input id="destination" v-model.trim="form.destination" maxlength="120" required
-            class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+          <span class="block text-xs font-semibold text-surface-600 mb-1.5">目的地</span>
+          <DestinationRegionSelector
+            :model-value="form.destinationRegion"
+            @update:model-value="onRegionChange"
+          />
+          <input id="destination" v-model.trim="form.destination" type="hidden" required />
         </div>
         <div>
           <label for="start-date" class="block text-xs font-semibold text-surface-600 mb-1.5">开始日期</label>

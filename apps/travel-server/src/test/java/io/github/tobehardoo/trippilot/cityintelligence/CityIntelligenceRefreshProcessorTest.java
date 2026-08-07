@@ -110,6 +110,7 @@ class CityIntelligenceRefreshProcessorTest {
                 LocalDate.of(2026, 8, 4),
                 "DRAFT",
                 0,
+                null,
                 Instant.now(),
                 Instant.now(),
                 null

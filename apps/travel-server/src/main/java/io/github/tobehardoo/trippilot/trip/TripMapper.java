@@ -14,8 +14,12 @@ import org.apache.ibatis.annotations.Update;
 public interface TripMapper {
 
     @Insert("""
-            INSERT INTO business.trip(id, owner_id, title, destination, start_date, end_date, status, version)
-            VALUES (#{id}, #{ownerId}, #{title}, #{destination}, #{startDate}, #{endDate}, #{status}, #{version})
+            INSERT INTO business.trip(
+                id, owner_id, title, destination, start_date, end_date, status, version, destination_region
+            ) VALUES (
+                #{id}, #{ownerId}, #{title}, #{destination}, #{startDate}, #{endDate}, #{status}, #{version},
+                CAST(#{destinationRegionJson} AS jsonb)
+            )
             """)
     int insertTrip(TripRecord trip);
 
@@ -37,6 +41,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
+                   destination_region::text AS destination_region_json,
                    created_at, updated_at, archived_at
             FROM business.trip
             WHERE id = #{id} AND owner_id = #{ownerId}
@@ -45,6 +50,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
+                   destination_region::text AS destination_region_json,
                    created_at, updated_at, archived_at
             FROM business.trip
             WHERE id = #{id}
@@ -54,6 +60,7 @@ public interface TripMapper {
     @Select("""
             SELECT trip.id, trip.owner_id, trip.title, trip.destination,
                    trip.start_date, trip.end_date, trip.status, trip.version,
+                   trip.destination_region::text AS destination_region_json,
                    trip.created_at, trip.updated_at, trip.archived_at,
                    trip_constraint.budget_amount, trip_constraint.travelers,
                    trip_constraint.traveler_type, trip_constraint.pace,
@@ -77,6 +84,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
+                   destination_region::text AS destination_region_json,
                    created_at, updated_at, archived_at
             FROM business.trip
             WHERE owner_id = #{ownerId} AND archived_at IS NULL
@@ -86,6 +94,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
+                   destination_region::text AS destination_region_json,
                    created_at, updated_at, archived_at
             FROM business.trip
             WHERE owner_id = #{ownerId}
@@ -164,6 +173,7 @@ public interface TripMapper {
             UPDATE business.trip
             SET title = #{title}, destination = #{destination},
                 start_date = #{startDate}, end_date = #{endDate},
+                destination_region = CAST(#{destinationRegionJson} AS jsonb),
                 version = version + 1, updated_at = CURRENT_TIMESTAMP
             WHERE id = #{id} AND owner_id = #{ownerId} AND version = #{expectedVersion}
             """)
@@ -174,7 +184,8 @@ public interface TripMapper {
             @Param("title") String title,
             @Param("destination") String destination,
             @Param("startDate") java.time.LocalDate startDate,
-            @Param("endDate") java.time.LocalDate endDate
+            @Param("endDate") java.time.LocalDate endDate,
+            @Param("destinationRegionJson") String destinationRegionJson
     );
 
     @Update("""

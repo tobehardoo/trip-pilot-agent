@@ -232,6 +232,7 @@ class CityIntelligencePlanningPreflightServiceTest {
                 "DRAFT",
                 0,
                 null,
+                null,
                 Instant.now(),
                 Instant.now(),
                 null

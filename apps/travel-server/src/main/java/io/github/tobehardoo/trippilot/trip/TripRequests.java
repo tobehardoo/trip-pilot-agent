@@ -21,12 +21,37 @@ final class TripRequests {
     private TripRequests() {
     }
 
+    /**
+     * Structured destination region (province / city / districts). Codes are
+     * AMap adcodes and must match the static {@link RegionCatalog}; a plain
+     * {@code destination} string remains the backward-compatible fallback for
+     * legacy trips and cities without catalogued codes.
+     */
+    record DestinationRegion(
+            @NotBlank @Size(max = 12) String provinceCode,
+            @NotBlank @Size(max = 30) String provinceName,
+            @NotBlank @Size(max = 12) String cityCode,
+            @NotBlank @Size(max = 30) String cityName,
+            @Size(max = 10) List<DistrictRef> districts
+    ) {
+        DestinationRegion {
+            districts = districts == null ? List.of() : List.copyOf(districts);
+        }
+
+        record DistrictRef(
+                @NotBlank @Size(max = 12) String districtCode,
+                @NotBlank @Size(max = 30) String districtName
+        ) {
+        }
+    }
+
     record CreateTripRequest(
             @NotBlank @Size(max = 120) String title,
             @NotBlank @Size(max = 120) String destination,
             @NotNull LocalDate startDate,
             @NotNull LocalDate endDate,
-            @NotNull @Valid ConstraintInput constraints
+            @NotNull @Valid ConstraintInput constraints,
+            @Valid DestinationRegion destinationRegion
     ) {
     }
 
@@ -66,7 +91,8 @@ final class TripRequests {
             @NotBlank @Size(max = 120) String destination,
             @NotNull LocalDate startDate,
             @NotNull LocalDate endDate,
-            @NotNull @Valid ConstraintInput constraints
+            @NotNull @Valid ConstraintInput constraints,
+            @Valid DestinationRegion destinationRegion
     ) {
     }
 

@@ -84,7 +84,10 @@ class AuthenticationSecurityIntegrationTest extends PostgresIntegrationTest {
     @Test
     void rejectsExpiredRefreshToken() throws Exception {
         Cookie refreshCookie = register("expired@example.com");
-        jdbcTemplate.update("UPDATE business.refresh_token SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second'");
+        // The expiry check compares against the application JVM clock; a 1s
+        // offset is flaky when the app and DB clocks drift even slightly.
+        // 60s keeps the intent (a clearly expired token is rejected) robust.
+        jdbcTemplate.update("UPDATE business.refresh_token SET expires_at = CURRENT_TIMESTAMP - INTERVAL '60 seconds'");
 
         mockMvc.perform(post("/api/auth/refresh")
                         .cookie(refreshCookie))

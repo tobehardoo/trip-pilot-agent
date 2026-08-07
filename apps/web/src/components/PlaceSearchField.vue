@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { CheckCircle2, LoaderCircle, MapPin, RefreshCcw, Search } from 'lucide-vue-next'
 
-import type { PlaceSearchFn, StructuredPoi } from '../lib/api'
+import type { PlaceSearchFn, PlaceSuggestFn, PlaceSuggestItem, StructuredPoi } from '../lib/api'
 
 const props = withDefaults(defineProps<{
   /** Selected structured POI (the only trusted anchor). */
@@ -11,23 +11,35 @@ const props = withDefaults(defineProps<{
   legacyPlaceName?: string
   /** Destination city that results must belong to. Empty disables the field. */
   city: string
+  /** Structured destination city code for the mixed suggest API. */
+  cityCode?: string
+  /** ARRIVAL | DEPARTURE | HOTEL, used to filter the suggest categories. */
+  scene?: string
   placeholder?: string
   disabled?: boolean
   searchPlaces?: PlaceSearchFn
+  suggestPlaces?: PlaceSuggestFn
 }>(), {
   legacyPlaceName: '',
+  cityCode: '',
+  scene: 'ARRIVAL',
   placeholder: '输入关键词搜索（如：广州南站）',
   disabled: false,
   searchPlaces: undefined,
+  suggestPlaces: undefined,
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: StructuredPoi | null]
 }>()
 
+interface Suggestion {
+  item: PlaceSuggestItem
+}
+
 // 状态拆分：输入文本与已选 POI 分离，searchStatus 明确搜索阶段。
 const inputText = ref('')
-const results = ref<StructuredPoi[]>([])
+const results = ref<Suggestion[]>([])
 const searchStatus = ref<'idle' | 'loading' | 'available' | 'unavailable' | 'no-results'>('idle')
 const requestSequence = ref(0)
 let controller: AbortController | null = null
@@ -50,18 +62,43 @@ function clear() {
   searchStatus.value = 'idle'
 }
 
+function selectPoi(item: PlaceSuggestItem) {
+  select({
+    name: item.name,
+    providerPoiId: item.providerPoiId ?? '',
+    fullAddress: item.fullAddress ?? '',
+    longitude: item.longitude ?? null,
+    latitude: item.latitude ?? null,
+    city: props.city,
+    district: item.districtName ?? null,
+  })
+}
+
 async function runSearch() {
   const query = inputText.value.trim()
   if (!query || !cityReady.value) return
-  if (!props.searchPlaces) {
-    searchStatus.value = 'unavailable'
-    return
-  }
   const seq = ++requestSequence.value
   controller?.abort()
   controller = new AbortController()
   searchStatus.value = 'loading'
   try {
+    if (props.suggestPlaces && props.cityCode) {
+      const response = await props.suggestPlaces(query, props.cityCode, props.scene, controller.signal)
+      if (seq !== requestSequence.value) return // 旧请求结果不得覆盖新请求
+      const items = response.items.filter((item) => item.itemType !== 'SUGGESTION')
+      if (items.length === 0) {
+        searchStatus.value = 'no-results'
+        results.value = []
+      } else {
+        searchStatus.value = 'available'
+        results.value = items.map((item) => ({ item }))
+      }
+      return
+    }
+    if (!props.searchPlaces) {
+      searchStatus.value = 'unavailable'
+      return
+    }
     const response = await props.searchPlaces(query, props.city, controller.signal)
     if (seq !== requestSequence.value) return // 旧请求结果不得覆盖新请求
     if (response.status === 'UNAVAILABLE') {
@@ -72,7 +109,9 @@ async function runSearch() {
       results.value = []
     } else {
       searchStatus.value = 'available'
-      results.value = response.results
+      results.value = response.results.map((poi) => ({
+        item: { itemType: 'POI', providerPoiId: poi.providerPoiId, name: poi.name, fullAddress: poi.fullAddress, districtName: poi.district, longitude: poi.longitude, latitude: poi.latitude },
+      }))
     }
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === 'AbortError') return
@@ -184,21 +223,35 @@ onBeforeUnmount(() => {
       </p>
 
       <ul v-if="searchStatus === 'available' && results.length" class="absolute z-20 mt-1.5 w-full overflow-hidden rounded-xl border border-surface-200 bg-white shadow-lg" data-testid="poi-results">
-        <li v-for="poi in results" :key="poi.providerPoiId">
+        <li v-for="(suggestion, index) in results" :key="`${suggestion.item.itemType}-${index}`">
           <button
+            v-if="suggestion.item.itemType === 'POI'"
             type="button"
             class="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-surface-50"
-            @click="select(poi)"
+            @click="selectPoi(suggestion.item)"
           >
             <span class="mt-0.5 shrink-0 text-surface-300"><MapPin :size="14" aria-hidden="true" /></span>
             <span class="min-w-0 flex-1">
-              <span class="block truncate text-sm font-medium text-surface-800">{{ poi.name }}</span>
-              <span class="mt-0.5 block truncate text-xs text-surface-400">{{ poi.fullAddress }}</span>
+              <span class="block truncate text-sm font-medium text-surface-800">{{ suggestion.item.name }}</span>
+              <span class="mt-0.5 block truncate text-xs text-surface-400">{{ suggestion.item.fullAddress }}</span>
             </span>
             <span class="mt-0.5 shrink-0 rounded bg-surface-100 px-1.5 py-0.5 text-[11px] text-surface-500">
-              {{ poi.district || poi.city }}
+              {{ suggestion.item.districtName || suggestion.item.category }}
             </span>
           </button>
+          <div
+            v-else
+            class="flex w-full items-start gap-2 px-3 py-2.5"
+          >
+            <span class="mt-0.5 shrink-0 text-surface-300"><MapPin :size="14" aria-hidden="true" /></span>
+            <span class="min-w-0 flex-1">
+              <span class="block truncate text-sm font-medium text-surface-700">{{ suggestion.item.name }}</span>
+              <span class="mt-0.5 block truncate text-xs text-surface-400">{{ suggestion.item.category || '行政区' }}（仅用于调整搜索范围，不能直接设为地点）</span>
+            </span>
+            <span class="mt-0.5 shrink-0 rounded bg-primary-50 px-1.5 py-0.5 text-[11px] font-medium text-primary-600">
+              {{ suggestion.item.itemType === 'REGION' ? '区域' : '建议' }}
+            </span>
+          </div>
         </li>
       </ul>
       <p v-else-if="searchStatus === 'no-results'" class="mt-1.5 text-xs text-surface-400">未找到匹配地点，换个关键词试试</p>

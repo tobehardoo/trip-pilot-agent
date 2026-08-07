@@ -14,6 +14,7 @@ public record PlacePoi(
         BigDecimal longitude,
         BigDecimal latitude,
         String city,
-        String district
+        String district,
+        String districtCode
 ) {
 }

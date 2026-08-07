@@ -67,7 +67,7 @@ class PlaceSearchFlowIntegrationTest extends PostgresIntegrationTest {
                 new PlacePoi("长沙希尔顿酒店", "B0FFFABC12",
                         "长沙市岳麓区枫林一路123号",
                         new BigDecimal("112.9834"), new BigDecimal("28.1987"),
-                        "长沙市", "岳麓区")
+                        "长沙市", "岳麓区", null)
         ));
 
         mockMvc.perform(get("/api/places/search")
@@ -97,6 +97,38 @@ class PlaceSearchFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UNAVAILABLE"))
                 .andExpect(jsonPath("$.results.length()").value(0));
+    }
+
+    @Test
+    void suggestsMixedRegionAndPoiItemsForAuthenticatedUser() throws Exception {
+        String token = registerAndGetAccessToken("suggest@example.com");
+        StubPlaceSearchClientConfig.CLIENT.set((keyword, city, limit) -> List.of(
+                new PlacePoi("广州南站", "BV10019725", "广州市番禺区南站北路",
+                        new BigDecimal("113.269"), new BigDecimal("22.988"),
+                        "广州市", "番禺区", "440113")
+        ));
+
+        mockMvc.perform(get("/api/places/suggest")
+                        .header("Authorization", bearer(token))
+                        .param("keyword", "广州")
+                        .param("cityCode", "440100")
+                        .param("scene", "ARRIVAL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.itemType == 'POI')].name").value(org.hamcrest.Matchers.hasItem("广州南站")))
+                .andExpect(jsonPath("$.items[?(@.itemType == 'REGION')].name").value(org.hamcrest.Matchers.hasItem("广州")));
+    }
+
+    @Test
+    void rejectsSuggestWithoutAKnownCityCode() throws Exception {
+        String token = registerAndGetAccessToken("suggest-bad@example.com");
+
+        mockMvc.perform(get("/api/places/suggest")
+                        .header("Authorization", bearer(token))
+                        .param("keyword", "广州")
+                        .param("cityCode", "999999")
+                        .param("scene", "ARRIVAL"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("PLACE_SEARCH_INVALID"));
     }
 
     @Test

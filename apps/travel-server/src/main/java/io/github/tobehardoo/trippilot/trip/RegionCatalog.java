@@ -273,6 +273,16 @@ public final class RegionCatalog {
     public static String cityName(String code) { return CITY_CODES.get(code); }
     public static String districtName(String code) { return DISTRICT_CODES.get(code); }
     public static String provinceOfCity(String cityCode) { return CITY_PROVINCE.get(cityCode); }
+
+    /** Reverse lookup of a district code by name within a city, or null. */
+    public static String districtCodeOf(String districtName, String cityCode) {
+        for (Map.Entry<String, String> entry : DISTRICT_CITY.entrySet()) {
+            if (entry.getValue().equals(cityCode) && districtName.equals(DISTRICT_CODES.get(entry.getKey()))) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
     public static String cityOfDistrict(String districtCode) { return DISTRICT_CITY.get(districtCode); }
     public static List<String> citiesOfProvince(String provinceCode) { return PROVINCE_CITIES.getOrDefault(provinceCode, List.of()); }
     public static List<String> districtsOfCity(String cityCode) { return CITY_DISTRICTS.getOrDefault(cityCode, List.of()); }

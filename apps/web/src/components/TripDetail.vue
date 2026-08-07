@@ -41,6 +41,7 @@ import {
   type ItineraryVersionSummary,
   type PlaceSearchFn,
   type PlaceSearchResponse,
+  type PlaceSuggestFn,
   type PlanEvaluation,
   type PlanningProgressUpdate,
   type Trip,
@@ -113,6 +114,7 @@ const props = withDefaults(defineProps<{
   updateConfiguration?: (tripId: string, input: UpdateConfigurationInput) => Promise<void>
   serverDate?: string
   searchPlaces?: PlaceSearchFn
+  suggestPlaces?: PlaceSuggestFn
   reloadTrip: () => Promise<boolean>
   evaluation?: PlanEvaluation | null
   evaluationBusy?: boolean
@@ -1512,6 +1514,7 @@ watch(() => props.itinerary, (nextItinerary) => {
             :initial="trip"
             :server-date="serverDate"
             :search-places="searchPlaces"
+            :suggest-places="suggestPlaces"
             :submitting="submitting"
             :error="formError"
             @submit="handleConfigSubmit"

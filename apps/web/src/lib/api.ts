@@ -136,6 +136,32 @@ export type PlaceSearchFn = (
   signal?: AbortSignal,
 ) => Promise<PlaceSearchResponse>
 
+export interface PlaceSuggestItem {
+  itemType: 'POI' | 'REGION' | 'SUGGESTION'
+  provider?: string | null
+  providerPoiId?: string | null
+  name: string
+  category?: string | null
+  provinceCode?: string | null
+  cityCode?: string | null
+  districtCode?: string | null
+  districtName?: string | null
+  fullAddress?: string | null
+  longitude?: number | null
+  latitude?: number | null
+}
+
+export interface PlaceSuggestResponse {
+  items: PlaceSuggestItem[]
+}
+
+export type PlaceSuggestFn = (
+  keyword: string,
+  cityCode: string,
+  scene: string,
+  signal?: AbortSignal,
+) => Promise<PlaceSuggestResponse>
+
 export interface DestinationDistrict {
   districtCode: string
   districtName: string
@@ -800,6 +826,17 @@ export function searchPlaces(
 ): Promise<PlaceSearchResponse> {
   const query = new URLSearchParams({ keyword, city })
   return request(`/api/places/search?${query}`, { signal }, accessToken)
+}
+
+export function suggestPlaces(
+  accessToken: string,
+  keyword: string,
+  cityCode: string,
+  scene: string,
+  signal?: AbortSignal,
+): Promise<PlaceSuggestResponse> {
+  const query = new URLSearchParams({ keyword, cityCode, scene })
+  return request(`/api/places/suggest?${query}`, { signal }, accessToken)
 }
 
 export function listGuideImports(accessToken: string, tripId: string): Promise<GuideImport[]> {

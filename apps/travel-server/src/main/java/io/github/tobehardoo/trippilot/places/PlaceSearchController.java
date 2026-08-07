@@ -17,9 +17,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class PlaceSearchController {
 
     private final PlaceSearchService placeSearchService;
+    private final PlaceSuggestService placeSuggestService;
 
-    public PlaceSearchController(PlaceSearchService placeSearchService) {
+    public PlaceSearchController(PlaceSearchService placeSearchService, PlaceSuggestService placeSuggestService) {
         this.placeSearchService = placeSearchService;
+        this.placeSuggestService = placeSuggestService;
     }
 
     @GetMapping("/search")
@@ -29,5 +31,16 @@ public class PlaceSearchController {
             @RequestParam String city
     ) {
         return placeSearchService.search(keyword, city);
+    }
+
+    /** 混合联想：真实 POI + 行政区 REGION，用于 ARRIVAL/DEPARTURE/HOTEL 字段。 */
+    @GetMapping("/suggest")
+    PlaceSuggestResponse suggest(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam String keyword,
+            @RequestParam String cityCode,
+            @RequestParam(defaultValue = "ARRIVAL") String scene
+    ) {
+        return placeSuggestService.suggest(keyword, cityCode, scene);
     }
 }

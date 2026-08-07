@@ -28,6 +28,10 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
      * categories. Keeps results structural instead of free-form.
      */
     private static final String TYPE_FILTER = "120000|150302|150500";
+    /** Stations, ports, and airports for ARRIVAL/DEPARTURE anchors. */
+    private static final String STATION_TYPES = "150300|150301|150302|150400|150401|150402|150500|150600|150700";
+    /** Lodging only for HOTEL anchors. */
+    private static final String HOTEL_TYPES = "120000|141200";
     private static final int MAX_RETRIES = 1;
 
     private final RestClient restClient;
@@ -43,12 +47,18 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
 
     @Override
     public List<PlacePoi> search(String keyword, String city, int limit) {
+        return searchScene(keyword, city, limit, "ARRIVAL");
+    }
+
+    @Override
+    public List<PlacePoi> searchScene(String keyword, String city, int limit, String scene) {
+        String types = "HOTEL".equalsIgnoreCase(scene) ? HOTEL_TYPES : STATION_TYPES;
         try {
-            return request(keyword, city, limit);
+            return request(keyword, city, limit, types);
         } catch (RestClientResponseException | ResourceAccessException exception) {
             for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
-                    return request(keyword, city, limit);
+                    return request(keyword, city, limit, types);
                 } catch (RestClientResponseException | ResourceAccessException retryException) {
                     // fall through and fail closed
                 }
@@ -57,7 +67,7 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
         }
     }
 
-    private List<PlacePoi> request(String keyword, String city, int limit) {
+    private List<PlacePoi> request(String keyword, String city, int limit, String types) {
         JsonNode body = restClient.get()
                 .uri(UriComponentsBuilder.fromHttpUrl(ENDPOINT)
                         .queryParam("key", properties.amapKey())
@@ -65,7 +75,7 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
                         .queryParam("city", city)
                         .queryParam("citylimit", "true")
                         .queryParam("offset", limit)
-                        .queryParam("types", TYPE_FILTER)
+                        .queryParam("types", types)
                         .queryParam("extensions", "base")
                         .build().encode().toUri())
                 .retrieve()
@@ -115,7 +125,8 @@ public class AmapPlaceSearchClient implements PlaceSearchClient {
                 longitude,
                 latitude,
                 cityValue,
-                textOrNull(poi.path("adname"))
+                textOrNull(poi.path("adname")),
+                textOrNull(poi.path("adcode"))
         );
     }
 

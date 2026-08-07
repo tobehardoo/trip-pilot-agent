@@ -16,7 +16,7 @@ import {
 } from 'lucide-vue-next'
 import { computed, ref } from 'vue'
 
-import type { CreateTripInput, PlaceSearchFn, PlaceSearchResponse, Trip, User } from '../lib/api'
+import type { CreateTripInput, PlaceSearchFn, PlaceSuggestFn, Trip, User } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
 import Button from './ui/Button.vue'
 import Card from './ui/Card.vue'
@@ -33,6 +33,7 @@ const props = withDefaults(defineProps<{
   includeArchived?: boolean
   serverDate?: string
   searchPlaces?: PlaceSearchFn
+  suggestPlaces?: PlaceSuggestFn
   /** 弹窗是否打开，由路由驱动（/trips/new）。 */
   createDialogOpen?: boolean
 }>(), {
@@ -375,6 +376,7 @@ async function handleFormSubmit(payload: CreateTripInput) {
               ref="constraintFormRef"
               :server-date="serverDate"
               :search-places="searchPlaces"
+              :suggest-places="suggestPlaces"
               :submitting="submitting"
               :error="formError"
               @submit="handleFormSubmit"

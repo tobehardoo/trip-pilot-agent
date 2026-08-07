@@ -38,6 +38,7 @@ import {
   revokeItineraryShare,
   restoreTrip,
   searchPlaces,
+  suggestPlaces,
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
   updateTripConfiguration,
@@ -54,6 +55,7 @@ import {
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
   type PlaceSearchResponse,
+  type PlaceSuggestResponse,
   type PlanEvaluation,
   type PlanningTask,
   type PlanningTaskEvent,
@@ -1042,6 +1044,17 @@ async function searchPlacesFor(keyword: string, city: string, signal?: AbortSign
   }
 }
 
+async function suggestPlacesFor(keyword: string, cityCode: string, scene: string, signal?: AbortSignal): Promise<PlaceSuggestResponse> {
+  try {
+    return await withAccessToken((token) => suggestPlaces(token, keyword, cityCode, scene, signal))
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') {
+      throw cause
+    }
+    return { items: [] }
+  }
+}
+
 onUnmounted(() => {
   stopPlanningStream()
   removeNavigationHook?.()
@@ -1067,6 +1080,7 @@ onUnmounted(() => {
       :include-archived="includeArchived"
       :server-date="serverDate"
       :search-places="searchPlacesFor"
+      :suggest-places="suggestPlacesFor"
       :create-dialog-open="currentRoute.name === 'trip-create'"
       @logout="logout"
       @open-trip="openTrip"
@@ -1119,6 +1133,7 @@ onUnmounted(() => {
       :update-configuration="handleUpdateConfiguration"
       :server-date="serverDate"
       :search-places="searchPlacesFor"
+      :suggest-places="suggestPlacesFor"
       :reload-trip="reloadSelectedTrip"
       @back="backToTrips"
       @logout="logout"

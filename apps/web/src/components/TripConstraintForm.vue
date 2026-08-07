@@ -5,6 +5,7 @@ import { CircleGauge, Landmark, MapPin, Plane, Utensils } from 'lucide-vue-next'
 import type {
   DestinationRegion,
   PlaceSearchFn,
+  PlaceSuggestFn,
   StructuredPoi,
   Trip,
   TripConfiguration,
@@ -32,6 +33,7 @@ const props = withDefaults(defineProps<{
   submitting?: boolean
   error?: string | null
   searchPlaces?: PlaceSearchFn
+  suggestPlaces?: PlaceSuggestFn
 }>(), {
   initial: null,
   serverDate: '',
@@ -399,7 +401,10 @@ function handleSubmit() {
               v-model="form.arrivalPoi"
               :legacy-place-name="form.arrivalPoi ? '' : form.arrivalPlace"
               :city="form.destination"
+              :city-code="form.destinationRegion?.cityCode ?? ''"
+              scene="ARRIVAL"
               :search-places="searchPlaces"
+              :suggest-places="suggestPlaces"
               placeholder="搜索到达站（如：广州南站）"
             />
           </div>
@@ -423,7 +428,10 @@ function handleSubmit() {
               v-model="form.departurePoi"
               :legacy-place-name="form.departurePoi ? '' : form.departurePlace"
               :city="form.destination"
+              :city-code="form.destinationRegion?.cityCode ?? ''"
+              scene="DEPARTURE"
               :search-places="searchPlaces"
+              :suggest-places="suggestPlaces"
               placeholder="搜索返程站（如：广州白云机场）"
             />
           </div>
@@ -440,7 +448,10 @@ function handleSubmit() {
         v-model="form.accommodationPoi"
         :legacy-place-name="form.accommodationPoi ? '' : form.accommodationPlace"
         :city="form.destination"
+        :city-code="form.destinationRegion?.cityCode ?? ''"
+        scene="HOTEL"
         :search-places="searchPlaces"
+        :suggest-places="suggestPlaces"
         placeholder="搜索酒店门店"
       />
       <p v-if="!form.accommodationPoi && !form.accommodationPlace" class="mt-1.5 text-xs text-surface-400">

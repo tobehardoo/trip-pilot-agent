@@ -16,4 +16,14 @@ public interface PlaceSearchClient {
      *         reached after bounded retries
      */
     List<PlacePoi> search(String keyword, String city, int limit);
+
+    /**
+     * Searches POIs for an autocomplete scene, filtering categories to those
+     * relevant to {@code scene} (ARRIVAL/DEPARTURE: stations and airports;
+     * HOTEL: lodging). Defaults to the plain search so single-method stubs
+     * remain valid.
+     */
+    default List<PlacePoi> searchScene(String keyword, String city, int limit, String scene) {
+        return search(keyword, city, limit);
+    }
 }

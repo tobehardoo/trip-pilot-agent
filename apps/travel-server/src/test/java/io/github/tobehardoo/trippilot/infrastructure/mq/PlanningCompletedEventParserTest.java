@@ -462,6 +462,32 @@ class PlanningCompletedEventParserTest {
     }
 
     @Test
+    void acceptsV8StructuralArrivalAnchorWithEmptyAddress() throws Exception {
+        ObjectNode event = amapV2Event();
+        ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");
+        activity.put("kind", "ARRIVAL");
+        activity.remove("address");
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+        PlanningCompletedEvent.Activity parsedActivity =
+                parsed.payload().itinerary().days().getFirst().activities().getFirst();
+        assertThat(parsedActivity.address()).isNull();
+        assertThat(parsedActivity.providerPoiId()).isEqualTo("B00140TWHT");
+        assertThat(parsedActivity.coordinates()).isNotNull();
+    }
+
+    @Test
+    void rejectsV2NonStructuralAmapActivityWithEmptyAddress() throws Exception {
+        ObjectNode event = amapV2Event();
+        ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");
+        activity.remove("address");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("AMAP activity requires valid provider metadata");
+    }
+
+    @Test
     void rejectsV2AmapActivityWithoutCoordinates() throws Exception {
         ObjectNode event = amapV2Event();
         ObjectNode activity = (ObjectNode) event.at("/payload/itinerary/days/0/activities/0");

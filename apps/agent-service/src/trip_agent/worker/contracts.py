@@ -114,6 +114,18 @@ class StructuredPoi(InboundMessageModel):
     city_code: ShortText | None = None
     district_code: ShortText | None = None
 
+    @field_validator(
+        "full_address", "district", "category", "category_code",
+        "province_code", "city_code", "district_code", "provider",
+        mode="before",
+    )
+    @classmethod
+    def blank_optional_strings_to_none(cls, value: object) -> object:
+        """AMap omits street addresses and some codes; blank strings mean absent."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def validate_coordinate_pair(self) -> Self:
         if (self.longitude is None) != (self.latitude is None):
@@ -570,6 +582,14 @@ class ItineraryActivity(MessageModel):
     kind: ActivityKind | None = None
     time_fixed: bool | None = None
 
+    @field_validator("address", "type_code", "type_name", mode="before")
+    @classmethod
+    def blank_optional_strings_to_none(cls, value: object) -> object:
+        """AMap omits street addresses and type labels; blank strings mean absent."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @model_validator(mode="after")
     def validate_source_metadata(self) -> Self:
         metadata = (self.provider_poi_id, self.coordinates, self.address)
@@ -580,6 +600,16 @@ class ItineraryActivity(MessageModel):
                 self.kind is not None and self.kind in STRUCTURAL_ACTIVITY_KINDS
             )
             if structural and not any(value is not None for value in metadata):
+                return self
+            if structural:
+                # Structural anchors (arrival/departure/hotel/meal) resolve to a
+                # POI whose AMap street address is often empty. The address is a
+                # display field, so the anchor only needs a consistent
+                # provider id + coordinate pair.
+                if (self.provider_poi_id is None) != (self.coordinates is None):
+                    raise ValueError(
+                        "AMAP structural activity requires both provider id and coordinates"
+                    )
                 return self
             if any(value is None for value in metadata):
                 raise ValueError("AMAP activity requires provider metadata")

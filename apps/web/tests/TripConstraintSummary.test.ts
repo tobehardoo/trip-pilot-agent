@@ -114,3 +114,23 @@ test('hints that transit uses an estimated default start without trusted anchors
   const view = renderDetail(baseTrip(), baseItinerary())
   expect(view.getByText('首末段交通 按默认起点估算')).toBeTruthy()
 })
+
+test('marks a legacy free-text destination as awaiting region confirmation', () => {
+  const view = renderDetail(baseTrip(), baseItinerary())
+  expect(view.getByText('目的地区域待确认')).toBeTruthy()
+})
+
+test('shows the structured destination region when present', () => {
+  const trip = baseTrip({
+    destinationRegion: {
+      provinceCode: '440000',
+      provinceName: '广东省',
+      cityCode: '440100',
+      cityName: '广州市',
+      districts: [{ districtCode: '440104', districtName: '越秀区' }],
+    },
+  })
+  const view = renderDetail(trip, baseItinerary())
+  expect(view.getByText('广东省 广州市（越秀区）')).toBeTruthy()
+  expect(view.queryByText('目的地区域待确认')).toBeNull()
+})

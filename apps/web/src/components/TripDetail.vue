@@ -443,6 +443,25 @@ const accommodationSummary = computed(() => {
   return { text: '尚未选择', note: null }
 })
 
+/**
+ * 目的地展示优先使用结构化行政区（省 + 市 + 区县）；旧旅行只有
+ * destination 字符串时保留旧值并标记"目的地区域待确认"，不得伪造 adcode。
+ */
+const destinationSummary = computed(() => {
+  const region = props.trip?.destinationRegion
+  if (region?.cityName) {
+    const districts = (region.districts ?? []).map((d) => d.districtName).join('、')
+    const text = districts
+      ? `${region.provinceName} ${region.cityName}（${districts}）`
+      : `${region.provinceName} ${region.cityName}`
+    return { text, note: null as string | null }
+  }
+  if (props.trip?.destination) {
+    return { text: props.trip.destination, note: '目的地区域待确认' }
+  }
+  return { text: '未设置', note: null as string | null }
+})
+
 /** No trusted coordinate anchors at all: transit uses an estimated default start. */
 const usesEstimatedAnchors = computed(() => {
   const constraints = props.trip?.constraints
@@ -1323,7 +1342,12 @@ watch(() => props.itinerary, (nextItinerary) => {
                 <MapPin :size="18" class="text-surface-400 mt-0.5 shrink-0" aria-hidden="true" />
                 <div>
                   <dt class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-1">目的地与日期</dt>
-                  <dd class="text-base font-bold text-surface-800">{{ trip.destination }}</dd>
+                  <dd class="flex items-center gap-2 text-base font-bold text-surface-800">
+                    <span>{{ destinationSummary.text }}</span>
+                    <span v-if="destinationSummary.note" class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-700">
+                      {{ destinationSummary.note }}
+                    </span>
+                  </dd>
                   <dd class="text-sm text-surface-500">{{ formatDate(trip.startDate) }} — {{ formatDate(trip.endDate) }}</dd>
                 </div>
               </div>

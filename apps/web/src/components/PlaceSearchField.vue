@@ -31,6 +31,8 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: StructuredPoi | null]
+  /** 同步当前未选中输入文本，供表单判断"输入了关键词但未选择 POI"。 */
+  'update:input': [value: string]
 }>()
 
 interface Suggestion {
@@ -202,6 +204,10 @@ watch(inputText, (value) => {
     void runSearch()
   }, 300)
 })
+
+// 输入文本一有变化就向父组件同步（与防抖搜索无关），保证表单在提交前
+// 知道是否存在未选中的关键词。
+watch(inputText, (value) => emit('update:input', value))
 
 // 切换城市时丢弃旧结果并取消在途请求，防止跨城市结果串台。
 watch(() => props.cityCode, () => {

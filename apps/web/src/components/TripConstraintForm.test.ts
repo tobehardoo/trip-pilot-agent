@@ -1,4 +1,4 @@
-import { render, type RenderResult } from '@testing-library/vue'
+import { fireEvent, render, type RenderResult } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 
 import type { Trip } from '../lib/api'
@@ -90,5 +90,67 @@ describe('TripConstraintForm timezone round-trip (P4.6 regression)', () => {
     const departureTime = view.container.querySelector('#departure-time') as HTMLInputElement
     expect(arrivalTime.value).toBe('')
     expect(departureTime.value).toBe('')
+  })
+})
+
+describe('TripConstraintForm arrival keyword validation (P5)', () => {
+  it('blocks submit when a keyword is typed but no POI is selected', async () => {
+    const view: RenderResult = render(TripConstraintForm, {
+      props: {
+        initial: makeTrip({ constraints: { ...makeTrip().constraints, arrival: null, departure: null } }),
+      },
+    })
+    const searchInput = view.container.querySelector(
+      'input[data-testid="poi-search-input"]',
+    ) as HTMLInputElement
+    await fireEvent.update(searchInput, '广州南')
+    await fireEvent.click(view.container.querySelector('button[type="submit"]') as HTMLButtonElement)
+
+    expect(await view.findByText(/请从列表中选择到达地点，并完整填写到达日期和时间/)).toBeTruthy()
+    expect(view.emitted('submit')).toBeUndefined()
+  })
+
+  it('submits when the typed keyword has been replaced by a selected POI', async () => {
+    const poi = makeTrip().constraints.arrival!.poi!
+    const suggest = async () => ({
+      items: [
+        {
+          itemType: 'POI' as const,
+          provider: 'AMAP',
+          providerPoiId: poi.providerPoiId,
+          name: poi.name,
+          category: poi.category,
+          categoryCode: poi.categoryCode,
+          provinceCode: poi.provinceCode,
+          cityCode: poi.cityCode,
+          districtCode: poi.districtCode,
+          fullAddress: poi.fullAddress,
+          districtName: poi.district,
+          longitude: poi.longitude,
+          latitude: poi.latitude,
+        },
+      ],
+    })
+    const view: RenderResult = render(TripConstraintForm, {
+      props: {
+        initial: makeTrip({ constraints: { ...makeTrip().constraints, arrival: null, departure: null } }),
+        suggestPlaces: suggest,
+      },
+    })
+    const searchInput = view.container.querySelector(
+      'input[data-testid="poi-search-input"]',
+    ) as HTMLInputElement
+    await fireEvent.update(searchInput, '广州南')
+    const poiRow = await view.findByTestId('poi-row')
+    await fireEvent.click(poiRow)
+    await fireEvent.update(
+      view.container.querySelector('#arrival-time') as HTMLInputElement,
+      '14:30',
+    )
+    await fireEvent.click(view.container.querySelector('button[type="submit"]') as HTMLButtonElement)
+
+    const emittedArgs = view.emitted('submit')?.[0] as unknown[] | undefined
+    const payload = emittedArgs?.[0] as { constraints: { arrival: { poi: { providerPoiId: string } } } } | undefined
+    expect(payload?.constraints.arrival.poi.providerPoiId).toBe(poi.providerPoiId)
   })
 })

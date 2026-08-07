@@ -96,10 +96,12 @@ function emptyForm() {
     arrivalDate: props.serverDate,
     arrivalTime: '',
     arrivalPoi: null as StructuredPoi | null,
+    arrivalKeyword: '',
     departurePlace: '',
     departureDate: props.serverDate,
     departureTime: '',
     departurePoi: null as StructuredPoi | null,
+    departureKeyword: '',
     accommodationPlace: '',
     accommodationPoi: null as StructuredPoi | null,
     breakfast: { ...defaultMeal('BREAKFAST') },
@@ -191,7 +193,18 @@ function onRegionChange(region: DestinationRegion | null) {
     form.arrivalPlace = ''
     form.departurePlace = ''
     form.accommodationPlace = ''
+    form.arrivalKeyword = ''
+    form.departureKeyword = ''
   }
+}
+
+/** 跟踪到返搜索框未选中的关键词，用于"输入了关键词但未选择 POI 不能提交"。 */
+function onArrivalInput(text: string) {
+  form.arrivalKeyword = text
+}
+
+function onDepartureInput(text: string) {
+  form.departureKeyword = text
 }
 
 function setMealTime(meal: { source?: 'SYSTEM_DEFAULT' | 'USER_SET' }, value: string, key: 'startTime' | 'endTime') {
@@ -249,10 +262,13 @@ function handleSubmit() {
 
   const arrivalPlace = form.arrivalPlace || form.arrivalPoi?.name || ''
   const departurePlace = form.departurePlace || form.departurePoi?.name || ''
-  // 到达/返程仅在用户显式提供地点或时间时才视为“正在设置”；
-  // 日期默认为旅行首/末日，单独存在不构成部分填写。
-  const arrivalBeingSet = Boolean(arrivalPlace) || Boolean(form.arrivalTime)
-  const departureBeingSet = Boolean(departurePlace) || Boolean(form.departureTime)
+  // 到达/返程在用户显式提供地点、时间或输入了未选中的关键词时视为”正在设置”；
+  // 日期默认为旅行首/末日，单独存在不构成部分填写。输入了关键词但未选择
+  // POI 不能提交（未从候选列表选择的自由文本不能成为可信地点）。
+  const arrivalKeywordPending = form.arrivalPoi ? '' : (form.arrivalKeyword ?? '').trim()
+  const departureKeywordPending = form.departurePoi ? '' : (form.departureKeyword ?? '').trim()
+  const arrivalBeingSet = Boolean(arrivalPlace) || Boolean(form.arrivalTime) || Boolean(arrivalKeywordPending)
+  const departureBeingSet = Boolean(departurePlace) || Boolean(form.departureTime) || Boolean(departureKeywordPending)
   if (arrivalBeingSet && (!form.arrivalDate || !arrivalPlace || !form.arrivalTime)) {
     formError.value = '请从列表中选择到达地点，并完整填写到达日期和时间'
     return
@@ -424,6 +440,7 @@ function handleSubmit() {
               :search-places="searchPlaces"
               :suggest-places="suggestPlaces"
               placeholder="搜索到达站（如：广州南站）"
+              @update:input="onArrivalInput"
             />
           </div>
         </div>
@@ -451,6 +468,7 @@ function handleSubmit() {
               :search-places="searchPlaces"
               :suggest-places="suggestPlaces"
               placeholder="搜索返程站（如：广州白云机场）"
+              @update:input="onDepartureInput"
             />
           </div>
         </div>

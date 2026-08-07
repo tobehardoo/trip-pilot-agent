@@ -13,7 +13,6 @@ import type {
 } from '../lib/api'
 import DestinationRegionSelector from './DestinationRegionSelector.vue'
 import PlaceSearchField from './PlaceSearchField.vue'
-import Button from './ui/Button.vue'
 
 export interface TripConfigurationPayload {
   version?: number
@@ -156,7 +155,7 @@ function load(initial: Trip | null) {
 // 挂载时从 initial 填充（编辑流依赖 :initial 提供 trip 数据）。
 load(props.initial)
 
-defineExpose({ load, reset: () => load(props.initial) })
+defineExpose({ load, reset: () => load(props.initial), submit: handleSubmit })
 
 // 到返默认日期跟随行程日期：改行程日期时，未被用户显式设置的到返日期同步。
 watch(() => form.startDate, (next, previous) => {
@@ -229,6 +228,7 @@ function anchorPayload(place: string, date: string, time: string, poi: Structure
 }
 
 function handleSubmit() {
+  if (props.submitting) return
   formError.value = ''
   if (!form.title.trim()) {
     formError.value = '请填写旅行名称'
@@ -533,10 +533,7 @@ function handleSubmit() {
       {{ formError || error }}
     </p>
 
-    <div class="flex items-center justify-end gap-3 pt-5 border-t border-surface-100">
-      <Button variant="primary" size="sm" type="submit" :disabled="submitting">
-        {{ submitting ? '保存中…' : '保存并开始规划' }}
-      </Button>
-    </div>
+    <!-- 提交按钮由弹窗固定底部栏提供；保留隐藏按钮支持输入框内回车提交。 -->
+    <button type="submit" class="hidden" aria-hidden="true" tabindex="-1" :disabled="submitting"></button>
   </form>
 </template>

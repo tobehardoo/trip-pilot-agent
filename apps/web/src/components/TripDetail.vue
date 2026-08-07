@@ -1515,14 +1515,14 @@ watch(() => props.itinerary, (nextItinerary) => {
       <div class="fixed inset-0 bg-surface-900/30 backdrop-blur-sm" aria-hidden="true" />
       <div
         ref="dialogElement"
-        class="relative mx-4 w-full max-w-xl max-h-[90vh] overflow-y-auto animate-scale-in rounded-3xl bg-white shadow-dialog ring-1 ring-black/5"
+        class="relative mx-4 flex w-full max-w-xl max-h-[90vh] flex-col animate-scale-in rounded-3xl bg-white shadow-dialog ring-1 ring-black/5"
         role="dialog"
         aria-modal="true"
         aria-labelledby="edit-constraints-title"
         tabindex="-1"
         @keydown="handleDialogKeydown"
       >
-        <div class="flex items-center justify-between gap-4 px-6 py-5 border-b border-surface-100">
+        <div class="flex shrink-0 items-center justify-between gap-4 px-6 py-5 border-b border-surface-100">
           <div>
             <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">Edit Constraints</p>
             <h2 id="edit-constraints-title" class="text-base font-bold text-surface-800">编辑约束</h2>
@@ -1532,7 +1532,7 @@ watch(() => props.itinerary, (nextItinerary) => {
           </button>
         </div>
 
-        <div class="px-6 py-5">
+        <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           <TripConstraintForm
             ref="configFormRef"
             :initial="trip"
@@ -1543,15 +1543,21 @@ watch(() => props.itinerary, (nextItinerary) => {
             :error="formError"
             @submit="handleConfigSubmit"
           />
+        </div>
+
+        <div class="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-surface-100 bg-surface-50/50 px-6 py-4">
           <button
             v-if="versionConflict"
-            class="mt-4 inline-flex h-10 items-center rounded-xl border border-red-200 bg-white px-4 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+            class="inline-flex h-10 items-center rounded-xl border border-red-200 bg-white px-4 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
             type="button"
             :disabled="submitting"
             @click="reloadLatestTrip"
           >
             重新加载最新数据
           </button>
+          <Button variant="primary" size="sm" :disabled="submitting" @click="configFormRef?.submit()">
+            {{ submitting ? '保存中…' : '保存并开始规划' }}
+          </Button>
         </div>
       </div>
     </div>

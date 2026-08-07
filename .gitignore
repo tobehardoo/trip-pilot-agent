@@ -48,3 +48,6 @@ output/pytest-*/
 **/output/pytest-*/
 output/backups/
 .playwright-cli/
+
+# Local P4/P5 acceptance evidence (never committed)
+evidence/

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { CalendarDays, CircleGauge, Landmark, MapPin, Plane, Utensils, Users, Wallet } from 'lucide-vue-next'
+import { CircleGauge, Landmark, MapPin, Plane, Utensils } from 'lucide-vue-next'
 
 import type {
-  PlaceSearchResponse,
+  PlaceSearchFn,
   StructuredPoi,
   Trip,
   TripConfiguration,
@@ -28,7 +28,7 @@ const props = withDefaults(defineProps<{
   serverDate?: string
   submitting?: boolean
   error?: string | null
-  searchPlaces?: (keyword: string, city: string) => Promise<PlaceSearchResponse>
+  searchPlaces?: PlaceSearchFn
 }>(), {
   initial: null,
   serverDate: '',
@@ -47,44 +47,100 @@ const DEFAULT_MEAL_WINDOWS: TripMealWindow[] = [
   { mealType: 'DINNER', startTime: '18:00', endTime: '19:00', source: 'SYSTEM_DEFAULT' },
 ]
 
-function mealWindow(mealType: TripMealWindow['mealType']): TripMealWindow {
-  return props.initial?.constraints.mealWindows?.find((w) => w.mealType === mealType)
-    ?? DEFAULT_MEAL_WINDOWS.find((w) => w.mealType === mealType)!
+function defaultMeal(mealType: TripMealWindow['mealType']): TripMealWindow {
+  return DEFAULT_MEAL_WINDOWS.find((w) => w.mealType === mealType)!
 }
 
-const form = reactive({
-  title: props.initial?.title ?? '',
-  destination: props.initial?.destination ?? '广州',
-  startDate: props.initial?.startDate ?? props.serverDate,
-  endDate: props.initial?.endDate ?? props.serverDate,
-  budgetAmount: props.initial?.constraints.budgetAmount?.toString() ?? '',
-  travelers: props.initial?.constraints.travelers ?? 1,
-  travelerType: props.initial?.constraints.travelerType ?? 'SOLO',
-  pace: props.initial?.constraints.pace ?? 'BALANCED',
-  mobilityLevel: props.initial?.constraints.mobilityLevel ?? 'STANDARD',
-  preferences: [...(props.initial?.constraints.preferences ?? [])],
-  mustVisitText: (props.initial?.constraints.mustVisitPlaces ?? []).join('、'),
-  avoidText: (props.initial?.constraints.avoidPlaces ?? []).join('、'),
-  arrivalPlace: props.initial?.constraints.arrival?.placeName ?? '',
-  arrivalTime: toTimeInput(props.initial?.constraints.arrival?.time),
-  arrivalPoi: props.initial?.constraints.arrival?.poi ?? null as StructuredPoi | null,
-  departurePlace: props.initial?.constraints.departure?.placeName ?? '',
-  departureTime: toTimeInput(props.initial?.constraints.departure?.time),
-  departurePoi: props.initial?.constraints.departure?.poi ?? null as StructuredPoi | null,
-  accommodationPlace: props.initial?.constraints.accommodation?.placeName ?? '',
-  accommodationPoi: props.initial?.constraints.accommodation?.poi ?? null as StructuredPoi | null,
-  breakfast: { ...mealWindow('BREAKFAST') },
-  lunch: { ...mealWindow('LUNCH') },
-  dinner: { ...mealWindow('DINNER') },
-})
+function dateFromIso(value?: string): string {
+  if (!value) return ''
+  return value.slice(0, 10)
+}
 
+function timeFromIso(value?: string): string {
+  if (!value) return ''
+  return value.slice(11, 16)
+}
+
+function emptyForm() {
+  return {
+    title: '',
+    destination: '广州',
+    startDate: props.serverDate,
+    endDate: props.serverDate,
+    budgetAmount: '',
+    travelers: 1,
+    travelerType: 'SOLO' as Trip['constraints']['travelerType'],
+    pace: 'BALANCED' as Trip['constraints']['pace'],
+    mobilityLevel: 'STANDARD' as Trip['constraints']['mobilityLevel'],
+    preferences: [] as string[],
+    mustVisitText: '',
+    avoidText: '',
+    arrivalPlace: '',
+    arrivalDate: props.serverDate,
+    arrivalTime: '',
+    arrivalPoi: null as StructuredPoi | null,
+    departurePlace: '',
+    departureDate: props.serverDate,
+    departureTime: '',
+    departurePoi: null as StructuredPoi | null,
+    accommodationPlace: '',
+    accommodationPoi: null as StructuredPoi | null,
+    breakfast: { ...defaultMeal('BREAKFAST') },
+    lunch: { ...defaultMeal('LUNCH') },
+    dinner: { ...defaultMeal('DINNER') },
+  }
+}
+
+const form = reactive(emptyForm())
 const formError = ref('')
 
-const preferenceOptions = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
+/** 显式加载初始值；父组件打开弹窗时调用，代替 key 强制重建。 */
+function load(initial: Trip | null) {
+  Object.assign(form, emptyForm())
+  if (!initial) return
+  const c = initial.constraints
+  form.title = initial.title
+  form.destination = initial.destination
+  form.startDate = initial.startDate
+  form.endDate = initial.endDate
+  form.budgetAmount = c.budgetAmount?.toString() ?? ''
+  form.travelers = c.travelers
+  form.travelerType = c.travelerType
+  form.pace = c.pace
+  form.mobilityLevel = c.mobilityLevel ?? 'STANDARD'
+  form.preferences = [...c.preferences]
+  form.mustVisitText = (c.mustVisitPlaces ?? []).join('、')
+  form.avoidText = (c.avoidPlaces ?? []).join('、')
+  form.arrivalPlace = c.arrival?.placeName ?? ''
+  form.arrivalDate = dateFromIso(c.arrival?.time) || initial.startDate
+  form.arrivalTime = timeFromIso(c.arrival?.time)
+  form.arrivalPoi = c.arrival?.poi ?? null
+  form.departurePlace = c.departure?.placeName ?? ''
+  form.departureDate = dateFromIso(c.departure?.time) || initial.endDate
+  form.departureTime = timeFromIso(c.departure?.time)
+  form.departurePoi = c.departure?.poi ?? null
+  form.accommodationPlace = c.accommodation?.placeName ?? ''
+  form.accommodationPoi = c.accommodation?.poi ?? null
+  const windows = c.mealWindows ?? []
+  for (const mealType of ['BREAKFAST', 'LUNCH', 'DINNER'] as const) {
+    const found = windows.find((w) => w.mealType === mealType)
+    if (found) {
+      const meal = mealType === 'BREAKFAST' ? form.breakfast : mealType === 'LUNCH' ? form.lunch : form.dinner
+      meal.startTime = found.startTime.slice(0, 5)
+      meal.endTime = found.endTime.slice(0, 5)
+      meal.source = found.source
+    }
+  }
+  formError.value = ''
+}
 
-const allPreferences = computed(() => [
-  ...new Set([...preferenceOptions, ...form.preferences]),
-])
+// 挂载时从 initial 填充（编辑流依赖 :initial 提供 trip 数据）。
+load(props.initial)
+
+defineExpose({ load, reset: () => load(props.initial) })
+
+const preferenceOptions = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
+const allPreferences = computed(() => [...new Set([...preferenceOptions, ...form.preferences])])
 
 function togglePreference(preference: string) {
   const index = form.preferences.indexOf(preference)
@@ -94,17 +150,11 @@ function togglePreference(preference: string) {
 
 function setMealTime(meal: { source?: 'SYSTEM_DEFAULT' | 'USER_SET' }, value: string, key: 'startTime' | 'endTime') {
   ;(meal as Record<string, unknown>)[key] = value
-  // A real user edit marks the window as USER_SET; untouched defaults stay SYSTEM_DEFAULT.
   meal.source = 'USER_SET'
 }
 
 function splitPlaces(value: string): string[] {
   return value.split(/[、,，]/).map((item) => item.trim()).filter(Boolean)
-}
-
-function toTimeInput(value?: string): string {
-  if (!value) return ''
-  return value.slice(0, 5)
 }
 
 function buildMealWindows(): TripMealWindow[] {
@@ -121,10 +171,14 @@ function accommodationPayload(): TripConfiguration['accommodation'] {
     return { placeName: form.accommodationPoi.name, poi: form.accommodationPoi }
   }
   if (form.accommodationPlace) {
-    // Legacy free text preserved for display but never treated as a trusted anchor.
     return { placeName: form.accommodationPlace }
   }
   return null
+}
+
+function anchorPayload(place: string, date: string, time: string, poi: StructuredPoi | null) {
+  if (!place || !date || !time) return null
+  return { placeName: place, time: `${date}T${time}:00+08:00`, poi }
 }
 
 function handleSubmit() {
@@ -145,14 +199,27 @@ function handleSubmit() {
     formError.value = '结束日期不能早于开始日期'
     return
   }
+
   const arrivalPlace = form.arrivalPlace || form.arrivalPoi?.name || ''
   const departurePlace = form.departurePlace || form.departurePoi?.name || ''
-  if (Boolean(arrivalPlace) !== Boolean(form.arrivalTime)) {
-    formError.value = '请同时填写到达地点和到达时间'
+  // 到达/返程仅在用户显式提供地点或时间时才视为“正在设置”；
+  // 日期默认为旅行首/末日，单独存在不构成部分填写。
+  const arrivalBeingSet = Boolean(arrivalPlace) || Boolean(form.arrivalTime)
+  const departureBeingSet = Boolean(departurePlace) || Boolean(form.departureTime)
+  if (arrivalBeingSet && (!form.arrivalDate || !arrivalPlace || !form.arrivalTime)) {
+    formError.value = '请完整填写到达日期、时间和地点'
     return
   }
-  if (Boolean(departurePlace) !== Boolean(form.departureTime)) {
-    formError.value = '请同时填写返程地点和返程时间'
+  if (departureBeingSet && (!form.departureDate || !departurePlace || !form.departureTime)) {
+    formError.value = '请完整填写返程日期、时间和地点'
+    return
+  }
+  if (form.arrivalDate && (form.arrivalDate < form.startDate || form.arrivalDate > form.endDate)) {
+    formError.value = '到达日期必须在旅行日期范围内'
+    return
+  }
+  if (form.departureDate && (form.departureDate < form.startDate || form.departureDate > form.endDate)) {
+    formError.value = '返程日期必须在旅行日期范围内'
     return
   }
   for (const meal of [form.breakfast, form.lunch, form.dinner]) {
@@ -176,12 +243,8 @@ function handleSubmit() {
     fixedSchedules: props.initial?.constraints.fixedSchedules.map((s) => ({ ...s })) ?? [],
     mustVisitPlaces: splitPlaces(form.mustVisitText),
     avoidPlaces: splitPlaces(form.avoidText),
-    arrival: arrivalPlace && form.arrivalTime
-      ? { placeName: arrivalPlace, time: `${form.arrivalTime}:00+08:00`, poi: form.arrivalPoi }
-      : null,
-    departure: departurePlace && form.departureTime
-      ? { placeName: departurePlace, time: `${form.departureTime}:00+08:00`, poi: form.departurePoi }
-      : null,
+    arrival: anchorPayload(arrivalPlace, form.arrivalDate, form.arrivalTime, form.arrivalPoi),
+    departure: anchorPayload(departurePlace, form.departureDate, form.departureTime, form.departurePoi),
     accommodation: accommodationPayload(),
     mealWindows: buildMealWindows(),
   }
@@ -195,10 +258,6 @@ function handleSubmit() {
     constraints,
   })
 }
-
-defineExpose({ reset: () => {
-  formError.value = ''
-} })
 </script>
 
 <template>
@@ -277,41 +336,59 @@ defineExpose({ reset: () => {
       </div>
     </section>
 
-    <!-- 到返信息 -->
+    <!-- 到返信息：日期 + 时间 + POI 联想 -->
     <section aria-label="到返信息">
       <h3 class="mb-3 flex items-center gap-2 text-sm font-semibold text-surface-700">
         <Plane :size="15" aria-hidden="true" /> 到返信息
       </h3>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-xs font-semibold text-surface-600 mb-1.5">到达地点</label>
-          <PlaceSearchField
-            v-model="form.arrivalPoi"
-            :legacy-place-name="form.arrivalPoi ? '' : form.arrivalPlace"
-            :city="form.destination"
-            :search-places="searchPlaces"
-            placeholder="搜索到达站（如：长沙南站）"
-          />
+      <div class="space-y-4">
+        <div class="rounded-xl border border-surface-100 bg-surface-50/50 p-3">
+          <p class="mb-2 text-xs font-semibold text-surface-500">到达</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label for="arrival-date" class="block text-xs text-surface-500 mb-1">到达日期</label>
+              <input id="arrival-date" v-model="form.arrivalDate" type="date" :min="form.startDate" :max="form.endDate"
+                class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400" />
+            </div>
+            <div>
+              <label for="arrival-time" class="block text-xs text-surface-500 mb-1">到达时间</label>
+              <input id="arrival-time" v-model="form.arrivalTime" type="time"
+                class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400" />
+            </div>
+          </div>
+          <div class="mt-2">
+            <PlaceSearchField
+              v-model="form.arrivalPoi"
+              :legacy-place-name="form.arrivalPoi ? '' : form.arrivalPlace"
+              :city="form.destination"
+              :search-places="searchPlaces"
+              placeholder="搜索到达站（如：广州南站）"
+            />
+          </div>
         </div>
-        <div>
-          <label for="arrival-time" class="block text-xs font-semibold text-surface-600 mb-1.5">到达时间</label>
-          <input id="arrival-time" v-model="form.arrivalTime" type="time"
-            class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-surface-600 mb-1.5">返程地点</label>
-          <PlaceSearchField
-            v-model="form.departurePoi"
-            :legacy-place-name="form.departurePoi ? '' : form.departurePlace"
-            :city="form.destination"
-            :search-places="searchPlaces"
-            placeholder="搜索返程站（如：长沙黄花机场）"
-          />
-        </div>
-        <div>
-          <label for="departure-time" class="block text-xs font-semibold text-surface-600 mb-1.5">返程时间</label>
-          <input id="departure-time" v-model="form.departureTime" type="time"
-            class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+        <div class="rounded-xl border border-surface-100 bg-surface-50/50 p-3">
+          <p class="mb-2 text-xs font-semibold text-surface-500">返程</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label for="departure-date" class="block text-xs text-surface-500 mb-1">返程日期</label>
+              <input id="departure-date" v-model="form.departureDate" type="date" :min="form.startDate" :max="form.endDate"
+                class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400" />
+            </div>
+            <div>
+              <label for="departure-time" class="block text-xs text-surface-500 mb-1">返程时间</label>
+              <input id="departure-time" v-model="form.departureTime" type="time"
+                class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400" />
+            </div>
+          </div>
+          <div class="mt-2">
+            <PlaceSearchField
+              v-model="form.departurePoi"
+              :legacy-place-name="form.departurePoi ? '' : form.departurePlace"
+              :city="form.destination"
+              :search-places="searchPlaces"
+              placeholder="搜索返程站（如：广州白云机场）"
+            />
+          </div>
         </div>
       </div>
     </section>

@@ -48,7 +48,7 @@ test('emits search, archive, and restore actions from the trip list', async () =
   expect(view.emitted('restoreTrip')?.[0]).toEqual(['trip-archived'])
 })
 
-test('opens the shared constraint form when creating a trip', async () => {
+test('opens the shared constraint form when the create dialog is active', async () => {
   const view = render(TripDashboard, {
     props: {
       user: { id: 'user-1', email: 'traveler@example.com', displayName: 'Traveler' },
@@ -56,13 +56,28 @@ test('opens the shared constraint form when creating a trip', async () => {
       busy: false,
       error: null,
       createTrip: vi.fn(async () => {}),
+      createDialogOpen: true,
     },
   })
-
-  await fireEvent.click(view.getByText('创建旅行'))
 
   expect(view.container.querySelector<HTMLInputElement>('#trip-title')).not.toBeNull()
   expect(view.container.querySelector<HTMLInputElement>('#destination')).not.toBeNull()
   // 三餐默认值直接可见（B1）。
   expect(view.container.querySelector<HTMLInputElement>('#BREAKFAST-start')?.value).toBe('08:00')
+})
+
+test('requests the create dialog via route-driven navigation', async () => {
+  const view = render(TripDashboard, {
+    props: {
+      user: { id: 'user-1', email: 'traveler@example.com', displayName: 'Traveler' },
+      trips: [],
+      busy: false,
+      error: null,
+      createTrip: vi.fn(async () => {}),
+      createDialogOpen: false,
+    },
+  })
+
+  await fireEvent.click(view.getByText('创建旅行'))
+  expect(view.emitted('requestCreate')).toBeTruthy()
 })

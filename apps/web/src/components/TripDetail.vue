@@ -39,6 +39,7 @@ import {
   type ItineraryShareStatus,
   type ItineraryVersionDiff,
   type ItineraryVersionSummary,
+  type PlaceSearchFn,
   type PlaceSearchResponse,
   type PlanEvaluation,
   type PlanningProgressUpdate,
@@ -111,7 +112,7 @@ const props = withDefaults(defineProps<{
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
   updateConfiguration?: (tripId: string, input: UpdateConfigurationInput) => Promise<void>
   serverDate?: string
-  searchPlaces?: (keyword: string, city: string) => Promise<PlaceSearchResponse>
+  searchPlaces?: PlaceSearchFn
   reloadTrip: () => Promise<boolean>
   evaluation?: PlanEvaluation | null
   evaluationBusy?: boolean
@@ -340,7 +341,7 @@ watch(() => props.itinerary?.versionId, () => {
   Object.keys(lockedTransitLegs).forEach((legId) => { delete lockedTransitLegs[legId] })
   transitEditError.value = null
 })
-const configFormKey = ref(0)
+const configFormRef = ref<InstanceType<typeof TripConstraintForm> | null>(null)
 
 const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
   editing,
@@ -353,7 +354,7 @@ function openEditor(event?: Event) {
   rememberTrigger(event?.currentTarget)
   formError.value = null
   versionConflict.value = false
-  configFormKey.value += 1
+  // 表单挂载时通过 :initial 填充当前 trip；不通过 key 卸载重建。
   editing.value = true
 }
 
@@ -1507,7 +1508,7 @@ watch(() => props.itinerary, (nextItinerary) => {
 
         <div class="px-6 py-5">
           <TripConstraintForm
-            :key="configFormKey"
+            ref="configFormRef"
             :initial="trip"
             :server-date="serverDate"
             :search-places="searchPlaces"

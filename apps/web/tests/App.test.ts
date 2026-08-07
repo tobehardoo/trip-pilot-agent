@@ -343,6 +343,7 @@ describe('TripPilot application shell', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '我的旅行' })
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), '广州周末四日')
     await fireEvent.update(screen.getByLabelText('目的地'), '广州')
     await fireEvent.update(screen.getByLabelText('开始日期'), '2026-07-18')
@@ -465,6 +466,7 @@ describe('TripPilot application shell', () => {
     await waitFor(() => expect(listLoads).toBe(2))
 
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), createdTrip.title)
     await fireEvent.update(screen.getByLabelText('目的地'), createdTrip.destination)
     await fireEvent.update(screen.getByLabelText('开始日期'), createdTrip.startDate)
@@ -497,6 +499,7 @@ describe('TripPilot application shell', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '我的旅行' })
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await screen.findByLabelText('旅行名称')
     await fireEvent.update(screen.getByLabelText('旅行名称'), '广州周末四日')
     await fireEvent.update(screen.getByLabelText('目的地'), '广州')
     await fireEvent.update(screen.getByLabelText('开始日期'), '2026-07-18')
@@ -1385,7 +1388,7 @@ describe('TripPilot application shell', () => {
     await fireEvent.update(screen.getByLabelText('到达时间'), '11:00')
     await fireEvent.click(screen.getByRole('button', { name: '保存并开始规划' }))
 
-    expect((await screen.findByRole('alert')).textContent).toContain('请同时填写到达地点和到达时间')
+    expect((await screen.findByRole('alert')).textContent).toContain('请完整填写到达日期、时间和地点')
     expect((screen.getByLabelText('到达时间') as HTMLInputElement).value).toBe('11:00')
     expect((document.querySelector('#LUNCH-start') as HTMLInputElement).value).toBe('12:00')
     expect(fetchMock).not.toHaveBeenCalledWith(
@@ -1620,12 +1623,14 @@ describe('TripPilot application shell', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '广州周末四日' })
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
-    expect((screen.getByLabelText('预算') as HTMLInputElement).step).toBe('0.01')
+    expect(((await screen.findByLabelText('预算')) as HTMLInputElement).step).toBe('0.01')
     await fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await screen.findByRole('button', { name: '打开 广州周末四日' })
     await fireEvent.click(screen.getByRole('button', { name: '打开 广州周末四日' }))
     await screen.findByRole('heading', { name: '结构化约束' })
     await fireEvent.click(screen.getByRole('button', { name: '编辑约束' }))
-    expect((screen.getByLabelText('预算') as HTMLInputElement).step).toBe('0.01')
+    expect(((await screen.findByLabelText('预算')) as HTMLInputElement).step).toBe('0.01')
   })
 
   test('moves focus into the create dialog and restores it after Escape', async () => {

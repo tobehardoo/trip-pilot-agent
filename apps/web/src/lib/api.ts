@@ -127,6 +127,12 @@ export interface PlaceSearchResponse {
   status: 'AVAILABLE' | 'UNAVAILABLE'
 }
 
+export type PlaceSearchFn = (
+  keyword: string,
+  city: string,
+  signal?: AbortSignal,
+) => Promise<PlaceSearchResponse>
+
 export interface PlanningTask {
   taskId: string
   tripId: string
@@ -663,7 +669,7 @@ async function request<T>(path: string, options: RequestInit = {}, accessToken?:
   }
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`
 
-  const result = await fetch(path, { ...options, headers })
+  const result = await fetch(path, { ...options, headers, signal: options.signal })
   let body: T | ApiErrorBody = {}
   try {
     body = (await result.json()) as T | ApiErrorBody
@@ -773,9 +779,10 @@ export function searchPlaces(
   accessToken: string,
   keyword: string,
   city: string,
+  signal?: AbortSignal,
 ): Promise<PlaceSearchResponse> {
   const query = new URLSearchParams({ keyword, city })
-  return request(`/api/places/search?${query}`, {}, accessToken)
+  return request(`/api/places/search?${query}`, { signal }, accessToken)
 }
 
 export function listGuideImports(accessToken: string, tripId: string): Promise<GuideImport[]> {

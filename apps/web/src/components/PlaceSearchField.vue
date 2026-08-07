@@ -1,20 +1,22 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { CheckCircle2, RefreshCcw, Search, X } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { CheckCircle2, LoaderCircle, MapPin, RefreshCcw, Search } from 'lucide-vue-next'
 
-import type { PlaceSearchResponse, StructuredPoi } from '../lib/api'
+import type { PlaceSearchFn, StructuredPoi } from '../lib/api'
 
 const props = withDefaults(defineProps<{
+  /** Selected structured POI (the only trusted anchor). */
   modelValue: StructuredPoi | null
   /** A legacy free-text name with no trusted POI, shown as "待重新确认". */
   legacyPlaceName?: string
+  /** Destination city that results must belong to. Empty disables the field. */
   city: string
   placeholder?: string
   disabled?: boolean
-  searchPlaces?: (keyword: string, city: string) => Promise<PlaceSearchResponse>
+  searchPlaces?: PlaceSearchFn
 }>(), {
   legacyPlaceName: '',
-  placeholder: '搜索地点（如：长沙希尔顿酒店）',
+  placeholder: '输入关键词搜索（如：广州南站）',
   disabled: false,
   searchPlaces: undefined,
 })
@@ -23,53 +25,97 @@ const emit = defineEmits<{
   'update:modelValue': [value: StructuredPoi | null]
 }>()
 
-const keyword = ref('')
+// 状态拆分：输入文本与已选 POI 分离，searchStatus 明确搜索阶段。
+const inputText = ref('')
 const results = ref<StructuredPoi[]>([])
-const searching = ref(false)
-const unavailable = ref(false)
-const showResults = ref(false)
+const searchStatus = ref<'idle' | 'loading' | 'available' | 'unavailable' | 'no-results'>('idle')
+const requestSequence = ref(0)
+let controller: AbortController | null = null
+let debounceTimer: number | undefined
 
 const locked = computed(() => props.modelValue !== null)
+const cityReady = computed(() => Boolean(props.city.trim()))
 
 function select(poi: StructuredPoi) {
   emit('update:modelValue', poi)
+  inputText.value = poi.name
   results.value = []
-  showResults.value = false
+  searchStatus.value = 'idle'
 }
 
 function clear() {
   emit('update:modelValue', null)
+  inputText.value = ''
   results.value = []
-  keyword.value = ''
-  unavailable.value = false
+  searchStatus.value = 'idle'
 }
 
 async function runSearch() {
-  const query = keyword.value.trim()
-  if (!query || !props.city || !props.searchPlaces) {
-    unavailable.value = !props.searchPlaces
+  const query = inputText.value.trim()
+  if (!query || !cityReady.value) return
+  if (!props.searchPlaces) {
+    searchStatus.value = 'unavailable'
     return
   }
-  searching.value = true
-  unavailable.value = false
+  const seq = ++requestSequence.value
+  controller?.abort()
+  controller = new AbortController()
+  searchStatus.value = 'loading'
   try {
-    const response = await props.searchPlaces(query, props.city)
+    const response = await props.searchPlaces(query, props.city, controller.signal)
+    if (seq !== requestSequence.value) return // 旧请求结果不得覆盖新请求
     if (response.status === 'UNAVAILABLE') {
-      unavailable.value = true
+      searchStatus.value = 'unavailable'
+      results.value = []
+    } else if (response.results.length === 0) {
+      searchStatus.value = 'no-results'
       results.value = []
     } else {
+      searchStatus.value = 'available'
       results.value = response.results
     }
-    showResults.value = true
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') return
+    if (seq === requestSequence.value) {
+      searchStatus.value = 'unavailable'
+      results.value = []
+    }
   } finally {
-    searching.value = false
+    if (seq === requestSequence.value && searchStatus.value === 'loading') {
+      searchStatus.value = 'no-results'
+    }
   }
 }
+
+// Search-as-you-type：300ms 防抖。
+let lastQuery = ''
+watch(inputText, (value) => {
+  if (locked.value) return
+  const query = value.trim()
+  if (query === lastQuery) return
+  lastQuery = query
+  window.clearTimeout(debounceTimer)
+  if (!query) {
+    requestSequence.value += 1
+    controller?.abort()
+    results.value = []
+    searchStatus.value = 'idle'
+    return
+  }
+  debounceTimer = window.setTimeout(() => {
+    void runSearch()
+  }, 300)
+})
+
+onBeforeUnmount(() => {
+  controller?.abort()
+  window.clearTimeout(debounceTimer)
+})
 </script>
 
 <template>
   <div>
-    <!-- Locked selection -->
+    <!-- 锁定卡片：已选 POI 不可随意修改，只能重新选择。 -->
     <div v-if="locked" class="rounded-xl border border-primary-200 bg-primary-50/60 px-3 py-2.5">
       <div class="flex items-start justify-between gap-2">
         <div class="min-w-0">
@@ -89,21 +135,11 @@ async function runSearch() {
             <RefreshCcw :size="13" aria-hidden="true" />
             重新选择
           </button>
-          <button
-            type="button"
-            class="flex h-8 w-8 items-center justify-center rounded-lg text-surface-400 hover:bg-white hover:text-surface-600"
-            :disabled="disabled"
-            title="清除"
-            aria-label="清除"
-            @click="clear"
-          >
-            <X :size="14" aria-hidden="true" />
-          </button>
         </div>
       </div>
     </div>
 
-    <!-- Legacy free text awaiting re-confirmation -->
+    <!-- 旧自由文本待重新确认 -->
     <div v-else-if="legacyPlaceName" class="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2.5">
       <div class="flex items-center justify-between gap-2">
         <div class="min-w-0">
@@ -114,7 +150,7 @@ async function runSearch() {
           type="button"
           class="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-amber-200 bg-white px-2 text-xs font-medium text-amber-700 hover:bg-amber-50"
           :disabled="disabled"
-          @click="keyword = ''; results = []"
+          @click="clear"
         >
           <Search :size="13" aria-hidden="true" />
           重新选择
@@ -122,41 +158,39 @@ async function runSearch() {
       </div>
     </div>
 
-    <!-- Search input -->
+    <!-- 搜索输入 -->
     <div v-else class="relative">
-      <div class="flex items-center gap-2 rounded-xl border border-surface-200 bg-white px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-400/30">
+      <div
+        class="flex items-center gap-2 rounded-xl border border-surface-200 bg-white px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-400/30"
+        :class="{ 'opacity-60': !cityReady }"
+      >
         <Search :size="15" class="shrink-0 text-surface-400" aria-hidden="true" />
         <input
-          v-model="keyword"
-          type="search"
+          v-model="inputText"
+          type="text"
           maxlength="30"
-          :placeholder="placeholder"
-          :disabled="disabled"
+          autocomplete="off"
+          :placeholder="cityReady ? placeholder : '请先选择目的城市'"
+          :disabled="disabled || !cityReady"
           class="h-10 w-full min-w-0 border-0 bg-transparent text-sm text-surface-800 outline-0"
-          @input="showResults = false"
-          @keydown.enter.prevent="runSearch"
+          data-testid="poi-search-input"
         />
-        <button
-          type="button"
-          class="h-8 shrink-0 rounded-lg bg-primary-600 px-3 text-xs font-medium text-white hover:bg-primary-700 disabled:opacity-50"
-          :disabled="disabled || searching || !keyword.trim()"
-          @click="runSearch"
-        >
-          {{ searching ? '搜索中…' : '搜索' }}
-        </button>
+        <LoaderCircle v-if="searchStatus === 'loading'" class="h-4 w-4 shrink-0 animate-spin text-primary-500" aria-hidden="true" />
       </div>
 
-      <p v-if="unavailable" class="mt-1.5 text-xs text-amber-600" role="alert">
-        地点搜索暂时不可用，可暂不设置酒店，稍后重试。
+      <p v-if="!cityReady" class="mt-1.5 text-xs text-surface-400">请先选择目的城市</p>
+      <p v-else-if="searchStatus === 'unavailable'" class="mt-1.5 text-xs text-amber-600" role="alert">
+        地点搜索暂时不可用，请稍后重试；可暂不设置。
       </p>
 
-      <ul v-if="showResults && results.length" class="absolute z-20 mt-1.5 w-full overflow-hidden rounded-xl border border-surface-200 bg-white shadow-lg">
+      <ul v-if="searchStatus === 'available' && results.length" class="absolute z-20 mt-1.5 w-full overflow-hidden rounded-xl border border-surface-200 bg-white shadow-lg" data-testid="poi-results">
         <li v-for="poi in results" :key="poi.providerPoiId">
           <button
             type="button"
             class="flex w-full items-start gap-2 px-3 py-2.5 text-left hover:bg-surface-50"
             @click="select(poi)"
           >
+            <span class="mt-0.5 shrink-0 text-surface-300"><MapPin :size="14" aria-hidden="true" /></span>
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm font-medium text-surface-800">{{ poi.name }}</span>
               <span class="mt-0.5 block truncate text-xs text-surface-400">{{ poi.fullAddress }}</span>
@@ -167,7 +201,7 @@ async function runSearch() {
           </button>
         </li>
       </ul>
-      <p v-else-if="showResults && !unavailable" class="mt-1.5 text-xs text-surface-400">未找到匹配地点</p>
+      <p v-else-if="searchStatus === 'no-results'" class="mt-1.5 text-xs text-surface-400">未找到匹配地点，换个关键词试试</p>
     </div>
   </div>
 </template>

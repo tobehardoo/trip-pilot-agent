@@ -528,6 +528,16 @@ async function openTrip(tripId: string) {
   await navigate(tripDetailPath(tripId))
 }
 
+async function openCreateDialog() {
+  await navigate('/trips/new')
+}
+
+async function closeCreateDialog() {
+  if (currentRoute.name === 'trip-create') {
+    await navigate('/trips')
+  }
+}
+
 async function backToTrips() {
   stopPlanningStream()
   await navigate('/trips')
@@ -1021,10 +1031,13 @@ async function loadServerDate() {
   }
 }
 
-async function searchPlacesFor(keyword: string, city: string): Promise<PlaceSearchResponse> {
+async function searchPlacesFor(keyword: string, city: string, signal?: AbortSignal): Promise<PlaceSearchResponse> {
   try {
-    return await withAccessToken((token) => searchPlaces(token, keyword, city))
-  } catch {
+    return await withAccessToken((token) => searchPlaces(token, keyword, city, signal))
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === 'AbortError') {
+      throw cause
+    }
     return { results: [], status: 'UNAVAILABLE' }
   }
 }
@@ -1054,13 +1067,15 @@ onUnmounted(() => {
       :include-archived="includeArchived"
       :server-date="serverDate"
       :search-places="searchPlacesFor"
-      :auto-open-create="currentRoute.name === 'trip-create'"
+      :create-dialog-open="currentRoute.name === 'trip-create'"
       @logout="logout"
       @open-trip="openTrip"
       @search="handleTripSearch"
       @include-archived="handleIncludeArchived"
       @archive-trip="handleArchiveTrip"
       @restore-trip="handleRestoreTrip"
+      @request-create="openCreateDialog"
+      @close-create="closeCreateDialog"
     />
     <TripDetail
       v-else-if="phase === 'authenticated' && user && route.name === 'trip-detail'"

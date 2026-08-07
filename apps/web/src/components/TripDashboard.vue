@@ -14,9 +14,9 @@ import {
   Wallet,
   X,
 } from 'lucide-vue-next'
-import { computed, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
-import type { CreateTripInput, PlaceSearchResponse, Trip, User } from '../lib/api'
+import type { CreateTripInput, PlaceSearchFn, PlaceSearchResponse, Trip, User } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
 import Button from './ui/Button.vue'
 import Card from './ui/Card.vue'
@@ -32,14 +32,15 @@ const props = withDefaults(defineProps<{
   destinationQuery?: string
   includeArchived?: boolean
   serverDate?: string
-  searchPlaces?: (keyword: string, city: string) => Promise<PlaceSearchResponse>
-  autoOpenCreate?: boolean
+  searchPlaces?: PlaceSearchFn
+  /** 弹窗是否打开，由路由驱动（/trips/new）。 */
+  createDialogOpen?: boolean
 }>(), {
   destinationQuery: '',
   includeArchived: false,
   serverDate: '',
   searchPlaces: undefined,
-  autoOpenCreate: false,
+  createDialogOpen: false,
 })
 
 const emit = defineEmits<{
@@ -49,14 +50,15 @@ const emit = defineEmits<{
   includeArchived: [includeArchived: boolean]
   archiveTrip: [tripId: string]
   restoreTrip: [tripId: string]
+  requestCreate: []
+  closeCreate: []
 }>()
 
-const dialogOpen = ref(false)
 const destinationQuery = ref(props.destinationQuery)
 const dialogElement = ref<HTMLElement | null>(null)
 const submitting = ref(false)
-const createFormKey = ref(0)
 const formError = ref<string | null>(null)
+const constraintFormRef = ref<InstanceType<typeof TripConstraintForm> | null>(null)
 
 // ── Destination gradient mapping ──
 const destinationGradientMap: Record<string, string> = {
@@ -105,31 +107,26 @@ function statusVariant(status: string): 'default' | 'secondary' | 'accent' | 'wa
   return { DRAFT: 'secondary', PLANNING: 'warning', READY: 'success', FAILED: 'danger' }[status] as any ?? 'secondary'
 }
 
+const createDialogOpenRef = computed(() => props.createDialogOpen)
 const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
-  dialogOpen,
+  createDialogOpenRef,
   dialogElement,
-  () => { dialogOpen.value = false },
+  () => { emit('closeCreate') },
 )
 
-function openDialog(event?: Event) {
+function requestCreate(event?: Event) {
   rememberTrigger(event?.currentTarget)
   formError.value = null
-  // 重建共享表单，保证每次打开都是全新草稿。
-  createFormKey.value += 1
-  dialogOpen.value = true
+  // 打开弹窗由路由驱动：跳转 /trips/new。
+  emit('requestCreate')
 }
-
-// /trips/new 直接落到统一创建表单。
-watch(() => props.autoOpenCreate, (shouldOpen) => {
-  if (shouldOpen) openDialog()
-}, { immediate: true })
 
 async function handleFormSubmit(payload: CreateTripInput) {
   submitting.value = true
   formError.value = null
   try {
     await props.createTrip(payload)
-    dialogOpen.value = false
+    // 创建成功后由工作区导航到 /trips/{id}，弹窗随路由自动关闭。
   } catch (cause) {
     formError.value = cause instanceof Error ? cause.message : '创建失败，请稍后重试'
   } finally {
@@ -177,7 +174,7 @@ async function handleFormSubmit(payload: CreateTripInput) {
             <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">Trips</p>
             <h1 class="text-2xl sm:text-3xl font-bold text-surface-900 tracking-tight text-balance">我的旅行</h1>
           </div>
-          <Button variant="primary" size="md" @click="openDialog">
+          <Button variant="primary" size="md" @click="requestCreate">
             <Plus :size="17" aria-hidden="true" />
             创建旅行
           </Button>
@@ -234,7 +231,7 @@ async function handleFormSubmit(payload: CreateTripInput) {
             <MapPin :size="36" stroke-width="1.5" aria-hidden="true" />
             <h2 class="text-lg font-semibold text-surface-500">还没有旅行</h2>
             <p class="text-sm text-surface-400 -mt-2">点击创建旅行，填写约束后开始规划</p>
-            <Button variant="outline" @click="openDialog">
+            <Button variant="outline" @click="requestCreate">
               <Plus :size="16" /> 创建第一条旅行
             </Button>
           </div>
@@ -350,7 +347,7 @@ async function handleFormSubmit(payload: CreateTripInput) {
       </main>
 
       <!-- Create Trip Dialog -->
-      <div v-if="dialogOpen" class="fixed inset-0 z-50 flex items-start justify-center pt-[5vh] sm:pt-[8vh]" @click.self="dialogOpen = false">
+      <div v-if="createDialogOpen" class="fixed inset-0 z-50 flex items-start justify-center pt-[5vh] sm:pt-[8vh]" @click.self="emit('closeCreate')">
         <div class="fixed inset-0 bg-surface-900/30 backdrop-blur-sm" aria-hidden="true" />
         <div
           ref="dialogElement"
@@ -367,7 +364,7 @@ async function handleFormSubmit(payload: CreateTripInput) {
             <button
               class="flex h-9 w-9 items-center justify-center rounded-xl border border-surface-200 text-surface-400 hover:bg-surface-50 transition-colors"
               type="button" title="关闭" aria-label="关闭"
-              @click="dialogOpen = false"
+              @click="emit('closeCreate')"
             >
               <X :size="17" aria-hidden="true" />
             </button>
@@ -375,7 +372,7 @@ async function handleFormSubmit(payload: CreateTripInput) {
 
           <div class="px-6 py-5">
             <TripConstraintForm
-              :key="createFormKey"
+              ref="constraintFormRef"
               :server-date="serverDate"
               :search-places="searchPlaces"
               :submitting="submitting"

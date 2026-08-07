@@ -703,8 +703,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void rejectsTransitModeThatCannotFitBetweenItsActivities() throws Exception {
-        PlanningContext context = completedItinerary("edit-transit-conflict@example.com");
+    void allowsSlowerTransitModeWithAReplanWarning() throws Exception {
+        PlanningContext context = completedItinerary("edit-transit-replan@example.com");
         JsonNode current = currentItinerary(context);
         UUID versionId = uuid(current, "versionId");
         UUID legId = uuid(current.at("/days/0/transitLegs/0"), "id");
@@ -716,7 +716,45 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 SET start_time = (SELECT end_time + INTERVAL '10 minutes'
                                   FROM business.activity WHERE id = ?),
                     end_time = (SELECT end_time + INTERVAL '70 minutes'
-                                FROM business.activity WHERE id = ?)
+                                FROM business.activity WHERE id = ?),
+                    time_fixed = FALSE
+                WHERE id = ?
+                """, firstActivityId, firstActivityId, secondActivityId);
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(versionId, legId, "TRANSIT", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canApply").value(true))
+                .andExpect(jsonPath("$.blockingReasons").isEmpty())
+                .andExpect(jsonPath("$.warnings[0]").exists());
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(versionId, legId, "TRANSIT", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.days[0].transitLegs[0].mode").value("TRANSIT"));
+    }
+
+    @Test
+    void rejectsSlowerTransitModeAgainstAFixedSchedule() throws Exception {
+        PlanningContext context = completedItinerary("edit-transit-fixed@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID versionId = uuid(current, "versionId");
+        UUID legId = uuid(current.at("/days/0/transitLegs/0"), "id");
+        UUID firstActivityId = uuid(current.at("/days/0/activities/0"), "id");
+        UUID secondActivityId = uuid(current.at("/days/0/activities/1"), "id");
+        jdbcTemplate.update("UPDATE business.transit_leg SET distance_meters = 20000 WHERE id = ?", legId);
+        jdbcTemplate.update("""
+                UPDATE business.activity
+                SET start_time = (SELECT end_time + INTERVAL '10 minutes'
+                                  FROM business.activity WHERE id = ?),
+                    end_time = (SELECT end_time + INTERVAL '70 minutes'
+                                FROM business.activity WHERE id = ?),
+                    time_fixed = TRUE
                 WHERE id = ?
                 """, firstActivityId, firstActivityId, secondActivityId);
 
@@ -726,15 +764,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .content(transitEditJson(versionId, legId, "TRANSIT", false)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.canApply").value(false))
-                .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_TRANSIT_CONFLICT"));
-
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
-                        .header("Authorization", bearer(context.accessToken()))
-                        .header("Idempotency-Key", nextIdempotencyKey().toString())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(transitEditJson(versionId, legId, "TRANSIT", false)))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.code").value("ITINERARY_TRANSIT_CONFLICT"));
+                .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_TRANSIT_CONFLICT"))
+                .andExpect(jsonPath("$.blockingReasons[0].message").isNotEmpty());
     }
 
     @Test

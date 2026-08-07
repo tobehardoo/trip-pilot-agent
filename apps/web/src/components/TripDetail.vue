@@ -53,8 +53,6 @@ import { useModalFocus } from '../lib/modal'
 import { cn } from '../lib/utils'
 import TripConstraintForm, { type TripConfigurationPayload } from './TripConstraintForm.vue'
 import {
-  estimateCommuteOptions,
-  recommendedCommuteMode,
   type CommuteMode,
   type ConcreteCommuteMode,
 } from '../lib/transit'
@@ -284,23 +282,6 @@ async function updateTransitLeg(
     if (changes.transitLocked !== undefined) lockedTransitLegs[leg.id] = changes.transitLocked
   } finally {
     transitEditBusy.value = false
-  }
-}
-
-function queueRecommendedLongWalks(nextItinerary: Itinerary) {
-  for (const day of nextItinerary.days) {
-    for (const leg of day.transitLegs) {
-      if (leg.locked || leg.mode !== 'WALKING' || leg.durationSeconds <= 20 * 60) continue
-      const recommendedMode = recommendedCommuteMode(estimateCommuteOptions(leg))
-      if (recommendedMode === 'WALKING') continue
-      selectedTransitModes[leg.id] = recommendedMode
-      queueItineraryEdit({
-        baseVersionId: nextItinerary.versionId,
-        operation: 'UPDATE_TRANSIT_LEG',
-        transitLegId: leg.id,
-        transitMode: recommendedMode,
-      })
-    }
   }
 }
 
@@ -729,7 +710,6 @@ watch(() => props.itinerary, (nextItinerary) => {
   if (selectedMapDate.value && !nextItinerary?.days.some((day) => day.date === selectedMapDate.value)) {
     selectedMapDate.value = null
   }
-  if (nextItinerary) queueRecommendedLongWalks(nextItinerary)
 }, { immediate: true })
 </script>
 

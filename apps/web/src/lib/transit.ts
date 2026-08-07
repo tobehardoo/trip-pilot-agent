@@ -3,6 +3,27 @@ import type { ItineraryTransitLeg } from './api'
 export type ConcreteCommuteMode = 'WALKING' | 'TRANSIT' | 'DRIVING' | 'TAXI'
 export type CommuteMode = 'AUTO' | ConcreteCommuteMode
 
+/**
+ * 交通方式对当前 itinerary 的可用状态：
+ * - AVAILABLE：真实可用且当前时间空档能容纳；
+ * - REQUIRES_REPLAN：真实可用但当前时间空档不足，仍允许选择，需要调整后续行程；
+ * - UNAVAILABLE：真实不可用（Provider 无路线、业务规则禁止、数据缺失）。
+ */
+export type CommuteModeStatus = 'AVAILABLE' | 'REQUIRES_REPLAN' | 'UNAVAILABLE'
+
+export function commuteModeStatus(
+  mode: ConcreteCommuteMode,
+  options: CommuteEstimate[],
+  availableSeconds?: number,
+): CommuteModeStatus {
+  const option = options.find((candidate) => candidate.mode === mode)
+  if (!option) return 'UNAVAILABLE'
+  if (availableSeconds !== undefined && option.durationSeconds > availableSeconds) {
+    return 'REQUIRES_REPLAN'
+  }
+  return 'AVAILABLE'
+}
+
 export interface CommuteEstimate {
   mode: ConcreteCommuteMode
   durationSeconds: number

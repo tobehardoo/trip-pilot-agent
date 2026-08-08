@@ -27,7 +27,20 @@ def test_evaluator_is_byte_deterministic_with_an_injected_clock() -> None:
 
     assert first.model_dump_json(by_alias=True) == repeated.model_dump_json(by_alias=True)
     assert first.evaluated_at == datetime(2026, 8, 2, 12, 30, tzinfo=UTC)
-    assert first.dimensions.interest_match == 80
+    # DEMO activities have no type info, so "food" pref is unmatched.
+    assert first.dimensions.interest_match == 0
+
+
+def test_evaluator_marks_missing_budget_and_preferences_not_applicable() -> None:
+    evaluation = PlanEvaluator(clock=FrozenClock).evaluate(
+        make_command(budget_amount=None, preferences=()),
+        make_result(),
+    )
+
+    assert evaluation.schema_version == 2
+    assert evaluation.evaluator_version == "rule-v2"
+    assert evaluation.dimensions.budget_fit is None
+    assert evaluation.dimensions.interest_match is None
 
 
 def test_evaluator_blocks_over_budget_completion_with_data_quality_error() -> None:

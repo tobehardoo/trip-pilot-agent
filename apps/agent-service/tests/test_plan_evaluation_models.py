@@ -54,6 +54,30 @@ def test_plan_evaluation_rounds_half_up_like_the_java_consumer() -> None:
     assert evaluation.overall_score == 99
 
 
+def test_v2_plan_evaluation_normalizes_weights_when_dimensions_are_not_applicable() -> None:
+    dimensions = EvaluationDimensions(
+        constraint_satisfaction=100,
+        time_feasibility=80,
+        budget_fit=None,
+        route_efficiency=60,
+        interest_match=None,
+    )
+
+    evaluation = PlanEvaluation(
+        schema_version=2,
+        evaluator_version="rule-v2",
+        feasible=True,
+        overall_score=84,
+        dimensions=dimensions,
+        summary="Only applicable dimensions contribute to the score",
+        evaluated_at=datetime(2026, 8, 2, tzinfo=UTC),
+    )
+
+    assert evaluation.overall_score == 84
+    assert evaluation.dimensions.budget_fit is None
+    assert evaluation.dimensions.interest_match is None
+
+
 @pytest.mark.parametrize(
     ("override", "message"),
     (

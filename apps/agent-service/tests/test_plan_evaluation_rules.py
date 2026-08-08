@@ -11,6 +11,7 @@ from trip_agent.evaluation.rules import (
     score_time_feasibility,
     time_warnings,
 )
+from trip_agent.worker.contracts import Itinerary, ItineraryDay
 
 
 def test_budget_thresholds_are_monotonic_and_warn_at_eighty_five_percent() -> None:
@@ -92,3 +93,60 @@ def test_fixed_schedule_requires_the_matching_place_not_only_the_time_window() -
     )
 
     assert violations == ["fixed schedule 'Reserved museum' is not covered"]
+
+
+def test_hard_constraint_guard_rejects_duplicate_poi_across_days() -> None:
+    command = make_command()
+    first = make_activity(0, source="AMAP")
+    repeated = make_activity(1, source="AMAP").model_copy(
+        update={"provider_poi_id": first.provider_poi_id}
+    )
+    itinerary = Itinerary(
+        title="Duplicate trip",
+        days=(
+            ItineraryDay(
+                date=command.payload.trip.start_date,
+                activities=(first,),
+                transit_legs=(),
+            ),
+            ItineraryDay(
+                date=command.payload.trip.start_date.replace(day=2),
+                activities=(repeated,),
+                transit_legs=(),
+            ),
+        ),
+        estimated_total_cost=Decimal("100.00"),
+    )
+
+    violations = detect_hard_constraint_violations(
+        command,
+        itinerary,
+        build_budget_context(command, itinerary),
+    )
+
+    assert "duplicate POI 'POI-1' appears more than once" in violations
+
+
+def test_hard_constraint_guard_rejects_overlapping_activities() -> None:
+    command = make_command()
+    first = make_activity(0)
+    overlapping = make_activity(1, start_hour=9, start_minute=30)
+    itinerary = Itinerary(
+        title="Overlapping trip",
+        days=(
+            ItineraryDay(
+                date=command.payload.trip.start_date,
+                activities=(first, overlapping),
+                transit_legs=(),
+            ),
+        ),
+        estimated_total_cost=Decimal("100.00"),
+    )
+
+    violations = detect_hard_constraint_violations(
+        command,
+        itinerary,
+        build_budget_context(command, itinerary),
+    )
+
+    assert "activities 'Activity 1' and 'Activity 2' overlap" in violations

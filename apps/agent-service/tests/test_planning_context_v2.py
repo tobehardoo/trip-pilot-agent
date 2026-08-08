@@ -274,6 +274,14 @@ def test_demo_skeleton_respects_arrival_window() -> None:
     activity = result.itinerary.days[0].activities[0]
     assert activity.start_time >= _local(date(2026, 8, 1), 14)
     assert activity.end_time <= _local(date(2026, 8, 1), 18)
+    activities = sorted(
+        result.itinerary.days[0].activities,
+        key=lambda item: item.start_time,
+    )
+    assert all(
+        current.start_time >= previous.end_time
+        for previous, current in zip(activities, activities[1:], strict=False)
+    )
 
 
 def test_contract_uses_china_local_dates_after_java_serializes_anchors_as_utc() -> None:

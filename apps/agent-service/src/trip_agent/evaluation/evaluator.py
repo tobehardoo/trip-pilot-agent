@@ -28,7 +28,7 @@ from trip_agent.evaluation.rules import (
 from trip_agent.evaluation.scoring import weighted_overall_score
 from trip_agent.worker.contracts import PlanningCreateCommand, PlanningReplanCommand
 
-EVALUATOR_VERSION = "rule-v1"
+EVALUATOR_VERSION = "rule-v2"
 
 
 class PlanEvaluator:
@@ -95,9 +95,17 @@ class PlanEvaluator:
 
         constraint_sat = score_constraint_satisfaction(command, itinerary)
         time_feas = score_time_feasibility(itinerary.days, day_stats)
-        budget_fit = score_budget_fit(budget_ctx)
+        budget_fit = (
+            score_budget_fit(budget_ctx)
+            if budget_ctx.budget_amount is not None
+            else None
+        )
         route_eff = score_route_efficiency(day_stats)
-        interest = score_interest_match(command)
+        interest = (
+            score_interest_match(command, itinerary)
+            if command.payload.trip.constraints.preferences
+            else None
+        )
 
         dimensions = EvaluationDimensions(
             constraint_satisfaction=constraint_sat,
@@ -129,7 +137,7 @@ class PlanEvaluator:
         )
 
         return PlanEvaluation(
-            schema_version=1,
+            schema_version=2,
             evaluator_version=EVALUATOR_VERSION,
             feasible=True,
             overall_score=weighted_overall_score(dimensions),

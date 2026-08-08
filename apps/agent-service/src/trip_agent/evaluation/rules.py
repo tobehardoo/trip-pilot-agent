@@ -365,22 +365,156 @@ def score_constraint_satisfaction(
 
 # ── Interest match ─────────────────────────────────────────────────────────
 
+# Preference keyword → AMap typecode prefix (first two digits = big category).
+# Activities whose type_code starts with any of these prefixes are considered
+# a match for that preference.
+_PREFERENCE_TYPECODE_MAP: dict[str, tuple[str, ...]] = {
+    "美食": ("05",),          # 餐饮服务
+    "餐饮": ("05",),
+    "小吃": ("05",),
+    "购物": ("06",),          # 购物服务
+    "自然": ("11",),          # 风景名胜
+    "风景": ("11",),
+    "风光": ("11",),
+    "山水": ("11",),
+    "历史文化": ("08", "14"), # 体育休闲(含历史景点) + 科教文化(博物馆等)
+    "历史": ("08", "14"),
+    "文化": ("14", "08"),
+    "古迹": ("08", "14"),
+    "博物馆": ("14",),        # 科教文化服务
+    "展览": ("14",),
+    "艺术": ("14",),
+    "娱乐": ("08",),          # 体育休闲服务
+    "休闲": ("08", "11"),
+    "户外": ("11", "08"),
+    "运动": ("08",),
+    "徒步": ("11",),
+    "住宿": ("10",),          # 住宿服务
+    "酒店": ("10",),
+}
+
+# Preference keywords that can also be matched by type_name substring.
+_PREFERENCE_TYPENAME_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "美食": ("餐饮", "餐厅", "美食", "小吃", "火锅", "面馆"),
+    "购物": ("购物", "商场", "市场", "商业街", "专卖店"),
+    "历史文化": ("博物馆", "纪念馆", "故居", "古迹", "寺庙", "教堂", "遗址", "古镇"),
+    "自然": ("公园", "风景区", "山", "湖", "海", "岛", "森林", "湿地", "峡谷"),
+    "娱乐": ("影院", "剧院", "游乐场", "KTV", "酒吧", "茶馆"),
+    "运动": ("体育", "健身", "游泳", "滑雪", "高尔夫", "球场"),
+    "住宿": ("酒店", "宾馆", "民宿", "客栈", "度假村"),
+}
+
+
 def score_interest_match(
     command: PlanningCreateCommand | PlanningReplanCommand,
+    itinerary: Itinerary,
 ) -> int:
-    """Score preference alignment at a basic level.
+    """Score how well the itinerary matches user preferences.
 
-    NOTE: Full semantic interest matching requires reliable activity
-    category tags which are not yet available in the domain model.
-    This implementation provides a baseline coverage metric.
+    Uses POI type_code (AMap classification) and type_name to check
+    whether planned activities align with each stated preference.
+    Returns 0–100.
     """
     constraints = command.payload.trip.constraints
-    pref_count = len(constraints.preferences)
-    if pref_count == 0:
+    preferences = constraints.preferences
+    if not preferences:
         return 100  # no explicit preferences → no penalty
-    # With preferences set, reward is proportional to activity diversity
-    # This is intentionally basic until rich activity tags are available.
-    return 80  # baseline — acknowledges preferences exist without guessing
+
+    activities = tuple(
+        activity for day in itinerary.days for activity in day.activities
+    )
+    if not activities:
+        return 80  # fallback when no activities (should not happen in practice)
+
+    # Build per-activity match signatures
+    activity_signatures: list[set[str]] = []
+    for a in activities:
+        sig: set[str] = set()
+        if a.type_code:
+            sig.add(a.type_code[:2])  # big category prefix
+        if a.type_name:
+            sig.add(a.type_name)
+        activity_signatures.append(sig)
+
+    # For each preference, check if any activity matches
+    matched_prefs = 0
+    for pref in preferences:
+        pref_key = pref.strip()
+        if not pref_key:
+            matched_prefs += 1  # empty preference → auto-match
+            continue
+
+        pref_lower = pref_key.lower()
+        is_match = False
+
+        # Check typecode prefix mapping
+        code_prefixes = _PREFERENCE_TYPECODE_MAP.get(pref_key)
+        if code_prefixes:
+            for sig in activity_signatures:
+                if any(cp in sig for cp in code_prefixes):
+                    is_match = True
+                    break
+
+        # Check type_name substring mapping
+        if not is_match:
+            name_keywords = _PREFERENCE_TYPENAME_KEYWORDS.get(pref_key, ())
+            if not name_keywords:
+                # No mapping defined — check if preference word appears in any
+                # activity type_name as a substring
+                for sig in activity_signatures:
+                    for token in sig:
+                        if pref_lower in token.lower():
+                            is_match = True
+                            break
+                    if is_match:
+                        break
+            else:
+                for sig in activity_signatures:
+                    for token in sig:
+                        token_lower = token.lower()
+                        if any(kw.lower() in token_lower for kw in name_keywords):
+                            is_match = True
+                            break
+                    if is_match:
+                        break
+
+        if is_match:
+            matched_prefs += 1
+
+    # Score: coverage of preferences
+    pref_coverage = matched_prefs / len(preferences)
+
+    # Also factor activity-level coverage: what fraction of activities matched
+    # at least one preference? This rewards itineraries where MOST activities
+    # are relevant to stated interests.
+    matched_activities = 0
+    for sig in activity_signatures:
+        act_matched = False
+        for pref in preferences:
+            pref_key = pref.strip()
+            if not pref_key:
+                act_matched = True
+                break
+            code_prefixes = _PREFERENCE_TYPECODE_MAP.get(pref_key)
+            if code_prefixes and any(cp in sig for cp in code_prefixes):
+                act_matched = True
+                break
+            name_keywords = _PREFERENCE_TYPENAME_KEYWORDS.get(pref_key)
+            if name_keywords:
+                for token in sig:
+                    if any(kw.lower() in token.lower() for kw in name_keywords):
+                        act_matched = True
+                        break
+                if act_matched:
+                    break
+        if act_matched:
+            matched_activities += 1
+
+    activity_ratio = matched_activities / len(activities) if activities else 0
+
+    # Combined score: 70% preference coverage + 30% activity coverage
+    score = round(pref_coverage * 70 + activity_ratio * 30)
+    return max(0, min(100, score))
 
 
 # ── Provider fallback warnings ─────────────────────────────────────────────
@@ -442,6 +576,31 @@ def detect_hard_constraint_violations(
         )
         if not found:
             violations.append(f"fixed schedule '{fs.place_name}' is not covered")
+
+    # A provider POI is a trip-wide identity. Structural anchors may repeat,
+    # but attractions and experiences must not be scheduled more than once.
+    seen_poi_ids: set[str] = set()
+    repeatable_kinds = {"ACCOMMODATION", "ARRIVAL", "DEPARTURE", "MEAL"}
+    for day in itinerary.days:
+        for activity in day.activities:
+            poi_id = activity.provider_poi_id
+            if poi_id is None or activity.kind in repeatable_kinds:
+                continue
+            if poi_id in seen_poi_ids:
+                violations.append(f"duplicate POI '{poi_id}' appears more than once")
+            else:
+                seen_poi_ids.add(poi_id)
+
+    for day in itinerary.days:
+        activities = sorted(
+            day.activities,
+            key=lambda activity: (activity.start_time, activity.end_time),
+        )
+        for previous, current in zip(activities, activities[1:], strict=False):
+            if current.start_time < previous.end_time:
+                violations.append(
+                    f"activities '{previous.title}' and '{current.title}' overlap"
+                )
 
     return violations
 

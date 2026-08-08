@@ -192,20 +192,9 @@ class DeterministicPlanExplanationGenerator:
 
 
 def _weighted_overall(d: EvaluationDimensions) -> int:
-    from trip_agent.evaluation.rules import (
-        BUDGET_FIT_WEIGHT,
-        CONSTRAINT_SATISFACTION_WEIGHT,
-        INTEREST_MATCH_WEIGHT,
-        ROUTE_EFFICIENCY_WEIGHT,
-        TIME_FEASIBILITY_WEIGHT,
-    )
-    return round(
-        d.constraint_satisfaction * CONSTRAINT_SATISFACTION_WEIGHT
-        + d.time_feasibility * TIME_FEASIBILITY_WEIGHT
-        + d.budget_fit * BUDGET_FIT_WEIGHT
-        + d.route_efficiency * ROUTE_EFFICIENCY_WEIGHT
-        + d.interest_match * INTEREST_MATCH_WEIGHT
-    )
+    from trip_agent.evaluation.scoring import weighted_overall_score
+
+    return weighted_overall_score(d)
 
 
 def _format_time(dt: object) -> str:

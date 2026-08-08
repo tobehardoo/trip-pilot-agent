@@ -56,9 +56,9 @@ class EvaluationDimensions(BaseModel):
 
     constraint_satisfaction: int = Field(ge=0, le=100)
     time_feasibility: int = Field(ge=0, le=100)
-    budget_fit: int = Field(ge=0, le=100)
+    budget_fit: int | None = Field(default=None, ge=0, le=100)
     route_efficiency: int = Field(ge=0, le=100)
-    interest_match: int = Field(ge=0, le=100)
+    interest_match: int | None = Field(default=None, ge=0, le=100)
 
 
 class EvaluationWarning(BaseModel):
@@ -157,7 +157,7 @@ class PlanEvaluation(BaseModel):
         frozen=True,
     )
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     evaluator_version: Annotated[
         str,
         StringConstraints(strip_whitespace=True, pattern=r"^rule-v\d+$"),
@@ -176,6 +176,10 @@ class PlanEvaluation(BaseModel):
     @model_validator(mode="after")
     def score_matches_dimensions(self) -> Self:
         dim = self.dimensions
+        if self.schema_version == 1 and (
+            dim.budget_fit is None or dim.interest_match is None
+        ):
+            raise ValueError("schemaVersion 1 requires all dimension scores")
         expected = weighted_overall_score(dim)
         if self.overall_score != expected:
             raise ValueError(

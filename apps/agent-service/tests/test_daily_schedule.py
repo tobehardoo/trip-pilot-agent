@@ -299,14 +299,33 @@ def test_single_day_late_arrival_plan_not_empty_but_minimal() -> None:
     assert plan.window_end_minute == 1080    # 18:00 default
 
 
-def test_no_usable_window_returns_empty_plan() -> None:
+def test_early_departure_keeps_departure_anchor() -> None:
+    """An 08:00 departure must keep the DEPARTURE anchor, not a null window."""
     plan = plan_day(
         trip_date=END, start_date=START, end_date=END,
         arrival=None, departure=_at(3, 8), accommodation_known=True,
         candidates=(_candidate("n-1", "A", "NORMAL"),),
     )
     assert plan.day_type == "DEPARTURE_DAY"
-    assert "NO_USABLE_DAY_WINDOW" in plan.warnings
+    assert "NO_USABLE_DAY_WINDOW" not in plan.warnings
+    kinds = [item.kind for item in plan.items]
+    assert "DEPARTURE" in kinds
+
+
+def test_late_arrival_keeps_arrival_anchor() -> None:
+    """A 20:00 arrival must keep the ARRIVAL anchor with room for its buffer."""
+    plan = plan_day(
+        trip_date=START, start_date=START, end_date=END,
+        arrival=_at(1, 20), departure=None, accommodation_known=True,
+        candidates=(_candidate("n-1", "A", "NORMAL"),),
+    )
+    assert plan.day_type == "ARRIVAL_DAY"
+    assert "NO_USABLE_DAY_WINDOW" not in plan.warnings
+    kinds = [item.kind for item in plan.items]
+    assert "ARRIVAL" in kinds
+    # arrival at 20:00 (1200) plus its 30-minute buffer must be inside the window.
+    assert plan.window_start_minute == 1200
+    assert plan.window_end_minute == 1230
 
 
 def test_fixed_schedule_overlap_is_warned() -> None:

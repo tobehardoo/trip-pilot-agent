@@ -238,9 +238,16 @@ def test_scenario_4_elderly_relaxed_no_anchors_not_fixed_two() -> None:
         assert day.day_type in {"FULL_DAY", "SPECIAL_ACTIVITY_DAY"}
         attractions = [a for a in day.activities if a.kind == "ATTRACTION"]
         assert len(attractions) <= 2, "relaxed elderly pace limits major activities"
-    # No accommodation input => no fake hotel node anywhere.
-    assert all(
-        a.kind != "ACCOMMODATION"
-        for day in result.itinerary.days
+    # Multi-day trip without a selected hotel: an unresolved accommodation
+    # semantic anchor IS expected (authoritative domain semantics — it must
+    # NOT be treated as "no accommodation").  The node must carry no fake
+    # provider POI / coordinates.
+    accommodation_nodes = [
+        a for day in result.itinerary.days
         for a in day.activities
-    )
+        if a.kind == "ACCOMMODATION"
+    ]
+    assert accommodation_nodes, "multi-day trip must keep an accommodation anchor"
+    for node in accommodation_nodes:
+        assert node.provider_poi_id is None
+        assert node.coordinates is None

@@ -138,6 +138,31 @@ def test_replan_contract_accepts_an_incomplete_impacted_day_snapshot() -> None:
     assert command.payload.itinerary.days[0].transit_legs == ()
 
 
+def test_replan_contract_accepts_a_conflicting_estimated_transit_selection() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_data = deepcopy(REPLAN_COMMAND)
+    command_data["payload"]["itinerary"]["days"][0]["transitLegs"] = [
+        {
+            "fromActivityIndex": 0,
+            "toActivityIndex": 1,
+            "mode": "TRANSIT",
+            "distanceMeters": 20_000,
+            "durationSeconds": 10_800,
+            "provider": "DEMO",
+            "estimated": True,
+            "estimatedCost": 6,
+            "polyline": [
+                {"longitude": 113.31, "latitude": 23.11},
+                {"longitude": 113.32, "latitude": 23.12},
+            ],
+        }
+    ]
+
+    command = contracts.PlanningReplanCommand.model_validate(command_data)
+
+    assert command.payload.itinerary.days[0].transit_legs[0].mode == "TRANSIT"
+
+
 def test_replan_contract_rejects_duplicate_present_transit_endpoints() -> None:
     contracts = import_module("trip_agent.worker.contracts")
     invalid = deepcopy(REPLAN_COMMAND)

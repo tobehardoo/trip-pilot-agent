@@ -1,6 +1,12 @@
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
+from trip_agent.guide_intelligence.travel_entities import (
+    FactProvenance,
+    FactValue,
+    TravelEntityLocation,
+    build_attraction,
+)
 from trip_agent.infrastructure.amap.planning_provider import weather_statements_for_date
 from trip_agent.planning.candidates import CandidateRanker
 from trip_agent.providers.map import Coordinates, Poi
@@ -112,3 +118,33 @@ def test_weather_statements_only_apply_to_their_effective_trip_date() -> None:
         "2026-08-01 广州雷阵雨 白天雷阵雨",
     )
     assert weather_statements_for_date(facts, date(2026, 8, 2)) == ()
+
+
+def test_ranker_explains_when_entity_facts_are_known_or_unknown() -> None:
+    checked_at = datetime(2026, 8, 1, tzinfo=UTC)
+    provenance = FactProvenance(
+        source="official-attraction",
+        source_type="OFFICIAL",
+        fetched_at=checked_at,
+        valid_until=checked_at + timedelta(days=1),
+        confidence=0.95,
+    )
+    entity = build_attraction(
+        city_adcode="440100",
+        provider_poi_id="museum",
+        name="广州博物馆",
+        category="MUSEUM",
+        location=TravelEntityLocation(113.26, 23.13, "广州市越秀区"),
+        opening_hours=FactValue.known("09:00-17:00", provenance),
+    )
+
+    result = CandidateRanker().rank(
+        (poi("museum", "广州博物馆"),),
+        destination="广州",
+        preferences=(),
+        traveler_type="FRIENDS",
+        limit=1,
+        entity_facts=(entity,),
+    )
+
+    assert "ENTITY_OPENING_HOURS_KNOWN" in result.selected[0].reasons

@@ -101,6 +101,7 @@ def _command(
     must_visit: list[str] | None = None,
     preferences: list[str] | None = None,
     pace: str = "BALANCED",
+    fixed_schedules: list[dict] | None = None,
 ) -> PlanningCreateCommand:
     payload = deepcopy(COMMAND)
     payload["schemaVersion"] = 2
@@ -117,7 +118,7 @@ def _command(
     constraints["avoidPlaces"] = []
     constraints["mealWindows"] = []
     constraints["mobilityLevel"] = "STANDARD"
-    constraints["fixedSchedules"] = []
+    constraints["fixedSchedules"] = fixed_schedules or []
     return PlanningCreateCommand.model_validate(payload)
 
 
@@ -217,14 +218,37 @@ def test_skeleton_full_day_experience_becomes_special_day() -> None:
     assert experience.title == "长隆欢乐世界"
 
 
-def test_skeleton_does_not_fabricate_hotel_when_accommodation_unknown() -> None:
+def test_skeleton_emits_unresolved_accommodation_without_fake_hotel() -> None:
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     result = asyncio.run(_provider(pois).plan(_command()))
 
     accommodation_nodes = tuple(
         a for day in result.itinerary.days for a in day.activities if a.kind == "ACCOMMODATION"
     )
-    assert accommodation_nodes == ()
+    assert accommodation_nodes, "multi-day plans must preserve accommodation semantics"
+    assert all(a.provider_poi_id is None for a in accommodation_nodes)
+    assert all(a.coordinates is None for a in accommodation_nodes)
+    assert all("住宿地点待确认" in a.title for a in accommodation_nodes)
+
+
+def test_skeleton_does_not_repeat_attractions_across_days() -> None:
+    pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
+
+    result = asyncio.run(_provider(pois).plan(_command()))
+
+    placed_ids = [
+        activity.provider_poi_id
+        for day in result.itinerary.days
+        for activity in day.activities
+        if activity.kind in {"ATTRACTION", "EXPERIENCE"}
+    ]
+    assert len(placed_ids) == len(set(placed_ids))
+
+
+def test_small_scenic_poi_uses_normal_not_half_day_duration() -> None:
+    scenic_poi = _poi("small-scenic", "社区小公园")
+
+    assert AmapPlanningProvider._magnitude_for_poi(scenic_poi) == "NORMAL"
 
 
 def test_skeleton_emits_hotel_nodes_when_accommodation_known() -> None:
@@ -313,3 +337,73 @@ def test_demo_skeleton_classifies_days_and_marks_anchors() -> None:
     assert first.day_type == "ARRIVAL_DAY"
     assert any(a.kind == "ARRIVAL" and a.time_fixed for a in first.activities)
     assert result.itinerary.days[1].day_type == "FULL_DAY"
+
+
+def test_fixed_schedule_is_mapped_from_contract_fields() -> None:
+    """Regression: contracts.FixedSchedule (start_time) must map to the daily
+    scheduler's FixedSchedule (start/end) instead of crashing on `.start`."""
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    result = asyncio.run(
+        _provider(pois).plan(
+            _command(
+                fixed_schedules=[
+                    {
+                        "placeName": "陈家祠",
+                        "startTime": "2026-08-02T14:00:00+08:00",
+                        "endTime": "2026-08-02T16:00:00+08:00",
+                    }
+                ]
+            )
+        )
+    )
+    day2 = result.itinerary.days[1]
+    fixed = next(a for a in day2.activities if a.title == "陈家祠" and a.time_fixed)
+    assert fixed.kind == "ATTRACTION"
+    # Scheduled window is preserved in the source timezone (Asia/Shanghai).
+    assert fixed.start_time.strftime("%H:%M") == "14:00"
+    assert fixed.end_time.strftime("%H:%M") == "16:00"
+
+
+def test_late_arrival_keeps_arrival_anchor_via_provider() -> None:
+    """Regression: a 20:00 arrival must keep the ARRIVAL node and not drop to a
+    null-window empty day."""
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    result = asyncio.run(
+        _provider(pois).plan(
+            _command(
+                arrival={"placeName": "广州站", "time": "2026-08-01T20:00:00+08:00"}
+            )
+        )
+    )
+    day1 = result.itinerary.days[0]
+    assert day1.day_type == "ARRIVAL_DAY"
+    assert any(a.kind == "ARRIVAL" for a in day1.activities)
+
+
+def test_early_departure_keeps_departure_anchor_via_provider() -> None:
+    """Regression: a 08:00 departure must keep the DEPARTURE node."""
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    result = asyncio.run(
+        _provider(pois).plan(
+            _command(
+                departure={"placeName": "广州南站", "time": "2026-08-03T08:00:00+08:00"}
+            )
+        )
+    )
+    day3 = result.itinerary.days[-1]
+    assert day3.day_type == "DEPARTURE_DAY"
+    assert any(a.kind == "DEPARTURE" for a in day3.activities)
+
+
+def test_must_visit_matches_only_the_named_place_not_sub_pois() -> None:
+    """Regression: AMap child facilities (公交站/殿宇/停车场) must not be
+    flagged as the must-visit place."""
+    provider = AmapPlanningProvider(
+        StaticMapProvider(()), SuccessfulRouteProvider()
+    )
+    must_set = {"光孝寺"}
+    assert provider._is_must_visit_poi(_poi("g1", "光孝寺"), must_set) is True
+    assert provider._is_must_visit_poi(_poi("g2", "光孝寺(公交站)"), must_set) is False
+    assert provider._is_must_visit_poi(_poi("g3", "光孝寺-六祖殿"), must_set) is False
+    assert provider._is_must_visit_poi(_poi("g4", "光孝寺售票处"), must_set) is False
+    assert provider._is_must_visit_poi(_poi("g5", "广州塔"), must_set) is False

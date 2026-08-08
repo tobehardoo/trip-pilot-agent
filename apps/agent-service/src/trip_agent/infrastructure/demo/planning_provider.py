@@ -138,6 +138,8 @@ class DemoPlanningProvider:
             ))
         cursor = minute_datetime(trip_date, available_start)
         window_end = minute_datetime(trip_date, available_end)
+        if day_type == "ARRIVAL_DAY" and activities:
+            cursor = max(cursor, max(activity.end_time for activity in activities))
         if window_end - cursor >= timedelta(hours=2):
             activities.append(ItineraryActivity(
                 title="自主探索时段（演示）",

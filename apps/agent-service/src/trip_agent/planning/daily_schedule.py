@@ -219,13 +219,24 @@ def day_window_minutes(
     Defaults to 09:00–18:00 (INTENSIVE extends to 20:00), tightened by
     arrival/departure on the first/last day.  Missing anchors keep the default
     window — the plan is still built by capacity.
+
+    The window always keeps room for the anchor it carries: a late arrival
+    (after the default end) still leaves the arrival buffer, and an early
+    departure (before the default start) still leaves the departure buffer.
+    This guarantees ARRIVAL/DEPARTURE anchor items are never dropped by a
+    negative window.
     """
     start = DEFAULT_DAY_START_MINUTE
     end = DEFAULT_DAY_END_MINUTE if pace != "INTENSIVE" else INTENSIVE_DAY_END_MINUTE
     if trip_date == start_date and arrival is not None:
         start = max(start, _anchor_minute(arrival))
+        # A late arrival must still fit: extend the end to cover arrival+buffer.
+        end = max(end, start + ARRIVAL_BUFFER_MINUTES)
     if trip_date == end_date and departure is not None:
         end = min(end, _anchor_minute(departure))
+        # An early departure must still fit: pull the start back to cover
+        # buffer+departure.
+        start = min(start, end - DEPARTURE_BUFFER_MINUTES)
     return start, end
 
 

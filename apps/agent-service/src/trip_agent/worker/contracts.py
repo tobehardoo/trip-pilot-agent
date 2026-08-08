@@ -560,11 +560,14 @@ class ItineraryActivity(MessageModel):
         return self
 
 
+type ItineraryTransitMode = Literal["WALKING", "TRANSIT", "DRIVING", "TAXI"]
+
+
 class TransitLeg(MessageModel):
     transit_id: UUID | None = None
     from_activity_index: int = Field(strict=True, ge=0)
     to_activity_index: int = Field(strict=True, ge=1)
-    mode: Literal["WALKING", "DRIVING"]
+    mode: ItineraryTransitMode
     distance_meters: int = Field(strict=True, ge=0, le=40_100_000)
     duration_seconds: int = Field(strict=True, ge=0, le=31_536_000)
     provider: Literal["AMAP", "DEMO"]
@@ -701,8 +704,17 @@ class ReplanItineraryDay(InboundMessageModel):
 
     @model_validator(mode="after")
     def validate_present_transit_legs(self) -> Self:
-        if self.transit_legs:
-            self.to_itinerary_day()
+        expected_pairs = {
+            (index, index + 1) for index in range(len(self.activities) - 1)
+        }
+        actual_pairs: set[tuple[int, int]] = set()
+        for leg in self.transit_legs:
+            endpoints = (leg.from_activity_index, leg.to_activity_index)
+            if endpoints not in expected_pairs:
+                raise ValueError("transit legs must connect adjacent activities in order")
+            if endpoints in actual_pairs:
+                raise ValueError("transit legs must use unique adjacent activity endpoints")
+            actual_pairs.add(endpoints)
         return self
 
     def to_itinerary_day(self) -> ItineraryDay:

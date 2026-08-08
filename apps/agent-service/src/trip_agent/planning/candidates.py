@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from trip_agent.guide_intelligence.travel_entities import Attraction
 from trip_agent.providers.map import Poi
 
 type TravelerType = Literal["SOLO", "COUPLE", "FAMILY", "FRIENDS", "BUSINESS"]
@@ -83,6 +84,7 @@ class CandidateRanker:
         avoid_places: tuple[str, ...] = (),
         guide_statements: tuple[str, ...] = (),
         weather_statements: tuple[str, ...] = (),
+        entity_facts: tuple[Attraction, ...] = (),
     ) -> CandidateRanking:
         if limit < 1:
             raise ValueError("candidate limit must be positive")
@@ -91,6 +93,7 @@ class CandidateRanker:
         provider_ids: set[str] = set()
         place_keys: set[tuple[str, int, int]] = set()
         destination_key = _city_key(destination)
+        entities_by_provider_id = {entity.provider_poi_id: entity for entity in entity_facts}
 
         for poi in pois:
             if poi.provider_id in provider_ids:
@@ -123,6 +126,7 @@ class CandidateRanker:
                     must_visit_places,
                     guide_statements,
                     weather_statements,
+                    entities_by_provider_id.get(poi.provider_id),
                 )
             )
 
@@ -148,6 +152,7 @@ class CandidateRanker:
         must_visit_places: tuple[str, ...],
         guide_statements: tuple[str, ...],
         weather_statements: tuple[str, ...],
+        entity: Attraction | None,
     ) -> RankedCandidate:
         score = 20
         reasons = ["VALID_CITY_AND_METADATA"]
@@ -167,6 +172,12 @@ class CandidateRanker:
         ):
             score += 25
             reasons.append("GUIDE_FACT_MATCH")
+        if entity is not None:
+            reasons.append(
+                "ENTITY_OPENING_HOURS_KNOWN"
+                if entity.opening_hours.status == "KNOWN"
+                else "ENTITY_OPENING_HOURS_UNKNOWN"
+            )
         weather_text = _text_key(" ".join(weather_statements))
         if is_adverse_weather_statement(weather_text):
             if any(_text_key(term) in searchable for term in _INDOOR_TERMS):

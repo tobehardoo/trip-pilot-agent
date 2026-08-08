@@ -29,6 +29,12 @@ from trip_agent.domain.shared import (
     minute_datetime,
     text_matches,
 )
+from trip_agent.guide_intelligence.travel_entities import (
+    FactProvenance,
+    FactValue,
+    TravelEntityLocation,
+    build_attraction,
+)
 from trip_agent.planning.candidates import CandidateRanker
 from trip_agent.planning.daily_schedule import (
     CandidateActivity,
@@ -38,6 +44,12 @@ from trip_agent.planning.daily_schedule import (
     MealDemand,
     classify_day_type,
     plan_day,
+)
+from trip_agent.planning.poi_quality import (
+    activity_candidate_eligible,
+    canonical_poi_key,
+    duration_profile_for,
+    magnitude_for_duration,
 )
 from trip_agent.planning.trusted_context import hard_closed_fact
 from trip_agent.providers.errors import (
@@ -69,13 +81,60 @@ from trip_agent.worker.progress import report_planning_progress
 
 logger = logging.getLogger(__name__)
 
-# Rule-based activity magnitude terms (deterministic defaults, marked as
-# rule-derived; not a substitute for curated POI duration data).
-_FULL_DAY_TERMS = (
-    "泰山", "华山", "衡山", "黄山", "庐山", "峨眉", "山岳",
-    "迪士尼", "迪斯尼", "长隆", "乐园", "环球影城", "主题公园", "度假区",
-)
-_HALF_DAY_TERMS = ("风景区", "古镇", "遗址", "公园", "博物馆群")
+_REDUCED_MOBILITY_MAX_HOP_METERS = 3_000
+_MAX_MOBILITY_REPAIR_ATTEMPTS = 2
+
+def _entity_facts_for_pois(
+    pois: tuple[Poi, ...],
+    command: PlanningCreateCommand,
+) -> tuple:
+    """Project fresh planning-context opening-hour facts onto recalled POIs.
+
+    The event contract predates ``cityAdcode``; keep that field explicitly unknown
+    until the producer supplies the structured region, while still preserving the
+    fact's source and expiry for candidate explanations.
+    """
+    context = command.payload.planning_context
+    if context is None:
+        return ()
+    opening_facts = tuple(
+        fact for fact in context.facts
+        if fact.category == "OPENING_HOURS" and not fact.stale
+    )
+    entities = []
+    for poi in pois:
+        fact = next(
+            (
+                item for item in opening_facts
+                if text_matches(poi.name, f"{item.statement} {item.evidence}")
+            ),
+            None,
+        )
+        if fact is None:
+            continue
+        source_type = "OFFICIAL" if fact.source_reviewed else "GUIDE"
+        provenance = FactProvenance(
+            source=fact.source_name,
+            source_type=source_type,
+            fetched_at=fact.checked_at,
+            valid_until=fact.expires_at,
+            confidence=1.0 if fact.source_reviewed else 0.7,
+        )
+        entities.append(
+            build_attraction(
+                city_adcode=None,
+                provider_poi_id=poi.provider_id,
+                name=poi.name,
+                category="ATTRACTION",
+                location=TravelEntityLocation(
+                    poi.coordinates.longitude,
+                    poi.coordinates.latitude,
+                    poi.address,
+                ),
+                opening_hours=FactValue.known(fact.statement, provenance),
+            )
+        )
+    return tuple(entities)
 _COMPLEX_TERMS = (
     "泰山", "华山", "衡山", "黄山", "庐山", "峨眉", "峡谷",
     "迪士尼", "迪斯尼", "长隆", "乐园", "环球影城", "主题公园", "度假区", "古镇",
@@ -150,8 +209,16 @@ class AmapPlanningProvider:
         raw_pois = await self._collect_pois(command, max(day_count * 3, 2))
         if not raw_pois:
             raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
+        # Candidate quality: drop pure infrastructure (bus stops, parking,
+        # metro, station gates) before ranking.  Transport hubs that serve as
+        # arrival/departure anchors are resolved separately and kept.
+        activity_pois = tuple(
+            poi for poi in raw_pois if activity_candidate_eligible(poi)
+        )
+        if not activity_pois:
+            raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
         ranking = self._candidate_ranker.rank(
-            raw_pois,
+            activity_pois,
             destination=trip.destination,
             preferences=constraints.preferences,
             traveler_type=constraints.traveler_type,
@@ -161,6 +228,7 @@ class AmapPlanningProvider:
             guide_statements=_non_weather_guide_statements(
                 command.payload.guide_evidence.facts
             ),
+            entity_facts=_entity_facts_for_pois(raw_pois, command),
         )
         ranked_pois = tuple(item.poi for item in ranking.selected)
         poi_by_id = {poi.provider_id: poi for poi in ranked_pois}
@@ -172,6 +240,13 @@ class AmapPlanningProvider:
             self._to_candidate(poi, must_visit_text, score_by_id)
             for poi in ranked_pois
         )
+        # Canonical identity per candidate: used for cross-day dedup so that
+        # sub-facilities of the same place (光孝寺 vs 光孝寺-六祖殿) collapse
+        # into one, while genuinely distinct attractions stay apart.
+        canonical_key_by_id = {
+            poi.provider_id: canonical_poi_key(poi)
+            for poi in ranked_pois
+        }
         anchors = await self._resolve_travel_anchors(command)
         special_date = self._special_day_date(command, candidates)
 
@@ -182,13 +257,18 @@ class AmapPlanningProvider:
         total_cost = Decimal("0")
         context = command.payload.planning_context
         closure_filtered_must: set[str] = set()
+        remaining_candidates = candidates
         for offset in range(day_count):
             trip_date = trip.start_date + timedelta(days=offset)
             has_full = trip_date == special_date
             day_candidates = (
-                candidates
+                remaining_candidates
                 if has_full or special_date is None
-                else tuple(c for c in candidates if c.magnitude != "FULL_DAY")
+                else tuple(
+                    candidate
+                    for candidate in remaining_candidates
+                    if candidate.magnitude != "FULL_DAY"
+                )
             )
             if context is not None:
                 day_candidates = tuple(
@@ -204,46 +284,76 @@ class AmapPlanningProvider:
                         ) is not None
                     ):
                         closure_filtered_must.add(candidate.poi_id)
-            day_plan = plan_day(
-                trip_date=trip_date,
-                start_date=trip.start_date,
-                end_date=trip.end_date,
-                arrival=(
-                    constraints.arrival.time
-                    if constraints.arrival is not None else None
-                ),
-                departure=(
-                    constraints.departure.time
-                    if constraints.departure is not None else None
-                ),
-                accommodation_known=anchors.accommodation is not None,
-                fixed_schedules=self._fixed_schedules_on(
-                    constraints.fixed_schedules, trip_date
-                ),
-                candidates=day_candidates,
-                has_full_day_experience=has_full,
-                pace=constraints.pace,
-                mobility_reduced=constraints.mobility_level == "REDUCED",
-                meal_preferences=constraints.preferences,
-            )
-            day, day_cost, day_warnings = await self._emit_day(
-                command, offset, day_plan, anchors, poi_by_id,
-                route_cache, route_calls,
-            )
+            mobility_reduced = constraints.mobility_level == "REDUCED"
+            for repair_attempt in range(_MAX_MOBILITY_REPAIR_ATTEMPTS + 1):
+                day_plan = plan_day(
+                    trip_date=trip_date,
+                    start_date=trip.start_date,
+                    end_date=trip.end_date,
+                    arrival=(
+                        constraints.arrival.time
+                        if constraints.arrival is not None else None
+                    ),
+                    departure=(
+                        constraints.departure.time
+                        if constraints.departure is not None else None
+                    ),
+                    accommodation_known=anchors.accommodation is not None,
+                    fixed_schedules=self._fixed_schedules_on(
+                        constraints.fixed_schedules, trip_date
+                    ),
+                    candidates=day_candidates,
+                    has_full_day_experience=has_full,
+                    pace=constraints.pace,
+                    mobility_reduced=mobility_reduced,
+                    meal_preferences=constraints.preferences,
+                )
+                day, day_cost, day_warnings = await self._emit_day(
+                    command, offset, day_plan, anchors, poi_by_id,
+                    route_cache, route_calls,
+                )
+                rejected_poi_id = (
+                    self._mobility_repair_candidate(day, day_candidates)
+                    if mobility_reduced else None
+                )
+                if (
+                    rejected_poi_id is None
+                    or repair_attempt == _MAX_MOBILITY_REPAIR_ATTEMPTS
+                ):
+                    break
+                day_candidates = tuple(
+                    candidate
+                    for candidate in day_candidates
+                    if candidate.poi_id != rejected_poi_id
+                )
             itinerary_days.append(day)
             total_cost += day_cost
             warnings.extend(day_warnings)
+            placed_on_day = {
+                key
+                for activity in day.activities
+                if activity.kind in {"ATTRACTION", "EXPERIENCE"}
+                and activity.provider_poi_id is not None
+                for key in (canonical_key_by_id.get(activity.provider_poi_id),)
+                if key is not None
+            }
+            remaining_candidates = tuple(
+                candidate
+                for candidate in remaining_candidates
+                if canonical_key_by_id.get(candidate.poi_id) not in placed_on_day
+            )
 
-        must_visit_unplaced = tuple(
-            w.split(":", 1)[1] for w in warnings
-            if w.startswith("MUST_VISIT_UNSCHEDULED")
-        )
         placed_ids = {
             activity.provider_poi_id
             for day in itinerary_days
             for activity in day.activities
             if activity.provider_poi_id is not None
         }
+        must_visit_unplaced = tuple(
+            candidate.title
+            for candidate in candidates
+            if candidate.must_include and candidate.poi_id not in placed_ids
+        )
         closure_unplaced = tuple(
             candidate.title
             for candidate in candidates
@@ -314,12 +424,32 @@ class AmapPlanningProvider:
         )
 
     @staticmethod
+    def _is_must_visit_poi(poi: Poi, must_visit_text: set[str]) -> bool:
+        """Decide whether a recalled POI is the user's must-visit place.
+
+        Uses an exact (normalised) name match instead of a substring match so
+        that AMap child facilities — e.g. ``光孝寺(公交站)``, ``光孝寺-六祖殿``,
+        ``光孝寺售票处`` — are NOT mistaken for the attraction itself.  The
+        must-visit intent refers to the named place, not its sub-POIs.
+        """
+        normalised = "".join(
+            character for character in poi.name.casefold() if character.isalnum()
+        )
+        return any(
+            "".join(
+                character for character in place.casefold()
+                if character.isalnum()
+            ) == normalised
+            for place in must_visit_text
+        )
+
     def _to_candidate(
+        self,
         poi: Poi,
         must_visit_text: set[str],
         score_by_id: dict[str, int],
     ) -> CandidateActivity:
-        must = any(text_matches(place, poi.name) for place in must_visit_text)
+        must = AmapPlanningProvider._is_must_visit_poi(poi, must_visit_text)
         magnitude = AmapPlanningProvider._magnitude_for_poi(poi)
         kind: str = (
             "EXPERIENCE"
@@ -343,14 +473,7 @@ class AmapPlanningProvider:
 
     @staticmethod
     def _magnitude_for_poi(poi: Poi) -> str:
-        text = f"{poi.name} {poi.type_name}"
-        if any(term in text for term in _FULL_DAY_TERMS):
-            return "FULL_DAY"
-        if poi.type_code.startswith("11") or any(
-            term in text for term in _HALF_DAY_TERMS
-        ):
-            return "HALF_DAY"
-        return "NORMAL"
+        return magnitude_for_duration(duration_profile_for(poi))
 
     @staticmethod
     def _is_complex_experience(poi: Poi) -> bool:
@@ -362,11 +485,46 @@ class AmapPlanningProvider:
         fixed_schedules: tuple[FixedSchedule, ...],
         trip_date: date,
     ) -> tuple[FixedSchedule, ...]:
-        return tuple(
-            schedule
-            for schedule in fixed_schedules
-            if schedule.start.astimezone(CHINA_TIME_ZONE).date() == trip_date
+        """Keep the schedules that fall on ``trip_date``.
+
+        ``constraints.fixed_schedules`` are the worker-contract schedules with
+        ``place_name``/``start_time``/``end_time``; the scheduler consumes
+        ``planning.daily_schedule.FixedSchedule`` (``label``/``start``/``end``),
+        so we map fields while filtering by day.
+        """
+        from trip_agent.planning.daily_schedule import (
+            FixedSchedule as DailyFixedSchedule,
         )
+
+        return tuple(
+            DailyFixedSchedule(
+                label=schedule.place_name,
+                start=schedule.start_time,
+                end=schedule.end_time,
+            )
+            for schedule in fixed_schedules
+            if schedule.start_time.astimezone(CHINA_TIME_ZONE).date() == trip_date
+        )
+
+    @staticmethod
+    def _mobility_repair_candidate(
+        day: ItineraryDay,
+        candidates: tuple[CandidateActivity, ...],
+    ) -> str | None:
+        candidate_by_id = {candidate.poi_id: candidate for candidate in candidates}
+        for leg in day.transit_legs:
+            if leg.distance_meters <= _REDUCED_MOBILITY_MAX_HOP_METERS:
+                continue
+            endpoints = (
+                day.activities[leg.to_activity_index],
+                day.activities[leg.from_activity_index],
+            )
+            for activity in endpoints:
+                poi_id = activity.provider_poi_id
+                candidate = candidate_by_id.get(poi_id) if poi_id else None
+                if candidate is not None and not candidate.must_include:
+                    return candidate.poi_id
+        return None
 
     @staticmethod
     def _special_day_date(
@@ -422,6 +580,11 @@ class AmapPlanningProvider:
                     unresolved.append("MEAL_POI_UNRESOLVED")
             else:
                 poi = poi_by_id.get(item.poi_id) if item.poi_id else None
+                # Fixed arrangements (place-level schedules) are not recalled
+                # with the candidate POIs; resolve their location so the node
+                # is a real AMAP activity and transit endpoints stay continuous.
+                if poi is None and item.time_fixed and item.kind == "ATTRACTION":
+                    poi = await self._resolve_fixed_place(item.title, command)
                 cost = (
                     Decimal("0")
                     if item.kind in {"ARRIVAL", "DEPARTURE", "ACCOMMODATION", "MEAL"}
@@ -429,22 +592,30 @@ class AmapPlanningProvider:
                 )
                 slots.append(self._slot_from_item(item, poi, trip_date, cost))
 
-        if anchors.accommodation is not None:
+        day_count = (
+            command.payload.trip.end_date - command.payload.trip.start_date
+        ).days + 1
+        if day_count > 1:
             hotel = anchors.accommodation
-            start_time = minute_datetime(trip_date, day_plan.window_start_minute)
+            start_time = minute_datetime(
+                trip_date, day_plan.window_start_minute
+            )
             end_slot = minute_datetime(trip_date, day_plan.window_end_minute)
+            hotel_label = hotel.name if hotel is not None else "住宿地点待确认"
+        if day_count > 1 and offset > 0:
             slots.insert(0, {
-                "title": "从酒店出发",
-                "start": start_time,
-                "end": start_time + timedelta(minutes=15),
+                "title": f"从{hotel_label}出发",
+                "start": start_time - timedelta(minutes=15),
+                "end": start_time,
                 "poi": hotel,
                 "kind": "ACCOMMODATION",
                 "time_fixed": False,
                 "magnitude": None,
                 "cost": Decimal("0"),
             })
+        if day_count > 1 and offset < day_count - 1:
             slots.append({
-                "title": "返回酒店",
+                "title": f"返回{hotel_label}",
                 "start": end_slot,
                 "end": end_slot + timedelta(minutes=15),
                 "poi": hotel,
@@ -628,6 +799,38 @@ class AmapPlanningProvider:
             fallback_operation=fallback_operation,
         )
 
+    async def _resolve_fixed_place(
+        self,
+        place_name: str,
+        command: PlanningCreateCommand,
+    ) -> Poi | None:
+        """Resolve a fixed-arrangement place to a real POI.
+
+        Fixed schedules carry a user-provided place name but no provider POI.
+        Search the destination so the scheduled node gets a real AMap identity,
+        coordinates, and transit endpoints.  Returns ``None`` when the place is
+        not found so the caller degrades gracefully (unresolved node).
+        """
+        trip = command.payload.trip
+        search = await self._map_provider.search_pois(
+            PoiSearchRequest(
+                city=trip.destination,
+                keyword=place_name,
+                limit=5,
+            )
+        )
+        if isinstance(search, ProviderFailure) or not search.data:
+            return None
+        matching = next(
+            (
+                poi
+                for poi in search.data
+                if text_matches(place_name, poi.name)
+            ),
+            None,
+        )
+        return matching or search.data[0]
+
     async def _resolve_meal_poi(
         self,
         meal: MealDemand,
@@ -806,6 +1009,7 @@ class AmapPlanningProvider:
                 guide_statements=_non_weather_guide_statements(
                     command.payload.guide_evidence.facts
                 ),
+                entity_facts=_entity_facts_for_pois(tuple(candidates), command),
             )
             if len(ranking.selected) >= required_count:
                 return tuple(candidates)

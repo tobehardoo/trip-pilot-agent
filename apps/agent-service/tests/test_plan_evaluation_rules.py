@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from plan_evaluation_support import make_activity, make_command, make_result, make_transit
@@ -10,6 +10,7 @@ from trip_agent.evaluation.rules import (
     score_budget_fit,
     score_time_feasibility,
     time_warnings,
+    transfer_slack_minutes,
 )
 from trip_agent.worker.contracts import Itinerary, ItineraryDay
 
@@ -37,8 +38,166 @@ def test_critical_transfer_warning_reduces_the_time_score() -> None:
 
     warnings = time_warnings(result.itinerary.days, stats)
 
-    assert score_time_feasibility(result.itinerary.days, stats) == 96
+    # gap 4 min − transit 3 min → slack 1 min → CRITICAL −20 → 80
+    assert score_time_feasibility(result.itinerary.days, stats) == 80
     assert [warning.code for warning in warnings] == ["TIGHT_TRANSFER", "LOW_TIME_BUFFER"]
+
+
+def test_transfer_slack_subtracts_transit_duration() -> None:
+    activities = (
+        make_activity(0),
+        make_activity(1, start_hour=10, start_minute=12),
+    )
+    result = make_result(
+        activities=activities,
+        transit_legs=(make_transit(0, duration_seconds=600),),
+    )
+    day = result.itinerary.days[0]
+
+    assert transfer_slack_minutes(day, day.transit_legs[0]) == 2.0  # 12 − 10
+
+    result_short = make_result(
+        activities=activities,
+        transit_legs=(make_transit(0, duration_seconds=180),),
+    )
+    short_day = result_short.itinerary.days[0]
+    assert transfer_slack_minutes(short_day, short_day.transit_legs[0]) == 9.0  # 12 − 3
+
+
+def test_critical_low_buffer_gets_extra_deduction() -> None:
+    activities = (
+        make_activity(0),
+        make_activity(1, start_hour=10, start_minute=12),
+    )
+    result = make_result(
+        activities=activities,
+        transit_legs=(make_transit(0, duration_seconds=600),),
+    )
+    stats = compute_day_stats(result.itinerary.days)
+
+    warnings = time_warnings(result.itinerary.days, stats)
+
+    assert score_time_feasibility(result.itinerary.days, stats) == 80  # −15 − 5
+    assert [warning.code for warning in warnings] == ["TIGHT_TRANSFER", "LOW_TIME_BUFFER"]
+
+
+def test_tight_transfer_only_deduction() -> None:
+    activities = (
+        make_activity(0),
+        make_activity(1, start_hour=10, start_minute=12),
+    )
+    result = make_result(
+        activities=activities,
+        transit_legs=(make_transit(0, duration_seconds=180),),
+    )
+    stats = compute_day_stats(result.itinerary.days)
+
+    warnings = time_warnings(result.itinerary.days, stats)
+
+    assert score_time_feasibility(result.itinerary.days, stats) == 85  # −15 only
+    assert [warning.code for warning in warnings] == ["TIGHT_TRANSFER"]
+
+
+def test_workload_penalty_is_progressive_and_capped() -> None:
+    # Bands: 5.0–5.99 → −18; 6.0–6.99 → −24; >= 7.0 → −30 (capped per day).
+    expectations = {5: 82, 6: 76, 7: 70, 9: 70}
+    for count, expected in expectations.items():
+        activities = tuple(
+            make_activity(index, kind="ATTRACTION", start_hour=9 + index)
+            for index in range(count)
+        )
+        result = make_result(activities=activities, transit_legs=())
+        stats = compute_day_stats(result.itinerary.days)
+
+        assert stats[0].workload == float(count)
+        assert score_time_feasibility(result.itinerary.days, stats) == expected
+
+
+def _combined_overload_day(activity_offset: int = 0) -> ItineraryDay:
+    """One 5.5-workload day with exactly one tight leg (slack 9 min)."""
+    kinds = (
+        "ARRIVAL",
+        "ATTRACTION",
+        "ATTRACTION",
+        "ATTRACTION",
+        "ATTRACTION",
+        "ATTRACTION",
+        "MEAL",
+        "ACCOMMODATION",
+    )
+    starts = (
+        (9, 0), (10, 15), (11, 30), (12, 45), (14, 0), (15, 15), (16, 30), (17, 42),
+    )
+    activities = tuple(
+        make_activity(
+            activity_offset + index,
+            kind=kind,
+            start_hour=hour,
+            start_minute=minute,
+        )
+        for index, (kind, (hour, minute)) in enumerate(zip(kinds, starts, strict=True))
+    )
+    legs = tuple(
+        make_transit(index, duration_seconds=0 if index < 6 else 180)
+        for index in range(7)
+    )
+    return ItineraryDay(
+        date=date(2026, 8, 1),
+        activities=activities,
+        transit_legs=legs,
+    )
+
+
+def test_combined_high_load_and_tight_transfers_target_band() -> None:
+    days = (_combined_overload_day(), _combined_overload_day(activity_offset=8))
+    stats = compute_day_stats(days)
+
+    assert stats[0].workload == 5.5
+    assert stats[1].workload == 5.5
+
+    # 2 days × −18 (workload) + 2 tight legs × −15 (slack 9) = −66 → 34
+    assert score_time_feasibility(days, stats) == 34
+
+
+def test_structural_anchors_do_not_count_as_full_workload() -> None:
+    kinds = (
+        "ARRIVAL",
+        "ATTRACTION",
+        "ATTRACTION",
+        "ATTRACTION",
+        "MEAL",
+        "ATTRACTION",
+        "DEPARTURE",
+        "ACCOMMODATION",
+    )
+    activities = tuple(
+        make_activity(index, kind=kind, start_hour=9 + index)
+        for index, kind in enumerate(kinds)
+    )
+    result = make_result(activities=activities, transit_legs=())
+    stats = compute_day_stats(result.itinerary.days)
+
+    assert len(activities) == 8  # raw node count stays 8
+    assert stats[0].activity_count == 8
+    assert stats[0].workload == 4.5  # 4 attractions + 1 meal + 3 anchors at 0
+
+    warnings = time_warnings(result.itinerary.days, stats)
+    assert [warning.code for warning in warnings] == []
+    assert score_time_feasibility(result.itinerary.days, stats) == 100
+
+
+def test_demo_and_unknown_kind_count_as_full_workload() -> None:
+    activities = tuple(
+        make_activity(index, kind=None, start_hour=9 + index) for index in range(5)
+    )
+    result = make_result(activities=activities, transit_legs=())
+    stats = compute_day_stats(result.itinerary.days)
+
+    assert stats[0].activity_count == 5
+    assert stats[0].workload == 5.0  # unknown kinds count as full activities
+
+    warnings = time_warnings(result.itinerary.days, stats)
+    assert [warning.code for warning in warnings] == ["HIGH_DAILY_LOAD"]
 
 
 def test_hard_constraint_guard_reports_budget_date_and_appointment_violations() -> None:

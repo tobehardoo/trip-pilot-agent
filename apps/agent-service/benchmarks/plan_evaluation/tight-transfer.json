@@ -1,6 +1,15 @@
 {
   "id": "tight-transfer",
-  "description": "A four-minute buffer triggers both tight and critical low-buffer warnings.",
+  "description": "A one-minute actual slack (4-minute gap minus 3-minute transit) triggers both tight and critical low-buffer warnings.",
   "profile": "tight-transfer",
-  "expect": {"minimum_score": 95, "maximum_score": 99, "required_warnings": ["TIGHT_TRANSFER", "LOW_TIME_BUFFER", "ESTIMATED_TRANSIT"], "forbidden_warnings": []}
+  "expect": {
+    "minimum_score": 93,
+    "maximum_score": 97,
+    "required_warnings": [
+      "TIGHT_TRANSFER",
+      "LOW_TIME_BUFFER",
+      "ESTIMATED_TRANSIT"
+    ],
+    "forbidden_warnings": []
+  }
 }

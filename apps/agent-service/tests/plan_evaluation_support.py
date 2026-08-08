@@ -53,6 +53,8 @@ def make_activity(
     duration_minutes: int = 60,
     estimated_cost: Decimal = Decimal("0.00"),
     source: str = "DEMO",
+    kind: str | None = None,
+    type_code: str | None = None,
 ) -> ItineraryActivity:
     start = datetime(
         2026,
@@ -74,6 +76,8 @@ def make_activity(
             provider_poi_id=f"POI-{index + 1}",
             coordinates=ActivityCoordinates(longitude=113, latitude=23),
             address=f"Address {index + 1}",
+            kind=kind,
+            type_code=type_code,
         )
     return ItineraryActivity(
         activity_id=activity_id,
@@ -82,6 +86,8 @@ def make_activity(
         end_time=start + timedelta(minutes=duration_minutes),
         estimated_cost=estimated_cost,
         source="DEMO",
+        kind=kind,
+        type_code=type_code,
     )
 
 

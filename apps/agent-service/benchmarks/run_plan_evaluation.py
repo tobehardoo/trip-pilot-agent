@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator  # noqa: E402
 
 from trip_agent.domain.planning.protocols import PlanningResult  # noqa: E402
 from trip_agent.evaluation.evaluator import PlanEvaluator  # noqa: E402
+from trip_agent.evaluation.models import PlanEvaluation  # noqa: E402
 from trip_agent.worker.contracts import (  # noqa: E402
     ActivityCoordinates,
     FallbackOperation,
@@ -36,6 +37,7 @@ from trip_agent.worker.contracts import (  # noqa: E402
 type Profile = Literal[
     "budget-near-limit",
     "clean-real",
+    "combined-load-transfer",
     "estimated-transit",
     "fixed-appointment",
     "high-daily-load",
@@ -45,17 +47,29 @@ type Profile = Literal[
 ]
 
 FROZEN_NOW = datetime(2026, 8, 2, 0, 0, tzinfo=UTC)
-ACTIVITY_IDS = tuple(UUID(int=10_000 + index) for index in range(5))
-TRANSIT_IDS = tuple(UUID(int=20_000 + index) for index in range(4))
+ACTIVITY_IDS = tuple(UUID(int=10_000 + index) for index in range(16))
+TRANSIT_IDS = tuple(UUID(int=20_000 + index) for index in range(16))
+
+# Benchmark expectation dimension name → PlanEvaluation dimension attribute.
+DIMENSION_ATTRS: dict[str, str] = {
+    "constraintSatisfaction": "constraint_satisfaction",
+    "timeFeasibility": "time_feasibility",
+    "budgetFit": "budget_fit",
+    "routeEfficiency": "route_efficiency",
+    "interestMatch": "interest_match",
+}
 
 
 class BenchmarkExpectation(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     minimum_score: int = Field(ge=0, le=100)
     maximum_score: int = Field(ge=0, le=100)
     required_warnings: tuple[str, ...] = ()
     forbidden_warnings: tuple[str, ...] = ()
+    required_dimensions: dict[str, tuple[int, int]] | None = Field(
+        default=None, alias="requiredDimensions"
+    )
 
     @model_validator(mode="after")
     def validate_score_range(self) -> Self:
@@ -115,6 +129,7 @@ def run_scenario(scenario: BenchmarkScenario) -> BenchmarkResult:
     forbidden = tuple(code for code in expected.forbidden_warnings if code in warnings)
     if forbidden:
         failures.append(f"forbidden warnings: {', '.join(forbidden)}")
+    failures.extend(_check_required_dimensions(expected, evaluation))
     return BenchmarkResult(
         scenario_id=scenario.id,
         overall_score=evaluation.overall_score,
@@ -122,6 +137,31 @@ def run_scenario(scenario: BenchmarkScenario) -> BenchmarkResult:
         passed=not failures,
         failures=tuple(failures),
     )
+
+
+def _check_required_dimensions(
+    expected: BenchmarkExpectation,
+    evaluation: PlanEvaluation,
+) -> list[str]:
+    """Assert per-dimension scores against declared bands.
+
+    A dimension that is None (not applicable) fails any declared band —
+    the scenario contract must never rely on N/A normalisation.
+    """
+    if not expected.required_dimensions:
+        return []
+    failures: list[str] = []
+    for name, (lo, hi) in expected.required_dimensions.items():
+        attr = DIMENSION_ATTRS.get(name)
+        if attr is None:
+            failures.append(f"unknown required dimension: {name}")
+            continue
+        actual = getattr(evaluation.dimensions, attr)
+        if actual is None:
+            failures.append(f"dimension {name} is N/A but required in [{lo}, {hi}]")
+        elif not lo <= actual <= hi:
+            failures.append(f"dimension {name} = {actual} outside [{lo}, {hi}]")
+    return failures
 
 
 def run_all(directory: Path | None = None) -> tuple[BenchmarkResult, ...]:
@@ -145,7 +185,9 @@ def _build_case(profile: Profile) -> tuple[PlanningCreateCommand, PlanningResult
         },)
         return _command(fixed_schedules=schedule), _result(real=True)
     if profile == "high-daily-load":
-        activities = tuple(_activity(index) for index in range(5))
+        activities = tuple(
+            _activity(index, kind="ATTRACTION") for index in range(5)
+        )
         return _command(), _result(activities=activities)
     if profile == "long-walking":
         legs = (_transit(0, duration_seconds=1_800, distance_meters=2_400),)
@@ -161,12 +203,90 @@ def _build_case(profile: Profile) -> tuple[PlanningCreateCommand, PlanningResult
         )
         legs = (_transit(0, duration_seconds=180),)
         return _command(), _result(activities=activities, transit_legs=legs)
+    if profile == "combined-load-transfer":
+        return _combined_case()
     raise ValueError(f"unsupported benchmark profile: {profile}")
+
+
+def _combined_case() -> tuple[PlanningCreateCommand, PlanningResult]:
+    """Two 5.5-workload days with exactly one tight leg (slack 9 min) each.
+
+    Overall 84 is locked by requiredDimensions: timeFeasibility must be
+    exactly 34 while the other four dimensions stay applicable at 100 —
+    no N/A normalisation allowed.
+    """
+    command = _command(preferences=("美食",), end_date="2026-08-02")
+    days = (
+        _combined_day(date(2026, 8, 1), activity_offset=0, transit_offset=0),
+        _combined_day(date(2026, 8, 2), activity_offset=8, transit_offset=7),
+    )
+    return command, PlanningResult(
+        provider="DEMO",
+        itinerary=Itinerary(
+            title="Benchmark itinerary",
+            days=days,
+            estimated_total_cost=Decimal("500.00"),
+        ),
+        fallback_operations=(),
+    )
+
+
+def _combined_day(
+    day_date: date,
+    *,
+    activity_offset: int,
+    transit_offset: int,
+) -> ItineraryDay:
+    """One day: ARRIVAL + 5×ATTRACTION + MEAL + ACCOMMODATION (workload 5.5).
+
+    Activities run hourly from 09:00 with a 15-minute gap between each;
+    the last leg has a 12-minute gap with a 3-minute transit → slack 9.
+    Span 09:00–18:42 (≤ 12 h), total transit 180 s (≤ 1 h).
+    """
+    kinds = (
+        "ARRIVAL",
+        "ATTRACTION",
+        "ATTRACTION",
+        "ATTRACTION",
+        "ATTRACTION",
+        "ATTRACTION",
+        "MEAL",
+        "ACCOMMODATION",
+    )
+    starts = (
+        (9, 0), (10, 15), (11, 30), (12, 45), (14, 0), (15, 15), (16, 30), (17, 42),
+    )
+    activities = tuple(
+        _activity(
+            activity_offset + index,
+            kind=kind,
+            type_code="050000",
+            start=datetime(2026, 8, day_date.day, hour, minute, tzinfo=UTC),
+        )
+        for index, (kind, (hour, minute)) in enumerate(zip(kinds, starts, strict=True))
+    )
+    legs = tuple(
+        _transit(
+            transit_offset + index,
+            duration_seconds=0 if index < 6 else 180,
+            distance_meters=0 if index < 6 else 300,
+            from_activity_index=index,
+            to_activity_index=index + 1,
+        )
+        for index in range(7)
+    )
+    return ItineraryDay(
+        date=day_date,
+        activities=activities,
+        transit_legs=legs,
+    )
 
 
 def _command(
     *,
     fixed_schedules: tuple[dict[str, object], ...] = (),
+    preferences: tuple[str, ...] = (),
+    end_date: str | None = None,
 ) -> PlanningCreateCommand:
     return PlanningCreateCommand.model_validate(
         {
@@ -185,7 +305,7 @@ def _command(
                     "title": "Benchmark trip",
                     "destination": "Guangzhou",
                     "startDate": "2026-08-01",
-                    "endDate": "2026-08-01",
+                    "endDate": end_date or "2026-08-01",
                     "status": "DRAFT",
                     "version": 0,
                     "constraints": {
@@ -193,7 +313,7 @@ def _command(
                         "travelers": 1,
                         "travelerType": "SOLO",
                         "pace": "BALANCED",
-                        "preferences": [],
+                        "preferences": list(preferences),
                         "fixedSchedules": list(fixed_schedules),
                         "schemaVersion": 2,
                     },
@@ -208,6 +328,8 @@ def _activity(
     *,
     start: datetime | None = None,
     real: bool = False,
+    kind: str | None = None,
+    type_code: str | None = None,
 ) -> ItineraryActivity:
     resolved_start = start or datetime(2026, 8, 1, 9 + index * 2, tzinfo=UTC)
     common = {
@@ -224,8 +346,10 @@ def _activity(
             provider_poi_id=f"POI-{index + 1}",
             coordinates=ActivityCoordinates(longitude=113, latitude=23),
             address=f"Address {index + 1}",
+            kind=kind,
+            type_code=type_code,
         )
-    return ItineraryActivity(**common, source="DEMO")
+    return ItineraryActivity(**common, source="DEMO", kind=kind, type_code=type_code)
 
 
 def _transit(
@@ -235,11 +359,15 @@ def _transit(
     distance_meters: int = 300,
     real: bool = False,
     fallback: FallbackOperation | None = None,
+    from_activity_index: int | None = None,
+    to_activity_index: int | None = None,
 ) -> TransitLeg:
+    resolved_from = index if from_activity_index is None else from_activity_index
+    resolved_to = index + 1 if to_activity_index is None else to_activity_index
     return TransitLeg(
         transit_id=TRANSIT_IDS[index],
-        from_activity_index=index,
-        to_activity_index=index + 1,
+        from_activity_index=resolved_from,
+        to_activity_index=resolved_to,
         mode="WALKING",
         distance_meters=distance_meters,
         duration_seconds=duration_seconds,

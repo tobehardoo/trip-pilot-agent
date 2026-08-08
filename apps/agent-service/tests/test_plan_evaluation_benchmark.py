@@ -18,12 +18,13 @@ def _load_runner():
     return module
 
 
-def test_benchmark_contains_eight_named_scenarios() -> None:
+def test_benchmark_contains_nine_named_scenarios() -> None:
     scenarios = sorted(SCENARIO_DIRECTORY.glob("*.json"))
 
     assert [scenario.stem for scenario in scenarios] == [
         "budget-near-limit",
         "clean-real",
+        "combined-load-transfer",
         "estimated-transit",
         "fixed-appointment",
         "high-daily-load",
@@ -40,5 +41,5 @@ def test_benchmark_runner_is_deterministic_and_meets_all_expectations() -> None:
     repeated = runner.run_all(SCENARIO_DIRECTORY)
 
     assert first == repeated
-    assert len(first) == 8
+    assert len(first) == 9
     assert all(result.passed for result in first)

@@ -1,0 +1,18 @@
+{
+  "id": "combined-load-transfer",
+  "description": "Two 5.5-workload days with one tight leg (slack 9 min) each push the overall score below the high band while every dimension stays applicable.",
+  "profile": "combined-load-transfer",
+  "expect": {
+    "minimum_score": 80,
+    "maximum_score": 85,
+    "required_warnings": ["HIGH_DAILY_LOAD", "TIGHT_TRANSFER"],
+    "forbidden_warnings": [],
+    "requiredDimensions": {
+      "constraintSatisfaction": [100, 100],
+      "timeFeasibility": [34, 34],
+      "budgetFit": [100, 100],
+      "routeEfficiency": [100, 100],
+      "interestMatch": [100, 100]
+    }
+  }
+}

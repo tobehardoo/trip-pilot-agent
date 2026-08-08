@@ -20,6 +20,7 @@ from trip_agent.worker.contracts import (
     ItineraryDay,
     PlanningCreateCommand,
     PlanningReplanCommand,
+    TransitLeg,
 )
 
 # ── Central weight configuration ──────────────────────────────────────────
@@ -49,10 +50,22 @@ SINGLE_WALK_DISTANCE_WARNING_METERS = 2_000      # 2 km
 DAILY_WALK_DURATION_WARNING_SECONDS = 60 * 60    # 1 hr
 
 # Tight transfer: minimum buffer between activity end + transit → next start
-MIN_BUFFER_MINUTES = 15  # < 15 min → tight transfer warning
+# Approved 2026-08-08: thresholds are based on *actual slack* (gap − transit
+# duration), not the raw gap. 12 and 4 are independent constants (no 1/3 rule).
+TIGHT_TRANSFER_SLACK_MINUTES = 12.0  # slack < 12 min → TIGHT_TRANSFER warning
+LOW_BUFFER_SLACK_MINUTES = 4.0       # slack < 4 min → LOW_TIME_BUFFER critical
 
-# Daily load: too many activities or too much total time
-HIGH_ACTIVITY_COUNT = 5          # >= 5 activities/day → warning
+# Daily load: weighted activity workload (anchors weightless, meals light).
+# Unknown kinds (None) count as full activities to prevent gaming.
+ACTIVITY_KIND_WORKLOAD: dict[str, float] = {
+    "ATTRACTION": 1.0,
+    "EXPERIENCE": 1.0,
+    "MEAL": 0.5,            # meal occupies time but carries light load
+    "ACCOMMODATION": 0.0,   # overnight node, no daytime load
+    "ARRIVAL": 0.0,         # arrival buffer
+    "DEPARTURE": 0.0,       # departure buffer
+}
+HIGH_DAILY_WORKLOAD = 5.0  # weighted workload >= 5.0 → HIGH_DAILY_LOAD
 HIGH_DAILY_SPAN_HOURS = 12       # > 12 hours from first start to last end
 HIGH_TOTAL_ROUTE_SECONDS = 3_600 # > 1 hr total transit in a day
 
@@ -75,6 +88,7 @@ class DayStats:
 
     day_index: int
     activity_count: int
+    workload: float
     first_activity_start: datetime | None
     last_activity_end: datetime | None
     span_hours: float | None
@@ -150,9 +164,13 @@ def compute_day_stats(days: tuple[ItineraryDay, ...]) -> tuple[DayStats, ...]:
         walk_legs = [leg for leg in transit_legs if leg.mode == "WALKING"]
         total_walk_seconds = sum(leg.duration_seconds for leg in walk_legs)
         total_walk_meters = sum(leg.distance_meters for leg in walk_legs)
+        workload = sum(
+            ACTIVITY_KIND_WORKLOAD.get(activity.kind, 1.0) for activity in activities
+        )
         result.append(DayStats(
             day_index=day_index,
             activity_count=len(activities),
+            workload=workload,
             first_activity_start=first_start,
             last_activity_end=last_end,
             span_hours=span,
@@ -171,6 +189,18 @@ def compute_day_stats(days: tuple[ItineraryDay, ...]) -> tuple[DayStats, ...]:
 
 # ── Time feasibility ───────────────────────────────────────────────────────
 
+def transfer_slack_minutes(day: ItineraryDay, leg: TransitLeg) -> float:
+    """Actual transfer margin in minutes: gap − transit duration.
+
+    Single source of truth shared by the warning classifier and the score
+    function so the two can never drift apart.
+    """
+    from_end = day.activities[leg.from_activity_index].end_time
+    to_start = day.activities[leg.to_activity_index].start_time
+    gap_min = (to_start - from_end).total_seconds() / 60
+    return gap_min - leg.duration_seconds / 60
+
+
 def score_time_feasibility(
     days: tuple[ItineraryDay, ...],
     day_stats: tuple[DayStats, ...],
@@ -178,22 +208,23 @@ def score_time_feasibility(
     """Score temporal quality.  Starts at 100, deducts for issues."""
     score = 100
     for stats in day_stats:
-        if stats.activity_count >= HIGH_ACTIVITY_COUNT:
-            score -= 3
+        # Progressive daily-load penalty: −18 base, +6 per full workload tier,
+        # capped at −30 per day.  Bands: 5.0–5.99 → −18; 6.0–6.99 → −24; ≥7.0 → −30.
+        overload = stats.workload - HIGH_DAILY_WORKLOAD
+        if overload >= 0:
+            score -= min(18 + 6 * int(overload), 30)
         if stats.span_hours is not None and stats.span_hours > HIGH_DAILY_SPAN_HOURS:
             score -= 5
         if stats.total_route_seconds > HIGH_TOTAL_ROUTE_SECONDS:
             score -= 3
-    # Check tight transfers
+    # Check tight transfers against the shared actual-slack signal
     for day in days:
         for leg in day.transit_legs:
-            from_end = day.activities[leg.from_activity_index].end_time
-            to_start = day.activities[leg.to_activity_index].start_time
-            buffer_min = (to_start - from_end).total_seconds() / 60
-            if buffer_min < MIN_BUFFER_MINUTES:
-                # A two-point dimension penalty disappears after the 25%
-                # weighting and integer rounding, leaving a risky plan at 100.
-                score -= 4
+            slack = transfer_slack_minutes(day, leg)
+            if slack < TIGHT_TRANSFER_SLACK_MINUTES:
+                score -= 15
+            if slack < LOW_BUFFER_SLACK_MINUTES:
+                score -= 5
     return max(0, score)
 
 
@@ -205,16 +236,19 @@ def time_warnings(
 
     result: list[EvaluationWarning] = []
     for stats in day_stats:
-        if stats.activity_count >= HIGH_ACTIVITY_COUNT:
+        if stats.workload >= HIGH_DAILY_WORKLOAD:
             result.append(EvaluationWarning(
                 code="HIGH_DAILY_LOAD",
                 severity="WARNING",
-                message=f"第 {stats.day_index + 1} 天有 {stats.activity_count} 个活动",
+                message=(
+                    f"第 {stats.day_index + 1} 天加权负载 {stats.workload:.1f} "
+                    f"(阈值 {HIGH_DAILY_WORKLOAD:.1f})"
+                ),
                 day_index=stats.day_index,
                 entity_type="DAY",
-                metric_key="activity_count",
-                actual_value=float(stats.activity_count),
-                threshold=float(HIGH_ACTIVITY_COUNT),
+                metric_key="workload",
+                actual_value=stats.workload,
+                threshold=float(HIGH_DAILY_WORKLOAD),
             ))
         if stats.last_activity_end is not None:
             local_end = stats.last_activity_end.astimezone(
@@ -236,32 +270,30 @@ def time_warnings(
                 ))
     for day in days:
         for leg in day.transit_legs:
-            from_end = day.activities[leg.from_activity_index].end_time
-            to_start = day.activities[leg.to_activity_index].start_time
-            buffer_min = (to_start - from_end).total_seconds() / 60
-            if buffer_min < MIN_BUFFER_MINUTES:
+            slack = transfer_slack_minutes(day, leg)
+            if slack < TIGHT_TRANSFER_SLACK_MINUTES:
                 result.append(EvaluationWarning(
                     code="TIGHT_TRANSFER",
                     severity="WARNING",
-                    message=f"活动间换乘时间仅 {round(buffer_min)} 分钟",
+                    message=f"活动间换乘余量仅 {round(slack)} 分钟",
                     day_index=list(days).index(day),
                     entity_type="TRANSIT",
                     entity_id=leg.transit_id,
-                    metric_key="buffer_minutes",
-                    actual_value=round(buffer_min, 1),
-                    threshold=float(MIN_BUFFER_MINUTES),
+                    metric_key="slack_minutes",
+                    actual_value=round(slack, 1),
+                    threshold=float(TIGHT_TRANSFER_SLACK_MINUTES),
                 ))
-            if buffer_min < MIN_BUFFER_MINUTES / 3:
+            if slack < LOW_BUFFER_SLACK_MINUTES:
                 result.append(EvaluationWarning(
                     code="LOW_TIME_BUFFER",
                     severity="CRITICAL",
-                    message=f"活动间缓冲时间严重不足 ({round(buffer_min)} 分钟)",
+                    message=f"活动间换乘缓冲严重不足 ({round(slack)} 分钟)",
                     day_index=list(days).index(day),
                     entity_type="TRANSIT",
                     entity_id=leg.transit_id,
-                    metric_key="buffer_minutes",
-                    actual_value=round(buffer_min, 1),
-                    threshold=float(MIN_BUFFER_MINUTES / 3),
+                    metric_key="slack_minutes",
+                    actual_value=round(slack, 1),
+                    threshold=float(LOW_BUFFER_SLACK_MINUTES),
                 ))
     return tuple(result)
 

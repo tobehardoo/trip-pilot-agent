@@ -32,13 +32,9 @@ public class CityIntelligencePlanningPreflightService {
                 .orElse(null);
         UUID refreshId;
         if (refresh == null || isTerminal(refresh.status())) {
-            refreshId = prewarmService.request(
-                    trip.id(),
-                    trip.destination(),
-                    trip.startDate(),
-                    trip.endDate(),
-                    refreshKey(trip.id(), refresh)
-            );
+            refreshId = trip.region() == null
+                    ? prewarmService.request(trip.id(), trip.destination(), trip.startDate(), trip.endDate(), refreshKey(trip.id(), refresh))
+                    : prewarmService.request(trip.id(), trip.destination(), trip.region().cityCode(), trip.startDate(), trip.endDate(), refreshKey(trip.id(), refresh));
         } else {
             refreshId = refresh.id();
         }

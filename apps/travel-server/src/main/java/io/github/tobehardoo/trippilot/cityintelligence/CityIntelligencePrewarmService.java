@@ -63,7 +63,19 @@ public class CityIntelligencePrewarmService {
             LocalDate endDate,
             UUID idempotencyKey
     ) {
-        String cityCode = cityCode(city);
+        return request(tripId, city, cityCode(city), startDate, endDate, idempotencyKey);
+    }
+
+    @Transactional
+    public UUID request(UUID tripId, String city, String explicitCityCode, LocalDate startDate, LocalDate endDate) {
+        UUID idempotencyKey = UUID.nameUUIDFromBytes(("city-prewarm-v1:" + tripId + ":" + startDate + ":" + endDate)
+                .getBytes(StandardCharsets.UTF_8));
+        return request(tripId, city, explicitCityCode, startDate, endDate, idempotencyKey);
+    }
+
+    @Transactional
+    public UUID request(UUID tripId, String city, String explicitCityCode, LocalDate startDate, LocalDate endDate, UUID idempotencyKey) {
+        String cityCode = explicitCityCode;
         UUID refreshId = UUID.randomUUID();
         CityIntelligenceRefreshRecord refresh = new CityIntelligenceRefreshRecord(
                 refreshId,
@@ -91,6 +103,10 @@ public class CityIntelligencePrewarmService {
                     ));
         }
         List<String> sourceIds = mapper.findApprovedSourceIds(cityCode);
+        if (sourceIds.isEmpty()) {
+            // RegionRef uses the stable six-digit adcode; older registry rows use legacy aliases.
+            sourceIds = mapper.findApprovedSourceIds(cityCode(city));
+        }
         Instant now = Instant.now();
         UUID eventId = UUID.randomUUID();
         CityRefreshCommand command = new CityRefreshCommand(
@@ -127,7 +143,7 @@ public class CityIntelligencePrewarmService {
         return refreshId;
     }
 
-    static String cityCode(String city) {
+    public static String cityCode(String city) {
         String normalized = city.trim().replaceFirst("市$", "");
         return Map.of(
                 "广州", "CN-GD-GZ",

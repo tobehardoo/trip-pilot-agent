@@ -17,6 +17,7 @@ import io.github.tobehardoo.trippilot.trip.TripRequests.MealWindow;
 import io.github.tobehardoo.trippilot.trip.TripRequests.PlaceAnchor;
 import io.github.tobehardoo.trippilot.trip.TripRequests.TravelAnchor;
 import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConstraintRequest;
+import io.github.tobehardoo.trippilot.trip.TripRequests.RegionRefInput;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,19 +51,23 @@ public class TripService {
         validator.validateDateRange(request.startDate(), request.endDate());
         validator.validateSchedules(request.constraints().fixedSchedules(), request.startDate(), request.endDate());
         validator.validateContext(request.constraints(), request.startDate(), request.endDate());
+        validateRegion(request.region());
         UUID tripId = UUID.randomUUID();
         TripRecord trip = new TripRecord(
                 tripId, ownerId, request.title().trim(), request.destination().trim(),
-                request.startDate(), request.endDate(), "DRAFT", 0, null, null, null
+                request.startDate(), request.endDate(), "DRAFT", 0, null, null, null,
+                writeNullableJson(request.region())
         );
         tripMapper.insertTrip(trip);
         tripMapper.insertConstraint(toRecord(tripId, request.constraints()));
-        cityIntelligencePrewarmService.request(
-                tripId,
-                trip.destination(),
-                trip.startDate(),
-                trip.endDate()
-        );
+        if (request.region() == null) {
+            cityIntelligencePrewarmService.request(tripId, trip.destination(), trip.startDate(), trip.endDate());
+        } else {
+            cityIntelligencePrewarmService.request(
+                    tripId, trip.destination(), request.region().cityCode(),
+                    trip.startDate(), trip.endDate()
+            );
+        }
         return get(ownerId, tripId);
     }
 
@@ -156,7 +161,8 @@ public class TripService {
         return new TripResponse(
                 trip.id(), trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
                 trip.status(), trip.version(), constraintResponse, trip.createdAt(), trip.updatedAt(),
-                trip.archivedAt()
+                trip.archivedAt(), readNullableJson(trip.regionRefJson(), RegionRef.class),
+                planningCoverage(trip.regionRefJson(), trip.destination())
         );
     }
 
@@ -177,8 +183,37 @@ public class TripService {
         return new TripResponse(
                 snapshot.id(), snapshot.title(), snapshot.destination(),
                 snapshot.startDate(), snapshot.endDate(), snapshot.status(), snapshot.version(),
-                constraintResponse, snapshot.createdAt(), snapshot.updatedAt(), snapshot.archivedAt()
+                constraintResponse, snapshot.createdAt(), snapshot.updatedAt(), snapshot.archivedAt(),
+                readNullableJson(snapshot.regionRefJson(), RegionRef.class),
+                planningCoverage(snapshot.regionRefJson(), snapshot.destination())
         );
+    }
+
+    private void validateRegion(RegionRefInput region) {
+        if (region == null) return;
+        String province = region.provinceCode();
+        String city = region.cityCode();
+        if (!province.endsWith("0000") || city.equals(province)
+                || !city.startsWith(province.substring(0, 2))) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "TRIP_REGION_INVALID", "Region city must belong to its province");
+        }
+        String cityPrefix = city.substring(0, 4);
+        boolean municipality = city.substring(2, 4).equals("00");
+        for (String district : region.districtCodes()) {
+            boolean belongs = !district.equals(city) && !district.endsWith("00")
+                    && (municipality ? district.startsWith(province.substring(0, 2)) : district.startsWith(cityPrefix));
+            if (!belongs) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "TRIP_REGION_INVALID", "Region district must belong to its city");
+            }
+        }
+    }
+
+    private String planningCoverage(String regionJson, String destination) {
+        if (regionJson == null) {
+            return CityIntelligencePrewarmService.cityCode(destination).equals("UNREGISTERED") ? "BASIC" : "FULL";
+        }
+        RegionRef region = readNullableJson(regionJson, RegionRef.class);
+        return List.of("110000", "310000", "440100").contains(region.cityCode()) ? "FULL" : "BASIC";
     }
 
     private TripSearch normalizeSearch(TripSearch search) {
@@ -241,7 +276,24 @@ public class TripService {
             ConstraintResponse constraints,
             java.time.Instant createdAt,
             java.time.Instant updatedAt,
-            java.time.Instant archivedAt
+            java.time.Instant archivedAt,
+            RegionRef region,
+            String planningCoverage
+    ) {
+        public TripResponse(
+                UUID id, String title, String destination, LocalDate startDate, LocalDate endDate,
+                String status, int version, ConstraintResponse constraints,
+                java.time.Instant createdAt, java.time.Instant updatedAt, java.time.Instant archivedAt
+        ) {
+            this(id, title, destination, startDate, endDate, status, version, constraints,
+                    createdAt, updatedAt, archivedAt, null, "BASIC");
+        }
+    }
+
+    public record RegionRef(
+            String provinceCode, String cityCode, List<String> districtCodes,
+            String provinceName, String cityName, List<String> districtNames,
+            String datasetVersion
     ) {
     }
 

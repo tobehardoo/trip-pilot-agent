@@ -67,13 +67,11 @@ public class CityIntelligenceStatusService {
             UUID idempotencyKey
     ) {
         TripService.TripResponse trip = tripService.get(ownerId, tripId);
-        prewarmService.request(
-                tripId,
-                trip.destination(),
-                trip.startDate(),
-                trip.endDate(),
-                idempotencyKey
-        );
+        if (trip.region() == null) {
+            prewarmService.request(tripId, trip.destination(), trip.startDate(), trip.endDate(), idempotencyKey);
+        } else {
+            prewarmService.request(tripId, trip.destination(), trip.region().cityCode(), trip.startDate(), trip.endDate(), idempotencyKey);
+        }
         return get(ownerId, tripId);
     }
 

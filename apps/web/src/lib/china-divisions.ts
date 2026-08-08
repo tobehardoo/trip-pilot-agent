@@ -238,6 +238,25 @@ export const PROVINCES: Province[] = [
   },
 ]
 
+// City-level adcodes for the versioned picker entries that only expose a whole-city district.
+// The registry remains versioned so future administrative changes do not silently rewrite trips.
+const CITY_ADCODE_FALLBACKS: Record<string, string> = {
+  佛山: '440600', 东莞: '441900', 珠海: '440400', 中山: '442000', 惠州: '441300',
+  江门: '440700', 肇庆: '441200', 宁波: '330200', 温州: '330300', 苏州: '320500',
+  无锡: '320200', 长沙: '430100', 张家界: '430800', 厦门: '350200', 福州: '350100',
+  昆明: '530100', 大理: '532900', 丽江: '530700', 青岛: '370200', 济南: '370100',
+  烟台: '370600', 郑州: '410100', 洛阳: '410300', 合肥: '340100', 黄山: '341000',
+  南昌: '360100', 九江: '360400', 桂林: '450300', 南宁: '450100', 贵阳: '520100',
+  三亚: '460200', 海口: '460100', 大连: '210200', 沈阳: '210100', 长春: '220100',
+  哈尔滨: '230100', 天津: '120000', 石家庄: '130100', 秦皇岛: '130300', 太原: '140100',
+  呼和浩特: '150100', 兰州: '620100', 西宁: '630100', 银川: '640100', 乌鲁木齐: '650100',
+  拉萨: '540100',
+}
+
+export function cityAdcode(city: City): string | undefined {
+  return city.adcode ?? CITY_ADCODE_FALLBACKS[city.name]
+}
+
 // ── 查找辅助 ──────────────────────────────────────────────────
 
 export function findProvince(name: string): Province | undefined {

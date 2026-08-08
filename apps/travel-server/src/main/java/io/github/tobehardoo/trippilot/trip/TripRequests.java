@@ -24,10 +24,26 @@ final class TripRequests {
     record CreateTripRequest(
             @NotBlank @Size(max = 120) String title,
             @NotBlank @Size(max = 120) String destination,
+            @Valid RegionRefInput region,
             @NotNull LocalDate startDate,
             @NotNull LocalDate endDate,
             @NotNull @Valid ConstraintInput constraints
     ) {
+    }
+
+    record RegionRefInput(
+            @NotNull @Pattern(regexp = "\\d{6}") String provinceCode,
+            @NotNull @Pattern(regexp = "\\d{6}") String cityCode,
+            @NotNull @Size(max = 100) List<@NotNull @Pattern(regexp = "\\d{6}") String> districtCodes,
+            @NotBlank @Size(max = 80) String provinceName,
+            @NotBlank @Size(max = 80) String cityName,
+            @NotNull @Size(max = 100) List<@NotBlank @Size(max = 80) String> districtNames,
+            @NotBlank @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}") String datasetVersion
+    ) {
+        RegionRefInput {
+            districtCodes = districtCodes == null ? List.of() : List.copyOf(districtCodes);
+            districtNames = districtNames == null ? List.of() : List.copyOf(districtNames);
+        }
     }
 
     record UpdateConstraintRequest(

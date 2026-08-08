@@ -14,8 +14,8 @@ import org.apache.ibatis.annotations.Update;
 public interface TripMapper {
 
     @Insert("""
-            INSERT INTO business.trip(id, owner_id, title, destination, start_date, end_date, status, version)
-            VALUES (#{id}, #{ownerId}, #{title}, #{destination}, #{startDate}, #{endDate}, #{status}, #{version})
+            INSERT INTO business.trip(id, owner_id, title, destination, start_date, end_date, status, version, region_ref)
+            VALUES (#{id}, #{ownerId}, #{title}, #{destination}, #{startDate}, #{endDate}, #{status}, #{version}, CAST(#{regionRefJson} AS jsonb))
             """)
     int insertTrip(TripRecord trip);
 
@@ -37,7 +37,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at, archived_at
+                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json
             FROM business.trip
             WHERE id = #{id} AND owner_id = #{ownerId}
             """)
@@ -45,7 +45,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at, archived_at
+                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json
             FROM business.trip
             WHERE id = #{id}
             """)
@@ -55,6 +55,7 @@ public interface TripMapper {
             SELECT trip.id, trip.owner_id, trip.title, trip.destination,
                    trip.start_date, trip.end_date, trip.status, trip.version,
                    trip.created_at, trip.updated_at, trip.archived_at,
+                   trip.region_ref::text AS region_ref_json,
                    trip_constraint.budget_amount, trip_constraint.travelers,
                    trip_constraint.traveler_type, trip_constraint.pace,
                    trip_constraint.preferences::text AS preferences_json,
@@ -77,7 +78,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at, archived_at
+                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json
             FROM business.trip
             WHERE owner_id = #{ownerId} AND archived_at IS NULL
             ORDER BY updated_at DESC, id
@@ -86,7 +87,7 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at, archived_at
+                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json
             FROM business.trip
             WHERE owner_id = #{ownerId}
               AND (CAST(#{includeArchived} AS BOOLEAN) OR archived_at IS NULL)

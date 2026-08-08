@@ -49,10 +49,10 @@ const currentStepIndex = computed(() => {
 })
 
 const currentMessage = computed(() => {
-  if (props.progress) return stageMessages[props.progress.stage]
   if (props.planningState === 'succeeded') return '行程规划已完成'
   if (props.planningState === 'failed') return '行程规划未能完成'
   if (props.planningState === 'cancelled') return '行程规划已取消'
+  if (props.progress) return stageMessages[props.progress.stage]
   return '正在等待规划服务响应'
 })
 
@@ -83,7 +83,7 @@ function stepStatus(index: number): 'done' | 'active' | 'skipped' | 'pending' {
           <span data-testid="planning-current-stage" class="mt-0.5 block truncate text-xs text-surface-500">
             {{ currentMessage }}
           </span>
-          <span v-if="progress" class="mt-1 block text-xs font-medium text-primary-700">{{ progress.progress }}%</span>
+          <span v-if="progress && planningState === 'queued'" class="mt-1 block text-xs font-medium text-primary-700">{{ progress.progress }}%</span>
         </span>
       </span>
       <ChevronDown

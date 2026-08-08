@@ -4,7 +4,7 @@
  * 作用是追踪每个字段的值来源（用户输入 / 规则推断 / 默认值），
  * 最终转换为 CreateTripInput 提交给后端。
  */
-import type { CreateTripInput } from './api'
+import type { CreateTripInput, RegionRef } from './api'
 
 export type ValueSource = 'explicit' | 'inferred' | 'default' | 'ambiguous' | 'unset'
 
@@ -15,9 +15,14 @@ export interface FieldMeta<T> {
 
 export interface StructuredDestination {
   province: string
+  provinceCode?: string
   city: string
+  cityCode?: string
   districts: string[]
+  districtCodes?: string[]
 }
+
+export const REGION_DATASET_VERSION = '2023-06-30'
 
 export interface ConstraintDraft {
   destination: FieldMeta<string | StructuredDestination>
@@ -73,11 +78,45 @@ export function destinationToString(dest: string | StructuredDestination): strin
   return parts.join(' ')
 }
 
+export function destinationToRegionRef(
+  destination: string | StructuredDestination,
+): RegionRef | undefined {
+  if (typeof destination === 'string') return undefined
+  const provinceCode = destination.provinceCode
+  const cityCode = destination.cityCode
+  const districtCodes = destination.districtCodes ?? []
+  if (!provinceCode || !cityCode) return undefined
+  if (!/^\d{6}$/.test(provinceCode) || !/^\d{6}$/.test(cityCode)) return undefined
+  if (!provinceCode.endsWith('0000') || provinceCode.slice(0, 2) !== cityCode.slice(0, 2)) {
+    return undefined
+  }
+  const municipality = cityCode.slice(2, 4) === '00'
+  const districtBelongs = municipality
+    ? (code: string) => code.slice(0, 2) === cityCode.slice(0, 2)
+    : (code: string) => code.slice(0, 4) === cityCode.slice(0, 4)
+  if (districtCodes.some((code) => !/^\d{6}$/.test(code)
+    || code === cityCode
+    || code.endsWith('00')
+    || !districtBelongs(code))) {
+    return undefined
+  }
+  return {
+    provinceCode,
+    cityCode,
+    districtCodes: [...districtCodes],
+    provinceName: destination.province,
+    cityName: destination.city,
+    districtNames: [...destination.districts],
+    datasetVersion: REGION_DATASET_VERSION,
+  }
+}
+
 /** 将草稿转换为 CreateTripInput。 */
 export function toCreateTripInput(draft: ConstraintDraft, title: string): CreateTripInput {
   return {
     title,
     destination: destinationToString(draft.destination.value),
+    region: destinationToRegionRef(draft.destination.value),
     startDate: draft.startDate.value,
     endDate: draft.endDate.value,
     constraints: {

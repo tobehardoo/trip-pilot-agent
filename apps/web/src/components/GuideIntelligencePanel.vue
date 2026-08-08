@@ -13,6 +13,8 @@ import { computed, ref } from 'vue'
 
 import type { GuideFact, GuideImport, GuideImportInput, Itinerary } from '../lib/api'
 
+type CoverageLevel = 'GOOD' | 'THIN' | 'NONE'
+
 const props = defineProps<{
   guideImports: GuideImport[]
   destination: string
@@ -46,6 +48,12 @@ const activeCityIntelligenceImport = computed(() => (
 const userGuideImports = computed(() => props.guideImports.filter(
   (guide) => guide.sourceType !== 'CITY_INTELLIGENCE',
 ))
+const guideCoverage = computed<CoverageLevel>(() => {
+  const enabledCount = props.guideImports.filter((g) => g.enabled).length
+  if (enabledCount >= 2) return 'GOOD'
+  if (enabledCount === 1) return 'THIN'
+  return 'NONE'
+})
 const cityFacts = computed(() => activeCityIntelligenceImport.value?.facts ?? [])
 const cityDisplayFacts = computed(() => cityFacts.value.filter((fact) => fact.category !== 'WEATHER'))
 
@@ -260,6 +268,17 @@ function formatDateTime(value: string) {
   }).format(new Date(value))
 }
 
+function qualityBadgeClass(score: number) {
+  if (score >= 80) return 'bg-emerald-100 text-emerald-700'
+  if (score >= 60) return 'bg-amber-100 text-amber-700'
+  return 'bg-surface-100 text-surface-500'
+}
+
+function qualityTooltip(q: { overall: number; label: string; dimensions: { factDensity: number; categoryCoverage: number; strongFactRatio: number; conflictRate: number; freshnessHealth: number } }) {
+  const d = q.dimensions
+  return `事实密度 ${d.factDensity} · 类别覆盖 ${d.categoryCoverage} · 强事实 ${d.strongFactRatio} · 冲突率 ${d.conflictRate} · 时效 ${d.freshnessHealth}`
+}
+
 function isFresh(expiresAt: string) {
   return new Date(expiresAt).getTime() > Date.now()
 }
@@ -456,13 +475,32 @@ function displayStatement(statement: string) {
       <BookOpen :size="24" aria-hidden="true" />
       <strong class="text-sm text-surface-500">还没有导入攻略</strong>
       <span class="text-xs text-surface-400">导入链接或正文，系统会保留来源、原句证据和事实有效期。</span>
+      <p class="mt-2 max-w-xs rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+        当前城市「{{ destination }}」尚无攻略数据，行程推荐完全基于地图 POI 数据。建议导入官方文旅网站链接或旅行攻略文本。
+      </p>
     </div>
+
+    <p
+      v-if="guideCoverage === 'THIN' && guideImports.length > 0"
+      class="mb-4 rounded-lg bg-amber-50 px-4 py-2.5 text-xs text-amber-700"
+      role="status"
+    >
+      当前城市「{{ destination }}」攻略数据较少（{{ guideImports.filter(g => g.enabled).length }} 个来源），部分推荐基于地图 POI 数据。
+    </p>
 
     <article v-for="guide in userGuideImports" :key="guide.id" class="mt-4 rounded-xl border border-surface-200 border-l-[3px] border-l-primary-500 bg-white p-5">
       <div class="flex justify-between gap-4">
         <div>
           <h3 class="text-base font-bold text-surface-800 m-0">{{ guide.title }}</h3>
-          <span class="text-[10px] text-surface-400">{{ guide.sourceHost }} · 采集于 {{ formatDateTime(guide.fetchedAt) }}</span>
+          <span class="text-[10px] text-surface-400">
+            {{ guide.sourceHost }} · 采集于 {{ formatDateTime(guide.fetchedAt) }}
+            <span
+              v-if="guide.quality"
+              class="ml-1.5 inline-flex items-center gap-1 rounded-full px-1.5 py-px text-[10px] font-semibold"
+              :class="qualityBadgeClass(guide.quality.overall)"
+              :title="qualityTooltip(guide.quality)"
+            >{{ guide.quality.label }} {{ guide.quality.overall }}</span>
+          </span>
         </div>
         <div class="flex items-center gap-2.5 shrink-0">
           <button

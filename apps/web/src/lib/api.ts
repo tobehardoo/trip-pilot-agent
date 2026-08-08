@@ -48,6 +48,18 @@ export interface Trip {
   createdAt: string
   updatedAt: string
   archivedAt: string | null
+  region?: RegionRef | null
+  planningCoverage?: 'FULL' | 'PARTIAL' | 'BASIC' | 'UNSUPPORTED'
+}
+
+export interface RegionRef {
+  provinceCode: string
+  cityCode: string
+  districtCodes: string[]
+  provinceName: string
+  cityName: string
+  districtNames: string[]
+  datasetVersion: string
 }
 
 export interface TripSearch {
@@ -71,6 +83,7 @@ export interface TripPage {
 export interface CreateTripInput {
   title: string
   destination: string
+  region?: RegionRef
   startDate: string
   endDate: string
   constraints: Omit<TripConstraints, 'schemaVersion'>
@@ -232,9 +245,9 @@ export interface PlanEvaluation {
 export interface EvaluationDimensions {
   constraintSatisfaction: number
   timeFeasibility: number
-  budgetFit: number
+  budgetFit: number | null
   routeEfficiency: number
-  interestMatch: number
+  interestMatch: number | null
 }
 
 export interface EvaluationWarning {
@@ -529,6 +542,8 @@ export interface ItineraryEditInput {
 export interface ItineraryEditPreview {
   operation: ItineraryEditOperation
   canApply: boolean
+  requiresReplan: boolean
+  transitSelectionState: 'AVAILABLE' | 'REQUIRES_REPLAN' | 'UNAVAILABLE' | 'USER_LOCKED' | null
   impactedDates: string[]
   impactedActivityIds: string[]
   warnings: string[]

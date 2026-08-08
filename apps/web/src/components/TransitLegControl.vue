@@ -37,6 +37,7 @@ const emit = defineEmits<{
   lock: [locked: boolean]
 }>()
 
+const LONG_WALK_REVIEW_SECONDS = 45 * 60
 const open = ref(false)
 const activeMode = ref<CommuteMode>(props.selectedMode)
 const options = computed(() => estimateCommuteOptions(props.leg))
@@ -63,15 +64,31 @@ function optionFor(mode: ConcreteCommuteMode): CommuteEstimate {
 }
 
 function selectMode(mode: CommuteMode) {
-  if (props.locked || modeHasConflict(mode)) return
+  if (props.locked || activeMode.value === mode) return
   activeMode.value = mode
   emit('select', mode === 'AUTO' ? recommendedMode.value : mode)
+}
+
+function toggleOptions() {
+  open.value = !open.value
+  if (
+    !open.value
+    || props.locked
+    || props.leg.mode !== 'WALKING'
+    || props.leg.durationSeconds <= LONG_WALK_REVIEW_SECONDS
+    || recommendedMode.value === 'WALKING'
+  ) return
+  selectMode(recommendedMode.value)
 }
 
 function modeHasConflict(mode: CommuteMode) {
   if (props.availableSeconds === undefined) return false
   const concreteMode = mode === 'AUTO' ? recommendedMode.value : mode
   return optionFor(concreteMode).durationSeconds > props.availableSeconds
+}
+
+function modeAvailability(mode: CommuteMode) {
+  return modeHasConflict(mode) ? 'requires-replan' : 'available'
 }
 
 function modeLabel(mode: ConcreteCommuteMode) {
@@ -120,7 +137,7 @@ function deltaText() {
       :aria-expanded="open"
       :aria-label="`选择 ${fromTitle} 到 ${toTitle} 的通勤方式`"
       :data-testid="`transit-leg-open-${leg.id}`"
-      @click="open = !open"
+      @click="toggleOptions"
     >
       <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white border border-surface-200 text-primary-600">
         <Footprints v-if="selectedEstimate.mode === 'WALKING'" :size="15" aria-hidden="true" />
@@ -157,7 +174,8 @@ function deltaText() {
             : 'bg-surface-50 border-surface-200 text-surface-500 hover:bg-surface-100 hover:text-surface-700'"
           type="button"
           :aria-pressed="activeMode === mode"
-          :disabled="(locked && activeMode !== mode) || (activeMode !== mode && modeHasConflict(mode))"
+          :disabled="locked && activeMode !== mode"
+          :data-availability="modeAvailability(mode)"
           :data-testid="`transit-option-${mode}`"
           @click="selectMode(mode)"
         >
@@ -182,7 +200,7 @@ function deltaText() {
 
       <!-- Conflict Warning -->
       <p v-if="hasConflict" class="rounded-lg bg-red-50 border-l-4 border-red-400 px-3 py-2 text-xs text-red-700 m-0" role="alert">
-        当前方式超过两个活动之间的可用时间，活动时间保持不变，请选择更快的方式。
+        当前交通方式超出活动间隔，需要调整活动时间后才能提交。
       </p>
 
       <!-- Lock -->

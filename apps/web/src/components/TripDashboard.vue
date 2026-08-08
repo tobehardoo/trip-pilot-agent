@@ -25,8 +25,20 @@ import Badge from './ui/Badge.vue'
 import TripTemplates from './TripTemplates.vue'
 
 import ConstraintCard from './ConstraintCard.vue'
+import ConstraintEditor from './ConstraintEditor.vue'
 import NaturalLanguageInput from './NaturalLanguageInput.vue'
-import { createDefaultDraft, destinationToString, toCreateTripInput, type ConstraintDraft } from '../lib/constraint-draft'
+import {
+  createConstraintEditorModel,
+  toTripConstraints,
+  validateConstraintEditor,
+} from '../lib/constraint-editor'
+import {
+  createDefaultDraft,
+  destinationToRegionRef,
+  destinationToString,
+  type ConstraintDraft,
+  type StructuredDestination,
+} from '../lib/constraint-draft'
 import { parseConstraint } from '../lib/constraint-parser'
 import type { ParseWarning } from '../lib/constraint-parser'
 
@@ -93,7 +105,7 @@ function syncDraftToForm() {
   form.destination = destination || form.destination
   form.startDate = draft.value.startDate.value || form.startDate
   form.endDate = draft.value.endDate.value || form.endDate
-  form.budgetAmount = draft.value.budgetAmount.value ?? form.budgetAmount
+  form.budgetAmount = draft.value.budgetAmount.value?.toString() ?? ''
   form.travelers = draft.value.travelers.value
   form.preferences = [...draft.value.preferences.value]
 }
@@ -113,8 +125,8 @@ function handleCardAppend(field: string) {
   useNaturalLanguage.value = false
 }
 
-function handleDestinationChange(sel: { province: string; city: string; districts: string[] }) {
-  draft.value.destination.value = { province: sel.province, city: sel.city, districts: sel.districts }
+function handleDestinationChange(sel: StructuredDestination) {
+  draft.value.destination.value = sel
   draft.value.destination.source = 'explicit'
   form.destination = sel.city
 }
@@ -133,16 +145,13 @@ const dialogOpen = ref(false)
 const destinationQuery = ref(props.destinationQuery)
 const dialogElement = ref<HTMLElement | null>(null)
 const submitting = ref(false)
+const editorError = ref<string | null>(null)
 const form = reactive({
   title: '',
   destination: '广州',
   startDate: '',
   endDate: '',
-  budgetAmount: 3000,
-  travelers: 1,
-  travelerType: 'SOLO' as 'SOLO' | 'COUPLE' | 'FAMILY' | 'FRIENDS' | 'BUSINESS',
-  pace: 'BALANCED' as 'RELAXED' | 'BALANCED' | 'INTENSIVE',
-  preferences: [] as string[],
+  ...createConstraintEditorModel(),
 })
 
 // ── Destination gradient mapping ──
@@ -197,11 +206,8 @@ function resetForm() {
   form.destination = '广州'
   form.startDate = ''
   form.endDate = ''
-  form.budgetAmount = 3000
-  form.travelers = 1
-  form.travelerType = 'SOLO'
-  form.pace = 'BALANCED'
-  form.preferences = []
+  Object.assign(form, createConstraintEditorModel())
+  editorError.value = null
 }
 
 const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
@@ -226,36 +232,19 @@ function openDialog(event?: Event, initial?: Pick<typeof form, 'title' | 'destin
   dialogOpen.value = true
 }
 
-function togglePreference(preference: string) {
-  const index = form.preferences.indexOf(preference)
-  if (index >= 0) form.preferences.splice(index, 1)
-  else form.preferences.push(preference)
-}
-
 async function saveTrip() {
+  editorError.value = validateConstraintEditor(form)
+  if (editorError.value) return
   submitting.value = true
   try {
     const title = form.title || `${form.destination || draft.value.destination.value}之旅`
     await props.createTrip({
       title,
       destination: form.destination,
+      region: destinationToRegionRef(draft.value.destination.value),
       startDate: form.startDate,
       endDate: form.endDate,
-      constraints: {
-        budgetAmount: form.budgetAmount,
-        travelers: form.travelers,
-        travelerType: form.travelerType,
-        pace: form.pace,
-        preferences: [...form.preferences],
-        fixedSchedules: [],
-        arrival: null,
-        departure: null,
-        accommodation: null,
-        mustVisitPlaces: [],
-        avoidPlaces: [],
-        mealWindows: [],
-        mobilityLevel: 'STANDARD',
-      },
+      constraints: toTripConstraints(form, []),
     })
     dialogOpen.value = false
   } catch {
@@ -557,58 +546,16 @@ async function saveTrip() {
                 <input id="end-date" v-model="form.endDate" type="date" :min="form.startDate" required
                   class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
               </div>
-              <div>
-                <label for="budget" class="block text-xs font-semibold text-surface-600 mb-1.5">预算</label>
-                <div class="flex items-center gap-2 h-10 rounded-xl border border-surface-200 bg-white px-3 focus-within:ring-2 focus-within:ring-primary-400/40 focus-within:border-primary-400 transition-shadow">
-                  <span class="text-surface-400 text-sm">¥</span>
-                  <input id="budget" v-model.number="form.budgetAmount" type="number" min="0" step="0.01" required
-                    class="w-full h-full border-0 bg-transparent text-sm text-surface-800 outline-0" />
-                </div>
-              </div>
-              <div>
-                <label for="travelers" class="block text-xs font-semibold text-surface-600 mb-1.5">同行人数</label>
-                <input id="travelers" v-model.number="form.travelers" type="number" min="1" max="50" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-              </div>
-              <div class="sm:col-span-2">
-                <label for="traveler-type" class="block text-xs font-semibold text-surface-600 mb-1.5">同行类型</label>
-                <select id="traveler-type" v-model="form.travelerType" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow">
-                  <option value="SOLO">独自出行</option>
-                  <option value="COUPLE">伴侣同行</option>
-                  <option value="FAMILY">家庭出行</option>
-                  <option value="FRIENDS">朋友同行</option>
-                  <option value="BUSINESS">商务出行</option>
-                </select>
-              </div>
             </div>
 
-            <fieldset class="mt-5 border-0 p-0">
-              <legend class="text-xs font-semibold text-surface-600 mb-2">旅行节奏</legend>
-              <div class="grid grid-cols-3 rounded-xl bg-surface-100 p-1">
-                <label v-for="p in [{v:'RELAXED',l:'舒缓'},{v:'BALANCED',l:'均衡'},{v:'INTENSIVE',l:'紧凑'}]" :key="p.v"
-                  class="relative flex h-9 cursor-pointer items-center justify-center rounded-lg text-sm font-medium transition-all"
-                  :class="form.pace === p.v ? 'bg-white text-primary-700 shadow-sm' : 'text-surface-500 hover:text-surface-700'"
-                >
-                  <input v-model="form.pace" type="radio" :value="p.v" class="sr-only" />
-                  {{ p.l }}
-                </label>
-              </div>
-            </fieldset>
+            <ConstraintEditor
+              class="mt-5"
+              :model="form"
+              mode="create"
+              :preference-options="preferenceOptions"
+            />
 
-            <fieldset class="mt-5 border-0 p-0">
-              <legend class="text-xs font-semibold text-surface-600 mb-2">偏好</legend>
-              <div class="flex flex-wrap gap-2">
-                <label v-for="preference in preferenceOptions" :key="preference"
-                  class="relative inline-flex cursor-pointer items-center rounded-xl border px-3 py-2 text-sm font-medium transition-all"
-                  :class="form.preferences.includes(preference) ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-surface-200 bg-white text-surface-600 hover:bg-surface-50'"
-                >
-                  <input type="checkbox" :value="preference" :checked="form.preferences.includes(preference)" class="sr-only" @change="togglePreference(preference)" />
-                  {{ preference }}
-                </label>
-              </div>
-            </fieldset>
-
+            <p v-if="editorError" class="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ editorError }}</p>
             <p v-if="error" class="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ error }}</p>
 
             <div class="flex items-center justify-end gap-3 mt-6 pt-5 border-t border-surface-100">

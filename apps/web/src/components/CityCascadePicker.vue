@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { ChevronRight, MapPin } from 'lucide-vue-next'
-import { PROVINCES, type City, type District, type Province } from '../lib/china-divisions'
+import { cityAdcode, PROVINCES, type City, type District, type Province } from '../lib/china-divisions'
 
 const props = defineProps<{
   province?: string
@@ -10,7 +10,14 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  change: [selection: { province: string; city: string; districts: string[] }]
+  change: [selection: {
+    province: string
+    provinceCode?: string
+    city: string
+    cityCode?: string
+    districts: string[]
+    districtCodes: string[]
+  }]
 }>()
 
 // 当前选中的索引
@@ -82,10 +89,18 @@ function emitChange() {
     const match = /^全市/.exec(d)
     return match ? '全市' : d
   })
+  const selectedCityAdcode = currentCity.value ? cityAdcode(currentCity.value) : undefined
   emit('change', {
     province: selectedProvince.value,
+    provinceCode: selectedCityAdcode
+      ? `${selectedCityAdcode.slice(0, 2)}0000`
+      : undefined,
     city: selectedCity.value,
+    cityCode: selectedCityAdcode,
     districts: cleanDistricts,
+    districtCodes: districtList.value
+      .filter((district) => selectedDistricts.value.includes(district.name))
+      .flatMap((district) => district.adcode ? [district.adcode] : []),
   })
 }
 

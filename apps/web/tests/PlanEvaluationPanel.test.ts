@@ -52,6 +52,8 @@ test('renders score dimensions severity labels and decision explanations', async
   const view = render(PlanEvaluationPanel, { props: { evaluation } })
 
   expect(view.getByText('68/100').classList.contains('score-low')).toBe(true)
+  expect(view.getByText('行程可执行：已验证')).toBeTruthy()
+  expect(view.getByText('体验评分')).toBeTruthy()
   expect(view.getByText('约束满足')).toBeTruthy()
   expect(view.getByText('路线效率')).toBeTruthy()
   expect(view.getByText('提示')).toBeTruthy()
@@ -69,4 +71,23 @@ test('renders the explicit legacy message only when requested', () => {
     props: { evaluation: null, showLegacy: true },
   })
   expect(legacy.getByText('该版本生成时尚未启用质量评估')).toBeTruthy()
+})
+
+test('renders not-applicable dimensions explicitly', () => {
+  const notApplicableEvaluation = {
+    ...evaluation,
+    schemaVersion: 2,
+    evaluatorVersion: 'rule-v2',
+    dimensions: {
+      ...evaluation.dimensions,
+      budgetFit: null,
+      interestMatch: null,
+    },
+  } as unknown as PlanEvaluation
+
+  const view = render(PlanEvaluationPanel, {
+    props: { evaluation: notApplicableEvaluation },
+  })
+
+  expect(view.getAllByText('未适用')).toHaveLength(2)
 })

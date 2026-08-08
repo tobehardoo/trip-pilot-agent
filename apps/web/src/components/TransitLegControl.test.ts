@@ -45,7 +45,7 @@ describe('TransitLegControl', () => {
     expect(view.emitted().select).toEqual([['TRANSIT'], ['TAXI']])
   })
 
-  it('does not emit a mode whose estimate exceeds the available activity gap', async () => {
+  it('allows a mode that exceeds the activity gap and marks it as requiring replanning', async () => {
     const view = render(TransitLegControl, {
       props: {
         leg: {
@@ -76,9 +76,11 @@ describe('TransitLegControl', () => {
     const transit = view.container.querySelector<HTMLButtonElement>('[data-testid="transit-option-TRANSIT"]')
     expect(transit).not.toBeNull()
     if (!transit) throw new Error('Expected the transit option')
-    expect(transit.disabled).toBe(true)
+    expect(transit.disabled).toBe(false)
+    expect(transit.dataset.availability).toBe('requires-replan')
 
     await fireEvent.click(transit)
-    expect(view.emitted().select).toBeUndefined()
+    expect(view.emitted().select).toEqual([['TRANSIT']])
+    expect(view.getByRole('alert').textContent).toContain('需要调整活动时间')
   })
 })

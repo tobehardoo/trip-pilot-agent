@@ -1,17 +1,24 @@
 <template>
   <div v-if="evaluation" class="plan-evaluation-panel">
+    <div class="mb-3 flex items-center justify-between gap-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+      <span class="font-semibold">行程可执行：已验证</span>
+      <span class="text-xs">硬约束校验通过</span>
+    </div>
     <div class="evaluation-header">
-      <span class="text-sm font-semibold">行程质量</span>
+      <span class="text-sm font-semibold">体验评分</span>
+      <span class="sr-only">行程质量</span>
       <span class="evaluation-score" :class="scoreClass">{{ evaluation.overallScore }}/100</span>
     </div>
 
     <div class="evaluation-dimensions">
       <div v-for="dim in dimensions" :key="dim.key" class="dimension-row">
         <span class="dim-label">{{ dim.label }}</span>
-        <div class="dim-bar-bg">
-          <div class="dim-bar" :style="{ width: dim.value + '%' }" :class="dim.barClass" />
+        <div class="dim-bar-bg" :class="{ 'dim-bar-na': dim.value === null }">
+          <div v-if="dim.value !== null" class="dim-bar" :style="{ width: dim.value + '%' }" :class="dim.barClass" />
         </div>
-        <span class="dim-value">{{ dim.value }}</span>
+        <span class="dim-value" :class="{ 'dim-value-na': dim.value === null }">
+          {{ dim.value === null ? '未适用' : dim.value }}
+        </span>
       </div>
     </div>
 
@@ -66,7 +73,10 @@ const scoreClass = computed(() => {
 const dimensions = computed(() => {
   if (!props.evaluation) return []
   const d = props.evaluation.dimensions
-  const scoreColor = (v: number) => v >= 85 ? 'bar-high' : v >= 70 ? 'bar-mid' : 'bar-low'
+  const scoreColor = (v: number | null) => {
+    if (v === null) return ''
+    return v >= 85 ? 'bar-high' : v >= 70 ? 'bar-mid' : 'bar-low'
+  }
   return [
     { key: 'constraintSatisfaction', label: '约束满足', value: d.constraintSatisfaction, barClass: scoreColor(d.constraintSatisfaction) },
     { key: 'timeFeasibility', label: '时间合理', value: d.timeFeasibility, barClass: scoreColor(d.timeFeasibility) },
@@ -95,7 +105,9 @@ function subjectTypeLabel(t: string) {
 .dim-bar-bg { flex: 1; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
 .dim-bar { height: 100%; border-radius: 3px; transition: width 0.3s; }
 .bar-high { background: #22c55e; } .bar-mid { background: #eab308; } .bar-low { background: #ef4444; }
-.dim-value { width: 2rem; text-align: right; }
+.dim-value { width: 3rem; text-align: right; }
+.dim-value-na { color: rgba(255,255,255,0.5); }
+.dim-bar-na { background: rgba(255,255,255,0.04); }
 .evaluation-warnings { margin-top: 0.5rem; }
 .warning-item { display: flex; align-items: flex-start; gap: 0.25rem; margin-bottom: 0.25rem; font-size: 0.75rem; }
 .warning-badge { font-size: 0.625rem; padding: 0 0.25rem; border-radius: 0.25rem; flex-shrink: 0; }

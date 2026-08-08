@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { Pencil, Plus, X } from 'lucide-vue-next'
-import type { ConstraintDraft, FieldMeta, ValueSource } from '../lib/constraint-draft'
+import type {
+  ConstraintDraft,
+  FieldMeta,
+  StructuredDestination,
+  ValueSource,
+} from '../lib/constraint-draft'
 import CityCascadePicker from './CityCascadePicker.vue'
 
 const props = defineProps<{
@@ -11,10 +16,10 @@ const emit = defineEmits<{
   edit: [field: string]
   remove: [field: string, value?: string]
   append: [field: string]
-  destinationChange: [selection: { province: string; city: string; districts: string[] }]
+  destinationChange: [selection: StructuredDestination]
 }>()
 
-function handleDestinationChange(sel: { province: string; city: string; districts: string[] }) {
+function handleDestinationChange(sel: StructuredDestination) {
   emit('destinationChange', sel)
 }
 

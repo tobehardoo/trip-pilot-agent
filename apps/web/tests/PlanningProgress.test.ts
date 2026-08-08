@@ -45,3 +45,24 @@ test('renders the current planning stage from an SSE progress event', () => {
   expect(view.getByTestId('planning-stage-POI_RECALLING').textContent)
     .toContain('未执行')
 })
+
+test('renders a terminal success instead of stale publishing progress', () => {
+  const view = render(PlanningProgress, {
+    props: {
+      planningState: 'succeeded',
+      progress: {
+        stage: 'RESULT_PUBLISHING',
+        sequence: 10,
+        progress: 95,
+        message: 'Publishing planning result',
+        statistics: {},
+        occurredAt: '2026-07-27T08:00:10Z',
+      },
+      progressHistory: [],
+    },
+  })
+
+  expect(view.getByTestId('planning-current-stage').textContent)
+    .toContain('行程规划已完成')
+  expect(view.queryByText('95%')).toBeNull()
+})

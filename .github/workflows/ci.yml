@@ -105,6 +105,7 @@ jobs:
           RABBITMQ_PASSWORD: ci-rabbitmq-password
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
           INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
+          AGENT_INTERNAL_TOKEN: ci-only-agent-internal-token-at-least-32-bytes
         run: docker compose -f compose.prod.yaml config --quiet
       - name: Validate immutable image overrides
         env:
@@ -113,6 +114,7 @@ jobs:
           RABBITMQ_PASSWORD: ci-rabbitmq-password
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
           INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
+          AGENT_INTERNAL_TOKEN: ci-only-agent-internal-token-at-least-32-bytes
           POSTGRES_IMAGE: registry.invalid/postgres@sha256:1111111111111111111111111111111111111111111111111111111111111111
           REDIS_IMAGE: registry.invalid/redis@sha256:2222222222222222222222222222222222222222222222222222222222222222
           RABBITMQ_IMAGE: registry.invalid/rabbitmq@sha256:3333333333333333333333333333333333333333333333333333333333333333
@@ -134,6 +136,7 @@ jobs:
           RABBITMQ_PASSWORD: ci-rabbitmq-password
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
           INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
+          AGENT_INTERNAL_TOKEN: ci-only-agent-internal-token-at-least-32-bytes
         run: docker compose -f compose.prod.yaml build postgres travel-server agent-service web prometheus
       - name: Smoke-test production Compose
         env:
@@ -143,6 +146,7 @@ jobs:
           RABBITMQ_PASSWORD: ci-rabbitmq-password
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
           INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
+          AGENT_INTERNAL_TOKEN: ci-only-agent-internal-token-at-least-32-bytes
         run: |
           docker compose -f compose.prod.yaml up -d --wait --wait-timeout 180
           curl --fail --retry 5 --retry-connrefused http://127.0.0.1:8080/
@@ -156,6 +160,7 @@ jobs:
           RABBITMQ_PASSWORD: ci-rabbitmq-password
           JWT_SECRET: ci-only-jwt-secret-at-least-32-bytes-long
           INTERNAL_DIAGNOSTICS_TOKEN: ci-only-diagnostics-token-at-least-32-bytes
+          AGENT_INTERNAL_TOKEN: ci-only-agent-internal-token-at-least-32-bytes
         run: docker compose -f compose.prod.yaml down -v --remove-orphans
 
   repository-safety:

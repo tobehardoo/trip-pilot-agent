@@ -21,6 +21,6 @@ completion v6 具有可选严格 `providerProvenance` 对象。新的成功 prod
 
 ## 相关文档
 
-- [Provider 策略 ADR](../../docs/adr/provider-mode-failure-and-fallback-policy.md)
+- [Provider 策略 ADR](../../docs/adr/Provider模式失败与降级策略.md)
 - [事件契约文档](../../docs/architecture/事件契约.md)
 - [遗留契约说明](legacy/README.md)

@@ -132,6 +132,6 @@
 
 ## 历史详稿
 
-- [原接口与消息契约详稿](archive/api.md)
-- [规划进度契约原文](archive/planning-progress.md)
-- [遗留消息契约说明](../contracts/messaging/legacy/README.md)
+- [原接口与消息契约详稿](../api.md)
+- [规划进度契约原文](../planning-progress.md)
+- [遗留消息契约说明](../../../contracts/messaging/legacy/README.md)

@@ -19,8 +19,8 @@
 | 路线图要求 | 审计结果 | 证据 |
 | --- | --- | --- |
 | 阶段 0 保护现场 | 通过 | 天气工作已形成提交；`.claude/`、`.pnpm-store/` 和产物目录均未受 Git 跟踪；`main` 未移动 |
-| 阶段 1 天气/城市情报收口 | 通过 | QWeather、AMap 组合与显式回退实现及定向测试见 [`service.py`](../../apps/agent-service/src/trip_agent/guide_intelligence/service.py) 和 [`test_service.py`](../../apps/agent-service/tests/guide_intelligence/test_service.py) |
-| 阶段 2 双线集成 | 通过 | [`TripDetail.vue`](../../apps/web/src/components/TripDetail.vue) 同时装配评估、天气和地图；[`TripWorkspace.vue`](../../apps/web/src/pages/TripWorkspace.vue) 绑定当前版本的 planning task |
+| 阶段 1 天气/城市情报收口 | 通过 | QWeather、AMap 组合与显式回退实现及定向测试见 [`service.py`](../../../apps/agent-service/src/trip_agent/guide_intelligence/service.py) 和 [`test_service.py`](../../../apps/agent-service/tests/guide_intelligence/test_service.py) |
+| 阶段 2 双线集成 | 通过 | [`TripDetail.vue`](../../../apps/web/src/components/TripDetail.vue) 同时装配评估、天气和地图；[`TripWorkspace.vue`](../../../apps/web/src/pages/TripWorkspace.vue) 绑定当前版本的 planning task |
 | 阶段 3 完整组合验证 | 通过（本地） | Python 541、Java 208、Web 124、Playwright 6、benchmark 8/8、Flyway V1–V27、JaCoCo、构建和隔离 Compose 均通过 |
 | 阶段 4 真实环境验收 | 未开始（外部阻塞） | 缺真实域名、证书、Key、Host、白名单、staging、告警和恢复环境 |
 
@@ -33,12 +33,12 @@
 #### I-01：缺少真正的 PlanEvaluation + 天气 + 地图组合 E2E
 
 - 发现：第二轮最初通过的 5 个 Playwright 场景覆盖 session、编辑、SSE 和分享，但没有在一个真实浏览器页面中同时验证当前版本评估恢复、天气时间轴和地图日期过滤。仅凭组件/Workspace 测试不能称为“组合 E2E”。
-- 处置：在 [`release-smoke.spec.ts`](../../apps/web/e2e/release-smoke.spec.ts) 增加组合场景，通过当前 version 的 `planningTaskId` 返回成功任务与 91/100 评估，同时返回 QWeather 城市天气和两日 itinerary；断言点击 2026-08-02 后地图地点从 3 个收敛到当天 1 个。
+- 处置：在 [`release-smoke.spec.ts`](../../../apps/web/e2e/release-smoke.spec.ts) 增加组合场景，通过当前 version 的 `planningTaskId` 返回成功任务与 91/100 评估，同时返回 QWeather 城市天气和两日 itinerary；断言点击 2026-08-02 后地图地点从 3 个收敛到当天 1 个。
 - 验证：新增场景先单独通过；完整 Playwright `6 passed`；Web typecheck、124 项覆盖率测试和 production build 通过。
 
 #### I-02：部分 QWeather 配置在 AMap 可用时被静默忽略
 
-- 发现：[`service.py`](../../apps/agent-service/src/trip_agent/guide_intelligence/service.py) 原先以 Key 和 Host 同时非空决定是否启用 QWeather。如果只设置其一但 AMap 已配置，系统会无提示退回 AMap，可能造成 staging 对 QWeather 配置的假阳性验收。
+- 发现：[`service.py`](../../../apps/agent-service/src/trip_agent/guide_intelligence/service.py) 原先以 Key 和 Host 同时非空决定是否启用 QWeather。如果只设置其一但 AMap 已配置，系统会无提示退回 AMap，可能造成 staging 对 QWeather 配置的假阳性验收。
 - 处置：先增加 Key-only 与 Host-only 两个失败用例，确认旧实现会继续请求 AMap；随后改为只要 Key/Host 完整性不一致就显式拒绝，并统一错误信息。
 - 验证：Key-only、Host-only 和无 Provider 配置均有失败用例；全量 Python 与 Ruff 通过。
 
@@ -110,10 +110,10 @@
 
 | 业务链路 | 结论 | 主要证据 |
 | --- | --- | --- |
-| 创建规划成功 | 通过 | [`App.test.ts`](../../apps/web/tests/App.test.ts) 验证创建、SSE 完成、itinerary/versions/evaluation 刷新；Java/Python completion 测试已纳入全量门禁 |
+| 创建规划成功 | 通过 | [`App.test.ts`](../../../apps/web/tests/App.test.ts) 验证创建、SSE 完成、itinerary/versions/evaluation 刷新；Java/Python completion 测试已纳入全量门禁 |
 | 创建规划失败 | 通过 | `PLANNING_FAILED` 业务错误和三次网络重试耗尽均有 Web 回归；失败不会清除当前版本已有有效评分 |
 | 重规划与编辑/回滚 | 通过 | 当前版本重新加载；`USER_EDIT`/`ROLLBACK` 无 `planningTaskId` 时不继承陈旧评分；编辑提交和回滚继续使用幂等键 |
-| PlanEvaluation 五维、警告、解释 | 通过 | Python 确定性 benchmark 8/8；completion v6、Java 持久化/API、Web [`PlanEvaluationPanel.vue`](../../apps/web/src/components/PlanEvaluationPanel.vue) 与组件测试贯通 |
+| PlanEvaluation 五维、警告、解释 | 通过 | Python 确定性 benchmark 8/8；completion v6、Java 持久化/API、Web [`PlanEvaluationPanel.vue`](../../../apps/web/src/components/PlanEvaluationPanel.vue) 与组件测试贯通 |
 | legacy/null | 通过 | succeeded legacy task 的 `evaluation=null` 显示兼容提示；非成功或无关联任务不展示评分 |
 | SSE 断线与重复事件 | 通过 | `Last-Event-ID` 恢复、重复阶段去重、离开页面终止并忽略迟到 completion 均有 Web 测试；浏览器场景覆盖一次断线恢复 |
 | 实体 ID 重映射 | 通过 | PlanEvaluation completion 的 activity/transit 引用在 Python/Java 契约与持久化测试中验证 |

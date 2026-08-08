@@ -129,8 +129,8 @@ Prometheus 覆盖规划成功/失败/取消、阶段耗时、Provider 结果、R
 
 原始长文档已归档，保留更多背景和旧版细节：
 
-- [原系统架构详稿](archive/architecture.md)
-- [领域模型详稿](archive/domain.md)
-- [数据库设计详稿](archive/database.md)
-- [规划算法详稿](archive/planning.md)
-- [架构重构记录](archive/architecture-refactoring-plan.md)
+- [原系统架构详稿](../architecture.md)
+- [领域模型详稿](../domain.md)
+- [数据库设计详稿](../database.md)
+- [规划算法详稿](../planning.md)
+- [架构重构记录](../architecture-refactoring-plan.md)

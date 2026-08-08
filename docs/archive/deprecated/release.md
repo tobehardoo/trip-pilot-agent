@@ -68,10 +68,10 @@ Flyway 升级路径已从空库验证到 V27。
 
 ## 归档证据
 
-- [V2.5 之后的 P0–P2 执行规划](archive/post-v2.5-p0-p2-execution-plan.md)：生产可信度、架构治理与产品扩展的后续门禁。
-- [P0 执行记录与剩余门禁](archive/p0-execution-evidence.md)：仓库内发布可信度工作和真实环境前置条件。
+- [V2.5 之后的 P0–P2 执行规划](../post-v2.5-p0-p2-execution-plan.md)：生产可信度、架构治理与产品扩展的后续门禁。
+- [P0 执行记录与剩余门禁](../p0-execution-evidence.md)：仓库内发布可信度工作和真实环境前置条件。
 
-- [V2.0 发布证据原文](archive/v2-release-evidence.md)
-- [V2.0 交付清单原文](archive/v2-delivery-checklist.md)
-- [V2.0 审查与验收报告](archive/v2-code-review-findings.md)
-- [V1.3 发布验收历史](archive/release-checklist.md)
+- [V2.0 发布证据原文](../v2-release-evidence.md)
+- [V2.0 交付清单原文](../v2-delivery-checklist.md)
+- [V2.0 审查与验收报告](../v2-code-review-findings.md)
+- [V1.3 发布验收历史](../release-checklist.md)

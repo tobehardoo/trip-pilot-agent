@@ -294,5 +294,5 @@ docker compose -f compose.prod.yaml --env-file .env down -v
 
 ## 历史详稿
 
-- [原部署详稿](archive/deployment.md)
-- [V2.0 发布证据原文](archive/v2-release-evidence.md)
+- [原部署详稿](../deployment.md)
+- [V2.0 发布证据原文](../v2-release-evidence.md)

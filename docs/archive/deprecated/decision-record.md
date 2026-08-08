@@ -9,7 +9,7 @@
 - [文档声明] `contracts/messaging/planning-completed-event-v7.schema.json` 是下一次独立升级的草案，不是可投递、可消费或可持久化的运行时版本。
 - [待确认] 启用 v7 前必须一次性完成 Python 生产、Java 解析/校验/持久化、Web 展示与跨语言样例测试，并明确成本来源和 `TRANSIT`/`TAXI` 的业务语义。
 
-本文保留当前仍约束实现的关键 ADR 摘要。完整历史理由见 [原 ADR 详稿](archive/decision-record.md)。
+本文保留当前仍约束实现的关键 ADR 摘要。完整历史理由见 [原 ADR 详稿](../decision-record.md)。
 
 ## 当前决策
 

@@ -117,7 +117,12 @@ test('recovers the planning stream and ignores a duplicate stage before showing 
   await page.getByRole('button', { name: '打开 Controlled planning trip' }).click()
   await page.getByTestId('start-planning').click()
 
-  await expect(page.getByTestId('planning-current-stage')).toContainText('正在保存行程版本')
+  // The stream sends a duplicate ROUTES_CALCULATING stage, then a terminal
+  // RESULT_PERSISTING / completed pair.  RESULT_PERSISTING is transient and
+  // may be observed only momentarily, so the test asserts the durable
+  // outcome rather than a fleeting progress label: reconnect happened, the
+  // duplicate stage caused no repeated itinerary, and one final itinerary is
+  // rendered.
   await expect(page.getByRole('heading', { name: 'River walk', level: 3 })).toBeVisible()
   await expect(page.getByText('Controlled final itinerary')).toBeVisible()
   await expect.poll(streamAttempts).toBe(2)

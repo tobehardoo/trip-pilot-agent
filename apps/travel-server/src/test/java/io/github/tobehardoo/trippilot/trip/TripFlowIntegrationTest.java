@@ -54,6 +54,93 @@ class TripFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void createsTripWithRegionReferenceAndUsesAdcodeForPrewarm() throws Exception {
+        String accessToken = registerAndGetAccessToken("region-owner@example.com");
+
+        MvcResult createResult = mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "拉萨三日游",
+                                  "destination": "西藏自治区 / 拉萨市 / 城关区",
+                                  "region": {
+                                    "provinceCode": "540000",
+                                    "cityCode": "540100",
+                                    "districtCodes": ["540102"],
+                                    "provinceName": "西藏自治区",
+                                    "cityName": "拉萨市",
+                                    "districtNames": ["城关区"],
+                                    "datasetVersion": "2023-06-30"
+                                  },
+                                  "startDate": "2026-08-01",
+                                  "endDate": "2026-08-03",
+                                  "constraints": {
+                                    "travelers": 1,
+                                    "travelerType": "SOLO",
+                                    "pace": "BALANCED",
+                                    "preferences": [],
+                                    "fixedSchedules": []
+                                  }
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.region.provinceCode").value("540000"))
+                .andExpect(jsonPath("$.region.cityCode").value("540100"))
+                .andExpect(jsonPath("$.region.districtCodes[0]").value("540102"))
+                .andExpect(jsonPath("$.planningCoverage").value("BASIC"))
+                .andReturn();
+
+        String tripId = json(createResult).get("id").asText();
+        String cityCode = jdbcTemplate.queryForObject("""
+                SELECT city_code
+                FROM business.city_intelligence_refresh
+                WHERE trip_id = ?::uuid
+                """, String.class, tripId);
+        org.assertj.core.api.Assertions.assertThat(cityCode).isEqualTo("540100");
+
+        mockMvc.perform(get("/api/trips/{tripId}", tripId).header("Authorization", bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.region.cityName").value("拉萨市"))
+                .andExpect(jsonPath("$.region.datasetVersion").value("2023-06-30"));
+    }
+
+    @Test
+    void rejectsRegionReferenceWhoseCityDoesNotBelongToProvince() throws Exception {
+        String accessToken = registerAndGetAccessToken("invalid-region-owner@example.com");
+
+        mockMvc.perform(post("/api/trips")
+                        .header("Authorization", bearer(accessToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "无效区域",
+                                  "destination": "广州",
+                                  "region": {
+                                    "provinceCode": "440000",
+                                    "cityCode": "510100",
+                                    "districtCodes": [],
+                                    "provinceName": "广东省",
+                                    "cityName": "成都市",
+                                    "districtNames": [],
+                                    "datasetVersion": "2023-06-30"
+                                  },
+                                  "startDate": "2026-08-01",
+                                  "endDate": "2026-08-03",
+                                  "constraints": {
+                                    "travelers": 1,
+                                    "travelerType": "SOLO",
+                                    "pace": "BALANCED",
+                                    "preferences": [],
+                                    "fixedSchedules": []
+                                  }
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("TRIP_REGION_INVALID"));
+    }
+
+    @Test
     void createsTripAndAtomicallyQueuesIdempotentCityIntelligencePrewarm() throws Exception {
         String accessToken = registerAndGetAccessToken("prewarm-owner@example.com");
         String tripId = json(createTrip(accessToken)

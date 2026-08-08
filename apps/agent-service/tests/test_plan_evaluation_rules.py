@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from plan_evaluation_support import make_activity, make_command, make_result, make_transit
@@ -6,6 +6,7 @@ from plan_evaluation_support import make_activity, make_command, make_result, ma
 from trip_agent.evaluation.rules import (
     build_budget_context,
     compute_day_stats,
+    daily_transfer_penalty,
     detect_hard_constraint_violations,
     score_budget_fit,
     score_time_feasibility,
@@ -309,3 +310,107 @@ def test_hard_constraint_guard_rejects_overlapping_activities() -> None:
     )
 
     assert "activities 'Activity 1' and 'Activity 2' overlap" in violations
+
+
+# ── B1_C35: daily transfer penalty aggregation ─────────────────────────────
+
+def _day_with_slacks(*slacks: int) -> ItineraryDay:
+    """One day where leg i has exactly slacks[i] minutes of slack.
+
+    Transit duration is fixed at 180 s (3 min), so the slack is precise:
+    gap = slack + 3 minutes.
+    """
+    activities = [make_activity(0)]  # 9:00–10:00
+    legs = []
+    for index, slack in enumerate(slacks):
+        previous_end = activities[-1].end_time
+        start = previous_end + timedelta(minutes=slack + 3)
+        activities.append(
+            make_activity(index + 1, start_hour=start.hour, start_minute=start.minute)
+        )
+        legs.append(make_transit(index, duration_seconds=180))
+    return ItineraryDay(
+        date=date(2026, 8, 1),
+        activities=tuple(activities),
+        transit_legs=tuple(legs),
+    )
+
+
+def test_daily_transfer_penalty_single_tight_leg_is_fifteen() -> None:
+    assert daily_transfer_penalty(_day_with_slacks(9)) == 15
+
+
+def test_daily_transfer_penalty_single_critical_leg_is_twenty() -> None:
+    assert daily_transfer_penalty(_day_with_slacks(0)) == 20
+
+
+def test_daily_transfer_penalty_two_tight_legs_are_twenty() -> None:
+    assert daily_transfer_penalty(_day_with_slacks(9, 9)) == 20
+
+
+def test_daily_transfer_penalty_two_critical_legs_are_thirty() -> None:
+    assert daily_transfer_penalty(_day_with_slacks(0, 0)) == 30
+
+
+def test_daily_transfer_penalty_three_tight_legs_are_twenty_five() -> None:
+    assert daily_transfer_penalty(_day_with_slacks(9, 9, 9)) == 25
+
+
+def test_daily_transfer_penalty_three_critical_legs_are_capped_at_thirty_five() -> None:
+    assert daily_transfer_penalty(_day_with_slacks(0, 0, 0)) == 35
+
+
+def test_daily_transfer_penalty_six_tight_legs_are_capped_at_thirty_five() -> None:
+    assert daily_transfer_penalty(_day_with_slacks(9, 9, 9, 9, 9, 9)) == 35
+
+
+def test_daily_transfer_penalty_mixed_severities() -> None:
+    assert daily_transfer_penalty(_day_with_slacks(9, 0)) == 25  # 1 T + 1 C
+    assert daily_transfer_penalty(_day_with_slacks(9, 9, 0)) == 30  # 2 T + 1 C
+    assert daily_transfer_penalty(_day_with_slacks(9, 0, 0)) == 35  # 1 T + 2 C
+
+
+def test_daily_transfer_penalty_is_order_independent() -> None:
+    # Same counts in different leg orders must yield identical penalties.
+    assert daily_transfer_penalty(_day_with_slacks(9, 0)) == daily_transfer_penalty(
+        _day_with_slacks(0, 9)
+    )
+    assert daily_transfer_penalty(_day_with_slacks(9, 9, 0)) == daily_transfer_penalty(
+        _day_with_slacks(0, 9, 9)
+    ) == daily_transfer_penalty(_day_with_slacks(9, 0, 9))
+    assert daily_transfer_penalty(_day_with_slacks(9, 0, 0)) == daily_transfer_penalty(
+        _day_with_slacks(0, 9, 0)
+    ) == daily_transfer_penalty(_day_with_slacks(0, 0, 9))
+
+
+def test_transfer_severity_boundaries() -> None:
+    # slack == 12 → safe, no penalty (strict < 12).
+    assert daily_transfer_penalty(_day_with_slacks(12)) == 0
+    # slack just below 12 → TIGHT only.
+    assert daily_transfer_penalty(_day_with_slacks(11)) == 15
+    # slack == 4 → TIGHT only, not CRITICAL (strict < 4).
+    assert daily_transfer_penalty(_day_with_slacks(4)) == 15
+    # slack just below 4 → CRITICAL.
+    assert daily_transfer_penalty(_day_with_slacks(3)) == 20
+
+
+def test_time_score_integrates_daily_transfer_penalty() -> None:
+    # 3 TIGHT legs in one day → −25 instead of the old linear −45.
+    stats = compute_day_stats((_day_with_slacks(9, 9, 9),))
+    assert score_time_feasibility((_day_with_slacks(9, 9, 9),), stats) == 75
+    # 6 TIGHT legs → capped at −35, still not negative.
+    assert daily_transfer_penalty(_day_with_slacks(9, 9, 9, 9, 9, 9)) == 35
+
+
+def test_transfer_warnings_stay_per_leg_under_aggregation() -> None:
+    # Aggregation caps the score but never merges or hides per-leg warnings:
+    # every risk leg keeps its TIGHT_TRANSFER warning and critical legs
+    # additionally keep LOW_TIME_BUFFER.
+    day = _day_with_slacks(9, 9, 0)
+    stats = compute_day_stats((day,))
+
+    warnings = time_warnings((day,), stats)
+
+    codes = [warning.code for warning in warnings]
+    assert codes.count("TIGHT_TRANSFER") == 3
+    assert codes.count("LOW_TIME_BUFFER") == 1

@@ -55,6 +55,15 @@ DAILY_WALK_DURATION_WARNING_SECONDS = 60 * 60    # 1 hr
 TIGHT_TRANSFER_SLACK_MINUTES = 12.0  # slack < 12 min → TIGHT_TRANSFER warning
 LOW_BUFFER_SLACK_MINUTES = 4.0       # slack < 4 min → LOW_TIME_BUFFER critical
 
+# Transfer penalty accumulation (B1_C35): within a day, the first risk leg
+# carries its full deduction, every further risk leg adds a reduced amount,
+# and the daily total is capped.  Classification is mutually exclusive:
+# a slack < 4 min leg counts only as critical, never also as tight.
+FIRST_RISK_LEG_EXTRA_PENALTY = 10  # full − reduced for both severities
+TIGHT_ONLY_ADDITIONAL_PENALTY = 5  # per further TIGHT-only leg
+CRITICAL_ADDITIONAL_PENALTY = 10   # per further CRITICAL leg
+DAILY_TRANSFER_PENALTY_CAP = 35    # daily score saturation bound
+
 # Daily load: weighted activity workload (anchors weightless, meals light).
 # Unknown kinds (None) count as full activities to prevent gaming.
 ACTIVITY_KIND_WORKLOAD: dict[str, float] = {
@@ -201,6 +210,42 @@ def transfer_slack_minutes(day: ItineraryDay, leg: TransitLeg) -> float:
     return gap_min - leg.duration_seconds / 60
 
 
+def daily_transfer_penalty(day: ItineraryDay) -> int:
+    """B1_C35 daily transfer penalty for one day, 0..35.
+
+    Counts risk legs with mutually exclusive severity (a slack < 4 min leg
+    is CRITICAL and is never also counted as TIGHT-only):
+
+        tight_only_count = legs with 4 <= slack < 12
+        critical_count    = legs with slack < 4
+
+    raw = 10 + 5 * tight_only_count + 10 * critical_count  (when any risk)
+    daily = min(raw, 35)
+
+    The formula depends only on the counts, never on TransitLeg order:
+    1 TIGHT = 15, 2 TIGHT = 20, 3 TIGHT = 25, 4 TIGHT = 30, 5+ TIGHT = 35;
+    1 CRITICAL = 20, 2 CRITICAL = 30, 3+ CRITICAL = 35;
+    1 TIGHT + 1 CRITICAL = 25, 2 TIGHT + 1 CRITICAL = 30,
+    1 TIGHT + 2 CRITICAL = 35.
+    """
+    tight_only_count = 0
+    critical_count = 0
+    for leg in day.transit_legs:
+        slack = transfer_slack_minutes(day, leg)
+        if slack < LOW_BUFFER_SLACK_MINUTES:
+            critical_count += 1
+        elif slack < TIGHT_TRANSFER_SLACK_MINUTES:
+            tight_only_count += 1
+    if tight_only_count == 0 and critical_count == 0:
+        return 0
+    raw = (
+        FIRST_RISK_LEG_EXTRA_PENALTY
+        + TIGHT_ONLY_ADDITIONAL_PENALTY * tight_only_count
+        + CRITICAL_ADDITIONAL_PENALTY * critical_count
+    )
+    return min(raw, DAILY_TRANSFER_PENALTY_CAP)
+
+
 def score_time_feasibility(
     days: tuple[ItineraryDay, ...],
     day_stats: tuple[DayStats, ...],
@@ -217,14 +262,10 @@ def score_time_feasibility(
             score -= 5
         if stats.total_route_seconds > HIGH_TOTAL_ROUTE_SECONDS:
             score -= 3
-    # Check tight transfers against the shared actual-slack signal
+    # Check tight transfers against the shared actual-slack signal,
+    # accumulated per day (B1_C35) with a daily cap.
     for day in days:
-        for leg in day.transit_legs:
-            slack = transfer_slack_minutes(day, leg)
-            if slack < TIGHT_TRANSFER_SLACK_MINUTES:
-                score -= 15
-            if slack < LOW_BUFFER_SLACK_MINUTES:
-                score -= 5
+        score -= daily_transfer_penalty(day)
     return max(0, score)
 
 

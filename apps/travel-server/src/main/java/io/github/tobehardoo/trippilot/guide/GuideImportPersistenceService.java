@@ -72,7 +72,8 @@ public class GuideImportPersistenceService {
                     candidate.contentHash(),
                     candidate.fetchedAt(),
                     persisted.enabled(),
-                    persisted.createdAt()
+                    persisted.createdAt(),
+                    candidate.qualityScore()
             );
             if (mapper.refreshImport(refreshed) != 1) {
                 throw new IllegalStateException("Guide import refresh could not be persisted");

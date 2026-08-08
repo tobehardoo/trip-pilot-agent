@@ -35,7 +35,8 @@ public interface GuideIntelligenceClient {
             List<FetchedTrustedFact> trustedFacts,
             List<FetchedRejectedFact> rejectedFacts,
             List<FetchedMergeDecision> factMergeDecisions,
-            FetchedModelExtraction modelExtraction
+            FetchedModelExtraction modelExtraction,
+            FetchedQualityScore quality
     ) {
         public FetchedGuide(
                 String sourceType,
@@ -67,7 +68,8 @@ public interface GuideIntelligenceClient {
                             0,
                             "MODEL_NOT_RUN",
                             "V1.2-compatible response"
-                    )
+                    ),
+                    null
             );
         }
     }
@@ -147,6 +149,22 @@ public interface GuideIntelligenceClient {
             int attempts,
             String failureCode,
             String failureReason
+    ) {
+    }
+
+    record FetchedQualityScore(
+            int overall,
+            String label,
+            FetchedQualityDimensions dimensions
+    ) {
+    }
+
+    record FetchedQualityDimensions(
+            int factDensity,
+            int categoryCoverage,
+            int strongFactRatio,
+            int conflictRate,
+            int freshnessHealth
     ) {
     }
 }

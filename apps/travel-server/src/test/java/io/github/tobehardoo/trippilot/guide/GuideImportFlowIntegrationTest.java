@@ -475,7 +475,8 @@ class GuideImportFlowIntegrationTest extends PostgresIntegrationTest {
                                 0,
                                 "MODEL_NOT_CONFIGURED",
                                 "structured model provider is not configured"
-                        )
+                        ),
+                null
                 );
             };
         }

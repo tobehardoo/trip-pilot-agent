@@ -15,6 +15,7 @@ public record GuideImportRecord(
         String contentHash,
         Instant fetchedAt,
         boolean enabled,
-        Instant createdAt
+        Instant createdAt,
+        String qualityScore
 ) {
 }

@@ -30,10 +30,11 @@ public interface GuideImportMapper {
     @Insert("""
             INSERT INTO business.guide_import(
                 id, trip_id, source_type, source_url, final_url, source_host, title,
-                excerpt, content_hash, fetched_at, enabled
+                excerpt, content_hash, fetched_at, enabled, quality_score
             ) VALUES (
                 #{id}, #{tripId}, #{sourceType}, #{sourceUrl}, #{finalUrl}, #{sourceHost}, #{title},
-                #{excerpt}, #{contentHash}, #{fetchedAt}, #{enabled}
+                #{excerpt}, #{contentHash}, #{fetchedAt}, #{enabled},
+                CAST(#{qualityScore} AS jsonb)
             )
             ON CONFLICT (trip_id, final_url, content_hash) DO NOTHING
             """)
@@ -274,7 +275,8 @@ public interface GuideImportMapper {
 
     @Select("""
             SELECT id, trip_id, source_type, source_url, final_url, source_host, title,
-                   excerpt, content_hash, fetched_at, enabled, created_at
+                   excerpt, content_hash, fetched_at, enabled, created_at,
+                   quality_score::text AS quality_score
             FROM business.guide_import
             WHERE trip_id = #{tripId}
               AND final_url = #{finalUrl}
@@ -291,7 +293,8 @@ public interface GuideImportMapper {
                    guide_import.source_url,
                    guide_import.final_url, guide_import.source_host, guide_import.title,
                    guide_import.excerpt, guide_import.content_hash,
-                   guide_import.fetched_at, guide_import.enabled, guide_import.created_at
+                   guide_import.fetched_at, guide_import.enabled, guide_import.created_at,
+                   guide_import.quality_score::text AS quality_score
             FROM business.guide_import
             JOIN business.trip ON trip.id = guide_import.trip_id
             WHERE guide_import.trip_id = #{tripId}
@@ -349,7 +352,8 @@ public interface GuideImportMapper {
                    guide_import.source_url,
                    guide_import.final_url, guide_import.source_host, guide_import.title,
                    guide_import.excerpt, guide_import.content_hash,
-                   guide_import.fetched_at, guide_import.enabled, guide_import.created_at
+                   guide_import.fetched_at, guide_import.enabled, guide_import.created_at,
+                   guide_import.quality_score::text AS quality_score
             FROM business.guide_import
             JOIN business.trip ON trip.id = guide_import.trip_id
             WHERE guide_import.id = #{guideImportId}

@@ -18,6 +18,8 @@ import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedMerge
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedModelExtraction;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedNormalizedDocument;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedRejectedFact;
+import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedQualityDimensions;
+import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedQualityScore;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedTrustedFact;
 import io.github.tobehardoo.trippilot.guide.GuideIntelligenceClient.FetchedGuide;
 import io.github.tobehardoo.trippilot.guide.TrustedGuideRecords.FactMergeDecisionRecord;
@@ -162,7 +164,8 @@ public class GuideImportService {
                 fetched.contentHash(),
                 fetched.fetchedAt(),
                 true,
-                null
+                null,
+                qualityJson(fetched.quality())
         );
         GuideImportRecord persisted = persistenceService.persist(
                 ownerId,
@@ -271,7 +274,46 @@ public class GuideImportService {
                 trustedFacts,
                 rejectedFacts,
                 mergeDecisions,
-                normalizedDocument == null ? null : normalizedDocument.modelExtraction()
+                normalizedDocument == null ? null : normalizedDocument.modelExtraction(),
+                parseQuality(record.qualityScore())
+        );
+    }
+
+    private static GuideQualityResponse parseQuality(String qualityJson) {
+        if (qualityJson == null || qualityJson.isBlank()) {
+            return null;
+        }
+        try {
+            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(qualityJson);
+            var dims = node.get("dimensions");
+            return new GuideQualityResponse(
+                    node.get("overall").asInt(),
+                    node.get("label").asText(),
+                    new GuideQualityDimensionsResponse(
+                            dims.get("fact_density").asInt(),
+                            dims.get("category_coverage").asInt(),
+                            dims.get("strong_fact_ratio").asInt(),
+                            dims.get("conflict_rate").asInt(),
+                            dims.get("freshness_health").asInt()
+                    )
+            );
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String qualityJson(FetchedQualityScore quality) {
+        if (quality == null) {
+            return null;
+        }
+        return String.format(
+                "{\"overall\":%d,\"label\":\"%s\",\"dimensions\":{\"fact_density\":%d,"
+                        + "\"category_coverage\":%d,\"strong_fact_ratio\":%d,"
+                        + "\"conflict_rate\":%d,\"freshness_health\":%d}}",
+                quality.overall(), quality.label(),
+                quality.dimensions().factDensity(), quality.dimensions().categoryCoverage(),
+                quality.dimensions().strongFactRatio(), quality.dimensions().conflictRate(),
+                quality.dimensions().freshnessHealth()
         );
     }
 
@@ -549,7 +591,24 @@ public class GuideImportService {
             List<TrustedFactResponse> trustedFacts,
             List<RejectedFactResponse> rejectedFacts,
             List<FactMergeDecisionResponse> factMergeDecisions,
-            ModelExtractionResponse modelExtraction
+            ModelExtractionResponse modelExtraction,
+            GuideQualityResponse quality
+    ) {
+    }
+
+    public record GuideQualityResponse(
+            int overall,
+            String label,
+            GuideQualityDimensionsResponse dimensions
+    ) {
+    }
+
+    public record GuideQualityDimensionsResponse(
+            int factDensity,
+            int categoryCoverage,
+            int strongFactRatio,
+            int conflictRate,
+            int freshnessHealth
     ) {
     }
 

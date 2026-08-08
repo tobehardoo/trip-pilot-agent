@@ -93,3 +93,4 @@ class GuideImportResult:
             failure_reason="trusted fact pipeline was not requested",
         )
     )
+    quality: object | None = None  # GuideQualityScore | None, lazy import to avoid circular dep

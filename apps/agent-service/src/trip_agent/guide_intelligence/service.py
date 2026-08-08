@@ -5,7 +5,7 @@ import logging
 import math
 import os
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -475,9 +475,11 @@ class GuideImportService:
             checked_at=result.fetched_at,
         )
         model_result = await self._extract_model(document, result.fetched_at)
+        all_candidates = (*rule_candidates, *model_result.candidates)
+        security = _apply_security_filter(all_candidates)
         validation = self._validator.validate(
             document,
-            (*rule_candidates, *model_result.candidates),
+            security.passed,
         )
         accepted = (
             tuple(fact_transform(fact) for fact in validation.accepted)
@@ -485,14 +487,20 @@ class GuideImportService:
             else validation.accepted
         )
         merge = self._merger.merge(accepted)
-        return replace(
+        enriched = replace(
             result,
             normalized_document=document,
             trusted_facts=merge.selected_facts,
-            rejected_facts=validation.rejected,
+            rejected_facts=(
+                *security.rejected,
+                *validation.rejected,
+            ),
             merge_decisions=merge.decisions,
             model_extraction=model_result,
         )
+        from trip_agent.guide_intelligence.quality import compute_guide_quality  # noqa: PLC0415
+
+        return replace(enriched, quality=compute_guide_quality(enriched))
     async def _extract_model(
         self,
         document: NormalizedDocument,
@@ -567,6 +575,34 @@ def _candidate_host(source_url: str) -> str:
         return hostname.encode("idna").decode("ascii").lower().rstrip(".")
     except UnicodeError as error:
         raise SourceSecurityError("source URL hostname is invalid") from error
+
+
+@dataclass(frozen=True, slots=True)
+class _SecurityFilterResult:
+    passed: tuple
+    rejected: tuple
+
+
+def _apply_security_filter(
+    candidates: tuple,
+) -> _SecurityFilterResult:
+    from trip_agent.guide_intelligence.security_filter import filter_content  # noqa: PLC0415
+    from trip_agent.guide_intelligence.trusted_facts import (  # noqa: PLC0415
+        RejectedFact,
+        ValidationReason,
+    )
+
+    result = filter_content(candidates)
+    return _SecurityFilterResult(
+        passed=result.passed,
+        rejected=tuple(
+            RejectedFact(
+                candidate=blocked.candidate,
+                reasons=(ValidationReason(code=blocked.rule, message=blocked.detail),),
+            )
+            for blocked in result.blocked
+        ),
+    )
 
 
 def _require_fetched(result: FetchResult) -> ResourceFetched:

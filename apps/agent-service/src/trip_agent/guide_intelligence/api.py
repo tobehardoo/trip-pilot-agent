@@ -115,6 +115,21 @@ class GuideImportResponse(BaseModel):
         alias="factMergeDecisions",
     )
     model_extraction: "ModelExtractionResponse" = Field(alias="modelExtraction")
+    quality: "QualityScoreResponse | None" = Field(default=None)
+
+
+class QualityScoreResponse(BaseModel):
+    overall: int
+    label: str
+    dimensions: "QualityDimensionsResponse"
+
+
+class QualityDimensionsResponse(BaseModel):
+    fact_density: int = Field(alias="factDensity")
+    category_coverage: int = Field(alias="categoryCoverage")
+    strong_fact_ratio: int = Field(alias="strongFactRatio")
+    conflict_rate: int = Field(alias="conflictRate")
+    freshness_health: int = Field(alias="freshnessHealth")
 
 
 class NormalizedDocumentResponse(BaseModel):
@@ -329,6 +344,21 @@ async def import_guide(
             attempts=result.model_extraction.attempts,
             failureCode=result.model_extraction.failure_code,
             failureReason=result.model_extraction.failure_reason,
+        ),
+        quality=(
+            QualityScoreResponse(
+                overall=result.quality.overall,
+                label=result.quality.label,
+                dimensions=QualityDimensionsResponse(
+                    factDensity=result.quality.dimensions.fact_density,
+                    categoryCoverage=result.quality.dimensions.category_coverage,
+                    strongFactRatio=result.quality.dimensions.strong_fact_ratio,
+                    conflictRate=result.quality.dimensions.conflict_rate,
+                    freshnessHealth=result.quality.dimensions.freshness_health,
+                ),
+            )
+            if result.quality is not None
+            else None
         ),
     )
 

@@ -703,7 +703,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void rejectsTransitModeThatCannotFitBetweenItsActivities() throws Exception {
+    void previewsTransitModeThatCannotFitAsRequiringReplanning() throws Exception {
         PlanningContext context = completedItinerary("edit-transit-conflict@example.com");
         JsonNode current = currentItinerary(context);
         UUID versionId = uuid(current, "versionId");
@@ -726,6 +726,11 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .content(transitEditJson(versionId, legId, "TRANSIT", false)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.canApply").value(false))
+                .andExpect(jsonPath("$.requiresReplan").value(true))
+                .andExpect(jsonPath("$.transitSelectionState").value("REQUIRES_REPLAN"))
+                .andExpect(jsonPath("$.impactedDates.length()").value(1))
+                .andExpect(jsonPath("$.impactedActivityIds.length()").value(2))
+                .andExpect(jsonPath("$.warnings[0]").value("The selected transit mode requires schedule replanning"))
                 .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_TRANSIT_CONFLICT"));
 
         mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())

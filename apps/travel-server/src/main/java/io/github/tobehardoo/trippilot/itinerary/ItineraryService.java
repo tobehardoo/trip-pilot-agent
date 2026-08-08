@@ -238,7 +238,8 @@ public class ItineraryService {
     private ItineraryEditPreviewResponse blockedPreview(
             ItineraryEditRequest request, String code, String message) {
         return new ItineraryEditPreviewResponse(
-                request == null ? null : request.operation(), false, List.of(), List.of(), List.of(),
+                request == null ? null : request.operation(), false, false, null,
+                List.of(), List.of(), List.of(),
                 List.of(new EditBlockingReason(code, message))
         );
     }
@@ -374,8 +375,13 @@ public class ItineraryService {
             if (from == null || to == null
                     || Duration.between(from.activity().endTime(), to.activity().startTime()).getSeconds()
                     < durationSeconds) {
-                return EditEvaluation.blocked("ITINERARY_TRANSIT_CONFLICT",
-                        "The selected transit mode does not fit between its activities");
+                return EditEvaluation.requiresReplan(
+                        EditOperation.UPDATE_TRANSIT_LEG,
+                        impacted(location.day(),
+                                List.of(location.leg().fromActivityId(), location.leg().toActivityId()), false),
+                        "ITINERARY_TRANSIT_CONFLICT",
+                        "The selected transit mode does not fit between its activities"
+                );
             }
             BigDecimal updatedCost = estimatedTransitCost(request.transitMode(), location.leg().distanceMeters());
             BigDecimal existingLegCost = location.leg().estimatedCost();
@@ -713,6 +719,8 @@ public class ItineraryService {
     public record ItineraryEditPreviewResponse(
             String operation,
             boolean canApply,
+            boolean requiresReplan,
+            String transitSelectionState,
             List<LocalDate> impactedDates,
             List<UUID> impactedActivityIds,
             List<String> warnings,
@@ -871,15 +879,29 @@ public class ItineraryService {
     private record EditEvaluation(
             EditOperation operation,
             EditImpact impact,
-            EditBlockingReason blockingReason
+            EditBlockingReason blockingReason,
+            boolean requiresReplan,
+            String transitSelectionState
     ) {
         static EditEvaluation allowed(EditOperation operation, EditImpact impact) {
-            return new EditEvaluation(operation, impact, null);
+            String selectionState = operation == EditOperation.UPDATE_TRANSIT_LEG ? "AVAILABLE" : null;
+            return new EditEvaluation(operation, impact, null, false, selectionState);
         }
 
         static EditEvaluation blocked(String code, String message) {
+            String selectionState = "ITINERARY_TRANSIT_LEG_LOCKED".equals(code) ? "USER_LOCKED" : null;
             return new EditEvaluation(null, new EditImpact(List.of(), List.of(), List.of()),
-                    new EditBlockingReason(code, message));
+                    new EditBlockingReason(code, message), false, selectionState);
+        }
+
+        static EditEvaluation requiresReplan(
+                EditOperation operation, EditImpact impact, String code, String message) {
+            EditImpact replanImpact = new EditImpact(
+                    impact.dates(), impact.activityIds(),
+                    List.of("The selected transit mode requires schedule replanning")
+            );
+            return new EditEvaluation(operation, replanImpact,
+                    new EditBlockingReason(code, message), true, "REQUIRES_REPLAN");
         }
 
         boolean canApply() {
@@ -888,7 +910,8 @@ public class ItineraryService {
 
         ItineraryEditPreviewResponse toPreview(String requestedOperation) {
             return new ItineraryEditPreviewResponse(
-                    requestedOperation, canApply(), impact.dates(), impact.activityIds(), impact.warnings(),
+                    requestedOperation, canApply(), requiresReplan, transitSelectionState,
+                    impact.dates(), impact.activityIds(), impact.warnings(),
                     canApply() ? List.of() : List.of(blockingReason)
             );
         }

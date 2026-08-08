@@ -33,9 +33,9 @@ app:
     event-consumer-enabled: ${EVENT_CONSUMER_ENABLED:true}
   agent:
     base-url: ${AGENT_SERVICE_BASE_URL:http://localhost:8090}
-    internal-token: ${AGENT_INTERNAL_TOKEN:local-development-only}
+    internal-token: ${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN is required}
   diagnostics:
-    internal-token: ${INTERNAL_DIAGNOSTICS_TOKEN:${AGENT_INTERNAL_TOKEN:local-development-only}}
+    internal-token: ${INTERNAL_DIAGNOSTICS_TOKEN:?INTERNAL_DIAGNOSTICS_TOKEN is required}
   city-intelligence:
     planning-wait-timeout: ${CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT:PT2S}
 

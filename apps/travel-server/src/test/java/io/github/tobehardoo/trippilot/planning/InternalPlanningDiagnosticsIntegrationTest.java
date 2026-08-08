@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class InternalPlanningDiagnosticsIntegrationTest extends PostgresIntegrationTest {
 
-    private static final String INTERNAL_TOKEN = "local-development-only";
+    private static final String INTERNAL_TOKEN = "integration-test-token";
 
     @Autowired
     private MockMvc mockMvc;

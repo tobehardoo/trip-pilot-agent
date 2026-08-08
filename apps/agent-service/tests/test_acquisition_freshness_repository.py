@@ -11,6 +11,7 @@ import pytest
 from trip_agent.acquisition import PsycopgAcquisitionRepository
 from trip_agent.acquisition.cli import main
 from trip_agent.acquisition.models import resource_id_for
+from trip_agent.acquisition.registry import SourceCatalog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -140,10 +141,23 @@ def test_freshness_cli_reports_all_configured_resources(
 
     assert exit_code == 0
     assert payload["status"] == "STALE"
-    assert payload["source_count"] == 1
-    assert payload["resource_count"] == 3
-    assert payload["stale_resource_count"] == 3
-    assert {
-        resource["stale_reason"]
-        for resource in payload["sources"][0]["resources"]
-    } == {"NEVER_ATTEMPTED"}
+    # The freshness report reflects the currently configured source registry
+    # (all source TOML files under knowledge/sources/), not a historical
+    # hard-coded count.  Load the same directory independently so the
+    # expectation stays aligned with configuration without being tautological.
+    catalog = SourceCatalog.load_directory(PROJECT_ROOT / "knowledge" / "sources")
+    assert payload["source_count"] == len(catalog.sources)
+    assert payload["resource_count"] == sum(
+        len(source.resource_urls) for source in catalog.sources
+    )
+    assert payload["stale_resource_count"] == payload["resource_count"]
+    # Every configured source must be reported, and every resource of every
+    # source is stale because nothing has ever been fetched.
+    assert {source["source_id"] for source in payload["sources"]} == {
+        source.source_id for source in catalog.sources
+    }
+    for source in payload["sources"]:
+        assert {
+            resource["stale_reason"]
+            for resource in source["resources"]
+        } == {"NEVER_ATTEMPTED"}

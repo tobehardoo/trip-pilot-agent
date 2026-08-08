@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 from jsonschema import Draft202012Validator
+from jsonschema import ValidationError as JsonSchemaValidationError
 from test_planning_context_v3 import _v3_command
 
 from trip_agent.worker.contracts import (
@@ -91,6 +92,19 @@ def test_v8_completed_event_contract_accepts_worker_output() -> None:
     Draft202012Validator(schema).validate(
         event.model_dump(mode="json", by_alias=True, exclude_none=True)
     )
+
+
+def test_v1_evaluation_schema_rejects_not_applicable_dimensions() -> None:
+    fixture = json.loads(
+        (COMPLETION_V6_FIXTURE_DIRECTORY / "completion-v6-evaluation-clean.json")
+        .read_text(encoding="utf-8")
+    )
+    fixture["payload"]["evaluation"]["dimensions"]["budgetFit"] = None
+
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(
+            _load_schema("planning-completed-event-v6.schema.json")
+        ).validate(fixture)
 
 
 @pytest.mark.parametrize(
@@ -226,6 +240,28 @@ def test_progress_event_model_matches_its_json_schema() -> None:
             progress=5,
             message="Planning task accepted",
             statistics={"tripDays": 3},
+        ),
+    )
+
+    schema = _load_schema("planning-progress-event-v1.schema.json")
+    Draft202012Validator(schema).validate(event.model_dump(mode="json", by_alias=True))
+
+
+def test_publishing_progress_stage_matches_its_json_schema() -> None:
+    event = PlanningProgressEvent(
+        event_type="PLANNING_PROGRESS",
+        schema_version=1,
+        event_id=UUID("5aa31052-2c21-53af-bddb-6a86614d801b"),
+        trace_id=UUID("ea930620-41a7-4fdc-b6d1-d298a850112a"),
+        task_id=UUID("dfb858fc-b910-4056-a375-2366dcaab690"),
+        trip_id=UUID("d209daf2-f004-42cc-8385-510825f40fe1"),
+        occurred_at=datetime(2026, 7, 27, 8, 0, tzinfo=UTC),
+        payload=PlanningProgressPayload(
+            stage="RESULT_PUBLISHING",
+            sequence=7,
+            progress=95,
+            message="Publishing planning result",
+            statistics={},
         ),
     )
 

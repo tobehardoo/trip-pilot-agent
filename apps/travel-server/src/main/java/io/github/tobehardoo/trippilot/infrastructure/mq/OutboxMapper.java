@@ -53,4 +53,14 @@ public interface OutboxMapper {
                    @Param("retryCount") int retryCount,
                    @Param("nextAttemptAt") Instant nextAttemptAt,
                    @Param("lastError") String lastError);
+
+    @Update("""
+            UPDATE business.outbox_event
+            SET status = 'DEAD', retry_count = #{retryCount},
+                last_error = #{lastError}
+            WHERE id = #{id} AND status = 'PENDING'
+            """)
+    int markDead(@Param("id") UUID id,
+                 @Param("retryCount") int retryCount,
+                 @Param("lastError") String lastError);
 }

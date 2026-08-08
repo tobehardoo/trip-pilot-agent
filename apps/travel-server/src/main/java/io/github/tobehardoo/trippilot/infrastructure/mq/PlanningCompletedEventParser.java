@@ -383,8 +383,9 @@ public class PlanningCompletedEventParser {
             return;
         }
         if ((event.schemaVersion() != 6 && event.schemaVersion() != 8)
-                || evaluation.schemaVersion() != 1) {
-            throw invalid("evaluation schemaVersion must be 1");
+                || (evaluation.schemaVersion() != 1
+                && evaluation.schemaVersion() != 2)) {
+            throw invalid("evaluation schemaVersion must be 1 or 2");
         }
         if (evaluation.evaluatorVersion() == null
                 || !evaluation.evaluatorVersion().matches("^rule-v\\d+$")) {
@@ -404,18 +405,26 @@ public class PlanningCompletedEventParser {
         if (dims == null
                 || dims.constraintSatisfaction() < 0 || dims.constraintSatisfaction() > 100
                 || dims.timeFeasibility() < 0 || dims.timeFeasibility() > 100
-                || dims.budgetFit() < 0 || dims.budgetFit() > 100
                 || dims.routeEfficiency() < 0 || dims.routeEfficiency() > 100
-                || dims.interestMatch() < 0 || dims.interestMatch() > 100) {
+                || !validOptionalScore(dims.budgetFit())
+                || !validOptionalScore(dims.interestMatch())
+                || (evaluation.schemaVersion() == 1
+                && (dims.budgetFit() == null || dims.interestMatch() == null))) {
             throw invalid("evaluation dimension scores must be 0-100");
         }
-        int expectedOverall = (int) Math.round(
-                dims.constraintSatisfaction() * 0.30
-                + dims.timeFeasibility() * 0.25
-                + dims.budgetFit() * 0.15
-                + dims.routeEfficiency() * 0.15
-                + dims.interestMatch() * 0.15
-        );
+        int numerator = dims.constraintSatisfaction() * 30
+                + dims.timeFeasibility() * 25
+                + dims.routeEfficiency() * 15;
+        int totalWeight = 70;
+        if (dims.budgetFit() != null) {
+            numerator += dims.budgetFit() * 15;
+            totalWeight += 15;
+        }
+        if (dims.interestMatch() != null) {
+            numerator += dims.interestMatch() * 15;
+            totalWeight += 15;
+        }
+        int expectedOverall = (numerator + totalWeight / 2) / totalWeight;
         if (evaluation.overallScore() != expectedOverall) {
             throw invalid("evaluation overallScore must match weighted dimensions");
         }
@@ -452,6 +461,10 @@ public class PlanningCompletedEventParser {
                 }
             }
         }
+    }
+
+    private boolean validOptionalScore(Integer score) {
+        return score == null || (score >= 0 && score <= 100);
     }
 
     private void validateProviderProvenance(PlanningCompletedEvent event) {

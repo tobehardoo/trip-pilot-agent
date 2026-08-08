@@ -206,9 +206,9 @@ public record PlanningCompletedEvent(
     public record EvaluationDimensions(
             int constraintSatisfaction,
             int timeFeasibility,
-            int budgetFit,
+            Integer budgetFit,
             int routeEfficiency,
-            int interestMatch
+            Integer interestMatch
     ) {
     }
 

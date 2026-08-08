@@ -79,6 +79,33 @@ class PlanningCompletedEventParserTest {
     }
 
     @Test
+    void acceptsV2EvaluationWithNormalizedNotApplicableDimensions() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedV6Fixture(
+                        "completion-v6-evaluation-clean.json"
+                )
+        );
+        ObjectNode evaluation = (ObjectNode) event.at("/payload/evaluation");
+        evaluation.put("schemaVersion", 2);
+        evaluation.put("evaluatorVersion", "rule-v2");
+        evaluation.put("overallScore", 84);
+        ((ObjectNode) evaluation.path("dimensions"))
+                .put("constraintSatisfaction", 100)
+                .put("timeFeasibility", 80)
+                .putNull("budgetFit")
+                .put("routeEfficiency", 60)
+                .putNull("interestMatch");
+
+        PlanningCompletedEvent parsed = parser.parse(
+                objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.payload().evaluation().schemaVersion()).isEqualTo(2);
+        assertThat(parsed.payload().evaluation().overallScore()).isEqualTo(84);
+        assertThat(parsed.payload().evaluation().dimensions().budgetFit()).isNull();
+        assertThat(parsed.payload().evaluation().dimensions().interestMatch()).isNull();
+    }
+
+    @Test
     void rejectsEvaluationValuesOutsideTheSharedSchemaEnumsAndCardinality()
             throws Exception {
         ObjectNode invalidWarning = evaluationFixture("completion-v6-evaluation-warnings.json");

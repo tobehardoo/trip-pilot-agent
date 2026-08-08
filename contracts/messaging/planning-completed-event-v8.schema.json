@@ -500,7 +500,7 @@
         "summary", "evaluatedAt"
       ],
       "properties": {
-        "schemaVersion": {"const": 1},
+        "schemaVersion": {"enum": [1, 2]},
         "evaluatorVersion": {"type": "string", "pattern": "^rule-v\\d+$"},
         "feasible": {"const": true},
         "overallScore": {"type": "integer", "minimum": 0, "maximum": 100},
@@ -514,9 +514,9 @@
           "properties": {
             "constraintSatisfaction": {"type": "integer", "minimum": 0, "maximum": 100},
             "timeFeasibility": {"type": "integer", "minimum": 0, "maximum": 100},
-            "budgetFit": {"type": "integer", "minimum": 0, "maximum": 100},
+            "budgetFit": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
             "routeEfficiency": {"type": "integer", "minimum": 0, "maximum": 100},
-            "interestMatch": {"type": "integer", "minimum": 0, "maximum": 100}
+            "interestMatch": {"type": ["integer", "null"], "minimum": 0, "maximum": 100}
           }
         },
         "warnings": {
@@ -529,7 +529,22 @@
         },
         "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
         "evaluatedAt": {"type": "string", "format": "date-time"}
-      }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"schemaVersion": {"const": 1}}},
+          "then": {
+            "properties": {
+              "dimensions": {
+                "properties": {
+                  "budgetFit": {"type": "integer"},
+                  "interestMatch": {"type": "integer"}
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "evaluationWarning": {
       "type": "object",

@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class TransactionalOutboxPublicationAttempt implements OutboxPublicationAttempt {
 
     private static final int MAX_ERROR_LENGTH = 500;
+    private static final int MAX_ATTEMPTS = 10;
     private static final long MAX_RETRY_DELAY_SECONDS = 300;
 
     private final OutboxMapper outboxMapper;
@@ -42,10 +43,14 @@ public class TransactionalOutboxPublicationAttempt implements OutboxPublicationA
             }
         } catch (RuntimeException exception) {
             int retryCount = event.retryCount() + 1;
-            long delaySeconds = Math.min(1L << Math.min(event.retryCount(), 8), MAX_RETRY_DELAY_SECONDS);
-            outboxMapper.reschedule(
-                    event.id(), retryCount, now.plusSeconds(delaySeconds), errorMessage(exception)
-            );
+            if (retryCount > MAX_ATTEMPTS) {
+                outboxMapper.markDead(event.id(), retryCount, errorMessage(exception));
+            } else {
+                long delaySeconds = Math.min(1L << Math.min(event.retryCount(), 8), MAX_RETRY_DELAY_SECONDS);
+                outboxMapper.reschedule(
+                        event.id(), retryCount, now.plusSeconds(delaySeconds), errorMessage(exception)
+                );
+            }
         }
     }
 

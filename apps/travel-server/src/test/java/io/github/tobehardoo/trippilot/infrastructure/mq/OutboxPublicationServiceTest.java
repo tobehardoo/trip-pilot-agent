@@ -58,6 +58,25 @@ class OutboxPublicationServiceTest {
     }
 
     @Test
+    void marksEventDeadWhenMaxAttemptsExceeded() {
+        OutboxEventRecord failing = event(10);
+        FakeOutboxMapper mapper = new FakeOutboxMapper(List.of(failing));
+        TransactionalOutboxPublicationAttempt attempt = new TransactionalOutboxPublicationAttempt(
+                mapper, event -> { throw new RuntimeException("persistent failure"); }, CLOCK
+        );
+
+        boolean processed = attempt.publishNext();
+
+        assertThat(processed).isTrue();
+        assertThat(mapper.sentAt).isEmpty();
+        assertThat(mapper.retries).isEmpty();
+        assertThat(mapper.dead).containsKey(failing.id());
+        RetryUpdate dead = mapper.dead.get(failing.id());
+        assertThat(dead.retryCount()).isEqualTo(11);
+        assertThat(dead.lastError()).isEqualTo("persistent failure");
+    }
+
+    @Test
     void batchOrchestratorContinuesUntilNoEventIsReady() {
         AtomicInteger calls = new AtomicInteger();
         OutboxPublicationService service = new OutboxPublicationService(
@@ -101,6 +120,7 @@ class OutboxPublicationServiceTest {
         private final List<Integer> requestedBatchSizes = new ArrayList<>();
         private final Map<UUID, Instant> sentAt = new HashMap<>();
         private final Map<UUID, RetryUpdate> retries = new HashMap<>();
+        private final Map<UUID, RetryUpdate> dead = new HashMap<>();
 
         private FakeOutboxMapper(List<OutboxEventRecord> ready) {
             this.ready = ready;
@@ -126,6 +146,12 @@ class OutboxPublicationServiceTest {
         @Override
         public int reschedule(UUID id, int retryCount, Instant nextAttemptAt, String lastError) {
             retries.put(id, new RetryUpdate(retryCount, nextAttemptAt, lastError));
+            return 1;
+        }
+
+        @Override
+        public int markDead(UUID id, int retryCount, String lastError) {
+            dead.put(id, new RetryUpdate(retryCount, null, lastError));
             return 1;
         }
     }

@@ -3,6 +3,9 @@
 from datetime import date, datetime
 from decimal import Decimal
 
+import pytest
+
+import trip_agent.planning.daily_schedule as daily_schedule_module
 from trip_agent.domain.shared import CHINA_TIME_ZONE
 from trip_agent.planning.daily_schedule import (
     CandidateActivity,
@@ -357,3 +360,89 @@ def test_meal_demands_always_reserve_time_even_without_restaurant() -> None:
     assert all(item.meal is not None for item in meal_items)
     # reserved span is exactly one hour
     assert all(item.end_minute - item.start_minute == 60 for item in meal_items)
+
+
+# ── B4A: primary_region exposure -------------------------------------------
+
+
+def test_plan_day_exposes_primary_region_from_single_region() -> None:
+    candidates = tuple(
+        _candidate(f"poi-{index}", f"景点{index}", "NORMAL", region="越秀区") for index in range(3)
+    )
+    plan = plan_day(
+        trip_date=MID,
+        start_date=START,
+        end_date=END,
+        arrival=None,
+        departure=None,
+        accommodation_known=True,
+        candidates=candidates,
+    )
+    assert plan.primary_region == "越秀区"
+
+
+def test_plan_day_primary_region_favours_majority_region() -> None:
+    candidates = (
+        _candidate("a-1", "A景点", "NORMAL", region="越秀区"),
+        _candidate("a-2", "A2景点", "NORMAL", region="越秀区"),
+        _candidate("a-3", "A3景点", "NORMAL", region="越秀区"),
+        _candidate("b-1", "B景点", "NORMAL", region="天河区"),
+    )
+    plan = plan_day(
+        trip_date=MID,
+        start_date=START,
+        end_date=END,
+        arrival=None,
+        departure=None,
+        accommodation_known=True,
+        candidates=candidates,
+    )
+    assert plan.primary_region == "越秀区"
+
+
+def test_plan_day_primary_region_is_none_without_regions() -> None:
+    candidates = (
+        _candidate("n-1", "A景点", "NORMAL", region=None),
+        _candidate("n-2", "B景点", "NORMAL", region=None),
+    )
+    plan = plan_day(
+        trip_date=MID,
+        start_date=START,
+        end_date=END,
+        arrival=None,
+        departure=None,
+        accommodation_known=True,
+        candidates=candidates,
+    )
+    assert plan.primary_region is None
+
+
+def test_no_usable_day_window_has_no_primary_region(monkeypatch) -> None:
+    monkeypatch.setattr(
+        daily_schedule_module, "day_window_minutes", lambda *args, **kwargs: (1200, 600)
+    )
+    plan = plan_day(
+        trip_date=MID,
+        start_date=START,
+        end_date=END,
+        arrival=None,
+        departure=None,
+        accommodation_known=True,
+        candidates=(_candidate("a-1", "A", "NORMAL", region="越秀区"),),
+    )
+    assert plan.warnings == ("NO_USABLE_DAY_WINDOW",)
+    assert plan.primary_region is None
+
+
+def test_day_plan_remains_frozen() -> None:
+    plan = plan_day(
+        trip_date=MID,
+        start_date=START,
+        end_date=END,
+        arrival=None,
+        departure=None,
+        accommodation_known=True,
+        candidates=(_candidate("a-1", "A", "NORMAL", region="越秀区"),),
+    )
+    with pytest.raises(AttributeError):
+        plan.primary_region = "天河区"  # type: ignore[misc]

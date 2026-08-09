@@ -2,18 +2,58 @@
 
 import asyncio
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from uuid import UUID
 
+import pytest
 from test_planning_worker import COMMAND
 
+from trip_agent.domain.planning.protocols import (
+    PlanningInfeasibleError,
+    PlanningResult,
+)
 from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider
+from trip_agent.planning.trip_skeleton import (
+    AccommodationState,
+    AreaEstimatedAccommodation,
+    ConfirmedAccommodation,
+    UnresolvedAccommodation,
+)
 from trip_agent.providers.map import (
     Coordinates,
     Poi,
     ProviderSuccess,
 )
 from trip_agent.providers.route import RoutePlan, RouteStep
-from trip_agent.worker.contracts import PlanningCreateCommand
+from trip_agent.worker.contracts import (
+    Itinerary,
+    ItineraryActivity,
+    ItineraryDay,
+    PlanningCreateCommand,
+)
+
+
+def _minimal_itinerary() -> Itinerary:
+    activity = ItineraryActivity(
+        activity_id=UUID("3d76fb9e-362e-4b28-8a9e-18e8ac7050ad"),
+        title="t",
+        start_time=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
+        end_time=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
+        estimated_cost=Decimal("0"),
+        source="DEMO",
+    )
+    return Itinerary(
+        title="t",
+        days=(
+            ItineraryDay(
+                date=date(2026, 8, 1),
+                activities=(activity,),
+                transit_legs=(),
+            ),
+        ),
+        estimated_total_cost=Decimal("0"),
+    )
 
 
 def _poi(provider_id: str, name: str, *, district: str = "越秀区") -> Poi:
@@ -407,3 +447,128 @@ def test_must_visit_matches_only_the_named_place_not_sub_pois() -> None:
     assert provider._is_must_visit_poi(_poi("g3", "光孝寺-六祖殿"), must_set) is False
     assert provider._is_must_visit_poi(_poi("g4", "光孝寺售票处"), must_set) is False
     assert provider._is_must_visit_poi(_poi("g5", "广州塔"), must_set) is False
+
+
+# ── B4A: transient trip skeleton on PlanningResult ─────────────────────────
+
+
+def test_planning_result_defaults_trip_skeleton_to_none() -> None:
+    result = PlanningResult(provider="DEMO", itinerary=_minimal_itinerary())
+
+    assert result.trip_skeleton is None
+
+
+def test_demo_provider_result_trip_skeleton_stays_none() -> None:
+    from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
+
+    result = asyncio.run(DemoPlanningProvider().plan(_command()))
+
+    assert result.trip_skeleton is None
+
+
+def test_amap_result_carries_transient_trip_skeleton() -> None:
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    result = asyncio.run(_provider(pois).plan(_command()))
+
+    assert result.trip_skeleton is not None
+    assert result.trip_skeleton.day_count == 3
+    assert result.trip_skeleton.night_count == 2
+
+
+def test_amap_skeleton_dates_match_itinerary_dates() -> None:
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    result = asyncio.run(_provider(pois).plan(_command()))
+
+    skeleton_dates = [day.date for day in result.trip_skeleton.days]
+    itinerary_dates = [day.date for day in result.itinerary.days]
+    assert skeleton_dates == itinerary_dates
+
+
+def test_amap_skeleton_confirmed_when_hotel_resolved() -> None:
+    hotel = _poi("hotel-1", "广州花园酒店", district="越秀区")
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"))
+    result = asyncio.run(
+        _provider(pois, accommodation_poi=hotel).plan(
+            _command(accommodation={"placeName": "广州花园酒店"})
+        )
+    )
+
+    assert result.trip_skeleton is not None
+    assert result.trip_skeleton.night_count == 2
+    assert result.trip_skeleton.accommodation_states == (
+        AccommodationState.CONFIRMED,
+        AccommodationState.CONFIRMED,
+    )
+    for overnight in result.trip_skeleton.overnights:
+        assert isinstance(overnight.accommodation, ConfirmedAccommodation)
+        assert overnight.accommodation.provider_poi_id == "hotel-1"
+
+
+def test_amap_skeleton_area_estimated_without_accommodation_request() -> None:
+    pois = tuple(_poi(f"p{index}", f"景点{index}", district="越秀区") for index in range(1, 8))
+    result = asyncio.run(_provider(pois).plan(_command(accommodation=None)))
+
+    assert result.trip_skeleton is not None
+    assert all(
+        isinstance(overnight.accommodation, AreaEstimatedAccommodation)
+        for overnight in result.trip_skeleton.overnights
+    )
+    assert result.trip_skeleton.accommodation_states == (
+        AccommodationState.AREA_ESTIMATED,
+        AccommodationState.AREA_ESTIMATED,
+    )
+
+
+def test_amap_skeleton_unresolved_when_no_region_available() -> None:
+    pois = (
+        _poi("p1", "越秀公园", district=""),
+        _poi("p2", "陈家祠", district=""),
+        _poi("p3", "广州塔", district=""),
+    )
+    result = asyncio.run(_provider(pois).plan(_command(accommodation=None)))
+
+    assert result.trip_skeleton is not None
+    assert all(
+        isinstance(overnight.accommodation, UnresolvedAccommodation)
+        for overnight in result.trip_skeleton.overnights
+    )
+
+
+def test_amap_single_day_skeleton_has_zero_nights() -> None:
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"))
+    result = asyncio.run(_provider(pois).plan(_command(start="2026-08-01", end="2026-08-01")))
+
+    assert result.trip_skeleton is not None
+    assert result.trip_skeleton.day_count == 1
+    assert result.trip_skeleton.night_count == 0
+    assert result.trip_skeleton.overnights == ()
+
+
+def test_v8_completion_json_has_no_trip_skeleton() -> None:
+    import json
+
+    from trip_agent.worker.processor import process_planning_create
+
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    completed = asyncio.run(process_planning_create(_command(), _provider(pois)))
+    assert completed.schema_version == 8
+    payload = json.loads(completed.model_dump_json(by_alias=True, exclude_none=True))
+    assert "tripSkeleton" not in json.dumps(payload)
+
+
+# ── B4A.1: strict accommodation anchor characterization ─────────────────────
+
+
+def test_strict_anchor_failure_when_requested_hotel_not_found() -> None:
+    """Characterization: AMap create fails hard on an unresolvable explicit
+    accommodation request; it never returns an UNRESOLVED TripSkeleton."""
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    with pytest.raises(PlanningInfeasibleError) as exc_info:
+        asyncio.run(
+            _provider(pois).plan(
+                _command(accommodation={"placeName": "查无此酒店"})
+            )
+        )
+
+    codes = {conflict.code for conflict in exc_info.value.conflicts}
+    assert "TRAVEL_ANCHOR_UNAVAILABLE" in codes

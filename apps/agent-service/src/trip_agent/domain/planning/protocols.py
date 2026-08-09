@@ -6,7 +6,7 @@ importing the entire worker module.
 """
 
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from trip_agent.providers.errors import PlanningProviderError  # noqa: F401
@@ -19,6 +19,9 @@ from trip_agent.worker.contracts import (
     PlanningReplanCommand,
     ProviderProvenance,
 )
+
+if TYPE_CHECKING:
+    from trip_agent.planning.trip_skeleton import TripSkeleton
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +90,9 @@ class PlanningResult:
     fallback_reason: str | None = None
     fallback_operations: tuple[FallbackOperation, ...] = ()
     evaluation: object | None = None  # PlanEvaluation — lazy import to avoid cycle
+    # B4A: transient planning-only aggregate.  Never enters messaging,
+    # persistence or API surfaces; worker/processor currently ignores it.
+    trip_skeleton: "TripSkeleton | None" = None
 
     def provider_provenance(self) -> ProviderProvenance | None:
         if self.requested_provider_mode is None:

@@ -171,6 +171,10 @@ class DayPlan:
     origin: VirtualDayOrigin | None
     accommodation_unknown: bool
     warnings: tuple[str, ...]
+    # B4A: the day's dominant region, derived by the existing weighted
+    # majority algorithm; None when no candidate/fixed item carries a
+    # region.  Used by the transient AMap accommodation projection only.
+    primary_region: str | None = None
 
 
 def classify_day_type(
@@ -451,6 +455,7 @@ def plan_day(
             items=(), meal_demands=(), origin=None,
             accommodation_unknown=not accommodation_known,
             warnings=("NO_USABLE_DAY_WINDOW",),
+            primary_region=None,
         )
 
     time_fixed = tuple(c for c in candidates if c.time_fixed)
@@ -509,6 +514,7 @@ def plan_day(
         items=items, meal_demands=meal_demands, origin=origin,
         accommodation_unknown=not accommodation_known,
         warnings=tuple(warnings),
+        primary_region=primary_region,
     )
 
 

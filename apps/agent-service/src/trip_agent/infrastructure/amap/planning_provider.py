@@ -36,6 +36,9 @@ from trip_agent.guide_intelligence.travel_entities import (
     TravelEntityLocation,
     build_attraction,
 )
+from trip_agent.infrastructure.amap.accommodation_projection import (
+    project_amap_trip_skeleton,
+)
 from trip_agent.planning.candidates import CandidateRanker
 from trip_agent.planning.daily_schedule import (
     CandidateActivity,
@@ -311,6 +314,7 @@ class AmapPlanningProvider:
         route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]] = {}
         route_calls = [0]
         itinerary_days: list[ItineraryDay] = []
+        day_plans: list[DayPlan] = []
         warnings: list[str] = []
         total_cost = Decimal("0")
         context = command.payload.planning_context
@@ -385,6 +389,10 @@ class AmapPlanningProvider:
                     if candidate.poi_id != rejected_poi_id
                 )
             itinerary_days.append(day)
+            # B4A: keep only the mobility-repair-final day plan; intermediate
+            # repair attempts are discarded so the skeleton matches the
+            # itinerary that was actually emitted.
+            day_plans.append(day_plan)
             total_cost += day_cost
             warnings.extend(day_warnings)
             placed_on_day = {
@@ -466,6 +474,18 @@ class AmapPlanningProvider:
             days=tuple(itinerary_days),
             estimated_total_cost=total_cost,
         )
+        # B4A: transient accommodation projection — provider → TripSkeleton.
+        # Not persisted, not emitted on any message contract; the worker
+        # currently ignores this field.
+        trip_skeleton = project_amap_trip_skeleton(
+            day_plans=tuple(day_plans),
+            requested_accommodation_label=(
+                constraints.accommodation.place_name
+                if constraints.accommodation is not None
+                else None
+            ),
+            resolved_accommodation=anchors.accommodation,
+        )
         return PlanningResult(
             provider="AMAP",
             itinerary=itinerary,
@@ -479,6 +499,7 @@ class AmapPlanningProvider:
                 "ROUTE_PROVIDER_FAILURE" if fallback_operations else None
             ),
             fallback_operations=fallback_operations,
+            trip_skeleton=trip_skeleton,
         )
 
     @staticmethod

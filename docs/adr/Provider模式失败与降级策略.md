@@ -18,7 +18,7 @@
 - `REAL_ONLY`：要求配置 AMap Key；构造 `AmapPlanningProvider`，不创建 `FallbackPlanningProvider` 或 `DemoRouteProvider`；每次失败都是失败。
 - `REAL_WITH_EXPLICIT_FALLBACK`：同时构造真实和 Demo Provider，但仅通过 `ProviderFallbackPolicy` 授权降级。
 
-生产环境默认为 `REAL_ONLY`。本地无凭据开发默认为 `DEMO_ONLY`。
+当前项目本地无凭据运行默认为 `DEMO_ONLY`。拥有合法凭据并明确要求真实结果时使用 `REAL_ONLY`；如果未来公开提供服务，必须重新评估 Provider 配置，并禁止把真实调用失败静默包装成 Demo 成功。
 
 ## 4. 错误分类
 

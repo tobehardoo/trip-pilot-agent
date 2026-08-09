@@ -2,7 +2,7 @@
 
 - 文档状态：生效中
 - 负责模块：agent-service
-- 最后更新：2026-08-05
+- 最后更新：2026-08-09
 - 当前事实来源：是
 - 相关决策记录：
   - [Provider 模式与降级策略 ADR](../adr/Provider模式失败与降级策略.md)
@@ -28,7 +28,7 @@ TripPilot 支持三种外部数据 Provider 的集成模式。Provider 负责提
 
 ### REAL_ONLY
 
-- 生产环境默认模式。
+- 本地显式启用真实 Provider 时使用。
 - 要求配置真实 `AMAP_WEB_SERVICE_KEY`。
 - 完全使用真实 Provider，失败即失败。
 - 不构造或调用任何 Demo Provider。
@@ -36,10 +36,10 @@ TripPilot 支持三种外部数据 Provider 的集成模式。Provider 负责提
 
 ### REAL_WITH_EXPLICIT_FALLBACK
 
-- 仅供内部演示或容错验证使用。
+- 仅供降级策略调试或容错验证使用。
 - 同时构造真实和 Demo Provider。
 - 降级仅在 `ProviderFallbackPolicy` 集中白名单明确允许时发生。
-- Production 不应使用此模式。
+- 普通本地体验应直接使用 `DEMO_ONLY`，需要严格真实结果时使用 `REAL_ONLY`。
 
 ## 高德地图（AMap）集成
 
@@ -54,7 +54,7 @@ TripPilot 支持三种外部数据 Provider 的集成模式。Provider 负责提
 
 - 使用独立的 Web JS Key（`VITE_AMAP_WEB_JS_KEY`）和安全密钥（`VITE_AMAP_SECURITY_CODE`）。
 - Key、安全密钥和域名白名单必须属于同一高德应用。
-- 最终浏览器域名能加载真实底图，缺 Key 或失败时页面显示降级视图而非空白。
+- 使用真实底图的浏览器来源需要在高德控制台允许；缺 Key 或失败时页面显示降级视图而非空白。
 
 ### Key 分离原则
 
@@ -115,7 +115,7 @@ Provider 可能提供开放时间与游玩时长证据，这些属于**事实层
 
 - 有可靠开放时间/时长时作为优先事实，并记录来源与新鲜度（随事实快照冻结）。
 - Provider 缺失时按 POI 类别、规模和场景使用版本化默认区间（见[行程真实性与旅行骨架](行程真实性与旅行骨架.md)）。
-- 已确认的开放时间冲突属于 Hard Validation 硬规则；Provider 无开放时间时计划是否可标"已验证"是未决问题。
+- 营业时间证据已区分 VERIFIED、CONFLICTING、STALE 和 UNKNOWN；只有符合资格的已验证事实可进入未来 Hard Validation，冲突、过期或未知状态不得伪装成硬结论。
 
 ## Provider 与领域策略边界
 
@@ -185,7 +185,7 @@ Provider 可能提供开放时间与游玩时长证据，这些属于**事实层
 
 ## 已知限制
 
-- 当前真实验收覆盖广州 POI、步行和驾车路线。
+- 当前真实 Provider 的开发验证主要覆盖广州 POI、步行和驾车路线。
 - 公交路线未验证。
 - 其他城市未纳入真实 Provider 证据。
 - QWeather 授权/署名和 fxLink 展示要求需依据实际套餐条款单独确认。

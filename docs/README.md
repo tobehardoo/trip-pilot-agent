@@ -1,20 +1,13 @@
-# TripPilot 文档入口
+# TripPilot 文档
 
-> 本文档已被 [docs/index.md](index.md) 替代，保留作为兼容入口。
+当前文档以**小型个人项目、本地优先运行**为统一口径。默认使用 `DEMO_ONLY`，真实 Provider 是可选增强；公网部署不是当前目标。
 
-请访问新的统一文档中心：
+- [文档中心](index.md)：按阅读目的导航全部生效文档
+- [产品概述](product/产品概述.md)：项目定位、能力边界和完成标准
+- [项目路线图](product/项目路线图.md)：已完成事项、近期优先级与风险
+- [本地运行指南](operations/本地运行指南.md)：使用 Docker Compose 体验完整系统
+- [本地开发指南](development/本地开发指南.md)：按服务开发与调试
+- [测试策略](development/测试策略.md)：本地与 CI 质量门禁
+- [历史归档](archive/README.md)：只保留历史背景，不作为当前事实来源
 
-- **[文档中心](index.md)** — 按阅读目标组织的完整文档导航
-
-## 快速入口
-
-| 目标 | 文档 |
-| --- | --- |
-| 了解项目 | [产品概述](product/产品概述.md) |
-| 了解架构 | [系统架构](architecture/系统架构.md) |
-| 规划领域 | [行程真实性与旅行骨架](architecture/行程真实性与旅行骨架.md) |
-| 本地开发 | [本地开发指南](development/本地开发指南.md) |
-| 部署运维 | [部署指南](operations/部署指南.md) |
-| 技术决策 | [ADR 索引](adr/README.md) |
-| 项目规划 | [项目路线图](product/项目路线图.md) |
-| 历史文档 | [历史归档](archive/README.md) |
+维护文档时优先更新[文档中心](index.md)列出的当前事实来源。历史发布、staging 和部署材料保留在归档或 Git 历史中，不应重新成为本地项目的完成门槛。

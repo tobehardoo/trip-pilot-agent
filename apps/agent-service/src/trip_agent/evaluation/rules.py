@@ -8,15 +8,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
-from unicodedata import normalize
 from uuid import UUID
 
+from trip_agent.feasibility.context import (
+    BudgetContext,
+    ValidationContext,
+    build_budget_context,  # noqa: F401  re-exported for legacy importers
+)
+from trip_agent.feasibility.rules.core import (
+    activity_covers_fixed_schedule,
+    assess_activity_overlap,
+    assess_budget_limit,
+    assess_duplicate_poi,
+    assess_fixed_schedule_coverage,
+    assess_trip_date_range,
+)
 from trip_agent.worker.contracts import (
     FallbackOperation,
-    FixedSchedule,
     Itinerary,
-    ItineraryActivity,
     ItineraryDay,
     PlanningCreateCommand,
     PlanningReplanCommand,
@@ -83,15 +92,6 @@ LATE_DAY_END_HOUR = 20  # 8 PM
 
 
 @dataclass(frozen=True, slots=True)
-class BudgetContext:
-    """Normalised budget data extracted once for all rules."""
-
-    budget_amount: Decimal | None
-    estimated_total_cost: Decimal
-    budget_ratio: float | None  # None when budget not specified
-
-
-@dataclass(frozen=True, slots=True)
 class DayStats:
     """Per-day statistics computed once for all rules."""
 
@@ -106,24 +106,6 @@ class DayStats:
     total_walk_meters: int
     activity_ids: tuple[UUID, ...]
     transit_ids: tuple[UUID, ...]
-
-
-# ── Budget ─────────────────────────────────────────────────────────────────
-
-def build_budget_context(
-    command: PlanningCreateCommand | PlanningReplanCommand,
-    itinerary: Itinerary,
-) -> BudgetContext:
-    budget_amount = command.payload.trip.constraints.budget_amount
-    cost = itinerary.estimated_total_cost
-    ratio = None
-    if budget_amount is not None and budget_amount > 0:
-        ratio = float(cost / budget_amount)
-    return BudgetContext(
-        budget_amount=budget_amount,
-        estimated_total_cost=cost,
-        budget_ratio=ratio,
-    )
 
 
 def score_budget_fit(ctx: BudgetContext) -> int:
@@ -620,80 +602,26 @@ def detect_hard_constraint_violations(
 ) -> list[str]:
     """Detect hard-constraint violations that should block completion.
 
-    Returns a list of violation descriptions.  An empty list means
-    the result is safe to complete.
+    Thin adapter over the canonical feasibility rules: each rule is evaluated
+    once through :func:`~trip_agent.feasibility.rules.core` and findings are
+    flattened into the legacy message texts, in the legacy order (budget,
+    date range, fixed schedules, duplicate POI, activity overlap).  An empty
+    list means the result is safe to complete.
     """
-    violations: list[str] = []
-    constraints = command.payload.trip.constraints
-
-    # Budget exceeded
-    if budget_ctx.budget_ratio is not None and budget_ctx.budget_ratio > 1.0:
-        violations.append(
-            f"estimated cost exceeds budget by "
-            f"{round((budget_ctx.budget_ratio - 1) * 100)}%"
-        )
-
-    # Trip date range
-    trip_start = command.payload.trip.start_date
-    trip_end = command.payload.trip.end_date
-    for day in itinerary.days:
-        if day.date < trip_start or day.date > trip_end:
-            violations.append(f"day {day.date} is outside trip range")
-
-    # Fixed schedules inside activity windows
-    for fs in constraints.fixed_schedules:
-        found = any(
-            activity_covers_fixed_schedule(activity, fs)
-            for day in itinerary.days
-            for activity in day.activities
-        )
-        if not found:
-            violations.append(f"fixed schedule '{fs.place_name}' is not covered")
-
-    # A provider POI is a trip-wide identity. Structural anchors may repeat,
-    # but attractions and experiences must not be scheduled more than once.
-    seen_poi_ids: set[str] = set()
-    repeatable_kinds = {"ACCOMMODATION", "ARRIVAL", "DEPARTURE", "MEAL"}
-    for day in itinerary.days:
-        for activity in day.activities:
-            poi_id = activity.provider_poi_id
-            if poi_id is None or activity.kind in repeatable_kinds:
-                continue
-            if poi_id in seen_poi_ids:
-                violations.append(f"duplicate POI '{poi_id}' appears more than once")
-            else:
-                seen_poi_ids.add(poi_id)
-
-    for day in itinerary.days:
-        activities = sorted(
-            day.activities,
-            key=lambda activity: (activity.start_time, activity.end_time),
-        )
-        for previous, current in zip(activities, activities[1:], strict=False):
-            if current.start_time < previous.end_time:
-                violations.append(
-                    f"activities '{previous.title}' and '{current.title}' overlap"
-                )
-
-    return violations
-
-
-def activity_covers_fixed_schedule(
-    activity: ItineraryActivity,
-    schedule: FixedSchedule,
-) -> bool:
-    """Return whether an activity represents the scheduled place and window."""
-    return (
-        _normalise_place_name(activity.title)
-        == _normalise_place_name(schedule.place_name)
-        and activity.start_time <= schedule.start_time
-        and activity.end_time >= schedule.end_time
+    ctx = ValidationContext(
+        command=command,
+        itinerary=itinerary,
+        budget=budget_ctx,
     )
-
-
-def _normalise_place_name(value: str) -> str:
-    return "".join(
-        character
-        for character in normalize("NFKC", value).casefold()
-        if character.isalnum()
+    assessments = (
+        assess_budget_limit(ctx),
+        assess_trip_date_range(ctx),
+        assess_fixed_schedule_coverage(ctx),
+        assess_duplicate_poi(ctx),
+        assess_activity_overlap(ctx),
     )
+    return [
+        finding.message
+        for assessment in assessments
+        for finding in assessment.findings
+    ]

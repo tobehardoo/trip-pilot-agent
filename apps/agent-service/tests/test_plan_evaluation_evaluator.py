@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from plan_evaluation_support import make_command, make_result
+from plan_evaluation_support import make_activity, make_command, make_result
 from test_local_replanning import REPLAN_COMMAND
 
 from trip_agent.evaluation.evaluator import PlanEvaluator
@@ -58,14 +58,62 @@ def test_evaluator_blocks_over_budget_completion_with_data_quality_error() -> No
 
 def test_replan_data_quality_failure_uses_the_replanning_operation() -> None:
     raw = deepcopy(REPLAN_COMMAND)
-    raw["payload"]["trip"]["constraints"]["fixedSchedules"] = [{
-        "placeName": "Missing appointment",
-        "startTime": "2026-08-01T09:15:00Z",
-        "endTime": "2026-08-01T09:45:00Z",
-    }]
+    raw["payload"]["trip"]["constraints"]["fixedSchedules"] = [
+        {
+            "placeName": "Missing appointment",
+            "startTime": "2026-08-01T09:15:00Z",
+            "endTime": "2026-08-01T09:45:00Z",
+        }
+    ]
     command = PlanningReplanCommand.model_validate(raw)
 
     with pytest.raises(PlanningProviderError) as captured:
         PlanEvaluator(clock=FrozenClock).evaluate(command, make_result())
+
+    assert captured.value.details.operation == "REPLANNING"
+
+
+def _oversized_result() -> object:
+    """PlanningResult with 65 duplicate POIs (aggregate capped at 64 refs)."""
+    activities = []
+    for i in range(65):
+        poi = f"P-{i:03d}"
+        activities.append(
+            make_activity(i, source="AMAP", start_hour=7 + (i % 8)).model_copy(
+                update={"provider_poi_id": poi}
+            )
+        )
+        activities.append(
+            make_activity(65 + i, source="AMAP", start_hour=7 + (i % 8)).model_copy(
+                update={"provider_poi_id": poi}
+            )
+        )
+    return make_result(activities=tuple(activities), transit_legs=())
+
+
+def test_evaluator_wraps_oversized_hard_violations_as_data_quality_error() -> None:
+    # Canonical aggregates are bounded, so the DATA_QUALITY_ERROR guard must
+    # surface with full findings in safe_message instead of leaking a
+    # ValidationError.
+    with pytest.raises(PlanningProviderError) as captured:
+        PlanEvaluator(clock=FrozenClock).evaluate(make_command(), _oversized_result())
+
+    details = captured.value.details
+    assert details.category == "DATA_QUALITY_ERROR"
+    assert details.error_code == "PLAN_EVALUATION_DATA_QUALITY_ERROR"
+    assert details.provider == "PLANNER"
+    assert details.retryable is False
+    assert details.fallback_allowed is False
+    assert details.retry_count == 0
+    assert details.operation == "PLANNING"
+    assert "duplicate POI 'P-000' appears more than once" in details.safe_message
+    assert "duplicate POI 'P-064' appears more than once" in details.safe_message
+
+
+def test_evaluator_oversized_violations_use_the_replanning_operation() -> None:
+    command = PlanningReplanCommand.model_validate(deepcopy(REPLAN_COMMAND))
+
+    with pytest.raises(PlanningProviderError) as captured:
+        PlanEvaluator(clock=FrozenClock).evaluate(command, _oversized_result())
 
     assert captured.value.details.operation == "REPLANNING"

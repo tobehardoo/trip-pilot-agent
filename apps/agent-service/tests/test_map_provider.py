@@ -553,3 +553,122 @@ def test_demo_map_provider_returns_deterministic_estimated_pois() -> None:
     assert first.data == second.data
     assert len(first.data) == 1
     assert first.data[0].city == "Guangzhou"
+
+
+def test_amap_text_search_requests_business_extension_and_parses_opening_hours() -> None:
+    """B4a: show_fields=business must be requested and parsed into Poi."""
+    provider = load_map_provider_module()
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "status": "1",
+                "info": "OK",
+                "infocode": "10000",
+                "count": "1",
+                "pois": [
+                    {
+                        "id": "B00140TWHT",
+                        "name": "广东省博物馆",
+                        "location": "113.319263,23.109078",
+                        "type": "科教文化服务;博物馆",
+                        "typecode": "140100",
+                        "pname": "广东省",
+                        "cityname": "广州市",
+                        "adname": "天河区",
+                        "address": "珠江东路2号",
+                        "business": {
+                            "cost": "35",
+                            "opentime_today": "09:00-17:00",
+                            "opentime_week": "一,二,三,四,五,六,日|09:00-17:00",
+                        },
+                    }
+                ],
+            },
+        )
+
+    async def run_scenario() -> Any:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            amap = provider.AmapMapProvider(
+                api_key="local-secret-key",
+                http_client=client,
+                cache=None,
+            )
+            search = provider.PoiSearchRequest(city="广州", keyword="博物馆", limit=10)
+            return await amap.search_pois(search)
+
+    result = asyncio.run(run_scenario())
+
+    assert isinstance(result, provider.ProviderSuccess)
+    poi = result.data[0]
+    assert poi.business_hours_today == "09:00-17:00"
+    assert poi.business_hours_week == "一,二,三,四,五,六,日|09:00-17:00"
+    assert requests[0].url.params["show_fields"] == "business"
+    # Acceptance fix 1: fetch time lives only on ProviderSuccess (and at the
+    # top level of the cache entry), never inside Poi/cache data items.
+    assert "fetched_at" not in poi.model_dump()
+    assert result.fetched_at is not None
+
+
+def test_amap_poi_without_business_keeps_hours_none() -> None:
+    provider = load_map_provider_module()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            json={
+                "status": "1",
+                "info": "OK",
+                "infocode": "10000",
+                "count": "1",
+                "pois": [make_amap_poi(name="Museum")],
+            },
+        )
+
+    async def run_scenario() -> Any:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            amap = provider.AmapMapProvider(
+                api_key="local-secret-key",
+                http_client=client,
+                cache=None,
+            )
+            search = provider.PoiSearchRequest(city="广州", keyword="Museum", limit=10)
+            return await amap.search_pois(search)
+
+    result = asyncio.run(run_scenario())
+    assert isinstance(result, provider.ProviderSuccess)
+    assert result.data[0].business_hours_today is None
+    assert result.data[0].business_hours_week is None
+
+
+def test_legacy_cached_poi_payload_deserialises_directly_without_new_fields() -> None:
+    """B4a/R5: a cache entry written before business fields must load without
+    exception fallback — the new fields default to None."""
+    provider = load_map_provider_module()
+    legacy_cache_value = {
+        "data": [
+            {
+                "provider_id": "B00140TWHT",
+                "name": "广东省博物馆",
+                "coordinates": {"longitude": 113.319263, "latitude": 23.109078},
+                "type_name": "科教文化服务;博物馆",
+                "type_code": "140100",
+                "province": "广东省",
+                "city": "广州市",
+                "district": "天河区",
+                "address": "珠江东路2号",
+            }
+        ],
+        "fetched_at": "2026-07-16T08:00:00Z",
+    }
+    parsed = provider._CachedPoiSearch.model_validate(legacy_cache_value)
+    assert parsed.data[0].business_hours_today is None
+    assert parsed.data[0].business_hours_week is None
+    # Acceptance fix 1: fetch time is a top-level cache field; data items
+    # must never carry it.
+    assert "fetched_at" not in parsed.data[0].model_dump()
+    assert parsed.fetched_at == datetime(2026, 7, 16, 8, 0, tzinfo=UTC)

@@ -123,6 +123,11 @@ def test_rule_extractor_emits_normalized_candidates_with_exact_evidence_spans() 
     assert opening.normalized_value == {
         "openTime": "09:00",
         "closeTime": "17:30",
+        "scope": "DAILY",
+        "raw": "开放时间：09:00-17:30，成人门票10元，需要提前预约。",
+        "openingWindows": [
+            {"open": "09:00", "close": "17:30", "closeDayOffset": 0}
+        ],
         "poiName": "陈家祠",
     }
 

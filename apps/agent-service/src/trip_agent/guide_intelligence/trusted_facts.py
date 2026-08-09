@@ -10,6 +10,11 @@ from typing import Literal
 
 from bs4 import BeautifulSoup, Tag
 
+from trip_agent.guide_intelligence.opening_hours import (
+    opening_normalized_value,
+    parse_opening_text,
+)
+
 type ReliabilityLevel = Literal[
     "OFFICIAL_ATTRACTION",
     "OFFICIAL_TOURISM",
@@ -421,14 +426,12 @@ class RuleFactExtractor:
                         0.95,
                     )
                 )
-            if opening := _TIME.search(sentence):
+            if _TIME.search(sentence):
+                parsed = parse_opening_text(sentence)
                 matches.append(
                     (
                         "OPENING_HOURS",
-                        {
-                            "openTime": opening.group("open"),
-                            "closeTime": opening.group("close"),
-                        },
+                        opening_normalized_value(parsed, sentence),
                         0.9,
                     )
                 )
@@ -634,9 +637,49 @@ class FactValidator:
         candidate: CandidateFact,
         reasons: list[ValidationReason],
     ) -> None:
+        value = candidate.normalized_value
+        # New openingWindows shape is the source of truth when present.
+        windows = value.get("openingWindows")
+        if isinstance(windows, list) and windows:
+            for window in windows:
+                try:
+                    open_at = time.fromisoformat(str(window["open"]))
+                    close_at = time.fromisoformat(str(window["close"]))
+                    offset = int(window.get("closeDayOffset", 0))
+                except (KeyError, TypeError, ValueError):
+                    reasons.append(
+                        _reason(
+                            "OPENING_HOURS_INVALID",
+                            "opening windows must use HH:MM values",
+                        )
+                    )
+                    continue
+                if offset < 0:
+                    reasons.append(
+                        _reason(
+                            "OPENING_HOURS_INVALID",
+                            "closeDayOffset cannot be negative",
+                        )
+                    )
+                elif offset == 0 and close_at <= open_at:
+                    reasons.append(
+                        _reason(
+                            "OPENING_HOURS_REVERSED",
+                            "closing time cannot precede opening time",
+                        )
+                    )
+            return
+        # Raw-only facts (unparseable conditional text, weekday closures)
+        # carry no time pair to validate; keep them as UNKNOWN evidence.
+        if value.get("unparsed") or (
+            "openTime" not in value and "closeTime" not in value
+        ):
+            return
+        # Legacy {openTime, closeTime}: close <= open is invalid and is never
+        # auto-guessed as a cross-midnight window.
         try:
-            open_at = time.fromisoformat(str(candidate.normalized_value["openTime"]))
-            close_at = time.fromisoformat(str(candidate.normalized_value["closeTime"]))
+            open_at = time.fromisoformat(str(value["openTime"]))
+            close_at = time.fromisoformat(str(value["closeTime"]))
             if close_at <= open_at:
                 reasons.append(
                     _reason(

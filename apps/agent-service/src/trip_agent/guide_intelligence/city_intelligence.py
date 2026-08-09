@@ -2,13 +2,20 @@
 
 import asyncio
 import re
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Annotated
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from trip_agent.domain.shared import CHINA_TIME_ZONE
 from trip_agent.guide_intelligence.models import ExtractedGuide, FactCategory, TravelFact
+from trip_agent.guide_intelligence.opening_hours import (
+    opening_normalized_value,
+    parse_amap_week_schedule,
+    parse_opening_text,
+)
 from trip_agent.providers.map import _install_httpx_credential_filter
 
 _install_httpx_credential_filter()
@@ -194,9 +201,6 @@ class AmapCityIntelligenceProvider:
             details = []
             if poi.business.cost:
                 details.append(f"高德参考消费{poi.business.cost}元")
-            opening = poi.business.opentime_today or poi.business.opentime_week
-            if opening:
-                details.append(f"营业信息{opening}")
             statement = f"{base}{';' if details else ''}{'；'.join(details)}。"
             statements.append(statement)
             facts.extend(
@@ -207,8 +211,9 @@ class AmapCityIntelligenceProvider:
             )
             if poi.business.cost:
                 facts.append(_fact("COST", statement, checked_at, days=7, confidence=0.78))
-            if opening:
-                facts.append(_fact("TIMING", statement, checked_at, days=1, confidence=0.8))
+            opening_facts = _opening_hour_facts(poi, checked_at)
+            facts.extend(opening_facts)
+            statements.extend(fact.statement for fact in opening_facts)
 
         if not statements:
             raise ValueError("city intelligence provider returned no usable facts")
@@ -292,6 +297,7 @@ def _fact(
     hours: int | None = None,
     days: int | None = None,
     confidence: float,
+    normalized_value: Mapping[str, object] | None = None,
 ) -> TravelFact:
     ttl = timedelta(hours=hours) if hours is not None else timedelta(days=days or 1)
     return TravelFact(
@@ -302,4 +308,51 @@ def _fact(
         observed_at=checked_at,
         expires_at=checked_at + ttl,
         effective_date=effective_date,
+        normalized_value=normalized_value,
     )
+
+
+def _opening_hour_facts(
+    poi: _Poi,
+    checked_at: datetime,
+) -> tuple[TravelFact, ...]:
+    """Separate TODAY and WEEKLY opening data from AMap business fields.
+
+    ``opentime_today`` is scoped to the fetch time's Asia/Shanghai local date
+    and is never treated as a recurring daily window.  ``opentime_week`` is
+    usable for future trip dates only when a weekday schedule can be parsed;
+    otherwise the raw text is preserved as UNKNOWN evidence.
+    """
+    facts: list[TravelFact] = []
+    today = poi.business.opentime_today.strip()
+    if today:
+        parsed = parse_opening_text(today, scope="TODAY")
+        normalized = opening_normalized_value(parsed, today)
+        if parsed is not None:
+            normalized["effectiveDate"] = (
+                checked_at.astimezone(CHINA_TIME_ZONE).date().isoformat()
+            )
+        facts.append(
+            _fact(
+                "TIMING",
+                f"{poi.name}今日营业信息：{today}。",
+                checked_at,
+                days=1,
+                confidence=0.8,
+                normalized_value=normalized,
+            )
+        )
+    week = poi.business.opentime_week.strip()
+    if week:
+        parsed = parse_amap_week_schedule(week)
+        facts.append(
+            _fact(
+                "TIMING",
+                f"{poi.name}常规营业信息：{week}。",
+                checked_at,
+                days=1,
+                confidence=0.8,
+                normalized_value=opening_normalized_value(parsed, week),
+            )
+        )
+    return tuple(facts)

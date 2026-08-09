@@ -135,9 +135,9 @@ def planning_fact_impacts(
                     fact,
                     context=context,
                     date_value=trip_date,
-                    effect="OPENING_HOURS_APPLIED",
+                    effect="OPENING_HOURS_EVIDENCE_AVAILABLE",
                     target_name=target_name,
-                    reason="活动时间已按开放时间窗核验",
+                    reason="已关联营业时间证据，尚未完成活动时间窗验证",
                 )
                 for trip_date, target_name in matched
             )

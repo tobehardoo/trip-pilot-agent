@@ -1,7 +1,7 @@
 import { render } from '@testing-library/vue'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Itinerary, Trip } from '../lib/api'
+import type { Itinerary, ItineraryFactImpact, Trip } from '../lib/api'
 import TripDetail from './TripDetail.vue'
 
 const trip: Trip = {
@@ -98,5 +98,124 @@ describe('TripDetail', () => {
 
     expect(view.queryByLabelText('行程修改草稿')).toBeNull()
     expect(view.getByText('我的要求')).toBeTruthy()
+  })
+
+  it('maps OPENING_HOURS_EVIDENCE_AVAILABLE to a neutral pending label', () => {
+    const factImpact: ItineraryFactImpact = {
+      factId: 'fact-1',
+      category: 'OPENING_HOURS',
+      date: null,
+      effect: 'OPENING_HOURS_EVIDENCE_AVAILABLE',
+      targetPoiId: null,
+      targetName: null,
+      reason: 'opening hours evidence linked',
+      sourceName: 'city-guide',
+      sourceType: 'OFFICIAL',
+      sourceUrl: null,
+      reliabilityLevel: 'OFFICIAL',
+      checkedAt: '2026-08-01T00:00:00Z',
+      evidence: 'opening hours 09:00-18:00',
+      stale: false,
+      conflicted: false,
+      refreshFailed: false,
+    }
+    const itineraryWithImpact: Itinerary = {
+      ...itinerary,
+      factImpacts: [factImpact],
+    }
+
+    const view = render(TripDetail, {
+      props: {
+        user: { id: 'user-1', email: 'user@example.com', displayName: 'Traveler' },
+        trip,
+        busy: false,
+        error: null,
+        itinerary: itineraryWithImpact,
+        itineraryBusy: false,
+        itineraryError: null,
+        planningState: 'succeeded',
+        planningError: null,
+        startPlanning: vi.fn(),
+        cancelPlanning: vi.fn(),
+        updateConstraints: vi.fn(),
+        reloadTrip: vi.fn(),
+      },
+      global: {
+        stubs: {
+          GuideIntelligencePanel: true,
+          ItineraryActionsPanel: true,
+          ItineraryVersionPanel: true,
+          PlanEvaluationPanel: true,
+          PlanningProgress: true,
+          TripMap: true,
+          TripWeatherTimeline: true,
+          TransitLegControl: true,
+        },
+      },
+    })
+
+    expect(view.getByText('营业时间证据待验证')).toBeTruthy()
+    expect(view.queryByText('OPENING_HOURS_EVIDENCE_AVAILABLE')).toBeNull()
+    expect(view.queryByText(/已核验开放时间/)).toBeNull()
+    expect(view.queryByText(/硬约束校验通过/)).toBeNull()
+  })
+
+  it('maps legacy OPENING_HOURS_APPLIED to a neutral historical label', () => {
+    const factImpact: ItineraryFactImpact = {
+      factId: 'fact-2',
+      category: 'OPENING_HOURS',
+      date: null,
+      effect: 'OPENING_HOURS_APPLIED',
+      targetPoiId: null,
+      targetName: null,
+      reason: 'historical marker',
+      sourceName: 'city-guide',
+      sourceType: 'OFFICIAL',
+      sourceUrl: null,
+      reliabilityLevel: 'OFFICIAL',
+      checkedAt: '2026-08-01T00:00:00Z',
+      evidence: 'opening hours 09:00-18:00',
+      stale: false,
+      conflicted: false,
+      refreshFailed: false,
+    }
+    const itineraryWithImpact: Itinerary = {
+      ...itinerary,
+      factImpacts: [factImpact],
+    }
+
+    const view = render(TripDetail, {
+      props: {
+        user: { id: 'user-1', email: 'user@example.com', displayName: 'Traveler' },
+        trip,
+        busy: false,
+        error: null,
+        itinerary: itineraryWithImpact,
+        itineraryBusy: false,
+        itineraryError: null,
+        planningState: 'succeeded',
+        planningError: null,
+        startPlanning: vi.fn(),
+        cancelPlanning: vi.fn(),
+        updateConstraints: vi.fn(),
+        reloadTrip: vi.fn(),
+      },
+      global: {
+        stubs: {
+          GuideIntelligencePanel: true,
+          ItineraryActionsPanel: true,
+          ItineraryVersionPanel: true,
+          PlanEvaluationPanel: true,
+          PlanningProgress: true,
+          TripMap: true,
+          TripWeatherTimeline: true,
+          TransitLegControl: true,
+        },
+      },
+    })
+
+    expect(view.getByText('营业时间证据（历史标记，未重新验证）')).toBeTruthy()
+    expect(view.queryByText('已核验开放时间')).toBeNull()
+    expect(view.queryByText('OPENING_HOURS_APPLIED')).toBeNull()
   })
 })

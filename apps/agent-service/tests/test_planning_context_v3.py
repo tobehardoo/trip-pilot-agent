@@ -173,6 +173,97 @@ def test_fact_impacts_are_scoped_to_the_actual_activity_date() -> None:
     assert impacts[0].effect == "STALE_FACT_WARNING"
 
 
+def test_opening_hours_fact_produces_neutral_evidence_impact_only() -> None:
+    """B1-F: merely having an opening-hours fact must not claim the activity
+    time window was verified.  Expected: OPENING_HOURS_EVIDENCE_AVAILABLE
+    with a neutral reason; never OPENING_HOURS_APPLIED."""
+    payload = _v3_command()
+    payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []
+    payload["payload"]["planningContext"]["facts"] = [
+        {
+            "factId": "fact_opening_0123456789abcdef",
+            "category": "OPENING_HOURS",
+            "statement": "广州博物馆开放时间：09:00-17:00",
+            "normalizedValue": {
+                "scope": "DAILY",
+                "openingWindows": [
+                    {"open": "09:00", "close": "17:00", "closeDayOffset": 0}
+                ],
+                "raw": "开放时间：09:00-17:00",
+            },
+            "evidence": "09:00-17:00",
+            "effectiveDate": None,
+            "checkedAt": "2026-07-13T08:00:00Z",
+            "expiresAt": "2026-08-10T08:00:00Z",
+            "stale": False,
+            "sourceName": "广州博物馆",
+            "sourceType": "OFFICIAL_ATTRACTION",
+            "sourceUrl": "https://www.guangzhoumuseum.cn/",
+            "reliabilityLevel": "OFFICIAL_ATTRACTION",
+            "sourceReviewed": True,
+            "hardConstraintEligible": True,
+        }
+    ]
+    payload["payload"]["planningContext"]["stale"] = False
+    command = PlanningCreateCommand.model_validate(payload)
+    context = command.payload.planning_context
+    assert context is not None
+
+    impacts = planning_fact_impacts(
+        context,
+        (
+            (date(2026, 8, 1), "广州博物馆"),
+            (date(2026, 8, 2), "上海博物馆"),
+        ),
+    )
+
+    assert len(impacts) == 1
+    assert impacts[0].effect == "OPENING_HOURS_EVIDENCE_AVAILABLE"
+    assert impacts[0].reason == "已关联营业时间证据，尚未完成活动时间窗验证"
+    assert all(
+        impact.effect != "OPENING_HOURS_APPLIED"
+        and "已按开放时间窗核验" not in impact.reason
+        for impact in impacts
+    )
+
+
+def test_reservation_fact_impact_semantics_are_unchanged() -> None:
+    """B1-F: other trusted-fact impacts keep their existing semantics."""
+    payload = _v3_command()
+    payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []
+    payload["payload"]["planningContext"]["facts"] = [
+        {
+            "factId": "fact_reservation_0123456789abcd",
+            "category": "RESERVATION_REQUIREMENT",
+            "statement": "广州博物馆需要提前预约",
+            "normalizedValue": {"required": True},
+            "evidence": "需要提前预约",
+            "effectiveDate": None,
+            "checkedAt": "2026-07-13T08:00:00Z",
+            "expiresAt": "2026-08-10T08:00:00Z",
+            "stale": False,
+            "sourceName": "广州博物馆",
+            "sourceType": "OFFICIAL_ATTRACTION",
+            "sourceUrl": "https://www.guangzhoumuseum.cn/",
+            "reliabilityLevel": "OFFICIAL_ATTRACTION",
+            "sourceReviewed": True,
+            "hardConstraintEligible": True,
+        }
+    ]
+    payload["payload"]["planningContext"]["stale"] = False
+    command = PlanningCreateCommand.model_validate(payload)
+    context = command.payload.planning_context
+    assert context is not None
+
+    impacts = planning_fact_impacts(
+        context,
+        ((date(2026, 8, 1), "广州博物馆"),),
+    )
+
+    assert len(impacts) == 1
+    assert impacts[0].effect == "RESERVATION_REQUIRED"
+
+
 def test_completed_v6_event_exposes_fact_impacts_from_the_frozen_snapshot() -> None:
     payload = _v3_command()
     payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []

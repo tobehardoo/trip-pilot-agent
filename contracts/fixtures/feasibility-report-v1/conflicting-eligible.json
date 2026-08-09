@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "reportId": "c9c467cc-65c4-8ff1-e175-4af42f2ed545",
+  "validatorVersion": "feasibility-v1",
+  "itineraryFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "VERIFIED",
+  "validatedAt": "2026-08-09T12:00:00Z",
+  "requiredRuleIds": [
+    "OPENING_HOURS"
+  ],
+  "missingRequiredRuleIds": [],
+  "summary": {
+    "totalCount": 1,
+    "passCount": 1,
+    "failCount": 0,
+    "unknownCount": 0,
+    "notApplicableCount": 0,
+    "missingRequiredCount": 0
+  },
+  "ruleResults": [
+    {
+      "ruleId": "OPENING_HOURS",
+      "ruleVersion": "1",
+      "outcome": "UNKNOWN",
+      "reasonCode": "R",
+      "message": "m",
+      "affectedDates": [],
+      "affectedEntityRefs": [],
+      "repairable": false,
+      "evidenceRefs": [
+        {
+          "evidenceId": "e",
+          "evidenceType": "OPENING_HOURS",
+          "state": "CONFLICTING",
+          "hardConstraintEligible": true
+        }
+      ]
+    }
+  ],
+  "repairAttempts": []
+}

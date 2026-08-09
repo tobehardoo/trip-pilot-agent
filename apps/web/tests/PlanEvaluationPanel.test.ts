@@ -52,7 +52,6 @@ test('renders score dimensions severity labels and decision explanations', async
   const view = render(PlanEvaluationPanel, { props: { evaluation } })
 
   expect(view.getByText('68/100').classList.contains('score-low')).toBe(true)
-  expect(view.getByText('行程可执行：已验证')).toBeTruthy()
   expect(view.getByText('体验评分')).toBeTruthy()
   expect(view.getByText('约束满足')).toBeTruthy()
   expect(view.getByText('路线效率')).toBeTruthy()

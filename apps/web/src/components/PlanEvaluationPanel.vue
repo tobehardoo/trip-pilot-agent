@@ -1,9 +1,5 @@
 <template>
   <div v-if="evaluation" class="plan-evaluation-panel">
-    <div class="mb-3 flex items-center justify-between gap-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-      <span class="font-semibold">行程可执行：已验证</span>
-      <span class="text-xs">硬约束校验通过</span>
-    </div>
     <div class="evaluation-header">
       <span class="text-sm font-semibold">体验评分</span>
       <span class="sr-only">行程质量</span>

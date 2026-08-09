@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/feasibility-report-v1.schema.json",
+  "title": "Feasibility Report v1",
+  "description": "Standalone feasibility report contract (B1). NOT embedded in planning-completed-event v8 or planning-failed-event v2; the runtime envelope is unchanged. schemaVersion is fixed at 1; cross-field consistency (status/summary/missing rules/evidence eligibility) is enforced by Python and Java semantic validators, not by this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "reportId", "validatorVersion", "itineraryFingerprint",
+    "status", "validatedAt", "requiredRuleIds", "missingRequiredRuleIds",
+    "summary", "ruleResults", "repairAttempts"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "reportId": {"type": "string", "format": "uuid"},
+    "validatorVersion": {"type": "string", "minLength": 1, "maxLength": 32},
+    "itineraryFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "status": {"enum": ["VERIFIED", "NEEDS_REPAIR", "UNVERIFIED"]},
+    "validatedAt": {"type": "string", "format": "date-time"},
+    "requiredRuleIds": {
+      "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    },
+    "missingRequiredRuleIds": {
+      "type": "array", "maxItems": 64, "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "totalCount", "passCount", "failCount",
+        "unknownCount", "notApplicableCount", "missingRequiredCount"
+      ],
+      "properties": {
+        "totalCount": {"type": "integer", "minimum": 0},
+        "passCount": {"type": "integer", "minimum": 0},
+        "failCount": {"type": "integer", "minimum": 0},
+        "unknownCount": {"type": "integer", "minimum": 0},
+        "notApplicableCount": {"type": "integer", "minimum": 0},
+        "missingRequiredCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "ruleResults": {
+      "type": "array", "maxItems": 64,
+      "items": {"$ref": "#/$defs/ruleResult"}
+    },
+    "repairAttempts": {
+      "type": "array", "maxItems": 3,
+      "items": {"$ref": "#/$defs/repairAttempt"}
+    }
+  },
+  "$defs": {
+    "ruleResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ruleId", "ruleVersion", "outcome", "reasonCode", "message",
+        "affectedDates", "affectedEntityRefs", "evidenceRefs", "repairable"
+      ],
+      "properties": {
+        "ruleId": {"type": "string", "minLength": 1, "maxLength": 64},
+        "ruleVersion": {"type": "string", "minLength": 1, "maxLength": 32},
+        "outcome": {"enum": ["PASS", "FAIL", "UNKNOWN", "NOT_APPLICABLE"]},
+        "reasonCode": {"type": "string", "minLength": 1, "maxLength": 60},
+        "message": {"type": "string", "minLength": 1, "maxLength": 500},
+        "affectedDates": {
+          "type": "array", "maxItems": 16,
+          "items": {"type": "string", "format": "date"}
+        },
+        "affectedEntityRefs": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 200}
+        },
+        "evidenceRefs": {
+          "type": "array", "maxItems": 64,
+          "items": {"$ref": "#/$defs/evidenceReference"}
+        },
+        "repairable": {"type": "boolean"}
+      }
+    },
+    "evidenceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "evidenceType", "state", "hardConstraintEligible"],
+      "properties": {
+        "evidenceId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "evidenceType": {"type": "string", "minLength": 1, "maxLength": 60},
+        "state": {"enum": ["VERIFIED", "UNKNOWN", "STALE", "CONFLICTING"]},
+        "hardConstraintEligible": {"type": "boolean"}
+      }
+    },
+    "repairAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attemptIndex", "triggeringRuleIds", "actionCodes", "affectedDates",
+        "affectedEntityRefs", "beforeFingerprint", "afterFingerprint",
+        "resultingStatus"
+      ],
+      "properties": {
+        "attemptIndex": {"type": "integer", "minimum": 1},
+        "triggeringRuleIds": {
+          "type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        },
+        "actionCodes": {
+          "type": "array", "minItems": 1, "maxItems": 16,
+          "items": {"type": "string", "minLength": 1, "maxLength": 60}
+        },
+        "affectedDates": {
+          "type": "array", "maxItems": 16,
+          "items": {"type": "string", "format": "date"}
+        },
+        "affectedEntityRefs": {
+          "type": "array", "maxItems": 64, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 200}
+        },
+        "beforeFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "afterFingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "resultingStatus": {"enum": ["VERIFIED", "NEEDS_REPAIR", "UNVERIFIED"]}
+      }
+    }
+  }
+}

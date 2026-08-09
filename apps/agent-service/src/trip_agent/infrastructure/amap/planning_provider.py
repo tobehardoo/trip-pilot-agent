@@ -7,7 +7,8 @@ plans (day types, anchors, meal demand, capacity).
 """
 
 import logging
-from datetime import date, timedelta
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID, uuid5
@@ -84,8 +85,23 @@ logger = logging.getLogger(__name__)
 _REDUCED_MOBILITY_MAX_HOP_METERS = 3_000
 _MAX_MOBILITY_REPAIR_ATTEMPTS = 2
 
+
+@dataclass(frozen=True, slots=True)
+class _FetchedPoi:
+    """A recalled POI paired with the fetch time of the response that
+    produced it.
+
+    ``ProviderSuccess.fetched_at`` is the single source of fetch time;
+    it travels through the recall/projection boundary here instead of being
+    stored on :class:`Poi`.  Never replaced by a downstream clock.
+    """
+
+    poi: Poi
+    fetched_at: datetime
+
+
 def _entity_facts_for_pois(
-    pois: tuple[Poi, ...],
+    pois: tuple[_FetchedPoi, ...],
     command: PlanningCreateCommand,
 ) -> tuple:
     """Project fresh planning-context opening-hour facts onto recalled POIs.
@@ -102,7 +118,8 @@ def _entity_facts_for_pois(
         if fact.category == "OPENING_HOURS" and not fact.stale
     )
     entities = []
-    for poi in pois:
+    for fetched in pois:
+        poi = fetched.poi
         fact = next(
             (
                 item for item in opening_facts
@@ -111,6 +128,24 @@ def _entity_facts_for_pois(
             None,
         )
         if fact is None:
+            amap_known = _amap_opening_value(poi, fetched.fetched_at)
+            if amap_known is None:
+                continue
+            text, provenance = amap_known
+            entities.append(
+                build_attraction(
+                    city_adcode=None,
+                    provider_poi_id=poi.provider_id,
+                    name=poi.name,
+                    category="ATTRACTION",
+                    location=TravelEntityLocation(
+                        poi.coordinates.longitude,
+                        poi.coordinates.latitude,
+                        poi.address,
+                    ),
+                    opening_hours=FactValue.known(text, provenance),
+                )
+            )
             continue
         source_type = "OFFICIAL" if fact.source_reviewed else "GUIDE"
         provenance = FactProvenance(
@@ -135,6 +170,29 @@ def _entity_facts_for_pois(
             )
         )
     return tuple(entities)
+
+
+def _amap_opening_value(
+    poi: Poi, fetched_at: datetime
+) -> tuple[str, FactProvenance] | None:
+    """Project AMap business opening text onto a POI as provider evidence.
+
+    ``opentime_today`` is today-scoped data: its effective date is the
+    ``ProviderSuccess.fetched_at`` Asia/Shanghai local date.  The fetch time
+    is passed explicitly across the projection boundary and never replaced
+    by a downstream clock.
+    """
+    text = poi.business_hours_today or poi.business_hours_week
+    if not text:
+        return None
+    provenance = FactProvenance(
+        source="AMAP",
+        source_type="PROVIDER",
+        fetched_at=fetched_at,
+        valid_until=fetched_at + timedelta(days=14),
+        confidence=0.8,
+    )
+    return text, provenance
 _COMPLEX_TERMS = (
     "泰山", "华山", "衡山", "黄山", "庐山", "峨眉", "峡谷",
     "迪士尼", "迪斯尼", "长隆", "乐园", "环球影城", "主题公园", "度假区", "古镇",
@@ -213,7 +271,7 @@ class AmapPlanningProvider:
         # metro, station gates) before ranking.  Transport hubs that serve as
         # arrival/departure anchors are resolved separately and kept.
         activity_pois = tuple(
-            poi for poi in raw_pois if activity_candidate_eligible(poi)
+            fetched.poi for fetched in raw_pois if activity_candidate_eligible(fetched.poi)
         )
         if not activity_pois:
             raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
@@ -961,9 +1019,9 @@ class AmapPlanningProvider:
 
     async def _collect_pois(
         self, command: PlanningCreateCommand, required_count: int
-    ) -> tuple[Poi, ...]:
+    ) -> tuple[_FetchedPoi, ...]:
         trip = command.payload.trip
-        candidates: list[Poi] = []
+        candidates: list[_FetchedPoi] = []
         keywords = candidate_keywords(
             trip.constraints.preferences, trip.constraints.must_visit_places,
         )
@@ -995,11 +1053,17 @@ class AmapPlanningProvider:
                 )
             if search.provider != "AMAP":
                 raise PlanningProviderError("UNEXPECTED_MAP_PROVIDER")
-            candidates.extend(search.data)
+            # ProviderSuccess.fetched_at is the single fetch-time source for
+            # this search batch; each batch keeps its own time.
+            fetched_at = search.fetched_at
+            candidates.extend(
+                _FetchedPoi(poi=item, fetched_at=fetched_at)
+                for item in search.data
+            )
             if query_index < required_preference_queries:
                 continue
             ranking = self._candidate_ranker.rank(
-                tuple(candidates),
+                tuple(item.poi for item in candidates),
                 destination=trip.destination,
                 preferences=trip.constraints.preferences,
                 traveler_type=trip.constraints.traveler_type,

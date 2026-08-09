@@ -120,6 +120,11 @@ class Poi(ProviderModel):
     city: str
     district: str
     address: PoiAddress
+    # Opening-hours text from AMap's business extension block
+    # (``show_fields=business``).  Explicit ``None`` defaults keep legacy
+    # cached POI payloads directly deserialisable.
+    business_hours_today: str | None = None
+    business_hours_week: str | None = None
 
 
 class PoiSearchRequest(ProviderModel):
@@ -182,6 +187,15 @@ class JsonCache(Protocol):
     async def set(self, key: str, value: str, *, ttl_seconds: int) -> None: ...
 
 
+class _AmapPoiBusiness(BaseModel):
+    """AMap v5 POI ``business`` extension (returned with show_fields=business)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    opentime_today: str = ""
+    opentime_week: str = ""
+
+
 class _AmapPoi(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -194,6 +208,7 @@ class _AmapPoi(BaseModel):
     city: str = Field(alias="cityname")
     district: str = Field(alias="adname")
     address: str
+    business: _AmapPoiBusiness | None = None
 
 
 class _AmapTextResponse(BaseModel):
@@ -266,6 +281,7 @@ class AmapMapProvider:
                     "page_size": str(request.limit),
                     "page_num": "1",
                     "output": "json",
+                    "show_fields": "business",
                 },
             )
         except httpx.TimeoutException as exception:
@@ -506,6 +522,7 @@ class AmapMapProvider:
     @staticmethod
     def _to_poi(item: _AmapPoi) -> Poi:
         longitude_text, latitude_text = item.location.split(",", maxsplit=1)
+        business = item.business
         return Poi(
             provider_id=item.provider_id,
             name=item.name,
@@ -519,6 +536,16 @@ class AmapMapProvider:
             city=item.city,
             district=item.district,
             address=item.address,
+            business_hours_today=(
+                business.opentime_today
+                if business is not None and business.opentime_today
+                else None
+            ),
+            business_hours_week=(
+                business.opentime_week
+                if business is not None and business.opentime_week
+                else None
+            ),
         )
 
     @staticmethod

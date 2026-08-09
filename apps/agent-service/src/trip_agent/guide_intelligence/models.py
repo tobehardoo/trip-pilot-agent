@@ -1,5 +1,6 @@
 """Immutable models for imported guide intelligence."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal
@@ -45,6 +46,9 @@ class TravelFact:
     observed_at: datetime
     expires_at: datetime
     effective_date: date | None = None
+    # Structured payload for opening-hours facts (scope/openingWindows/
+    # effectiveDate/weekdayRules/raw).  Optional; other categories keep None.
+    normalized_value: Mapping[str, object] | None = None
 
     def __post_init__(self) -> None:
         if not self.statement.strip() or not self.evidence.strip():

@@ -572,3 +572,69 @@ def test_strict_anchor_failure_when_requested_hotel_not_found() -> None:
 
     codes = {conflict.code for conflict in exc_info.value.conflicts}
     assert "TRAVEL_ANCHOR_UNAVAILABLE" in codes
+
+
+# ── B4B Phase 5: cross-layer standalone validation ─────────────────────────
+
+
+def test_amap_confirmed_chain_validates_continuity_pass() -> None:
+    from trip_agent.feasibility.models import FeasibilityStatus, RuleOutcome
+    from trip_agent.feasibility.validator import validate_itinerary
+
+    hotel = _poi("hotel-1", "广州花园酒店", district="越秀区")
+    meal = _poi("r1", "老字号粤菜馆", district="越秀区")
+    pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
+    command = _command(accommodation={"placeName": "广州花园酒店"})
+    result = asyncio.run(
+        _provider(pois, meal_pois=(meal,), accommodation_poi=hotel).plan(command)
+    )
+
+    report = validate_itinerary(
+        command=command,
+        itinerary=result.itinerary,
+        report_id="3d76fb9e-362e-4b28-8a9e-18e8ac7050ad",
+        validated_at=datetime(2026, 8, 9, 12, 0, tzinfo=UTC),
+        trip_skeleton=result.trip_skeleton,
+    )
+
+    route = next(
+        r for r in report.rule_results if r.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
+    )
+    cross = next(
+        r for r in report.rule_results if r.rule_id == "CROSS_DAY_CONTINUITY"
+    )
+    assert route.outcome is RuleOutcome.PASS
+    assert cross.outcome is RuleOutcome.PASS
+    # Four required rules remain unimplemented -> never VERIFIED.
+    assert report.status is FeasibilityStatus.UNVERIFIED
+
+
+def test_demo_chain_validates_unknown_and_unverified() -> None:
+    from trip_agent.feasibility.models import FeasibilityStatus, RuleOutcome
+    from trip_agent.feasibility.validator import validate_itinerary
+    from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
+
+    command = _command()
+    result = asyncio.run(DemoPlanningProvider().plan(command))
+    assert result.trip_skeleton is None
+
+    report = validate_itinerary(
+        command=command,
+        itinerary=result.itinerary,
+        report_id="3d76fb9e-362e-4b28-8a9e-18e8ac7050ad",
+        validated_at=datetime(2026, 8, 9, 12, 0, tzinfo=UTC),
+    )
+
+    route = next(
+        r for r in report.rule_results if r.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
+    )
+    cross = next(
+        r for r in report.rule_results if r.rule_id == "CROSS_DAY_CONTINUITY"
+    )
+    # Demo produces a single activity per day (no adjacent pairs), so the
+    # route rule is N/A — never PASS; multi-day without a skeleton makes the
+    # cross-day rule UNKNOWN.  Either way the report must stay UNVERIFIED.
+    assert route.outcome is not RuleOutcome.PASS
+    assert route.outcome is RuleOutcome.NOT_APPLICABLE
+    assert cross.outcome is RuleOutcome.UNKNOWN
+    assert report.status is FeasibilityStatus.UNVERIFIED

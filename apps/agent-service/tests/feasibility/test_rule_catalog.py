@@ -37,23 +37,23 @@ def test_required_rule_ids_are_unique_and_non_empty() -> None:
     assert all(isinstance(rule_id, str) and rule_id for rule_id in REQUIRED_RULE_IDS)
 
 
-def test_implemented_rule_ids_are_a_stable_five_subset_of_required() -> None:
+def test_implemented_rule_ids_are_a_stable_seven_subset_of_required() -> None:
     assert IMPLEMENTED_RULE_IDS == (
         "TRIP_DATE_RANGE",
         "FIXED_SCHEDULE_COVERAGE",
         "BUDGET_LIMIT",
         "DUPLICATE_POI",
         "ACTIVITY_OVERLAP",
-    )
-    assert set(IMPLEMENTED_RULE_IDS).issubset(set(REQUIRED_RULE_IDS))
-    assert len(set(IMPLEMENTED_RULE_IDS)) == len(IMPLEMENTED_RULE_IDS) == 5
-
-
-def test_missing_rule_ids_are_exactly_the_six_future_rules() -> None:
-    assert MISSING_RULE_IDS == (
-        "MUST_VISIT_COVERAGE",
         "ROUTE_ENDPOINT_CONTINUITY",
         "CROSS_DAY_CONTINUITY",
+    )
+    assert set(IMPLEMENTED_RULE_IDS).issubset(set(REQUIRED_RULE_IDS))
+    assert len(set(IMPLEMENTED_RULE_IDS)) == len(IMPLEMENTED_RULE_IDS) == 7
+
+
+def test_missing_rule_ids_are_exactly_the_four_future_rules() -> None:
+    assert MISSING_RULE_IDS == (
+        "MUST_VISIT_COVERAGE",
         "OPENING_HOURS",
         "VISIT_DURATION",
         "MEAL_WINDOW",

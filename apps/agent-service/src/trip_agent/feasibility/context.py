@@ -14,12 +14,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from trip_agent.worker.contracts import (
     Itinerary,
     PlanningCreateCommand,
     PlanningReplanCommand,
 )
+
+if TYPE_CHECKING:
+    from trip_agent.planning.trip_skeleton import TripSkeleton
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,3 +63,7 @@ class ValidationContext:
     command: PlanningCreateCommand | PlanningReplanCommand
     itinerary: Itinerary
     budget: BudgetContext
+    # B4B: transient planning aggregate supplied by the caller when the
+    # provider produced one; None keeps legacy callers compatible.  Rules
+    # must treat None as an evidence gap (UNKNOWN), never as a defect.
+    trip_skeleton: TripSkeleton | None = None

@@ -583,18 +583,27 @@ def test_trip_skeleton_uses_no_clocks_uuids_or_io() -> None:
     assert "urllib" not in source
 
 
-def test_b2_catalog_implemented_set_still_exactly_five() -> None:
+def test_b4b_catalog_implemented_set_is_exactly_seven() -> None:
     assert IMPLEMENTED_RULE_IDS == (
         "TRIP_DATE_RANGE",
         "FIXED_SCHEDULE_COVERAGE",
         "BUDGET_LIMIT",
         "DUPLICATE_POI",
         "ACTIVITY_OVERLAP",
+        "ROUTE_ENDPOINT_CONTINUITY",
+        "CROSS_DAY_CONTINUITY",
     )
 
 
-def test_cross_day_continuity_rule_still_missing() -> None:
-    assert "CROSS_DAY_CONTINUITY" in MISSING_RULE_IDS
+def test_continuity_rules_no_longer_missing() -> None:
+    assert "ROUTE_ENDPOINT_CONTINUITY" not in MISSING_RULE_IDS
+    assert "CROSS_DAY_CONTINUITY" not in MISSING_RULE_IDS
+    assert MISSING_RULE_IDS == (
+        "MUST_VISIT_COVERAGE",
+        "OPENING_HOURS",
+        "VISIT_DURATION",
+        "MEAL_WINDOW",
+    )
 
 
 def test_b3_does_not_make_validator_report_verified() -> None:

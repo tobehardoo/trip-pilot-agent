@@ -23,6 +23,7 @@ from trip_agent.feasibility.catalog import (
 from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
 from trip_agent.feasibility.models import FeasibilityReport, FeasibilityStatus
 from trip_agent.feasibility.validator import validate_itinerary
+from trip_agent.planning.trip_skeleton import TripSkeleton
 from trip_agent.worker.contracts import Itinerary, ItineraryDay
 
 REPORT_ID = "4d9b7e0a-3c2f-4a1b-9e8d-7f6e5d4c3b2a"
@@ -148,3 +149,235 @@ def test_validator_handles_oversized_inputs_with_bounded_report() -> None:
     assert report.status is FeasibilityStatus.NEEDS_REPAIR
     assert report.status is not FeasibilityStatus.VERIFIED
     assert report.summary.fail_count >= 2  # DUPLICATE_POI + TRIP_DATE_RANGE
+
+
+# ── B4B Phase 1: optional trip skeleton input ──────────────────────────────
+
+
+def _skeleton() -> TripSkeleton:
+    from trip_agent.planning.daily_schedule import DayPlan
+    from trip_agent.planning.trip_skeleton import (
+        UnresolvedAccommodation,
+        build_trip_skeleton,
+    )
+
+    def _day(day: date) -> DayPlan:
+        return DayPlan(
+            date=day,
+            day_type="FULL_DAY",
+            window_start_minute=540,
+            window_end_minute=1080,
+            items=(),
+            meal_demands=(),
+            origin=None,
+            accommodation_unknown=False,
+            warnings=(),
+        )
+
+    return build_trip_skeleton(
+        (_day(date(2026, 8, 1)), _day(date(2026, 8, 2))),
+        (UnresolvedAccommodation(),),
+    )
+
+
+def test_validation_context_carries_trip_skeleton() -> None:
+    from trip_agent.feasibility.context import ValidationContext, build_budget_context
+
+    command = make_command()
+    itinerary = make_result().itinerary
+    skeleton = _skeleton()
+    ctx = ValidationContext(
+        command=command,
+        itinerary=itinerary,
+        budget=build_budget_context(command, itinerary),
+        trip_skeleton=skeleton,
+    )
+
+    assert ctx.trip_skeleton is skeleton
+
+
+def test_validation_context_defaults_trip_skeleton_to_none() -> None:
+    from trip_agent.feasibility.context import ValidationContext, build_budget_context
+
+    command = make_command()
+    itinerary = make_result().itinerary
+    ctx = ValidationContext(
+        command=command,
+        itinerary=itinerary,
+        budget=build_budget_context(command, itinerary),
+    )
+
+    assert ctx.trip_skeleton is None
+
+
+def test_validate_itinerary_accepts_trip_skeleton_keyword() -> None:
+    report = validate_itinerary(
+        command=make_command(),
+        itinerary=make_result().itinerary,
+        report_id=REPORT_ID,
+        validated_at=_TS,
+        trip_skeleton=_skeleton(),
+    )
+
+    assert report.status is FeasibilityStatus.UNVERIFIED
+
+
+def test_validate_itinerary_without_trip_skeleton_stays_compatible() -> None:
+    report = validate_itinerary(
+        command=make_command(),
+        itinerary=make_result().itinerary,
+        report_id=REPORT_ID,
+        validated_at=_TS,
+    )
+
+    assert report.status is FeasibilityStatus.UNVERIFIED
+
+
+def test_validate_itinerary_does_not_mutate_skeleton_or_itinerary() -> None:
+    skeleton = _skeleton()
+    itinerary = make_result().itinerary
+    before_days = tuple(skeleton.days)
+    before_activities = tuple(itinerary.days[0].activities)
+
+    validate_itinerary(
+        command=make_command(),
+        itinerary=itinerary,
+        report_id=REPORT_ID,
+        validated_at=_TS,
+        trip_skeleton=skeleton,
+    )
+
+    assert skeleton.days == before_days
+    assert itinerary.days[0].activities == before_activities
+
+
+# ── B4B Phase 4: continuity rules in dispatch ──────────────────────────────
+
+
+def test_validator_version_is_v2() -> None:
+    report = _validate()
+
+    assert report.validator_version == "hard-validator-v2"
+
+
+def test_validator_rule_order_matches_implemented_set() -> None:
+    report = _validate()
+
+    assert [result.rule_id for result in report.rule_results] == list(IMPLEMENTED_RULE_IDS)
+    assert len(report.rule_results) == 7
+
+
+def test_route_unknown_keeps_report_unverified() -> None:
+    # Demo itinerary: activities without coordinates -> route rule UNKNOWN.
+    report = _validate()
+
+    route = next(
+        result
+        for result in report.rule_results
+        if result.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
+    )
+    assert route.outcome.value == "UNKNOWN"
+    assert report.status is FeasibilityStatus.UNVERIFIED
+
+
+def test_cross_unknown_keeps_report_unverified() -> None:
+    from datetime import date as date_cls
+
+    from trip_agent.planning.daily_schedule import DayPlan
+    from trip_agent.planning.trip_skeleton import (
+        UnresolvedAccommodation,
+        build_trip_skeleton,
+    )
+
+    day_one = ItineraryDay(
+        date=date_cls(2026, 8, 1),
+        activities=(make_activity(0),),
+        transit_legs=(),
+    )
+    day_two = ItineraryDay(
+        date=date_cls(2026, 8, 2),
+        activities=(make_activity(1),),
+        transit_legs=(),
+    )
+    itinerary = Itinerary(
+        title="Two days",
+        days=(day_one, day_two),
+        estimated_total_cost=Decimal("100.00"),
+    )
+
+    def _day(day: date_cls) -> DayPlan:
+        return DayPlan(
+            date=day,
+            day_type="FULL_DAY",
+            window_start_minute=540,
+            window_end_minute=1080,
+            items=(),
+            meal_demands=(),
+            origin=None,
+            accommodation_unknown=False,
+            warnings=(),
+        )
+
+    skeleton = build_trip_skeleton(
+        (_day(date_cls(2026, 8, 1)), _day(date_cls(2026, 8, 2))),
+        (UnresolvedAccommodation(),),
+    )
+    report = _validate(itinerary=itinerary)
+    assert report.status is FeasibilityStatus.UNVERIFIED
+
+    report_with_skeleton = validate_itinerary(
+        command=make_command(),
+        itinerary=itinerary,
+        report_id=REPORT_ID,
+        validated_at=_TS,
+        trip_skeleton=skeleton,
+    )
+    cross = next(
+        result
+        for result in report_with_skeleton.rule_results
+        if result.rule_id == "CROSS_DAY_CONTINUITY"
+    )
+    assert cross.outcome.value == "UNKNOWN"
+    assert report_with_skeleton.status is FeasibilityStatus.UNVERIFIED
+
+
+def test_continuity_fail_yields_needs_repair() -> None:
+    # AMap itinerary: activities have coordinates but no transit legs ->
+    # ROUTE_ENDPOINT_CONTINUITY FAIL -> NEEDS_REPAIR.
+    activities = (
+        make_activity(0, source="AMAP", start_hour=9),
+        make_activity(1, source="AMAP", start_hour=11),
+    )
+    itinerary = Itinerary(
+        title="No legs",
+        days=(
+            ItineraryDay(
+                date=date(2026, 8, 1),
+                activities=activities,
+                transit_legs=(),
+            ),
+        ),
+        estimated_total_cost=Decimal("100.00"),
+    )
+
+    report = _validate(itinerary=itinerary)
+
+    route = next(
+        result
+        for result in report.rule_results
+        if result.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
+    )
+    assert route.outcome.value == "FAIL"
+    assert report.status is FeasibilityStatus.NEEDS_REPAIR
+
+
+def test_fail_rule_precedes_unknown_in_aggregation() -> None:
+    # One FAIL (budget) plus UNKNOWN route/cross -> still NEEDS_REPAIR.
+    command = make_command(budget_amount=Decimal("1000.00"))
+    itinerary = make_result(estimated_total_cost=Decimal("1100.00")).itinerary
+
+    report = _validate(command=command, itinerary=itinerary)
+
+    assert report.status is FeasibilityStatus.NEEDS_REPAIR
+    assert report.summary.fail_count >= 1
+    assert report.summary.unknown_count >= 1

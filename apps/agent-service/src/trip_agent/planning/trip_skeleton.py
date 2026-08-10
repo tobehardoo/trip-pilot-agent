@@ -16,8 +16,12 @@ traveller stays overnight:
 are unrepresentable at the type level instead of being guarded by many
 optional fields.
 
-B3 only establishes the domain foundation; provider projection and the
-CROSS_DAY_CONTINUITY hard rule are later batches.
+B3 established the domain foundation; B4A added the AMap transient
+projection (infrastructure/amap/accommodation_projection.py) and B4B added
+the ROUTE_ENDPOINT_CONTINUITY / CROSS_DAY_CONTINUITY assessors in
+feasibility/rules/continuity.py.  The skeleton itself remains a transient
+Python planning aggregate: it has not entered the worker runtime, message
+contracts, database or API.
 """
 
 from __future__ import annotations

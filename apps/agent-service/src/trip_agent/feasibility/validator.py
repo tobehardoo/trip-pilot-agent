@@ -13,12 +13,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from trip_agent.feasibility.catalog import IMPLEMENTED_RULE_IDS, REQUIRED_RULE_IDS
 from trip_agent.feasibility.context import ValidationContext, build_budget_context
 from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
 from trip_agent.feasibility.models import FeasibilityReport, build_feasibility_report
+from trip_agent.feasibility.rules.continuity import (
+    assess_cross_day_continuity,
+    assess_route_endpoint_continuity,
+)
 from trip_agent.feasibility.rules.core import (
     RuleAssessment,
     assess_activity_overlap,
@@ -33,7 +38,10 @@ from trip_agent.worker.contracts import (
     PlanningReplanCommand,
 )
 
-VALIDATOR_VERSION = "hard-validator-v1"
+if TYPE_CHECKING:
+    from trip_agent.planning.trip_skeleton import TripSkeleton
+
+VALIDATOR_VERSION = "hard-validator-v2"
 
 # Stable dispatch: rule_id -> canonical assessor, keyed by the catalog order
 # so the report lists results in the same order as IMPLEMENTED_RULE_IDS.
@@ -43,6 +51,8 @@ _RULE_DISPATCH: dict[str, Callable[[ValidationContext], RuleAssessment]] = {
     "BUDGET_LIMIT": assess_budget_limit,
     "DUPLICATE_POI": assess_duplicate_poi,
     "ACTIVITY_OVERLAP": assess_activity_overlap,
+    "ROUTE_ENDPOINT_CONTINUITY": assess_route_endpoint_continuity,
+    "CROSS_DAY_CONTINUITY": assess_cross_day_continuity,
 }
 
 
@@ -52,18 +62,22 @@ def validate_itinerary(
     *,
     report_id: str | UUID,
     validated_at: datetime,
+    trip_skeleton: TripSkeleton | None = None,
 ) -> FeasibilityReport:
     """Run every implemented hard rule over the itinerary and aggregate the
     report.
 
     ``report_id`` and ``validated_at`` are caller-supplied to keep the
-    validator deterministic.  The report's status is never VERIFIED while
-    any required rule remains unimplemented (see the feasibility catalog).
+    validator deterministic.  ``trip_skeleton`` is an optional transient
+    planning aggregate; continuity rules treat its absence as an evidence
+    gap (UNKNOWN).  The report's status is never VERIFIED while any
+    required rule remains unimplemented (see the feasibility catalog).
     """
     ctx = ValidationContext(
         command=command,
         itinerary=itinerary,
         budget=build_budget_context(command, itinerary),
+        trip_skeleton=trip_skeleton,
     )
     rule_results = tuple(
         _RULE_DISPATCH[rule_id](ctx).result for rule_id in IMPLEMENTED_RULE_IDS

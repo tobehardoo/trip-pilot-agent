@@ -31,21 +31,13 @@ class RuleId(StrEnum):
 # in this order and lists every unimplemented rule in missingRequiredRuleIds.
 REQUIRED_RULE_IDS: tuple[str, ...] = tuple(member.value for member in RuleId)
 
-# Rules the B4B hard validator actually executes.  A stable subset of
-# REQUIRED_RULE_IDS; currently the five migrated runtime rules plus the two
-# continuity rules.
-IMPLEMENTED_RULE_IDS: tuple[str, ...] = (
-    "TRIP_DATE_RANGE",
-    "FIXED_SCHEDULE_COVERAGE",
-    "BUDGET_LIMIT",
-    "DUPLICATE_POI",
-    "ACTIVITY_OVERLAP",
-    "ROUTE_ENDPOINT_CONTINUITY",
-    "CROSS_DAY_CONTINUITY",
-)
+# Rules the B5 hard validator actually executes.  All eleven required
+# canonical rules are implemented; the set equals REQUIRED_RULE_IDS and
+# MISSING_RULE_IDS is empty.
+IMPLEMENTED_RULE_IDS: tuple[str, ...] = tuple(member.value for member in RuleId)
 
-# Rules required by the contract but not yet implemented; they remain in
-# missingRequiredRuleIds until a future batch implements them.
+# Rules required by the contract; with B5 all eleven are implemented, so
+# MISSING_RULE_IDS is empty and missingRequiredRuleIds stays empty.
 MISSING_RULE_IDS: tuple[str, ...] = tuple(
     rule_id for rule_id in REQUIRED_RULE_IDS if rule_id not in IMPLEMENTED_RULE_IDS
 )

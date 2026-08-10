@@ -1,9 +1,7 @@
 """B2 — opening-hours resolver semantics (tiers, conflicts, WEEKLY partial,
 TODAY applicability, runtime freshness) and evidence adapters."""
 
-from datetime import UTC, date, datetime, timedelta, time
-
-import pytest
+from datetime import UTC, date, datetime, time, timedelta
 
 from trip_agent.guide_intelligence.opening_evidence import (
     OpeningHoursEvidence,
@@ -41,6 +39,7 @@ def _evidence(
     checked_at: datetime = CHECKED,
     expires_at: datetime = FRESH_UNTIL,
     kind: str = "OPENING_HOURS",
+    source_ref: str = "fact-1",
 ) -> OpeningHoursEvidence:
     return OpeningHoursEvidence(
         kind=kind,  # type: ignore[arg-type]
@@ -48,7 +47,7 @@ def _evidence(
         parsed_hours=parsed,
         raw=raw,
         effective_date=effective_date,
-        source_ref="fact-1",
+        source_ref=source_ref,
         reliability_level=reliability_level,
         source_reviewed=source_reviewed,
         hard_constraint_eligible=hard_constraint_eligible,
@@ -526,3 +525,102 @@ def test_hard_eligibility_only_for_verified_resolved_states() -> None:
     conflicting = _resolve([eligible, conflicting_other])
     assert conflicting.state == "CONFLICTING"
     assert conflicting.hard_constraint_eligible is False
+
+
+# ── B5.2: temporary-closure hard-eligibility basis ─────────────────────────
+
+
+def _closure(
+    *,
+    confidence: float,
+    eligible: bool,
+    source_ref: str,
+    effective_date: date | None = date(2026, 8, 1),
+) -> OpeningHoursEvidence:
+    return _evidence(
+        kind="TEMPORARY_CLOSURE",
+        parsed=None,
+        raw=f"closure {source_ref}",
+        effective_date=effective_date,
+        hard_constraint_eligible=eligible,
+        confidence=confidence,
+        source_ref=source_ref,
+    )
+
+
+def test_closure_selected_basis_is_eligible_when_available() -> None:
+    high_ineligible = _closure(confidence=0.99, eligible=False, source_ref="high")
+    low_eligible = _closure(confidence=0.80, eligible=True, source_ref="low")
+
+    result = _resolve([high_ineligible, low_eligible])
+
+    assert result.state == "VERIFIED_CLOSED"
+    assert result.hard_constraint_eligible is True
+    assert result.selected_evidence is low_eligible
+    assert result.selected_evidence.hard_constraint_eligible is True
+    assert all(evidence is not result.selected_evidence for evidence in result.conflict_evidences)
+    assert high_ineligible in result.conflict_evidences
+
+
+def test_closure_no_eligible_yields_ineligible_selected() -> None:
+    first = _closure(confidence=0.99, eligible=False, source_ref="a")
+    second = _closure(confidence=0.80, eligible=False, source_ref="b")
+
+    result = _resolve([first, second])
+
+    assert result.hard_constraint_eligible is False
+    assert result.selected_evidence is first  # confidence max among equals
+    assert result.selected_evidence.hard_constraint_eligible is False
+
+
+def test_multiple_eligible_closures_select_highest_confidence_eligible() -> None:
+    low = _closure(confidence=0.80, eligible=True, source_ref="low")
+    high = _closure(confidence=0.90, eligible=True, source_ref="high")
+
+    result = _resolve([low, high])
+
+    assert result.selected_evidence is high
+    assert result.selected_evidence.hard_constraint_eligible is True
+
+
+def test_closure_selection_is_order_independent() -> None:
+    high_ineligible = _closure(confidence=0.99, eligible=False, source_ref="high")
+    low_eligible = _closure(confidence=0.80, eligible=True, source_ref="low")
+
+    forward = _resolve([high_ineligible, low_eligible])
+    backward = _resolve([low_eligible, high_ineligible])
+
+    assert forward.selected_evidence is backward.selected_evidence
+    assert {id(e) for e in forward.conflict_evidences} == {
+        id(e) for e in backward.conflict_evidences
+    }
+
+
+# ── B5.3: stable tie-break for identical eligibility/confidence ────────────
+
+
+def test_same_confidence_eligible_closures_select_stably() -> None:
+    a = _closure(confidence=0.90, eligible=True, source_ref="a")
+    b = _closure(confidence=0.90, eligible=True, source_ref="b")
+
+    forward = _resolve([a, b])
+    backward = _resolve([b, a])
+
+    assert forward.selected_evidence is backward.selected_evidence
+    assert {id(e) for e in forward.conflict_evidences} == {
+        id(e) for e in backward.conflict_evidences
+    }
+
+
+def test_same_confidence_ineligible_closures_select_stably() -> None:
+    a = _closure(confidence=0.90, eligible=False, source_ref="a")
+    b = _closure(confidence=0.90, eligible=False, source_ref="b")
+
+    forward = _resolve([a, b])
+    backward = _resolve([b, a])
+
+    assert forward.selected_evidence is backward.selected_evidence
+    assert forward.selected_evidence.hard_constraint_eligible is False
+    assert {id(e) for e in forward.conflict_evidences} == {
+        id(e) for e in backward.conflict_evidences
+    }

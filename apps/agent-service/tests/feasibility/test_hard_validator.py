@@ -17,7 +17,6 @@ from plan_evaluation_support import make_activity, make_command, make_result
 
 from trip_agent.feasibility.catalog import (
     IMPLEMENTED_RULE_IDS,
-    MISSING_RULE_IDS,
     REQUIRED_RULE_IDS,
 )
 from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
@@ -62,12 +61,15 @@ def test_validator_rule_results_use_the_core_rule_version() -> None:
 # ── aggregation semantics ─────────────────────────────────────────────────
 
 
-def test_full_pass_is_unverified_because_future_rules_are_missing() -> None:
+def test_full_pass_is_unverified_without_validation_inputs() -> None:
+    # All eleven rules now exist; the fixture itinerary carries no opening /
+    # duration / meal inputs, so the new rules are UNKNOWN -> UNVERIFIED.
     report = _validate()
 
     assert report.status is FeasibilityStatus.UNVERIFIED
-    assert report.missing_required_rule_ids == MISSING_RULE_IDS
+    assert report.missing_required_rule_ids == ()
     assert report.summary.fail_count == 0
+    assert report.summary.unknown_count >= 1
 
 
 def test_fail_rule_yields_needs_repair() -> None:
@@ -254,17 +256,17 @@ def test_validate_itinerary_does_not_mutate_skeleton_or_itinerary() -> None:
 # ── B4B Phase 4: continuity rules in dispatch ──────────────────────────────
 
 
-def test_validator_version_is_v2() -> None:
+def test_validator_version_is_v3() -> None:
     report = _validate()
 
-    assert report.validator_version == "hard-validator-v2"
+    assert report.validator_version == "hard-validator-v3"
 
 
 def test_validator_rule_order_matches_implemented_set() -> None:
     report = _validate()
 
     assert [result.rule_id for result in report.rule_results] == list(IMPLEMENTED_RULE_IDS)
-    assert len(report.rule_results) == 7
+    assert len(report.rule_results) == 11
 
 
 def test_route_unknown_keeps_report_unverified() -> None:

@@ -110,7 +110,25 @@ def resolve_opening_hours(
         if evidence.expires_at <= resolver_as_of
     )
     if closure_fresh:
-        eligible = any(evidence.hard_constraint_eligible for evidence in closure_fresh)
+        # The verdict basis must itself carry the hard-eligibility: prefer
+        # eligible closures, then highest confidence, so a high-confidence
+        # ineligible closure never steals the VERIFIED/True basis.  The
+        # remaining provenance fields make the choice fully deterministic —
+        # identical eligibility/confidence never depends on input order.
+        eligible_closure = tuple(
+            evidence for evidence in closure_fresh if evidence.hard_constraint_eligible
+        )
+        pool = eligible_closure if eligible_closure else closure_fresh
+        selected = max(
+            pool,
+            key=lambda item: (
+                item.hard_constraint_eligible,
+                item.confidence,
+                item.source_ref,
+                item.checked_at,
+                item.expires_at,
+            ),
+        )
         return ResolvedOpeningHours(
             poi_key=poi_key,
             date=trip_date,
@@ -119,10 +137,10 @@ def resolve_opening_hours(
             last_entry=None,
             closed=True,
             all_day=False,
-            hard_constraint_eligible=eligible,
-            selected_evidence=max(closure_fresh, key=lambda item: item.confidence),
+            hard_constraint_eligible=selected.hard_constraint_eligible,
+            selected_evidence=selected,
             conflict_evidences=tuple(
-                item for item in closure_fresh if item is not closure_fresh[0]
+                item for item in closure_fresh if item is not selected
             ),
             downgraded_reason=None,
         )

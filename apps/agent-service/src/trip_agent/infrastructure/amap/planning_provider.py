@@ -39,6 +39,9 @@ from trip_agent.guide_intelligence.travel_entities import (
 from trip_agent.infrastructure.amap.accommodation_projection import (
     project_amap_trip_skeleton,
 )
+from trip_agent.infrastructure.amap.feasibility_projection import (
+    project_amap_validation_inputs,
+)
 from trip_agent.planning.candidates import CandidateRanker
 from trip_agent.planning.daily_schedule import (
     CandidateActivity,
@@ -486,6 +489,23 @@ class AmapPlanningProvider:
             ),
             resolved_accommodation=anchors.accommodation,
         )
+        # B5: transient validation inputs.  Each selected POI keeps the fetch
+        # time of its own search batch (object identity, never a shared
+        # timestamp); the worker and message contracts ignore this field.
+        fetched_by_identity = {
+            id(fetched.poi): fetched
+            for fetched in raw_pois
+        }
+        selected_snapshots = tuple(
+            fetched_by_identity[id(poi)]
+            for poi in ranked_pois
+            if id(poi) in fetched_by_identity
+        )
+        validation_inputs = project_amap_validation_inputs(
+            itinerary=itinerary,
+            day_plans=tuple(day_plans),
+            fetched_snapshots=selected_snapshots,
+        )
         return PlanningResult(
             provider="AMAP",
             itinerary=itinerary,
@@ -500,6 +520,7 @@ class AmapPlanningProvider:
             ),
             fallback_operations=fallback_operations,
             trip_skeleton=trip_skeleton,
+            validation_inputs=validation_inputs,
         )
 
     @staticmethod
@@ -529,7 +550,11 @@ class AmapPlanningProvider:
         score_by_id: dict[str, int],
     ) -> CandidateActivity:
         must = AmapPlanningProvider._is_must_visit_poi(poi, must_visit_text)
-        magnitude = AmapPlanningProvider._magnitude_for_poi(poi)
+        # B5: compute the duration profile exactly once per POI; magnitude is
+        # derived from it and the profile travels with the candidate so the
+        # scheduler and the duration hard rule see the same numbers.
+        profile = duration_profile_for(poi)
+        magnitude = magnitude_for_duration(profile)
         kind: str = (
             "EXPERIENCE"
             if magnitude in {"FULL_DAY", "HALF_DAY"}
@@ -548,6 +573,7 @@ class AmapPlanningProvider:
             must_include=must,
             kind=kind,  # type: ignore[arg-type]
             score=score_by_id.get(poi.provider_id, 0),
+            visit_duration_profile=profile,
         )
 
     @staticmethod

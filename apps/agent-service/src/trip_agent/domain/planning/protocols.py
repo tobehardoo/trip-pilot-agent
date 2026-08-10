@@ -21,6 +21,7 @@ from trip_agent.worker.contracts import (
 )
 
 if TYPE_CHECKING:
+    from trip_agent.feasibility.inputs import ValidationInputs
     from trip_agent.planning.trip_skeleton import TripSkeleton
 
 
@@ -93,6 +94,10 @@ class PlanningResult:
     # B4A: transient planning-only aggregate.  Never enters messaging,
     # persistence or API surfaces; worker/processor currently ignores it.
     trip_skeleton: "TripSkeleton | None" = None
+    # B5: transient validation inputs (opening/duration/meal evidence).
+    # Transient only — worker, messaging, DB and API never consume them;
+    # Demo and replan results leave this None.
+    validation_inputs: "ValidationInputs | None" = None
 
     def provider_provenance(self) -> ProviderProvenance | None:
         if self.requested_provider_mode is None:

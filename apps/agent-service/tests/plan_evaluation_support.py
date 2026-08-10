@@ -28,6 +28,7 @@ def make_command(
     preferences: tuple[str, ...] = (),
     fixed_schedules: tuple[dict[str, object], ...] = (),
     must_visit_places: tuple[str, ...] = (),
+    meal_windows: tuple[dict[str, object], ...] = (),
 ) -> PlanningCreateCommand:
     raw = deepcopy(COMMAND)
     raw["schemaVersion"] = 2
@@ -38,6 +39,7 @@ def make_command(
             "preferences": list(preferences),
             "fixedSchedules": list(fixed_schedules),
             "mustVisitPlaces": list(must_visit_places),
+            "mealWindows": list(meal_windows),
             "schemaVersion": 2,
         }
     )

@@ -39,6 +39,7 @@ from trip_agent.domain.shared import (
     MealType,
     Pace,
 )
+from trip_agent.planning.visit_duration import VisitDurationProfile
 
 # Default daily window.  When arrival/departure are missing we do NOT fall back
 # to a fixed two-activity model — the window is filled by capacity.
@@ -111,6 +112,9 @@ class CandidateActivity:
     fixed_end: datetime | None = None
     kind: ActivityKind = "ATTRACTION"
     score: int = 0
+    # B5: optional versioned duration profile.  When present, the scheduler
+    # uses recommended_minutes; otherwise it falls back to the magnitude map.
+    visit_duration_profile: VisitDurationProfile | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -617,6 +621,19 @@ def _choose_special_day(
     return None
 
 
+def _activity_duration_minutes(candidate: CandidateActivity) -> int:
+    """One shared duration source for placement.
+
+    A candidate with a versioned profile uses its recommended duration;
+    otherwise the magnitude map applies.  `_place` and `_fill_slots` both
+    use this helper so the two paths can never disagree.
+    """
+    profile = candidate.visit_duration_profile
+    if profile is not None:
+        return profile.recommended_minutes
+    return MAGNITUDE_DURATION_MINUTES[candidate.magnitude]
+
+
 def _place(
     candidates: tuple[CandidateActivity, ...],
     candidate: CandidateActivity,
@@ -625,7 +642,7 @@ def _place(
     return PlacedActivity(
         candidate=candidate,
         start_minute=start_minute,
-        end_minute=start_minute + MAGNITUDE_DURATION_MINUTES[candidate.magnitude],
+        end_minute=start_minute + _activity_duration_minutes(candidate),
     )
 
 
@@ -665,7 +682,7 @@ def _fill_slots(
         for activity in ordered:
             if any(item.candidate is activity for item in placed):
                 continue
-            duration = MAGNITUDE_DURATION_MINUTES[activity.magnitude]
+            duration = _activity_duration_minutes(activity)
             needed = duration + (buffer if cursor > low else 0)
             if needed > capacity - (cursor - low):
                 continue

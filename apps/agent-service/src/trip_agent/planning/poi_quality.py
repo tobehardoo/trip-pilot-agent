@@ -20,9 +20,12 @@ already ambiguous.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal
 
+from trip_agent.planning.visit_duration import (
+    DurationProfileSource,
+    VisitDurationProfile,
+)
 from trip_agent.providers.map import Poi
 
 # AMap top-level classes (leading digits of type_code).
@@ -149,24 +152,51 @@ def canonical_poi_key(poi: Poi) -> str:
     return f"{role}:{base}:{lon}:{lat}"
 
 
-@dataclass(frozen=True, slots=True)
-class DurationProfile:
-    """A category-driven visit-duration window with an explicit source."""
-
-    min_minutes: int
-    recommended_minutes: int
-    max_minutes: int
-    source: DurationSource
+# B5: the canonical duration model lives in planning/visit_duration.py; keep
+# the legacy name importable for existing callers.
+DurationProfile = VisitDurationProfile
 
 
-# Deterministic category → duration profile.  The numbers are design guidance
-# for the current domain model (LIGHT ~45–90, NORMAL ~90–180, HALF ~180–300,
+# Deterministic category -> duration profile.  The numbers are design guidance
+# for the current domain model (LIGHT ~45-90, NORMAL ~90-180, HALF ~180-300,
 # FULL ~360+).  A provider with explicit duration data can override these.
-_LIGHT_PROFILE = DurationProfile(45, 90, 120, "CATEGORY_PROFILE")
-_NORMAL_PROFILE = DurationProfile(90, 150, 180, "CATEGORY_PROFILE")
-_HALF_DAY_PROFILE = DurationProfile(180, 240, 300, "CATEGORY_PROFILE")
-_FULL_DAY_PROFILE = DurationProfile(360, 480, 540, "CATEGORY_PROFILE")
-_DEFAULT_PROFILE = DurationProfile(90, 150, 180, "SYSTEM_DEFAULT")
+# Category/system profiles are never hard-constraint eligible.
+_CATEGORY_VERSION = "category-profile-v1"
+_LIGHT_PROFILE = VisitDurationProfile(
+    45, 90, 120,
+    DurationProfileSource.CATEGORY_PROFILE,
+    source_ref="category:light",
+    confidence=0.5,
+    profile_version=_CATEGORY_VERSION,
+)
+_NORMAL_PROFILE = VisitDurationProfile(
+    90, 150, 180,
+    DurationProfileSource.CATEGORY_PROFILE,
+    source_ref="category:normal",
+    confidence=0.5,
+    profile_version=_CATEGORY_VERSION,
+)
+_HALF_DAY_PROFILE = VisitDurationProfile(
+    180, 240, 300,
+    DurationProfileSource.CATEGORY_PROFILE,
+    source_ref="category:half-day",
+    confidence=0.5,
+    profile_version=_CATEGORY_VERSION,
+)
+_FULL_DAY_PROFILE = VisitDurationProfile(
+    360, 480, 540,
+    DurationProfileSource.CATEGORY_PROFILE,
+    source_ref="category:full-day",
+    confidence=0.5,
+    profile_version=_CATEGORY_VERSION,
+)
+_DEFAULT_PROFILE = VisitDurationProfile(
+    90, 150, 180,
+    DurationProfileSource.SYSTEM_DEFAULT,
+    source_ref="system:default",
+    confidence=0.3,
+    profile_version=_CATEGORY_VERSION,
+)
 
 # Lightweight scalar markers that indicate a small/simple attraction.
 # Deliberately excludes ambiguous landmark words ("塔", "楼") so that

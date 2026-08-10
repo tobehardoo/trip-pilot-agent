@@ -16,7 +16,11 @@ import pytest
 from plan_evaluation_support import make_command, make_result
 
 import trip_agent.planning.trip_skeleton as trip_skeleton_module
-from trip_agent.feasibility.catalog import IMPLEMENTED_RULE_IDS, MISSING_RULE_IDS
+from trip_agent.feasibility.catalog import (
+    IMPLEMENTED_RULE_IDS,
+    MISSING_RULE_IDS,
+    REQUIRED_RULE_IDS,
+)
 from trip_agent.feasibility.models import FeasibilityStatus
 from trip_agent.feasibility.validator import validate_itinerary
 from trip_agent.planning.daily_schedule import DayPlan
@@ -583,27 +587,13 @@ def test_trip_skeleton_uses_no_clocks_uuids_or_io() -> None:
     assert "urllib" not in source
 
 
-def test_b4b_catalog_implemented_set_is_exactly_seven() -> None:
-    assert IMPLEMENTED_RULE_IDS == (
-        "TRIP_DATE_RANGE",
-        "FIXED_SCHEDULE_COVERAGE",
-        "BUDGET_LIMIT",
-        "DUPLICATE_POI",
-        "ACTIVITY_OVERLAP",
-        "ROUTE_ENDPOINT_CONTINUITY",
-        "CROSS_DAY_CONTINUITY",
-    )
+def test_b5_catalog_implemented_set_is_the_full_eleven() -> None:
+    assert IMPLEMENTED_RULE_IDS == REQUIRED_RULE_IDS
+    assert len(IMPLEMENTED_RULE_IDS) == 11
 
 
-def test_continuity_rules_no_longer_missing() -> None:
-    assert "ROUTE_ENDPOINT_CONTINUITY" not in MISSING_RULE_IDS
-    assert "CROSS_DAY_CONTINUITY" not in MISSING_RULE_IDS
-    assert MISSING_RULE_IDS == (
-        "MUST_VISIT_COVERAGE",
-        "OPENING_HOURS",
-        "VISIT_DURATION",
-        "MEAL_WINDOW",
-    )
+def test_no_required_rule_is_missing() -> None:
+    assert MISSING_RULE_IDS == ()
 
 
 def test_b3_does_not_make_validator_report_verified() -> None:

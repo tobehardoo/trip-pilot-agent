@@ -638,3 +638,95 @@ def test_demo_chain_validates_unknown_and_unverified() -> None:
     assert route.outcome is RuleOutcome.NOT_APPLICABLE
     assert cross.outcome is RuleOutcome.UNKNOWN
     assert report.status is FeasibilityStatus.UNVERIFIED
+
+
+# ── B5 Phase 8: transient validation inputs on PlanningResult ──────────────
+
+
+def test_amap_result_carries_validation_inputs() -> None:
+    from trip_agent.feasibility.inputs import MealProjectionState
+
+    pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
+    result = asyncio.run(_provider(pois).plan(_command()))
+
+    assert result.validation_inputs is not None
+    assert (
+        result.validation_inputs.meal_projection_state
+        is MealProjectionState.COMPLETE
+    )
+    assert len(result.validation_inputs.visit_duration_bindings) > 0
+
+
+def test_amap_standalone_validation_is_unverified_with_unknown_evidence() -> None:
+    from trip_agent.feasibility.models import FeasibilityStatus, RuleOutcome
+    from trip_agent.feasibility.validator import validate_itinerary
+
+    meal = _poi("r1", "老字号粤菜馆", district="越秀区")
+    pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
+    command = _command()
+    result = asyncio.run(_provider(pois, meal_pois=(meal,)).plan(command))
+
+    report = validate_itinerary(
+        command=command,
+        itinerary=result.itinerary,
+        report_id="3d76fb9e-362e-4b28-8a9e-18e8ac7050ad",
+        validated_at=datetime(2026, 8, 9, 12, 0, tzinfo=UTC),
+        trip_skeleton=result.trip_skeleton,
+        validation_inputs=result.validation_inputs,
+    )
+
+    opening = next(r for r in report.rule_results if r.rule_id == "OPENING_HOURS")
+    duration = next(r for r in report.rule_results if r.rule_id == "VISIT_DURATION")
+    cross = next(r for r in report.rule_results if r.rule_id == "CROSS_DAY_CONTINUITY")
+    # AMap evidence is category/provider level: never hard-eligible; without
+    # a confirmed hotel the cross-day rule is UNKNOWN too.
+    assert opening.outcome is RuleOutcome.UNKNOWN
+    assert duration.outcome is RuleOutcome.UNKNOWN
+    assert cross.outcome is RuleOutcome.UNKNOWN
+    assert report.status is FeasibilityStatus.UNVERIFIED
+    assert report.missing_required_rule_ids == ()
+
+
+def test_amap_explicit_breakfast_window_fails_without_breakfast_placement() -> None:
+    from trip_agent.feasibility.models import FeasibilityStatus, RuleOutcome
+    from trip_agent.feasibility.validator import validate_itinerary
+
+    meal = _poi("r1", "老字号粤菜馆", district="越秀区")
+    pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
+    command = _command()
+    # Add an explicit breakfast window; AMap schedules no breakfast.
+    raw = command.model_dump(by_alias=True)
+    raw["payload"]["trip"]["constraints"]["mealWindows"] = [
+        {"mealType": "BREAKFAST", "startTime": "08:00", "endTime": "09:00"}
+    ]
+    from trip_agent.worker.contracts import PlanningCreateCommand
+
+    breakfast_command = PlanningCreateCommand.model_validate(raw)
+    result = asyncio.run(_provider(pois, meal_pois=(meal,)).plan(breakfast_command))
+
+    report = validate_itinerary(
+        command=breakfast_command,
+        itinerary=result.itinerary,
+        report_id="3d76fb9e-362e-4b28-8a9e-18e8ac7050ad",
+        validated_at=datetime(2026, 8, 9, 12, 0, tzinfo=UTC),
+        trip_skeleton=result.trip_skeleton,
+        validation_inputs=result.validation_inputs,
+    )
+
+    meal_window = next(
+        r for r in report.rule_results if r.rule_id == "MEAL_WINDOW"
+    )
+    assert meal_window.outcome is RuleOutcome.FAIL
+    assert report.status is FeasibilityStatus.NEEDS_REPAIR
+
+
+def test_v8_completion_json_has_no_validation_inputs() -> None:
+    import json
+
+    from trip_agent.worker.processor import process_planning_create
+
+    pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
+    completed = asyncio.run(process_planning_create(_command(), _provider(pois)))
+    assert completed.schema_version == 8
+    payload = json.loads(completed.model_dump_json(by_alias=True, exclude_none=True))
+    assert "validationInputs" not in json.dumps(payload)

@@ -264,8 +264,15 @@ def test_local_replanning_only_rebuilds_impacted_transit() -> None:
     assert second_day == command.payload.itinerary.days[1].to_itinerary_day()
     assert completed.payload.knowledge == command.payload.knowledge
     assert completed.payload.provider == "AMAP"
-    assert completed.payload.evaluation is not None
-    assert completed.payload.evaluation.feasible is True
+    # Local replan lacks transient validation inputs -> review-required, no
+    # evaluation, and the old version semantics are preserved by Java.
+    assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
+    assert completed.schema_version == 1
+    assert not hasattr(completed.payload, "evaluation")
+    assert completed.payload.feasibility_report.status.value in {
+        "UNVERIFIED",
+        "NEEDS_REPAIR",
+    }
 
 
 def test_local_replanning_preserves_the_existing_transit_mode() -> None:

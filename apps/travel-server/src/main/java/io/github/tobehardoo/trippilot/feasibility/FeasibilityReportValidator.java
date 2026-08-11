@@ -18,7 +18,9 @@ import java.util.regex.Pattern;
  * aggregation or safety decisions is rejected with
  * {@link IllegalArgumentException} — never an NPE.
  *
- * Not referenced by any runtime parser.
+ * Referenced by the v9 completion and review-required event parsers after
+ * wire deserialisation; parser adapters convert {@link IllegalArgumentException}
+ * into the fail-closed contract rejection.
  */
 public final class FeasibilityReportValidator {
 

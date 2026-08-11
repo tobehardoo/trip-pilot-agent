@@ -2,9 +2,6 @@ package io.github.tobehardoo.trippilot.planning;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -27,6 +24,10 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     private final PlanningTaskEventMapper taskEventMapper;
     private final ItineraryService itineraryService;
     private final PlanningFactImpactMapper factImpactMapper;
+    private final io.github.tobehardoo.trippilot.itinerary.ItineraryFeasibilityReportMapper
+            feasibilityReportMapper;
+    private final io.github.tobehardoo.trippilot.itinerary.FeasibilityEntityRefMapper entityRefMapper;
+    private final PlanningOutcomeGuard guard;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
@@ -36,6 +37,11 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                                      PlanningTaskEventMapper taskEventMapper,
                                      ItineraryService itineraryService,
                                      PlanningFactImpactMapper factImpactMapper,
+                                     io.github.tobehardoo.trippilot.itinerary.ItineraryFeasibilityReportMapper
+                                             feasibilityReportMapper,
+                                     io.github.tobehardoo.trippilot.itinerary.FeasibilityEntityRefMapper
+                                             entityRefMapper,
+                                     PlanningOutcomeGuard guard,
                                      ObjectMapper objectMapper,
                                      Clock clock,
                                      ApplicationEventPublisher eventPublisher,
@@ -44,6 +50,9 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         this.taskEventMapper = taskEventMapper;
         this.itineraryService = itineraryService;
         this.factImpactMapper = factImpactMapper;
+        this.feasibilityReportMapper = feasibilityReportMapper;
+        this.entityRefMapper = entityRefMapper;
+        this.guard = guard;
         this.objectMapper = objectMapper;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
@@ -53,9 +62,25 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     @Transactional
     @Override
     public void handle(PlanningCompletedEvent event) {
+        // Second fail-closed gate: the parser already rejects non-v9 wire
+        // events, but a caller that bypasses the parser must not be able to
+        // create a formal itinerary version without a VERIFIED report.
+        if (event.schemaVersion() != 9) {
+            throw rejected("Only schemaVersion 9 completions can create a version");
+        }
+        if (event.payload() == null || event.payload().feasibilityReport() == null) {
+            throw rejected("A v9 completion requires a feasibilityReport");
+        }
+        if (event.payload().feasibilityReport().status()
+                != io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.VERIFIED) {
+            throw rejected("A v9 completion requires a VERIFIED feasibilityReport");
+        }
+        if (event.payload().evaluation() == null) {
+            throw rejected("A v9 completion requires an evaluation");
+        }
         PlanningTaskCompletionRecord task = taskMapper.findCompletionContextForUpdate(event.taskId())
                 .orElseThrow(() -> rejected("Planning task was not found"));
-        validateIdentity(event, task);
+        guard.validateIdentity(event.tripId(), event.traceId(), task, "Completed event");
         var existingEvent = taskEventMapper.findByEventId(event.eventId());
         if (existingEvent.isPresent()) {
             PlanningTaskEventRecord existing = existingEvent.get();
@@ -70,15 +95,15 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         if (!"QUEUED".equals(task.status()) && !"RUNNING".equals(task.status())) {
             throw rejected("Planning task cannot accept a completion event in status " + task.status());
         }
-        validateDates(event, task);
-        if (task.baselineTripVersion() != task.currentTripVersion()) {
+        guard.validateDates(event.payload().itinerary().days(), task);
+        if (guard.isStaleTripBaseline(task)) {
             persistStaleFailure(event, task, "STALE_TRIP_VERSION",
                     "Trip constraints changed while planning was running");
             return;
         }
         if ("REPLAN".equals(task.taskType())) {
-            if (!task.baselineItineraryVersionId()
-                    .equals(itineraryService.getCurrentVersionForTask(task.tripId()))) {
+            if (guard.isStaleReplanBaseline(
+                    task, itineraryService.getCurrentVersionForTask(task.tripId()))) {
                 persistStaleFailure(event, task, "STALE_ITINERARY_VERSION",
                         "The itinerary changed while local replanning was running");
                 return;
@@ -86,6 +111,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
             ItineraryService.CreateItineraryResult result =
                     itineraryService.createReplanVersion(
                             task.tripId(), event, task, clock);
+            persistFeasibilityReportIfPresent(event, result);
             updateTaskToSucceeded(
                     event, task, result, "PLANNING_COMPLETED",
                     writeJson(completionPayload(event, result)));
@@ -96,9 +122,53 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         task.tripId(), event, task.id(),
                         task.constraintSnapshotJson(), clock);
         persistFactImpacts(event, result.versionId());
+        persistFeasibilityReportIfPresent(event, result);
         updateTaskToSucceeded(
                 event, task, result, "PLANNING_COMPLETED",
                 writeJson(completionPayload(event, result)));
+    }
+
+    /**
+     * Persists the VERIFIED feasibility report of a v9 completion atomically
+     * with the itinerary version and the SUCCEEDED transition.  A v9
+     * completion always carries a report (enforced by the service gate), so a
+     * missing report here is a programming error and must not be silently
+     * tolerated.  A failed insert rolls the whole completion transaction back.
+     *
+     * Temporary activity/transit references inside the report are remapped to
+     * the persisted node ids before storage; provider POI ids and plain text
+     * references pass through unchanged.
+     */
+    private void persistFeasibilityReportIfPresent(
+            PlanningCompletedEvent event,
+            ItineraryService.CreateItineraryResult result
+    ) {
+        io.github.tobehardoo.trippilot.feasibility.FeasibilityReport report =
+                event.payload().feasibilityReport();
+        if (report == null) {
+            throw new IllegalStateException("v9 completion is missing its feasibility report");
+        }
+        java.util.Map<java.util.UUID, java.util.UUID> activityRefs = new java.util.HashMap<>();
+        for (ItineraryService.PersistedActivityReference ref : result.persistedActivities()) {
+            activityRefs.put(ref.sourceActivityId(), ref.activityId());
+        }
+        java.util.Map<java.util.UUID, java.util.UUID> transitRefs = new java.util.HashMap<>();
+        for (ItineraryService.PersistedTransitReference ref : result.persistedTransit()) {
+            transitRefs.put(ref.sourceTransitId(), ref.transitId());
+        }
+        String reportJson = entityRefMapper.remap(writeJson(report), activityRefs, transitRefs);
+        requireOne(feasibilityReportMapper.insert(
+                new io.github.tobehardoo.trippilot.itinerary.ItineraryFeasibilityReportRecord(
+                        result.versionId(),
+                        report.reportId(),
+                        report.schemaVersion(),
+                        report.validatorVersion(),
+                        report.itineraryFingerprint(),
+                        report.status().name(),
+                        report.validatedAt().toInstant(),
+                        reportJson
+                )
+        ), "itinerary feasibility report");
     }
 
     private CompletionPayload completionPayload(
@@ -262,33 +332,6 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                             impact.refreshFailed()
                     )
             ), "planning fact impact");
-        }
-    }
-
-    private void validateIdentity(PlanningCompletedEvent event, PlanningTaskCompletionRecord task) {
-        if (!event.tripId().equals(task.tripId()) || !event.traceId().equals(task.traceId())) {
-            throw rejected("Completed event does not match its planning task");
-        }
-    }
-
-    private void validateDates(PlanningCompletedEvent event, PlanningTaskCompletionRecord task) {
-        var days = event.payload().itinerary().days();
-        long expectedDayCount = ChronoUnit.DAYS.between(task.tripStartDate(), task.tripEndDate()) + 1;
-        if (days.size() != expectedDayCount) {
-            throw rejected("Completed itinerary must contain every trip date exactly once");
-        }
-        for (int dayIndex = 0; dayIndex < days.size(); dayIndex++) {
-            PlanningCompletedEvent.Day day = days.get(dayIndex);
-            LocalDate expectedDate = task.tripStartDate().plusDays(dayIndex);
-            if (!expectedDate.equals(day.date())) {
-                throw rejected("Completed itinerary dates must be ordered within the trip range");
-            }
-            for (PlanningCompletedEvent.Activity activity : day.activities()) {
-                if (!day.date().equals(activity.startTime().withOffsetSameInstant(ZoneOffset.ofHours(8)).toLocalDate())
-                        || !day.date().equals(activity.endTime().withOffsetSameInstant(ZoneOffset.ofHours(8)).toLocalDate())) {
-                    throw rejected("Activities must remain within their itinerary day");
-                }
-            }
         }
     }
 

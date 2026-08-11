@@ -10,8 +10,14 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * Standalone feasibility report (schemaVersion 1) — B1 contract foundation.
  *
- * Deliberately NOT wired into any runtime parser or envelope; v8/v2 remain
- * unchanged. Cross-field semantics are enforced by {@link FeasibilityReportValidator}.
+ * The B1 contract shape is preserved for {@link FeasibilityReportValidator}
+ * and its contract tests.  Runtime v9 completions and review-required events
+ * carry the feasibility report inside
+ * {@code PlanningCompletedEvent.FeasibilityReport} /
+ * {@code PlanningReviewRequiredEvent.Payload}, verified against the shared
+ * JSON contract (status, schemaVersion, fingerprint) by the event parsers
+ * and persisted alongside itinerary versions by
+ * {@code ItineraryFeasibilityReportMapper}.
  */
 public record FeasibilityReport(
         @JsonProperty("schemaVersion") int schemaVersion,

@@ -289,7 +289,8 @@ def test_completed_v6_event_exposes_fact_impacts_from_the_frozen_snapshot() -> N
     completed = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
     wire = completed.model_dump(mode="json", by_alias=True, exclude_none=True)
 
-    assert wire["schemaVersion"] == 8
+    assert wire["schemaVersion"] == 1
+    assert wire["eventType"] == "PLANNING_REVIEW_REQUIRED"
     assert wire["payload"]["factImpacts"][0]["factId"] == fact["factId"]
     assert wire["payload"]["factImpacts"][0]["effect"] == "STALE_FACT_WARNING"
     assert wire["payload"]["factImpacts"][0]["evidence"] == "预计有雨"

@@ -98,7 +98,8 @@ def test_demo_success_emits_recorded_provenance() -> None:
 
     completed = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
 
-    assert completed.schema_version == 8
+    assert completed.schema_version == 1
+    assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
     assert completed.payload.provider_provenance == ProviderProvenance(
         requested_provider_mode="DEMO_ONLY",
         primary_provider="DEMO",

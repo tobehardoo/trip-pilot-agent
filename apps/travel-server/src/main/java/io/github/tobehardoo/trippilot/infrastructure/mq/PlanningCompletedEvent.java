@@ -23,14 +23,15 @@ public record PlanningCompletedEvent(
             KnowledgeEvidence knowledge,
             List<FactImpact> factImpacts,
             ProviderProvenance providerProvenance,
-            PlanEvaluation evaluation
+            PlanEvaluation evaluation,
+            io.github.tobehardoo.trippilot.feasibility.FeasibilityReport feasibilityReport
     ) {
         public Payload(
                 String provider,
                 Itinerary itinerary,
                 KnowledgeEvidence knowledge
         ) {
-            this(provider, itinerary, knowledge, List.of(), null, null);
+            this(provider, itinerary, knowledge, List.of(), null, null, null);
         }
 
         public Payload(
@@ -39,7 +40,7 @@ public record PlanningCompletedEvent(
                 KnowledgeEvidence knowledge,
                 List<FactImpact> factImpacts
         ) {
-            this(provider, itinerary, knowledge, factImpacts, null, null);
+            this(provider, itinerary, knowledge, factImpacts, null, null, null);
         }
 
         public Payload(
@@ -49,7 +50,7 @@ public record PlanningCompletedEvent(
                 List<FactImpact> factImpacts,
                 ProviderProvenance providerProvenance
         ) {
-            this(provider, itinerary, knowledge, factImpacts, providerProvenance, null);
+            this(provider, itinerary, knowledge, factImpacts, providerProvenance, null, null);
         }
 
         public Payload {

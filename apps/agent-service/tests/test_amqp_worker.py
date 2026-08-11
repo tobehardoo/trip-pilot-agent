@@ -78,7 +78,7 @@ def test_valid_command_is_acked_only_after_completed_event_is_published() -> Non
     assert message.nacked_with is None
     assert len(exchange.published) > 1
     published, routing_key, mandatory = exchange.published[-1]
-    assert routing_key == "planning.completed"
+    assert routing_key == "planning.review-required"
 
 
 def test_valid_command_publishes_the_expected_completed_contract() -> None:
@@ -92,31 +92,57 @@ def test_valid_command_publishes_the_expected_completed_contract() -> None:
     assert message.rejected_with is None
     assert len(exchange.published) > 1
     published, routing_key, mandatory = exchange.published[-1]
-    assert routing_key == "planning.completed"
+    # Demo lacks hard evidence -> review-required route, not completed.
+    assert routing_key == "planning.review-required"
     assert mandatory is True
-    assert json.loads(published.body)["eventType"] == "PLANNING_COMPLETED"
+    assert json.loads(published.body)["eventType"] == "PLANNING_REVIEW_REQUIRED"
     assert mandatory is True
     assert published.content_type == "application/json"
     assert published.delivery_mode.name == "PERSISTENT"
     assert published.message_id is not None
     body = json.loads(published.body)
-    assert body["eventType"] == "PLANNING_COMPLETED"
-    assert body["schemaVersion"] == 8
+    assert body["eventType"] == "PLANNING_REVIEW_REQUIRED"
+    assert body["schemaVersion"] == 1
+    assert body["payload"]["feasibilityReport"]["status"] == "UNVERIFIED"
     assert body["taskId"] == COMMAND["taskId"]
     assert body["payload"]["itinerary"]["estimatedTotalCost"] == 0
     assert isinstance(body["payload"]["itinerary"]["estimatedTotalCost"], int | float)
     activity = body["payload"]["itinerary"]["days"][0]["activities"][0]
-    assert "providerPoiId" not in activity
-    assert "coordinates" not in activity
-    assert "address" not in activity
+    assert activity["providerPoiId"] is None
+    assert activity["coordinates"] is None
+    assert activity["address"] is None
     assert body["payload"]["itinerary"]["days"][0]["transitLegs"] == []
     assert body["payload"]["knowledge"] == {
         "status": "DEMO",
         "query": "广州 美食 历史 FRIENDS",
         "citations": [],
-        "freshness": {"status": "UNAVAILABLE"},
+        "freshness": {
+            "status": "UNAVAILABLE",
+            "checkedAt": None,
+            "staleReason": None,
+        },
         "message": "演示模式未使用生产知识检索",
     }
+
+
+def test_review_wire_keeps_explicit_nulls_matching_shared_fixture() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    message = FakeIncomingMessage(json.dumps(COMMAND).encode())
+    exchange = FakeExchange()
+
+    asyncio.run(amqp.handle_delivery(message, exchange))
+
+    published, routing_key, _ = exchange.published[-1]
+    assert routing_key == "planning.review-required"
+    body = json.loads(published.body)
+    # The wire must carry the same explicit-null shape as the shared fixture:
+    # Java recomputes the itinerary fingerprint from the raw wire tree, so
+    # omitted nullable fields would break the cross-language match.
+    activity = body["payload"]["itinerary"]["days"][0]["activities"][0]
+    assert activity["providerPoiId"] is None
+    assert activity["coordinates"] is None
+    assert activity["address"] is None
+    assert body["payload"]["knowledge"]["freshness"]["checkedAt"] is None
 
 
 def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
@@ -127,7 +153,7 @@ def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
     asyncio.run(amqp.handle_delivery(message, exchange))
 
     routing_keys = [routing_key for _, routing_key, _ in exchange.published]
-    assert routing_keys[-1] == "planning.completed"
+    assert routing_keys[-1] == "planning.review-required"
     assert routing_keys[:-1] == [
         "planning.progress",
         "planning.progress",
@@ -153,7 +179,13 @@ def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
     ]
     assert [event["payload"]["sequence"] for event in progress_events] == list(range(1, 8))
     assert [event["payload"]["progress"] for event in progress_events] == [
-        5, 15, 25, 65, 75, 85, 95,
+        5,
+        15,
+        25,
+        65,
+        75,
+        85,
+        95,
     ]
     assert all(event["eventType"] == "PLANNING_PROGRESS" for event in progress_events)
     assert all(event["schemaVersion"] == 1 for event in progress_events)
@@ -170,13 +202,14 @@ def test_valid_replan_command_uses_the_completed_event_route() -> None:
     assert message.rejected_with is None
     assert len(exchange.published) > 1
     published, routing_key, mandatory = exchange.published[-1]
-    assert routing_key == "planning.completed"
+    # Local replan has no transient inputs -> review-required route.
+    assert routing_key == "planning.review-required"
     assert mandatory is True
     body = json.loads(published.body)
-    assert body["eventType"] == "PLANNING_COMPLETED"
+    assert body["eventType"] == "PLANNING_REVIEW_REQUIRED"
     assert body["taskId"] == REPLAN_COMMAND["taskId"]
     assert body["payload"]["itinerary"]["days"][0]["transitLegs"][0]["distanceMeters"] > 0
-    assert "providerProvenance" not in body["payload"]
+    assert body["payload"]["providerProvenance"] is None
 
 
 def test_replan_without_activity_coordinates_publishes_failure_without_requeue() -> None:
@@ -586,7 +619,8 @@ def test_legacy_false_worker_provider_factory_builds_strict_amap_v3_with_routes(
 
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/v5/direction/walking") or request.url.path.endswith(
-                "/v5/direction/driving"):
+            "/v5/direction/driving"
+        ):
             return httpx.Response(
                 200,
                 json={
@@ -651,11 +685,17 @@ def test_legacy_false_worker_provider_factory_builds_strict_amap_v3_with_routes(
 
     completed, cache_ttls = asyncio.run(run_scenario())
 
-    assert completed.schema_version == 8
+    # AMap without confirmed accommodation/evidence -> UNVERIFIED review.
+    assert completed.schema_version == 1
+    assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
     assert completed.payload.provider == "AMAP"
+    assert completed.payload.feasibility_report.status.value == "UNVERIFIED"
     first_day = completed.payload.itinerary.days[0]
     assert first_day.day_type in {
-        "ARRIVAL_DAY", "FULL_DAY", "DEPARTURE_DAY", "SPECIAL_ACTIVITY_DAY",
+        "ARRIVAL_DAY",
+        "FULL_DAY",
+        "DEPARTURE_DAY",
+        "SPECIAL_ACTIVITY_DAY",
     }
     assert all(a.kind is not None for a in first_day.activities)
     leg = first_day.transit_legs[0]

@@ -82,6 +82,7 @@ CREATE_ROUTING_KEY = "planning.create"
 REPLAN_ROUTING_KEY = "planning.replan"
 CANCEL_ROUTING_KEY = "planning.cancel"
 COMPLETED_ROUTING_KEY = "planning.completed"
+REVIEW_REQUIRED_ROUTING_KEY = "planning.review-required"
 FAILED_ROUTING_KEY = "planning.failed"
 PROGRESS_ROUTING_KEY = "planning.progress"
 DEAD_LETTER_ROUTING_KEY = "planning.create.dead"
@@ -331,9 +332,7 @@ class WorkerSettings(BaseSettings):
             )
             if self.provider_mode != legacy_mode:
                 raise ValueError("PROVIDER_MODE conflicts with DEMO_MODE")
-        ProviderFallbackPolicy(
-            additional_allowed_categories=self.provider_fallback_categories
-        )
+        ProviderFallbackPolicy(additional_allowed_categories=self.provider_fallback_categories)
         key = self.amap_web_service_key
         if self.resolved_provider_mode != ProviderExecutionMode.DEMO_ONLY and (
             key is None or not key.get_secret_value().strip()
@@ -620,10 +619,10 @@ async def handle_delivery(
                 return
             await progress_publisher.report(
                 "RESULT_PUBLISHING",
-                "Preparing the itinerary for persistence",
+                "Publishing the planning result",
             )
             outgoing = aio_pika.Message(
-                body=completed.model_dump_json(by_alias=True, exclude_none=True).encode(),
+                body=completed.model_dump_json(by_alias=True, exclude_none=False).encode(),
                 content_type="application/json",
                 content_encoding="utf-8",
                 delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
@@ -637,9 +636,14 @@ async def handle_delivery(
                     "runId": str(completed.run_id),
                 },
             )
+            routing_key = (
+                COMPLETED_ROUTING_KEY
+                if completed.event_type == "PLANNING_COMPLETED"
+                else REVIEW_REQUIRED_ROUTING_KEY
+            )
             await event_exchange.publish(
                 outgoing,
-                routing_key=COMPLETED_ROUTING_KEY,
+                routing_key=routing_key,
                 mandatory=True,
             )
     except (PlanningInfeasibleError, PlanningProviderError) as failure:

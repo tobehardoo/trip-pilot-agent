@@ -33,10 +33,16 @@ from trip_agent.worker.processor import DemoPlanningProvider, process_planning_c
 
 CONTRACT_DIRECTORY = Path(__file__).parents[3] / "contracts" / "messaging"
 COMPLETION_V6_FIXTURE_DIRECTORY = (
-    Path(__file__).parents[3]
+    Path(__file__).resolve().parents[3] / "contracts" / "fixtures" / "planning-completed-event-v6"
+)
+COMPLETION_V9_FIXTURE_DIRECTORY = (
+    Path(__file__).resolve().parents[3] / "contracts" / "fixtures" / "planning-completed-event-v9"
+)
+REVIEW_V1_FIXTURE_DIRECTORY = (
+    Path(__file__).resolve().parents[3]
     / "contracts"
     / "fixtures"
-    / "planning-completed-event-v6"
+    / "planning-review-required-event-v1"
 )
 ACTIVE_SCHEMA_FILES = (
     "city-intelligence-refresh-command-v1.schema.json",
@@ -50,6 +56,8 @@ ACTIVE_SCHEMA_FILES = (
     "planning-failed-event-v2.schema.json",
     "planning-progress-event-v1.schema.json",
     "planning-replan-command-v1.schema.json",
+    "planning-completed-event-v9.schema.json",
+    "planning-review-required-event-v1.schema.json",
 )
 
 
@@ -82,12 +90,14 @@ def test_v3_planning_create_contract_accepts_the_frozen_context_shape() -> None:
     Draft202012Validator(schema).validate(_v3_command())
 
 
-def test_v8_completed_event_contract_accepts_worker_output() -> None:
+def test_review_required_contract_accepts_worker_output() -> None:
     payload = deepcopy(_v3_command())
     payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []
     command = PlanningCreateCommand.model_validate(payload)
     event = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
-    schema = _load_schema("planning-completed-event-v8.schema.json")
+    assert event.schema_version == 1
+    assert event.event_type == "PLANNING_REVIEW_REQUIRED"
+    schema = _load_schema("planning-review-required-event-v1.schema.json")
 
     Draft202012Validator(schema).validate(
         event.model_dump(mode="json", by_alias=True, exclude_none=True)
@@ -96,15 +106,16 @@ def test_v8_completed_event_contract_accepts_worker_output() -> None:
 
 def test_v1_evaluation_schema_rejects_not_applicable_dimensions() -> None:
     fixture = json.loads(
-        (COMPLETION_V6_FIXTURE_DIRECTORY / "completion-v6-evaluation-clean.json")
-        .read_text(encoding="utf-8")
+        (COMPLETION_V6_FIXTURE_DIRECTORY / "completion-v6-evaluation-clean.json").read_text(
+            encoding="utf-8"
+        )
     )
     fixture["payload"]["evaluation"]["dimensions"]["budgetFit"] = None
 
     with pytest.raises(JsonSchemaValidationError):
-        Draft202012Validator(
-            _load_schema("planning-completed-event-v6.schema.json")
-        ).validate(fixture)
+        Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).validate(
+            fixture
+        )
 
 
 @pytest.mark.parametrize(
@@ -124,9 +135,7 @@ def test_completion_v6_shared_fixtures_match_the_active_schema(
         (COMPLETION_V6_FIXTURE_DIRECTORY / fixture_name).read_text(encoding="utf-8")
     )
 
-    Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).validate(
-        fixture
-    )
+    Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).validate(fixture)
 
 
 @pytest.mark.parametrize(
@@ -142,17 +151,16 @@ def test_completion_v6_schema_rejects_illegal_provenance_combinations(
     field: str, value: object
 ) -> None:
     fixture = json.loads(
-        (
-            COMPLETION_V6_FIXTURE_DIRECTORY
-            / "completion-v6-explicit-fallback-mixed.json"
-        ).read_text(encoding="utf-8")
+        (COMPLETION_V6_FIXTURE_DIRECTORY / "completion-v6-explicit-fallback-mixed.json").read_text(
+            encoding="utf-8"
+        )
     )
     fixture["payload"]["providerProvenance"][field] = value
 
     errors = list(
-        Draft202012Validator(
-            _load_schema("planning-completed-event-v6.schema.json")
-        ).iter_errors(fixture)
+        Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).iter_errors(
+            fixture
+        )
     )
 
     assert errors
@@ -311,3 +319,124 @@ def test_planning_failed_event_model_matches_its_json_schema() -> None:
 
     schema = _load_schema("planning-failed-event-v1.schema.json")
     Draft202012Validator(schema).validate(event.model_dump(mode="json", by_alias=True))
+
+
+# ── B6.1: v9/review schema hard constraints ────────────────────────────────
+
+
+def test_v9_schema_requires_evaluation_in_both_payloads() -> None:
+    schema = _load_schema("planning-completed-event-v9.schema.json")
+    for payload_name in ("amapPayload", "demoPayload"):
+        payload = schema["$defs"][payload_name]
+        assert "evaluation" in payload["required"], payload_name
+        assert "feasibilityReport" in payload["required"], payload_name
+
+
+def test_v9_schema_report_status_is_const_verified() -> None:
+    schema = _load_schema("planning-completed-event-v9.schema.json")
+    for payload_name in ("amapPayload", "demoPayload"):
+        payload = schema["$defs"][payload_name]
+        ref = payload["properties"]["feasibilityReport"]["$ref"]
+        report = schema["$defs"][ref.split("/")[-1]]
+        assert report["properties"]["status"] == {"const": "VERIFIED"}
+
+
+def test_v9_schema_rejects_fixture_without_evaluation() -> None:
+    import copy
+    import json
+
+    schema = _load_schema("planning-completed-event-v9.schema.json")
+    fixture = json.loads(
+        (COMPLETION_V9_FIXTURE_DIRECTORY / "completion-v9-verified-amap.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    broken = copy.deepcopy(fixture)
+    del broken["payload"]["evaluation"]
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema).validate(broken)
+
+
+def test_v9_schema_rejects_unverified_and_needs_repair_status() -> None:
+    import copy
+    import json
+
+    schema = _load_schema("planning-completed-event-v9.schema.json")
+    fixture = json.loads(
+        (COMPLETION_V9_FIXTURE_DIRECTORY / "completion-v9-verified-amap.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    for status in ("UNVERIFIED", "NEEDS_REPAIR"):
+        broken = copy.deepcopy(fixture)
+        broken["payload"]["feasibilityReport"]["status"] = status
+        with pytest.raises(JsonSchemaValidationError):
+            Draft202012Validator(schema).validate(broken)
+
+
+def test_v9_schema_accepts_verified_fixture() -> None:
+    import json
+
+    schema = _load_schema("planning-completed-event-v9.schema.json")
+    fixture = json.loads(
+        (COMPLETION_V9_FIXTURE_DIRECTORY / "completion-v9-verified-amap.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    Draft202012Validator(schema).validate(fixture)
+
+
+# ── B6.1: active schema coverage for v9/review ──────────────────────────────
+
+
+def test_active_schema_check_includes_v9_and_review() -> None:
+    names = set(ACTIVE_SCHEMA_FILES)
+    assert "planning-completed-event-v9.schema.json" in names
+    assert "planning-review-required-event-v1.schema.json" in names
+
+
+def test_all_active_schemas_have_matching_fixture_sets() -> None:
+    import json
+
+    for schema_name in ACTIVE_SCHEMA_FILES:
+        schema = _load_schema(schema_name)
+        base = schema_name.removesuffix(".schema.json")
+        fixture_dir = CONTRACT_DIRECTORY.parent / "fixtures" / base
+        if not fixture_dir.exists():
+            continue
+        for fixture in fixture_dir.glob("*.json"):
+            Draft202012Validator(schema).validate(json.loads(fixture.read_text(encoding="utf-8")))
+    # v9/review fixtures are covered explicitly below.
+    v9 = _load_schema("planning-completed-event-v9.schema.json")
+    review = _load_schema("planning-review-required-event-v1.schema.json")
+    for fixture in COMPLETION_V9_FIXTURE_DIRECTORY.glob("*.json"):
+        Draft202012Validator(v9).validate(json.loads(fixture.read_text(encoding="utf-8")))
+    for fixture in REVIEW_V1_FIXTURE_DIRECTORY.glob("*.json"):
+        Draft202012Validator(review).validate(json.loads(fixture.read_text(encoding="utf-8")))
+
+
+def test_schema_and_model_agree_on_v9_required_fields() -> None:
+    import json
+
+    schema = _load_schema("planning-completed-event-v9.schema.json")
+    fixture = json.loads(
+        (COMPLETION_V9_FIXTURE_DIRECTORY / "completion-v9-verified-amap.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    # model requires evaluation and feasibilityReport; drop each and check
+    # that BOTH the schema and the Pydantic model reject the payload.
+    import copy
+
+    for field in ("evaluation", "feasibilityReport"):
+        broken = copy.deepcopy(fixture)
+        del broken["payload"][field]
+        with pytest.raises(JsonSchemaValidationError):
+            Draft202012Validator(schema).validate(broken)
+        raw_payload = broken["payload"]
+        raw_payload["provider"] = "AMAP"
+        from trip_agent.worker.contracts import PlanningCompletedEventV9
+
+        with pytest.raises(Exception) as exc:
+            PlanningCompletedEventV9.model_validate(broken)
+        assert exc.value

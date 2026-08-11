@@ -279,7 +279,8 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 "/payload/itinerary/days/0/transitLegs")).removeAll();
 
         completionService.handle(eventParser.parse(bytes(
-                objectMapper.writeValueAsString(fixture))));
+                PlanningCompletedEventFixture.upgradeToV9(
+                        objectMapper.writeValueAsString(fixture)))));
 
         UUID persistedActivityId = jdbcTemplate.queryForObject(
                 "SELECT id FROM business.activity", UUID.class);
@@ -303,7 +304,8 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                         .header("Authorization", bearer(context.accessToken())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("SUCCEEDED"))
-                .andExpect(jsonPath("$.evaluation").doesNotExist());
+                .andExpect(jsonPath("$.evaluation").exists())
+                .andExpect(jsonPath("$.evaluation.overallScore").value(100));
     }
 
     @Test
@@ -393,11 +395,11 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     @Test
     void persistsAndReturnsV2AmapActivityMetadata() throws Exception {
         PlanningContext context = createPlanningContext("completion-amap@example.com");
-        PlanningCompletedEvent event = eventParser.parse(bytes(
+        PlanningCompletedEvent event = eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
                 PlanningCompletedEventFixture.completedAmapEventV2(
                         UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
                 )
-        ));
+        )));
 
         completionService.handle(event);
 
@@ -438,10 +440,10 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void persistsV8ScheduleFieldsIncludingStructuralMealWithoutMetadata() throws Exception {
-        PlanningContext context = createPlanningContext("completion-v8@example.com");
+    void persistsV9ScheduleFieldsIncludingStructuralMealWithoutMetadata() throws Exception {
+        PlanningContext context = createPlanningContext("completion-v9@example.com");
         PlanningCompletedEvent event = eventParser.parse(bytes(
-                PlanningCompletedEventFixture.completedAmapEventV8(
+                PlanningCompletedEventFixture.completedAmapEventV9(
                         UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
                 )
         ));
@@ -494,11 +496,11 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     @Test
     void persistsAndReturnsV3TransitLegsLinkedToAdjacentActivities() throws Exception {
         PlanningContext context = createPlanningContext("completion-route@example.com");
-        PlanningCompletedEvent event = eventParser.parse(bytes(
+        PlanningCompletedEvent event = eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
                 PlanningCompletedEventFixture.completedAmapEventV3(
                         UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
                 )
-        ));
+       )));
 
         completionService.handle(event);
 
@@ -735,7 +737,8 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .put("retryCount", 1);
 
         completionService.handle(eventParser.parse(bytes(
-                objectMapper.writeValueAsString(fixture))));
+                PlanningCompletedEventFixture.upgradeToV9(
+                        objectMapper.writeValueAsString(fixture)))));
 
         List<Map<String, Object>> operationsStored = jdbcTemplate.queryForList("""
                 SELECT operation ->> 'transitId' AS transit_id,
@@ -759,11 +762,11 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     @Test
     void persistsAndReturnsV4KnowledgeEvidenceWithoutDuplicatingSnapshots() throws Exception {
         PlanningContext context = createPlanningContext("completion-knowledge@example.com");
-        PlanningCompletedEvent event = eventParser.parse(bytes(
+        PlanningCompletedEvent event = eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
                 PlanningCompletedEventFixture.completedAmapEventV4(
                         UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
                 )
-        ));
+       )));
 
         completionService.handle(event);
         completionService.handle(event);
@@ -820,11 +823,11 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     @Test
     void handlesTheSameV3EventWithoutDuplicatingTransitLegs() throws Exception {
         PlanningContext context = createPlanningContext("completion-route-repeat@example.com");
-        PlanningCompletedEvent event = eventParser.parse(bytes(
+        PlanningCompletedEvent event = eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
                 PlanningCompletedEventFixture.completedAmapEventV3(
                         UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
                 )
-        ));
+       )));
 
         completionService.handle(event);
         completionService.handle(event);
@@ -837,11 +840,11 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     @Test
     void transitLegDatabaseConstraintRejectsActivitiesFromAnotherDay() throws Exception {
         PlanningContext context = createPlanningContext("completion-route-fk@example.com");
-        completionService.handle(eventParser.parse(bytes(
+        completionService.handle(eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
                 PlanningCompletedEventFixture.completedAmapEventV3(
                         UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
                 )
-        )));
+        ))));
         UUID existingDayId = jdbcTemplate.queryForObject(
                 "SELECT id FROM business.itinerary_day LIMIT 1", UUID.class
         );
@@ -897,8 +900,11 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     void rejectsACompletedEventWhoseTaskIdentityDoesNotMatch() throws Exception {
         PlanningContext context = createPlanningContext("completion-mismatch@example.com");
         PlanningCompletedEvent mismatched = eventParser.parse(bytes(
-                PlanningCompletedEventFixture.completedEvent(
-                        UUID.randomUUID(), context.traceId(), context.taskId(), UUID.randomUUID()
+                PlanningCompletedEventFixture.upgradeToV9(
+                        PlanningCompletedEventFixture.completedEvent(
+                                UUID.randomUUID(), context.traceId(),
+                                context.taskId(), UUID.randomUUID()
+                        )
                 )
         ));
 
@@ -971,11 +977,11 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     @Test
     void rollsBackEveryCompletionWriteWhenATransitLegCannotBePersisted() throws Exception {
         PlanningContext context = createPlanningContext("completion-route-rollback@example.com");
-        PlanningCompletedEvent event = eventParser.parse(bytes(
+        PlanningCompletedEvent event = eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
                 PlanningCompletedEventFixture.completedAmapEventV3(
                         UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
                 )
-        ));
+       )));
         jdbcTemplate.execute("""
                 CREATE FUNCTION business.fail_transit_leg_insert() RETURNS trigger AS $$
                 BEGIN
@@ -1177,15 +1183,18 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     private PlanningCompletedEvent completedEvent(UUID eventId, PlanningContext context) {
-        return eventParser.parse(bytes(PlanningCompletedEventFixture.completedEvent(
-                eventId, context.traceId(), context.taskId(), context.tripId()
+        return eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
+                PlanningCompletedEventFixture.completedEvent(
+                        eventId, context.traceId(), context.taskId(), context.tripId()
+                )
         )));
     }
 
     private PlanningCompletedEvent sharedV6Event(
             String fixtureName, UUID eventId, PlanningContext context) throws Exception {
-        return eventParser.parse(bytes(objectMapper.writeValueAsString(
-                sharedV6Fixture(fixtureName, eventId, context))));
+        return eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
+                objectMapper.writeValueAsString(
+                        sharedV6Fixture(fixtureName, eventId, context)))));
     }
 
     private ObjectNode sharedV6Fixture(
@@ -1259,6 +1268,146 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 """.formatted(
                 eventId, context.traceId(), context.taskId(), context.tripId()
         );
+    }
+
+    @Test
+    void serviceRejectsNonV9CompletionEvenWhenCalledDirectly() throws Exception {
+        PlanningContext context = createPlanningContext("service-gate-v8@example.com");
+        ObjectNode v9 = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        v9.put("schemaVersion", 8);
+        PlanningCompletedEvent event = objectMapper.treeToValue(v9, PlanningCompletedEvent.class);
+
+        assertThatThrownBy(() -> completionService.handle(event))
+                .isInstanceOf(PlanningEventRejectedException.class)
+                .hasMessageContaining("schemaVersion 9");
+        assertThat(taskStatus(context.taskId())).isNotEqualTo("SUCCEEDED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_version
+                """, Integer.class)).isZero();
+    }
+
+    @Test
+    void serviceRejectsCompletionWithoutFeasibilityReportEvenWhenCalledDirectly()
+            throws Exception {
+        PlanningContext context = createPlanningContext("service-gate-no-report@example.com");
+        ObjectNode v9 = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        ((ObjectNode) v9.at("/payload")).remove("feasibilityReport");
+        PlanningCompletedEvent event = objectMapper.treeToValue(v9, PlanningCompletedEvent.class);
+
+        assertThatThrownBy(() -> completionService.handle(event))
+                .isInstanceOf(PlanningEventRejectedException.class)
+                .hasMessageContaining("feasibilityReport");
+        assertThat(taskStatus(context.taskId())).isNotEqualTo("SUCCEEDED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_version
+                """, Integer.class)).isZero();
+    }
+
+    @Test
+    void serviceRejectsCompletionWithUnverifiedReportEvenWhenCalledDirectly() throws Exception {
+        PlanningContext context = createPlanningContext("service-gate-unverified@example.com");
+        ObjectNode v9 = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        ((ObjectNode) v9.at("/payload/feasibilityReport")).put("status", "UNVERIFIED");
+        PlanningCompletedEvent event = objectMapper.treeToValue(v9, PlanningCompletedEvent.class);
+
+        assertThatThrownBy(() -> completionService.handle(event))
+                .isInstanceOf(PlanningEventRejectedException.class)
+                .hasMessageContaining("VERIFIED");
+        assertThat(taskStatus(context.taskId())).isNotEqualTo("SUCCEEDED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_version
+                """, Integer.class)).isZero();
+    }
+
+    @Test
+    void serviceRejectsCompletionWithoutEvaluationEvenWhenCalledDirectly() throws Exception {
+        PlanningContext context = createPlanningContext("service-gate-no-evaluation@example.com");
+        ObjectNode v9 = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        ((ObjectNode) v9.at("/payload")).remove("evaluation");
+        PlanningCompletedEvent event = objectMapper.treeToValue(v9, PlanningCompletedEvent.class);
+
+        assertThatThrownBy(() -> completionService.handle(event))
+                .isInstanceOf(PlanningEventRejectedException.class)
+                .hasMessageContaining("evaluation");
+        assertThat(taskStatus(context.taskId())).isNotEqualTo("SUCCEEDED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_version
+                """, Integer.class)).isZero();
+    }
+
+    @Test
+    void persistsFeasibilityReportWithMappedEntityReferences() throws Exception {
+        PlanningContext context = createPlanningContext("completion-report-refs@example.com");
+        ObjectNode v9 = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        ObjectNode report = (ObjectNode) v9.at("/payload/feasibilityReport");
+        ArrayNode ruleResults = (ArrayNode) report.path("ruleResults");
+        ObjectNode openingRule = (ObjectNode) ruleResults.get(8);
+        openingRule.put("outcome", "PASS")
+                .put("reasonCode", "OPENING_HOURS_VERIFIED")
+                .put("message", "opening hours verified");
+        openingRule.putArray("affectedEntityRefs")
+                .add("6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f60")
+                .add("6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f70")
+                .add("POI-KEEP-1");
+        openingRule.putArray("evidenceRefs").addObject()
+                .put("evidenceId", "opening-verified-1")
+                .put("evidenceType", "OPENING_HOURS")
+                .put("state", "VERIFIED")
+                .put("hardConstraintEligible", true);
+        ObjectNode summary = (ObjectNode) report.path("summary");
+        summary.put("passCount", 1).put("notApplicableCount", 10);
+        ((ObjectNode) v9.at("/payload")).set("feasibilityReport", report);
+        PlanningCompletedEvent event = objectMapper.treeToValue(v9, PlanningCompletedEvent.class);
+
+        completionService.handle(event);
+
+        Map<String, Object> row = jdbcTemplate.queryForMap("""
+                SELECT itinerary_version_id, report_json::text AS report_json
+                FROM business.itinerary_feasibility_report
+                WHERE report_id = ?
+                """, event.payload().feasibilityReport().reportId());
+        UUID persistedVersionId = (UUID) row.get("itinerary_version_id");
+        JsonNode stored = objectMapper.readTree((String) row.get("report_json"));
+        JsonNode storedRule = stored.path("ruleResults").get(8);
+        UUID mappedActivity = UUID.fromString(
+                storedRule.path("affectedEntityRefs").get(0).asText());
+        UUID mappedTransit = UUID.fromString(
+                storedRule.path("affectedEntityRefs").get(1).asText());
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.activity WHERE id = ?
+                """, Integer.class, mappedActivity)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.transit_leg WHERE id = ?
+                """, Integer.class, mappedTransit)).isEqualTo(1);
+        assertThat(storedRule.path("affectedEntityRefs").get(2).asText())
+                .isEqualTo("POI-KEEP-1");
+        assertThat(storedRule.path("affectedEntityRefs").get(0).asText())
+                .isNotEqualTo("6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f60");
+        assertThat(storedRule.path("affectedEntityRefs").get(1).asText())
+                .isNotEqualTo("6b4e8b2d-7f3e-4e2f-8f0a-1b2c3d4e5f70");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT version_source FROM business.itinerary_version WHERE id = ?
+                """, String.class, persistedVersionId)).isEqualTo("PLANNING_TASK");
     }
 
     private String taskStatus(UUID taskId) {

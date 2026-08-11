@@ -6,6 +6,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 public final class PlanningCompletedEventFixture {
 
     private PlanningCompletedEventFixture() {
@@ -17,6 +23,14 @@ public final class PlanningCompletedEventFixture {
 
     public static String sharedV8Fixture(String fixtureName) {
         return sharedFixture("planning-completed-event-v8", fixtureName, "v8");
+    }
+
+    public static String sharedV9Fixture(String fixtureName) {
+        return sharedFixture("planning-completed-event-v9", fixtureName, "v9");
+    }
+
+    public static String sharedReviewV1Fixture(String fixtureName) {
+        return sharedFixture("planning-review-required-event-v1", fixtureName, "review v1");
     }
 
     private static String sharedFixture(String directory, String fixtureName, String label) {
@@ -325,6 +339,140 @@ public final class PlanningCompletedEventFixture {
                   }
                 }
                 """.formatted(eventId, traceId, taskId, tripId);
+    }
+
+    public static String completedAmapEventV9(
+            UUID eventId, UUID traceId, UUID taskId, UUID tripId
+    ) {
+        String v8 = completedAmapEventV8(eventId, traceId, taskId, tripId);
+        try {
+            ObjectNode event = (ObjectNode) new ObjectMapper().readTree(v8);
+            event.put("schemaVersion", 9);
+            ObjectNode payload = (ObjectNode) event.path("payload");
+            payload.set("evaluation", v9Evaluation());
+            payload.set("feasibilityReport", v9FeasibilityReport(
+                    payload.path("itinerary")));
+            return new ObjectMapper().writeValueAsString(event);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not build v9 completion fixture", exception);
+        }
+    }
+
+    /**
+     * Upgrades a historical (v1-v8) completion event to the active v9 shape
+     * for runtime integration tests: schemaVersion=9 plus the v9-required
+     * knowledge/factImpacts/evaluation/feasibilityReport fields, keeping the
+     * original itinerary content.  The report fingerprint is recomputed from
+     * the payload itinerary so the Java verifier accepts the event.
+     */
+    public static String upgradeToV9(String historicalEventJson) {
+        try {
+            ObjectNode event = (ObjectNode) new ObjectMapper().readTree(historicalEventJson);
+            event.put("schemaVersion", 9);
+            ObjectNode payload = (ObjectNode) event.path("payload");
+            if (!payload.has("knowledge")) {
+                payload.set("knowledge", demoKnowledge());
+            }
+            if (!payload.has("factImpacts")) {
+                payload.set("factImpacts", new ObjectMapper().createArrayNode());
+            }
+            for (JsonNode day : payload.path("itinerary").path("days")) {
+                if (!day.has("transitLegs")) {
+                    ((ObjectNode) day).set("transitLegs",
+                            new ObjectMapper().createArrayNode());
+                }
+            }
+            if (!payload.has("evaluation")) {
+                payload.set("evaluation", v9Evaluation());
+            }
+            if (!payload.has("feasibilityReport")) {
+                payload.set("feasibilityReport", v9FeasibilityReport(
+                        payload.path("itinerary")));
+            }
+            return new ObjectMapper().writeValueAsString(event);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not upgrade completion fixture to v9",
+                    exception);
+        }
+    }
+
+    private static ObjectNode demoKnowledge() {
+        ObjectNode knowledge = new ObjectMapper().createObjectNode();
+        knowledge.put("status", "DEMO");
+        knowledge.put("query", "广州");
+        knowledge.putArray("citations");
+        knowledge.putObject("freshness").put("status", "UNAVAILABLE");
+        knowledge.put("message", "演示模式未使用生产知识检索");
+        return knowledge;
+    }
+
+    private static ObjectNode v9Evaluation() {
+        ObjectNode evaluation = new ObjectMapper().createObjectNode();
+        evaluation.put("schemaVersion", 2);
+        evaluation.put("evaluatorVersion", "rule-v2");
+        evaluation.put("feasible", true);
+        evaluation.put("overallScore", 100);
+        ObjectNode dimensions = evaluation.putObject("dimensions");
+        dimensions.put("constraintSatisfaction", 100)
+                .put("timeFeasibility", 100)
+                .put("budgetFit", 100)
+                .put("routeEfficiency", 100);
+        evaluation.putArray("warnings");
+        evaluation.putArray("decisions");
+        evaluation.put("summary", "所有检查通过");
+        evaluation.put("evaluatedAt", "2026-08-10T10:15:00Z");
+        return evaluation;
+    }
+
+    private static final String[] V9_REQUIRED_RULE_IDS = {
+            "TRIP_DATE_RANGE", "FIXED_SCHEDULE_COVERAGE", "BUDGET_LIMIT",
+            "MUST_VISIT_COVERAGE", "DUPLICATE_POI", "ACTIVITY_OVERLAP",
+            "ROUTE_ENDPOINT_CONTINUITY", "CROSS_DAY_CONTINUITY", "OPENING_HOURS",
+            "VISIT_DURATION", "MEAL_WINDOW"
+    };
+
+    private static ObjectNode v9FeasibilityReport(JsonNode itinerary) {
+        ObjectNode report = new ObjectMapper().createObjectNode();
+        report.put("schemaVersion", 1);
+        report.put("reportId", UUID.randomUUID().toString());
+        report.put("validatorVersion", "hard-validator-v3");
+        report.put("itineraryFingerprint",
+                io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                        .compute(itinerary));
+        report.put("status", "VERIFIED");
+        report.put("validatedAt", "2026-08-10T12:00:00Z");
+        ArrayNode requiredRuleIds = report.putArray("requiredRuleIds");
+        for (String ruleId : V9_REQUIRED_RULE_IDS) {
+            requiredRuleIds.add(ruleId);
+        }
+        report.putArray("missingRequiredRuleIds");
+        ObjectNode summary = report.putObject("summary");
+        summary.put("totalCount", V9_REQUIRED_RULE_IDS.length)
+                .put("passCount", 0)
+                .put("failCount", 0)
+                .put("unknownCount", 0)
+                .put("notApplicableCount", V9_REQUIRED_RULE_IDS.length)
+                .put("missingRequiredCount", 0);
+        ArrayNode ruleResults = report.putArray("ruleResults");
+        for (String ruleId : V9_REQUIRED_RULE_IDS) {
+            ruleResults.add(v9RuleResult(ruleId));
+        }
+        report.putArray("repairAttempts");
+        return report;
+    }
+
+    private static ObjectNode v9RuleResult(String ruleId) {
+        ObjectNode result = new ObjectMapper().createObjectNode();
+        result.put("ruleId", ruleId);
+        result.put("ruleVersion", "hard-rule-v1");
+        result.put("outcome", "NOT_APPLICABLE");
+        result.put("reasonCode", "N/A");
+        result.put("message", "not applicable");
+        result.putArray("affectedDates");
+        result.putArray("affectedEntityRefs");
+        result.putArray("evidenceRefs");
+        result.put("repairable", false);
+        return result;
     }
 
     public static String completedTwoDayAmapEventV3(

@@ -1075,8 +1075,10 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 "SELECT trace_id FROM business.planning_task WHERE id = ?", UUID.class, taskId
         );
         PlanningCompletedEvent event = eventParser.parse(
-                PlanningCompletedEventFixture.completedAmapEventV3(
-                        UUID.randomUUID(), traceId, taskId, tripId
+                PlanningCompletedEventFixture.upgradeToV9(
+                        PlanningCompletedEventFixture.completedAmapEventV3(
+                                UUID.randomUUID(), traceId, taskId, tripId
+                        )
                 ).getBytes(StandardCharsets.UTF_8)
         );
         completionService.handle(event);
@@ -1096,8 +1098,10 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 "SELECT trace_id FROM business.planning_task WHERE id = ?", UUID.class, taskId
         );
         completionService.handle(eventParser.parse(
-                PlanningCompletedEventFixture.completedTwoDayAmapEventV3(
-                        UUID.randomUUID(), traceId, taskId, tripId
+                PlanningCompletedEventFixture.upgradeToV9(
+                        PlanningCompletedEventFixture.completedTwoDayAmapEventV3(
+                                UUID.randomUUID(), traceId, taskId, tripId
+                        )
                 ).getBytes(StandardCharsets.UTF_8)
         ));
         return new PlanningContext(accessToken, tripId);
@@ -1185,7 +1189,11 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         ((ObjectNode) knowledge.get("freshness")).remove("staleReason");
         payload.set("knowledge", knowledge);
         payload.set("itinerary", itinerary);
-        return eventParser.parse(objectMapper.writeValueAsBytes(root));
+        return eventParser.parse(
+                PlanningCompletedEventFixture.upgradeToV9(
+                        objectMapper.writeValueAsString(root)
+                ).getBytes(StandardCharsets.UTF_8)
+        );
     }
 
     private PlanningCompletedEvent replanCompletedEventWithTwoTransitLegs(
@@ -1214,7 +1222,11 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         ((ObjectNode) knowledge.get("freshness")).remove("staleReason");
         payload.set("knowledge", knowledge);
         payload.set("itinerary", itinerary);
-        return eventParser.parse(objectMapper.writeValueAsBytes(root));
+        return eventParser.parse(
+                PlanningCompletedEventFixture.upgradeToV9(
+                        objectMapper.writeValueAsString(root)
+                ).getBytes(StandardCharsets.UTF_8)
+        );
     }
 
     private ObjectNode replanTransitLeg(int fromIndex, int toIndex, ArrayNode activities) {

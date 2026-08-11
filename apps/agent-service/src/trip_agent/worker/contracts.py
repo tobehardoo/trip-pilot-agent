@@ -27,6 +27,7 @@ from trip_agent.domain.shared import (
     DayType,
     normalize_text,
 )
+from trip_agent.feasibility.models import FeasibilityReport, FeasibilityStatus
 
 STRUCTURAL_ACTIVITY_KINDS = frozenset({"MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"})
 
@@ -70,6 +71,7 @@ type JsonLatitude = Annotated[
     Field(ge=Decimal("-90"), le=Decimal("90")),
     PlainSerializer(lambda value: float(value), return_type=float, when_used="json"),
 ]
+
 
 class MessageModel(BaseModel):
     model_config = ConfigDict(
@@ -236,9 +238,7 @@ class PlanningContextSource(InboundMessageModel):
 
 
 class PlanningContextFact(InboundMessageModel):
-    fact_id: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
-    ]
+    fact_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
     category: Literal[
         "ADDRESS",
         "COORDINATES",
@@ -292,8 +292,7 @@ class PlanningContextFact(InboundMessageModel):
             raise ValueError("stale planning facts cannot form hard constraints")
         if self.hard_constraint_eligible and (
             not self.source_reviewed
-            or self.reliability_level
-            not in {"OFFICIAL_ATTRACTION", "OFFICIAL_TOURISM"}
+            or self.reliability_level not in {"OFFICIAL_ATTRACTION", "OFFICIAL_TOURISM"}
         ):
             raise ValueError("hard constraints require a reviewed official source")
         return self
@@ -305,16 +304,12 @@ class PlanningContextConflict(InboundMessageModel):
     ]
     conflict_fact_ids: tuple[str, ...] = Field(default=(), max_length=100)
     downgraded_fact_ids: tuple[str, ...] = Field(default=(), max_length=100)
-    reason: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1_000)
-    ]
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1_000)]
     needs_manual_review: bool
 
 
 class PlanningContextExcludedFact(InboundMessageModel):
-    fact_id: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
-    ]
+    fact_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
     category: ShortText
     statement: Annotated[
         str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2_000)
@@ -345,9 +340,7 @@ class PlanningContextSnapshot(InboundMessageModel):
     sources: tuple[PlanningContextSource, ...] = Field(default=(), max_length=100)
     facts: tuple[PlanningContextFact, ...] = Field(default=(), max_length=200)
     conflicts: tuple[PlanningContextConflict, ...] = Field(default=(), max_length=200)
-    excluded_facts: tuple[PlanningContextExcludedFact, ...] = Field(
-        default=(), max_length=200
-    )
+    excluded_facts: tuple[PlanningContextExcludedFact, ...] = Field(default=(), max_length=200)
     diagnostics: tuple[PlanningContextDiagnostic, ...] = Field(default=(), max_length=50)
 
     @model_validator(mode="after")
@@ -358,9 +351,7 @@ class PlanningContextSnapshot(InboundMessageModel):
             raise ValueError("planning context dates are invalid")
         if any(
             fact.effective_date is not None
-            and not self.travel_start_date
-            <= fact.effective_date
-            <= self.travel_end_date
+            and not self.travel_start_date <= fact.effective_date <= self.travel_end_date
             for fact in self.facts
         ):
             raise ValueError("planning facts must apply to the trip date range")
@@ -550,9 +541,7 @@ class ItineraryActivity(MessageModel):
         if self.source == "DEMO" and any(value is not None for value in metadata):
             raise ValueError("DEMO activity must not contain provider metadata")
         if self.source == "AMAP":
-            structural = (
-                self.kind is not None and self.kind in STRUCTURAL_ACTIVITY_KINDS
-            )
+            structural = self.kind is not None and self.kind in STRUCTURAL_ACTIVITY_KINDS
             if structural and not any(value is not None for value in metadata):
                 return self
             if any(value is None for value in metadata):
@@ -604,9 +593,7 @@ class ItineraryDay(MessageModel):
 
     @model_validator(mode="after")
     def validate_transit_legs(self) -> Self:
-        expected_pairs = {
-            (index, index + 1) for index in range(len(self.activities) - 1)
-        }
+        expected_pairs = {(index, index + 1) for index in range(len(self.activities) - 1)}
         actual_pairs: set[tuple[int, int]] = set()
         for leg in self.transit_legs:
             endpoints = (leg.from_activity_index, leg.to_activity_index)
@@ -704,9 +691,7 @@ class ReplanItineraryDay(InboundMessageModel):
 
     @model_validator(mode="after")
     def validate_present_transit_legs(self) -> Self:
-        expected_pairs = {
-            (index, index + 1) for index in range(len(self.activities) - 1)
-        }
+        expected_pairs = {(index, index + 1) for index in range(len(self.activities) - 1)}
         actual_pairs: set[tuple[int, int]] = set()
         for leg in self.transit_legs:
             endpoints = (leg.from_activity_index, leg.to_activity_index)
@@ -790,9 +775,7 @@ class PlanningReplanCommand(InboundMessageModel):
 
 
 class PlanningFactImpact(MessageModel):
-    fact_id: Annotated[
-        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)
-    ]
+    fact_id: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
     category: ShortText
     date: dt.date | None = None
     effect: ShortText
@@ -834,9 +817,7 @@ class ProviderProvenance(MessageModel):
     @model_validator(mode="after")
     def validate_and_normalize(self) -> Self:
         provider_order = {"AMAP": 0, "DEMO": 1}
-        actual_providers = tuple(
-            sorted(set(self.actual_providers), key=provider_order.__getitem__)
-        )
+        actual_providers = tuple(sorted(set(self.actual_providers), key=provider_order.__getitem__))
         operation_keys: set[tuple[object, ...]] = set()
         operations: list[FallbackOperation] = []
         for operation in sorted(
@@ -922,6 +903,7 @@ class PlanningCompletedPayload(MessageModel):
             return None
         # Deferred import breaks the circular chain
         from trip_agent.evaluation.models import PlanEvaluation  # noqa: PLC0415
+
         if isinstance(value, PlanEvaluation):
             return value
         if isinstance(value, dict):
@@ -949,6 +931,117 @@ class PlanningCompletedEvent(MessageModel):
     run_id: UUID
     occurred_at: datetime
     payload: PlanningCompletedPayload
+
+
+# ── B6: authoritative outcome events (v9 completion / review-required v1) ──
+
+
+class PlanningCompletedPayloadV9(MessageModel):
+    provider: Literal["AMAP", "DEMO"]
+    itinerary: Itinerary
+    knowledge: KnowledgeEvidence
+    fact_impacts: tuple[PlanningFactImpact, ...] = Field(default=(), max_length=500)
+    provider_provenance: ProviderProvenance | None = None
+    evaluation: object
+    feasibility_report: FeasibilityReport
+
+    @field_validator("evaluation", mode="before")
+    @classmethod
+    def _normalize_evaluation(cls, value: object) -> object:
+        """Accept only a PlanEvaluation (deferred import avoids a cycle)."""
+        if value is None:
+            raise ValueError("evaluation is required for v9 completion")
+        from trip_agent.evaluation.models import PlanEvaluation  # noqa: PLC0415
+
+        if isinstance(value, PlanEvaluation):
+            return value
+        if isinstance(value, dict):
+            return PlanEvaluation.model_validate(value)
+        raise ValueError("evaluation must be a PlanEvaluation")
+
+    @model_validator(mode="after")
+    def validate_activity_sources(self) -> Self:
+        if any(
+            activity.source != self.provider
+            for day in self.itinerary.days
+            for activity in day.activities
+        ):
+            raise ValueError("activity source must match payload provider")
+        return self
+
+    @model_validator(mode="after")
+    def validate_report_fingerprint(self) -> Self:
+        from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
+
+        expected = compute_itinerary_fingerprint(self.itinerary)
+        if self.feasibility_report.itinerary_fingerprint != expected:
+            raise ValueError("feasibility report fingerprint must match the payload itinerary")
+        return self
+
+
+class PlanningCompletedEventV9(MessageModel):
+    event_type: Literal["PLANNING_COMPLETED"]
+    schema_version: Literal[9]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    run_id: UUID
+    occurred_at: datetime
+    payload: PlanningCompletedPayloadV9
+
+    @model_validator(mode="after")
+    def require_verified_report(self) -> Self:
+        if self.payload.feasibility_report.status is not FeasibilityStatus.VERIFIED:
+            raise ValueError("v9 completion requires a VERIFIED feasibility report")
+        return self
+
+
+class PlanningReviewRequiredPayload(MessageModel):
+    status: Literal["WAITING_USER"]
+    provider: Literal["AMAP", "DEMO"]
+    itinerary: Itinerary
+    knowledge: KnowledgeEvidence
+    fact_impacts: tuple[PlanningFactImpact, ...] = Field(default=(), max_length=500)
+    provider_provenance: ProviderProvenance | None = None
+    feasibility_report: FeasibilityReport
+
+    @model_validator(mode="after")
+    def validate_activity_sources(self) -> Self:
+        if any(
+            activity.source != self.provider
+            for day in self.itinerary.days
+            for activity in day.activities
+        ):
+            raise ValueError("activity source must match payload provider")
+        return self
+
+    @model_validator(mode="after")
+    def forbid_verified_report(self) -> Self:
+        if self.feasibility_report.status is FeasibilityStatus.VERIFIED:
+            raise ValueError("review-required forbids a VERIFIED feasibility report")
+        return self
+
+    @model_validator(mode="after")
+    def validate_report_fingerprint(self) -> Self:
+        from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
+
+        expected = compute_itinerary_fingerprint(self.itinerary)
+        if self.feasibility_report.itinerary_fingerprint != expected:
+            raise ValueError("feasibility report fingerprint must match the payload itinerary")
+        return self
+
+
+class PlanningReviewRequiredEvent(MessageModel):
+    event_type: Literal["PLANNING_REVIEW_REQUIRED"]
+    schema_version: Literal[1]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    run_id: UUID
+    occurred_at: datetime
+    payload: PlanningReviewRequiredPayload
 
 
 class PlanningConflict(MessageModel):
@@ -1019,9 +1112,7 @@ class PlanningFailedPayload(MessageModel):
     safe_provider_code: ShortText | None = None
     cause_type: ShortText | None = None
     conflicts: tuple[PlanningConflict, ...] = Field(default=(), max_length=20)
-    relaxation_suggestions: tuple[PlanningRelaxation, ...] = Field(
-        default=(), max_length=20
-    )
+    relaxation_suggestions: tuple[PlanningRelaxation, ...] = Field(default=(), max_length=20)
 
     @model_validator(mode="after")
     def validate_fallback_outcome(self) -> Self:

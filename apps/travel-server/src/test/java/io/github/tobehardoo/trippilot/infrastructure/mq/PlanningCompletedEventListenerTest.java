@@ -64,7 +64,7 @@ class PlanningCompletedEventListenerTest {
     }
 
     private byte[] validBody() {
-        return PlanningCompletedEventFixture.completedEvent(
+        return PlanningCompletedEventFixture.completedAmapEventV9(
                 UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
         ).getBytes(StandardCharsets.UTF_8);
     }

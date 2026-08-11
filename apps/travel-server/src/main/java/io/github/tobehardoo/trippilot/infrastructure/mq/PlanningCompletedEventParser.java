@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
+import io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -89,9 +90,9 @@ public class PlanningCompletedEventParser {
         JsonNode itinerary = payload.path("itinerary");
         JsonNode days = itinerary.path("days");
         int schemaVersion = event.path("schemaVersion").asInt();
-        // Java accepts v1-v6 (historical/current) and v8 (candidate); v7 is
-        // ABANDONED and stays rejected.
-        if (schemaVersion < 1 || schemaVersion > 8 || schemaVersion == 7) {
+        // v9 is the only active completion contract.  v1-v8 are historical
+        // contracts and must not reach the runtime completion listener.
+        if (schemaVersion != 9) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (!payload.isObject() || !payload.path("provider").isTextual()
@@ -103,12 +104,14 @@ public class PlanningCompletedEventParser {
         validateFactImpactTypes(payload, schemaVersion);
         validateProviderProvenanceTypes(payload, schemaVersion);
         validateEvaluationTypes(payload, schemaVersion);
+        validateFeasibilityReportTypes(payload, schemaVersion);
         for (JsonNode day : days) {
             JsonNode activities = day.path("activities");
             if (!day.isObject() || !day.path("date").isTextual() || !activities.isArray()) {
                 throw invalid("day field types do not match the JSON Schema");
             }
-            if (day.has("dayType") && !day.path("dayType").isTextual()) {
+            if (day.has("dayType") && !day.path("dayType").isNull()
+                    && !day.path("dayType").isTextual()) {
                 throw invalid("dayType must be a string");
             }
             for (JsonNode activity : activities) {
@@ -119,20 +122,29 @@ public class PlanningCompletedEventParser {
                         || !activity.path("source").isTextual()) {
                     throw invalid("activity field types do not match the JSON Schema");
                 }
-                if (activity.has("kind") && !activity.path("kind").isTextual()) {
+                if (activity.has("kind") && !activity.path("kind").isNull()
+                        && !activity.path("kind").isTextual()) {
                     throw invalid("activity kind must be a string");
                 }
-                if (activity.has("timeFixed") && !activity.path("timeFixed").isBoolean()) {
+                if (activity.has("timeFixed") && !activity.path("timeFixed").isNull()
+                        && !activity.path("timeFixed").isBoolean()) {
                     throw invalid("activity timeFixed must be a boolean");
                 }
                 validateActivityMetadataTypes(activity);
                 if (activity.has("activityId")
-                        && ((schemaVersion != 6 && schemaVersion != 8)
+                        && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9)
                         || !activity.path("activityId").isTextual())) {
-                    throw invalid("activityId is only supported as a UUID string in schema v6/v8");
+                    throw invalid("activityId is only supported as a UUID string in schema v6/v8/v9");
                 }
             }
             validateTransitLegTypes(day, schemaVersion);
+        }
+        if (schemaVersion == 9) {
+            JsonNode report = payload.path("feasibilityReport");
+            if (!ItineraryFingerprintVerifier.matches(
+                    itinerary, report.path("itineraryFingerprint").asText())) {
+                throw invalid("feasibilityReport itineraryFingerprint does not match the itinerary");
+            }
         }
     }
 
@@ -174,11 +186,12 @@ public class PlanningCompletedEventParser {
     }
 
     private void validateProviderProvenanceTypes(JsonNode payload, int schemaVersion) {
-        if (!payload.has("providerProvenance")) {
+        if (!payload.has("providerProvenance")
+                || payload.get("providerProvenance").isNull()) {
             return;
         }
-        if (schemaVersion != 6 && schemaVersion != 8) {
-            throw invalid("provider provenance is only supported in schema v6/v8");
+        if (schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9) {
+            throw invalid("provider provenance is only supported in schema v6/v8/v9");
         }
         JsonNode provenance = payload.path("providerProvenance");
         JsonNode actualProviders = provenance.path("actualProviders");
@@ -236,13 +249,15 @@ public class PlanningCompletedEventParser {
                 || !freshness.isObject() || !freshness.path("status").isTextual()) {
             throw invalid("knowledge evidence field types do not match the JSON Schema");
         }
-        if (knowledge.has("message") && !knowledge.path("message").isTextual()) {
+        if (knowledge.has("message") && !knowledge.path("message").isNull()
+                && !knowledge.path("message").isTextual()) {
             throw invalid("knowledge message must be text");
         }
         if (freshness.has("checkedAt") && !freshness.path("checkedAt").isTextual()) {
             throw invalid("knowledge checkedAt must be text");
         }
-        if (freshness.has("staleReason") && !freshness.path("staleReason").isTextual()) {
+        if (freshness.has("staleReason") && !freshness.path("staleReason").isNull()
+                && !freshness.path("staleReason").isTextual()) {
             throw invalid("knowledge staleReason must be text");
         }
         for (JsonNode citation : citations) {
@@ -285,9 +300,9 @@ public class PlanningCompletedEventParser {
                 throw invalid("transit leg field types do not match the JSON Schema");
             }
             if (leg.has("transitId")
-                    && ((schemaVersion != 6 && schemaVersion != 8)
+                    && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9)
                     || !leg.path("transitId").isTextual())) {
-                throw invalid("transitId is only supported as a UUID string in schema v6/v8");
+                throw invalid("transitId is only supported as a UUID string in schema v6/v8/v9");
             }
             for (JsonNode point : leg.path("polyline")) {
                 if (!point.isObject() || !point.path("longitude").isNumber()
@@ -299,16 +314,19 @@ public class PlanningCompletedEventParser {
     }
 
     private void validateActivityMetadataTypes(JsonNode activity) {
-        if (activity.has("providerPoiId") && !activity.path("providerPoiId").isTextual()) {
+        if (activity.has("providerPoiId") && !activity.path("providerPoiId").isNull()
+                && !activity.path("providerPoiId").isTextual()) {
             throw invalid("activity metadata types do not match the JSON Schema");
         }
-        if (activity.has("address") && !activity.path("address").isTextual()) {
+        if (activity.has("address") && !activity.path("address").isNull()
+                && !activity.path("address").isTextual()) {
             throw invalid("activity metadata types do not match the JSON Schema");
         }
         if (activity.has("coordinates")) {
             JsonNode coordinates = activity.path("coordinates");
-            if (!coordinates.isObject() || !coordinates.path("longitude").isNumber()
-                    || !coordinates.path("latitude").isNumber()) {
+            if (!coordinates.isNull() && (!coordinates.isObject()
+                    || !coordinates.path("longitude").isNumber()
+                    || !coordinates.path("latitude").isNumber())) {
                 throw invalid("activity metadata types do not match the JSON Schema");
             }
         }
@@ -316,13 +334,7 @@ public class PlanningCompletedEventParser {
 
     private void validate(PlanningCompletedEvent event) {
         if (!"PLANNING_COMPLETED".equals(event.eventType())
-                || (event.schemaVersion() != 1
-                && event.schemaVersion() != 2
-                && event.schemaVersion() != 3
-                && event.schemaVersion() != 4
-                && event.schemaVersion() != 5
-                && event.schemaVersion() != 6
-                && event.schemaVersion() != 8)) {
+                || event.schemaVersion() != 9) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (event.eventId() == null || event.traceId() == null || event.taskId() == null
@@ -353,14 +365,45 @@ public class PlanningCompletedEventParser {
         validateFactImpacts(event.schemaVersion(), event.payload().factImpacts());
         validateProviderProvenance(event);
         validateEvaluation(event);
+        validateFeasibilityReport(event);
+    }
+
+    private void validateFeasibilityReportTypes(JsonNode payload, int schemaVersion) {
+        if (schemaVersion != 9) {
+            if (payload.has("feasibilityReport")) {
+                throw invalid("feasibilityReport is only supported in schema v9");
+            }
+            return;
+        }
+        JsonNode report = payload.path("feasibilityReport");
+        if (!report.isObject()
+                || !report.path("schemaVersion").isInt()
+                || !report.path("reportId").isTextual()
+                || !report.path("validatorVersion").isTextual()
+                || !report.path("itineraryFingerprint").isTextual()
+                || !report.path("status").isTextual()
+                || !report.path("validatedAt").isTextual()
+                || !report.path("requiredRuleIds").isArray()
+                || !report.path("missingRequiredRuleIds").isArray()
+                || !report.path("summary").isObject()
+                || !report.path("ruleResults").isArray()
+                || !report.path("repairAttempts").isArray()) {
+            throw invalid("feasibilityReport field types do not match the JSON Schema");
+        }
+        if (!report.path("itineraryFingerprint").asText().matches("^[0-9a-f]{64}$")) {
+            throw invalid("feasibilityReport itineraryFingerprint must be a 64-char lowercase hex");
+        }
     }
 
     private void validateEvaluationTypes(JsonNode payload, int schemaVersion) {
         if (!payload.has("evaluation") || payload.get("evaluation").isNull()) {
+            if (schemaVersion == 9) {
+                throw invalid("evaluation is required in schema v9");
+            }
             return;
         }
-        if (schemaVersion != 6 && schemaVersion != 8) {
-            throw invalid("evaluation is only supported in schema v6/v8");
+        if (schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9) {
+            throw invalid("evaluation is only supported in schema v6/v8/v9");
         }
         JsonNode evaluation = payload.path("evaluation");
         if (!evaluation.isObject()
@@ -380,9 +423,13 @@ public class PlanningCompletedEventParser {
     private void validateEvaluation(PlanningCompletedEvent event) {
         PlanningCompletedEvent.PlanEvaluation evaluation = event.payload().evaluation();
         if (evaluation == null) {
+            if (event.schemaVersion() == 9) {
+                throw invalid("evaluation is required in schema v9");
+            }
             return;
         }
-        if ((event.schemaVersion() != 6 && event.schemaVersion() != 8)
+        if ((event.schemaVersion() != 6 && event.schemaVersion() != 8
+                && event.schemaVersion() != 9)
                 || (evaluation.schemaVersion() != 1
                 && evaluation.schemaVersion() != 2)) {
             throw invalid("evaluation schemaVersion must be 1 or 2");
@@ -463,6 +510,25 @@ public class PlanningCompletedEventParser {
         }
     }
 
+    private void validateFeasibilityReport(PlanningCompletedEvent event) {
+        if (event.schemaVersion() != 9) {
+            return;
+        }
+        io.github.tobehardoo.trippilot.feasibility.FeasibilityReport report =
+                event.payload().feasibilityReport();
+        if (report == null) {
+            throw invalid("feasibilityReport is required in schema v9");
+        }
+        try {
+            io.github.tobehardoo.trippilot.feasibility.FeasibilityReportValidator.validate(report);
+        } catch (IllegalArgumentException exception) {
+            throw invalid("feasibilityReport is invalid: " + exception.getMessage());
+        }
+        if (report.status() != io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.VERIFIED) {
+            throw invalid("feasibilityReport status must be VERIFIED");
+        }
+    }
+
     private boolean validOptionalScore(Integer score) {
         return score == null || (score >= 0 && score <= 100);
     }
@@ -473,7 +539,8 @@ public class PlanningCompletedEventParser {
         if (provenance == null) {
             return;
         }
-        if ((event.schemaVersion() != 6 && event.schemaVersion() != 8)
+        if ((event.schemaVersion() != 6 && event.schemaVersion() != 8
+                && event.schemaVersion() != 9)
                 || provenance.requestedProviderMode() == null
                 || provenance.primaryProvider() == null
                 || provenance.actualProviders().isEmpty()
@@ -763,10 +830,10 @@ public class PlanningCompletedEventParser {
             }
             return;
         }
-        // Gaps between adjacent activities are allowed only in v8 (unresolved
+        // Gaps between adjacent activities are allowed only in v8/v9 (unresolved
         // structural nodes such as a meal without a bound restaurant have no
         // transit leg). Older producers always emit one leg per adjacent pair.
-        boolean strictAdjacency = schemaVersion != 8;
+        boolean strictAdjacency = schemaVersion != 8 && schemaVersion != 9;
         if (strictAdjacency
                 && day.transitLegs().size() != day.activities().size() - 1) {
             throw invalid("transit legs must connect every adjacent activity");

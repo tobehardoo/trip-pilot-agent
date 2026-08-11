@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import TYPE_CHECKING
 
-from trip_agent.worker.contracts import Itinerary
+if TYPE_CHECKING:
+    from trip_agent.worker.contracts import Itinerary
 
 
 def compute_itinerary_fingerprint(itinerary: Itinerary) -> str:

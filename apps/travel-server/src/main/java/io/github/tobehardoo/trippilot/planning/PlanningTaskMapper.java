@@ -105,6 +105,17 @@ public interface PlanningTaskMapper {
 
     @Update("""
             UPDATE business.planning_task
+            SET status = 'WAITING_USER', error_code = NULL,
+                error_message = NULL, version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{taskId} AND version = #{expectedVersion}
+              AND status IN ('QUEUED', 'RUNNING')
+            """)
+    int markWaitingUser(@Param("taskId") UUID taskId,
+                        @Param("expectedVersion") int expectedVersion);
+
+    @Update("""
+            UPDATE business.planning_task
             SET status = 'RUNNING', version = version + 1, updated_at = CURRENT_TIMESTAMP
             WHERE id = #{taskId} AND version = #{expectedVersion} AND status = 'QUEUED'
             """)

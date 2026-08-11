@@ -325,7 +325,7 @@ def test_skeleton_activities_carry_kind_and_time_fixed() -> None:
 
 # ── flag decoupling ----------------------------------------------------------
 
-def test_skeleton_result_serializes_as_v8_schema_valid() -> None:
+def test_amap_result_serializes_as_review_required_v1_valid() -> None:
     import json
     from pathlib import Path
 
@@ -341,17 +341,19 @@ def test_skeleton_result_serializes_as_v8_schema_valid() -> None:
             _provider(pois),
         )
     )
-    assert completed.schema_version == 8
+    # AMap without confirmed accommodation -> UNVERIFIED review-required.
+    assert completed.schema_version == 1
+    assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
 
     payload = completed.model_dump_json(by_alias=True, exclude_none=True)
     schema = json.loads(
-        Path("../../contracts/messaging/planning-completed-event-v8.schema.json")
+        Path("../../contracts/messaging/planning-review-required-event-v1.schema.json")
         .read_text(encoding="utf-8")
     )
     jsonschema.validate(json.loads(payload), schema)
 
 
-def test_producer_always_writes_v8() -> None:
+def test_producer_no_longer_writes_v8_completion() -> None:
     from trip_agent.worker.processor import process_planning_create
 
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
@@ -359,7 +361,8 @@ def test_producer_always_writes_v8() -> None:
     completed = asyncio.run(
         process_planning_create(command, _provider(pois))
     )
-    assert completed.schema_version == 8
+    assert completed.schema_version == 1
+    assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
 
 
 def test_demo_skeleton_classifies_days_and_marks_anchors() -> None:
@@ -544,16 +547,17 @@ def test_amap_single_day_skeleton_has_zero_nights() -> None:
     assert result.trip_skeleton.overnights == ()
 
 
-def test_v8_completion_json_has_no_trip_skeleton() -> None:
+def test_review_required_json_has_no_transient_fields() -> None:
     import json
 
     from trip_agent.worker.processor import process_planning_create
 
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     completed = asyncio.run(process_planning_create(_command(), _provider(pois)))
-    assert completed.schema_version == 8
+    assert completed.schema_version == 1
     payload = json.loads(completed.model_dump_json(by_alias=True, exclude_none=True))
     assert "tripSkeleton" not in json.dumps(payload)
+    assert "validationInputs" not in json.dumps(payload)
 
 
 # ── B4A.1: strict accommodation anchor characterization ─────────────────────
@@ -720,13 +724,17 @@ def test_amap_explicit_breakfast_window_fails_without_breakfast_placement() -> N
     assert report.status is FeasibilityStatus.NEEDS_REPAIR
 
 
-def test_v8_completion_json_has_no_validation_inputs() -> None:
+def test_review_required_has_no_evaluation() -> None:
     import json
 
     from trip_agent.worker.processor import process_planning_create
 
     pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
     completed = asyncio.run(process_planning_create(_command(), _provider(pois)))
-    assert completed.schema_version == 8
+    assert completed.schema_version == 1
     payload = json.loads(completed.model_dump_json(by_alias=True, exclude_none=True))
-    assert "validationInputs" not in json.dumps(payload)
+    assert "evaluation" not in json.dumps(payload)
+    assert payload["payload"]["feasibilityReport"]["status"] in {
+        "UNVERIFIED",
+        "NEEDS_REPAIR",
+    }

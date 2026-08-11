@@ -160,8 +160,9 @@ def test_demo_processor_emits_a_deterministic_completed_event() -> None:
     first = asyncio.run(process(command, provider_type()))
     repeated = asyncio.run(process(command, provider_type()))
 
-    assert first.event_type == "PLANNING_COMPLETED"
-    assert first.schema_version == 8
+    # Demo lacks hard evidence -> deterministic UNVERIFIED review-required.
+    assert first.event_type == "PLANNING_REVIEW_REQUIRED"
+    assert first.schema_version == 1
     assert first.event_id == repeated.event_id
     assert first.run_id == repeated.run_id
     assert first.trace_id == command.trace_id
@@ -172,6 +173,7 @@ def test_demo_processor_emits_a_deterministic_completed_event() -> None:
     assert first.payload.knowledge.query == "广州 美食 历史 FRIENDS"
     assert first.payload.knowledge.citations == ()
     assert first.payload.knowledge.freshness.status == "UNAVAILABLE"
+    assert first.payload.feasibility_report.status.value == "UNVERIFIED"
 
 
 def test_v4_processor_serializes_real_knowledge_citations_and_freshness() -> None:
@@ -215,7 +217,10 @@ def test_v4_processor_serializes_real_knowledge_citations_and_freshness() -> Non
     )
     wire = completed.model_dump(mode="json", by_alias=True, exclude_none=True)
 
-    assert wire["schemaVersion"] == 8
+    assert wire["schemaVersion"] == 1
+    assert wire["eventType"] == "PLANNING_REVIEW_REQUIRED"
+    assert "evaluation" not in wire["payload"]
+    assert wire["payload"]["feasibilityReport"]["status"] == "UNVERIFIED"
     assert wire["payload"]["knowledge"] == {
         "status": "REAL",
         "query": "广州 历史",
@@ -240,7 +245,7 @@ def test_v4_processor_serializes_real_knowledge_citations_and_freshness() -> Non
     }
     schema = json.loads(
         (Path(__file__).resolve().parents[3]
-         / "contracts/messaging/planning-completed-event-v8.schema.json").read_text(
+         / "contracts/messaging/planning-review-required-event-v1.schema.json").read_text(
              encoding="utf-8"
          )
     )

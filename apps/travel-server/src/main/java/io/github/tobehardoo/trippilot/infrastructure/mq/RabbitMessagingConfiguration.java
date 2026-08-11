@@ -23,6 +23,7 @@ public class RabbitMessagingConfiguration {
     static final String CANCEL_QUEUE = "planning.cancel.queue";
     static final String PROGRESS_QUEUE = "planning.progress.queue";
     static final String COMPLETED_QUEUE = "planning.completed.queue";
+    static final String REVIEW_QUEUE = "planning.review.queue";
     static final String FAILED_QUEUE = "planning.failed.queue";
     static final String CITY_REFRESH_QUEUE = "city-intelligence.refresh.queue";
     static final String DEAD_LETTER_QUEUE = "planning.dead-letter.queue";
@@ -63,6 +64,11 @@ public class RabbitMessagingConfiguration {
     }
 
     @Bean
+    Queue planningReviewQueue() {
+        return durableQueue(REVIEW_QUEUE, "planning.review.dead");
+    }
+
+    @Bean
     Queue planningFailedQueue() {
         return durableQueue(FAILED_QUEUE, "planning.failed.dead");
     }
@@ -98,6 +104,11 @@ public class RabbitMessagingConfiguration {
     @Bean
     Binding planningCompletedBinding(Queue planningCompletedQueue, DirectExchange planningEventExchange) {
         return BindingBuilder.bind(planningCompletedQueue).to(planningEventExchange).with("planning.completed");
+    }
+
+    @Bean
+    Binding planningReviewBinding(Queue planningReviewQueue, DirectExchange planningEventExchange) {
+        return BindingBuilder.bind(planningReviewQueue).to(planningEventExchange).with("planning.review-required");
     }
 
     @Bean
@@ -141,6 +152,23 @@ public class RabbitMessagingConfiguration {
     @Bean
     Clock systemClock() {
         return Clock.systemUTC();
+    }
+
+    @Bean
+    io.github.tobehardoo.trippilot.planning.ItineraryCurrentVersionProvider
+            itineraryCurrentVersionProvider(
+                    io.github.tobehardoo.trippilot.itinerary.ItineraryService itineraryService) {
+        return itineraryService::getCurrentVersionForTask;
+    }
+
+    @Bean
+    io.github.tobehardoo.trippilot.planning.PlanningOutcomeGuard planningOutcomeGuard() {
+        return new io.github.tobehardoo.trippilot.planning.PlanningOutcomeGuard();
+    }
+
+    @Bean
+    io.github.tobehardoo.trippilot.itinerary.FeasibilityEntityRefMapper feasibilityEntityRefMapper() {
+        return new io.github.tobehardoo.trippilot.itinerary.FeasibilityEntityRefMapper();
     }
 
     @Bean

@@ -33,6 +33,7 @@ from trip_agent.domain.shared import (  # noqa: F401
     text_matches,
 )
 from trip_agent.evaluation import get_plan_evaluator
+from trip_agent.feasibility.validator import validate_itinerary
 from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider  # noqa: F811
 from trip_agent.infrastructure.demo.knowledge_provider import (
     DemoKnowledgeEvidenceProvider,  # noqa: F811
@@ -48,8 +49,8 @@ from trip_agent.worker.contracts import (
     KnowledgeCitationSnapshot,
     KnowledgeEvidence,
     KnowledgeFreshness,
-    PlanningCompletedEvent,
-    PlanningCompletedPayload,
+    PlanningCompletedEventV9,
+    PlanningCompletedPayloadV9,
     PlanningConflict,
     PlanningCreateCommand,
     PlanningFactImpact,
@@ -57,6 +58,8 @@ from trip_agent.worker.contracts import (
     PlanningFailedPayload,
     PlanningRelaxation,
     PlanningReplanCommand,
+    PlanningReviewRequiredEvent,
+    PlanningReviewRequiredPayload,
 )
 from trip_agent.worker.progress import report_planning_progress
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider  # noqa: F811
@@ -91,7 +94,7 @@ async def process_planning_create(
     *,
     knowledge_provider: KnowledgeEvidenceProvider | None = None,
     occurred_at: datetime | None = None,
-) -> PlanningCompletedEvent:
+) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
     completed_at = occurred_at or datetime.now(UTC)
     await report_planning_progress(
         "CONTEXT_VALIDATING",
@@ -121,24 +124,55 @@ async def process_planning_create(
         knowledge,
         checked_at=completed_at,
     )
-    evaluator = get_plan_evaluator()
-    evaluation = evaluator.evaluate(effective_command, result)
-    return PlanningCompletedEvent(
-        event_type="PLANNING_COMPLETED",
-        schema_version=8,
+    # B6: authoritative feasibility gate.  The report is derived from the
+    # same itinerary that will be emitted; validated_at is the caller-owned
+    # timestamp and the report id is a deterministic uuid5 of the command.
+    report = validate_itinerary(
+        command=effective_command,
+        itinerary=result.itinerary,
+        report_id=_feasibility_report_id(command.event_id),
+        validated_at=completed_at,
+        trip_skeleton=result.trip_skeleton,
+        validation_inputs=result.validation_inputs,
+    )
+    if report.status.value == "VERIFIED":
+        evaluation = get_plan_evaluator().evaluate(effective_command, result)
+        return PlanningCompletedEventV9(
+            event_type="PLANNING_COMPLETED",
+            schema_version=9,
+            event_id=_completed_event_id(command.event_id),
+            trace_id=command.trace_id,
+            task_id=command.task_id,
+            trip_id=command.trip_id,
+            run_id=_run_id(command.task_id),
+            occurred_at=completed_at,
+            payload=PlanningCompletedPayloadV9(
+                provider=result.provider,
+                itinerary=result.itinerary,
+                knowledge=knowledge,
+                fact_impacts=_fact_impacts(effective_command, result),
+                provider_provenance=result.provider_provenance(),
+                evaluation=evaluation,
+                feasibility_report=report,
+            ),
+        )
+    return PlanningReviewRequiredEvent(
+        event_type="PLANNING_REVIEW_REQUIRED",
+        schema_version=1,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
         trip_id=command.trip_id,
         run_id=_run_id(command.task_id),
         occurred_at=completed_at,
-        payload=PlanningCompletedPayload(
+        payload=PlanningReviewRequiredPayload(
+            status="WAITING_USER",
             provider=result.provider,
             itinerary=result.itinerary,
             knowledge=knowledge,
             fact_impacts=_fact_impacts(effective_command, result),
             provider_provenance=result.provider_provenance(),
-            evaluation=evaluation,
+            feasibility_report=report,
         ),
     )
 
@@ -148,7 +182,7 @@ async def process_planning_replan(
     provider: PlanningProvider,
     *,
     occurred_at: datetime | None = None,
-) -> PlanningCompletedEvent:
+) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
     completed_at = occurred_at or datetime.now(UTC)
     await report_planning_progress(
         "CONTEXT_VALIDATING",
@@ -160,23 +194,52 @@ async def process_planning_replan(
         "RESULT_EXPLAINING",
         "Preparing the updated local itinerary",
     )
-    evaluation = get_plan_evaluator().evaluate(command, result)
-    return PlanningCompletedEvent(
-        event_type="PLANNING_COMPLETED",
-        schema_version=8,
+    report = validate_itinerary(
+        command=command,
+        itinerary=result.itinerary,
+        report_id=_feasibility_report_id(command.event_id),
+        validated_at=completed_at,
+        trip_skeleton=result.trip_skeleton,
+        validation_inputs=result.validation_inputs,
+    )
+    if report.status.value == "VERIFIED":
+        evaluation = get_plan_evaluator().evaluate(command, result)
+        return PlanningCompletedEventV9(
+            event_type="PLANNING_COMPLETED",
+            schema_version=9,
+            event_id=_completed_event_id(command.event_id),
+            trace_id=command.trace_id,
+            task_id=command.task_id,
+            trip_id=command.trip_id,
+            run_id=_run_id(command.task_id),
+            occurred_at=completed_at,
+            payload=PlanningCompletedPayloadV9(
+                provider=result.provider,
+                itinerary=result.itinerary,
+                knowledge=command.payload.knowledge,
+                fact_impacts=(),
+                provider_provenance=result.provider_provenance(),
+                evaluation=evaluation,
+                feasibility_report=report,
+            ),
+        )
+    return PlanningReviewRequiredEvent(
+        event_type="PLANNING_REVIEW_REQUIRED",
+        schema_version=1,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
         trip_id=command.trip_id,
         run_id=_run_id(command.task_id),
         occurred_at=completed_at,
-        payload=PlanningCompletedPayload(
+        payload=PlanningReviewRequiredPayload(
+            status="WAITING_USER",
             provider=result.provider,
             itinerary=result.itinerary,
             knowledge=command.payload.knowledge,
             fact_impacts=(),
             provider_provenance=result.provider_provenance(),
-            evaluation=evaluation,
+            feasibility_report=report,
         ),
     )
 
@@ -230,8 +293,7 @@ def planning_failed_event(
             for item in failure.conflicts
         )
         relaxations = tuple(
-            PlanningRelaxation(code=item.code, message=item.message)
-            for item in failure.relaxations
+            PlanningRelaxation(code=item.code, message=item.message) for item in failure.relaxations
         )
     elif isinstance(failure, PlanningProviderError):
         details = failure.details
@@ -284,6 +346,11 @@ def _completed_event_id(command_event_id: UUID) -> UUID:
     return uuid5(NAMESPACE_URL, f"trip-pilot/planning-completed/{command_event_id}")
 
 
+def _feasibility_report_id(command_event_id: UUID) -> UUID:
+    """Deterministic report id so command retries always derive the same id."""
+    return uuid5(NAMESPACE_URL, f"trip-pilot/feasibility-report/{command_event_id}")
+
+
 def _failed_event_id(command_event_id: UUID) -> UUID:
     return uuid5(NAMESPACE_URL, f"trip-pilot/planning-failed/{command_event_id}")
 
@@ -318,9 +385,7 @@ def _merge_guide_evidence(
             source_name=fact.source_host[:120],
             collected_at=fact.observed_at,
             reliability_level=(
-                "provider-live"
-                if fact.source_type == "CITY_INTELLIGENCE"
-                else "community-guide"
+                "provider-live" if fact.source_type == "CITY_INTELLIGENCE" else "community-guide"
             ),
             similarity=fact.confidence,
         )
@@ -350,9 +415,7 @@ def _fact_impacts(
     if context is None:
         return ()
     scheduled = tuple(
-        (day.date, activity.title)
-        for day in result.itinerary.days
-        for activity in day.activities
+        (day.date, activity.title) for day in result.itinerary.days for activity in day.activities
     )
     return tuple(
         PlanningFactImpact.model_validate(asdict(impact))

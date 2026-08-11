@@ -95,7 +95,7 @@ class PlanningCompletedRabbitIntegrationTest {
     void consumesACompletedEventFromRabbitAndCommitsTheItinerary() throws Exception {
         PlanningContext context = createPlanningContext("rabbit-completion@example.com");
         UUID eventId = UUID.randomUUID();
-        byte[] body = PlanningCompletedEventFixture.completedEvent(
+        byte[] body = PlanningCompletedEventFixture.completedAmapEventV9(
                 eventId, context.traceId(), context.taskId(), context.tripId()
         ).getBytes(StandardCharsets.UTF_8);
 

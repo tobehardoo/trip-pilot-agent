@@ -1,0 +1,254 @@
+{
+  "eventType": "PLANNING_REVIEW_REQUIRED",
+  "schemaVersion": 1,
+  "eventId": "00000000-0000-0000-0000-000000000001",
+  "traceId": "00000000-0000-0000-0000-000000000002",
+  "taskId": "00000000-0000-0000-0000-000000000003",
+  "tripId": "00000000-0000-0000-0000-000000000004",
+  "runId": "00000000-0000-0000-0000-000000000005",
+  "occurredAt": "2026-08-10T12:00:00Z",
+  "payload": {
+    "status": "WAITING_USER",
+    "provider": "DEMO",
+    "itinerary": {
+      "title": "Benchmark itinerary",
+      "days": [
+        {
+          "date": "2026-08-01",
+          "dayType": null,
+          "activities": [
+            {
+              "activityId": "3d76fb9e-362e-4b28-8a9e-18e8ac7050ae",
+              "title": "Activity 1",
+              "startTime": "2026-08-01T09:00:00Z",
+              "endTime": "2026-08-01T10:00:00Z",
+              "estimatedCost": 0.0,
+              "source": "DEMO",
+              "providerPoiId": null,
+              "coordinates": null,
+              "address": null,
+              "typeCode": null,
+              "typeName": null,
+              "kind": null,
+              "timeFixed": null
+            },
+            {
+              "activityId": "3d76fb9e-362e-4b28-8a9e-18e8ac7050af",
+              "title": "Activity 2",
+              "startTime": "2026-08-01T11:00:00Z",
+              "endTime": "2026-08-01T12:00:00Z",
+              "estimatedCost": 0.0,
+              "source": "DEMO",
+              "providerPoiId": null,
+              "coordinates": null,
+              "address": null,
+              "typeCode": null,
+              "typeName": null,
+              "kind": null,
+              "timeFixed": null
+            }
+          ],
+          "transitLegs": [
+            {
+              "transitId": "61f3d628-8c83-4c51-986d-8e87353a2d6a",
+              "fromActivityIndex": 0,
+              "toActivityIndex": 1,
+              "mode": "WALKING",
+              "distanceMeters": 300,
+              "durationSeconds": 300,
+              "provider": "DEMO",
+              "estimated": true,
+              "polyline": [
+                {
+                  "longitude": 113.0,
+                  "latitude": 23.0
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "estimatedTotalCost": 500.0
+    },
+    "knowledge": {
+      "status": "REAL",
+      "query": "广州 历史",
+      "citations": [
+        {
+          "documentId": "guangzhou-history-001",
+          "documentVersion": 2,
+          "chunkId": "guangzhou-history-001-0",
+          "chunkIndex": 0,
+          "title": "广州历史",
+          "sourceUrl": "https://example.com/guangzhou",
+          "sourceName": "示例",
+          "collectedAt": "2026-08-09T12:00:00Z",
+          "reliabilityLevel": "HIGH",
+          "similarity": 0.9
+        }
+      ],
+      "freshness": {
+        "status": "FRESH",
+        "checkedAt": "2026-08-09T12:00:00Z",
+        "staleReason": null
+      },
+      "message": null
+    },
+    "factImpacts": [],
+    "providerProvenance": null,
+    "feasibilityReport": {
+      "schemaVersion": 1,
+      "reportId": "3d76fb9e-362e-4b28-8a9e-18e8ac7050ad",
+      "validatorVersion": "hard-validator-v3",
+      "itineraryFingerprint": "dce5e94d5981b3ffec3a0aff9dcfc29245d874552e863f4b432a47985bc7d025",
+      "status": "UNVERIFIED",
+      "validatedAt": "2026-08-10T12:00:00Z",
+      "requiredRuleIds": [
+        "TRIP_DATE_RANGE",
+        "FIXED_SCHEDULE_COVERAGE",
+        "BUDGET_LIMIT",
+        "MUST_VISIT_COVERAGE",
+        "DUPLICATE_POI",
+        "ACTIVITY_OVERLAP",
+        "ROUTE_ENDPOINT_CONTINUITY",
+        "CROSS_DAY_CONTINUITY",
+        "OPENING_HOURS",
+        "VISIT_DURATION",
+        "MEAL_WINDOW"
+      ],
+      "missingRequiredRuleIds": [],
+      "summary": {
+        "totalCount": 11,
+        "passCount": 0,
+        "failCount": 0,
+        "unknownCount": 11,
+        "notApplicableCount": 0,
+        "missingRequiredCount": 0
+      },
+      "ruleResults": [
+        {
+          "ruleId": "TRIP_DATE_RANGE",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "FIXED_SCHEDULE_COVERAGE",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "BUDGET_LIMIT",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "MUST_VISIT_COVERAGE",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "DUPLICATE_POI",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "ACTIVITY_OVERLAP",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "ROUTE_ENDPOINT_CONTINUITY",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "CROSS_DAY_CONTINUITY",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "OPENING_HOURS",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "VISIT_DURATION",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        },
+        {
+          "ruleId": "MEAL_WINDOW",
+          "ruleVersion": "hard-rule-v1",
+          "outcome": "UNKNOWN",
+          "reasonCode": "OPENING_HOURS_UNVERIFIED",
+          "message": "no evidence",
+          "affectedDates": [],
+          "affectedEntityRefs": [],
+          "evidenceRefs": [],
+          "repairable": false
+        }
+      ],
+      "repairAttempts": []
+    }
+  }
+}

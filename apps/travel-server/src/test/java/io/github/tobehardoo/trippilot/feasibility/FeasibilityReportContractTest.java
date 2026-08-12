@@ -455,6 +455,46 @@ public class FeasibilityReportContractTest {
     }
 
     @Test
+    void v5ValidTypedRefsAndRepairHistoryPass() {
+        FeasibilityReport report = reportWithValidatorVersion(
+                "hard-validator-v5",
+                List.of(new FeasibilityReport.RuleResult(
+                        "OPENING_HOURS", "1", RuleOutcome.PASS, "REASON_OK", "ok",
+                        List.of(), List.of("poi:POI-1"),
+                        List.of(verifiedOpeningEvidence()), false)),
+                List.of(new FeasibilityReport.RepairAttempt(
+                        1, List.of("VISIT_DURATION"), List.of("CLAMP_VISIT_DURATION"),
+                        List.of("2026-08-09"),
+                        List.of("activity:10000000-0000-4000-8000-000000000031"),
+                        "b".repeat(64), "a".repeat(64), FeasibilityStatus.VERIFIED)));
+
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                () -> FeasibilityReportValidator.validate(report));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"EMPTY_ACTIONS", "EMPTY_RULES", "BAD_FINGERPRINT", "BAD_DATE"})
+    void malformedRepairAttemptIsRejectedBySemanticValidator(String scenario) {
+        List<String> rules = scenario.equals("EMPTY_RULES")
+                ? List.of() : List.of("VISIT_DURATION");
+        List<String> actions = scenario.equals("EMPTY_ACTIONS")
+                ? List.of() : List.of("CLAMP_VISIT_DURATION");
+        List<String> dates = scenario.equals("BAD_DATE")
+                ? List.of("2026-02-30") : List.of("2026-08-09");
+        String before = scenario.equals("BAD_FINGERPRINT")
+                ? "invalid" : "b".repeat(64);
+        FeasibilityReport report = reportWithValidatorVersion(
+                "hard-validator-v5",
+                List.of(openingPassRule(List.of(verifiedOpeningEvidence()))),
+                List.of(new FeasibilityReport.RepairAttempt(
+                        1, rules, actions, dates, List.of(), before,
+                        "a".repeat(64), FeasibilityStatus.VERIFIED)));
+
+        assertThatThrownBy(() -> FeasibilityReportValidator.validate(report))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void legacyVersionsKeepUnprefixedRefsCompatible() {
         for (String legacy : new String[]{
                 "feasibility-v1", "hard-validator-v1", "hard-validator-v2",

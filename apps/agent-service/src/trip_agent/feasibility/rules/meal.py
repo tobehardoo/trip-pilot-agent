@@ -13,6 +13,7 @@ from datetime import date
 from trip_agent.domain.shared import CHINA_TIME_ZONE
 from trip_agent.feasibility.context import ValidationContext
 from trip_agent.feasibility.inputs import (
+    ActivityLocator,
     MealPlacementBinding,
     MealProjectionState,
 )
@@ -119,6 +120,7 @@ def assess_meal_window(ctx: ValidationContext) -> RuleAssessment:
                             f"day {day.date} {meal_type} placement time is not timezone-aware"
                         ),
                         affected_date=day.date,
+                        activity=ActivityLocator(day_index, binding.activity.activity_index),
                     )
                 )
                 continue
@@ -134,6 +136,7 @@ def assess_meal_window(ctx: ValidationContext) -> RuleAssessment:
                             f"day {day.date} {meal_type} placement is not on the itinerary day"
                         ),
                         affected_date=day.date,
+                        activity=ActivityLocator(day_index, binding.activity.activity_index),
                     )
                 )
                 continue
@@ -153,6 +156,7 @@ def assess_meal_window(ctx: ValidationContext) -> RuleAssessment:
                             "its explicit meal window"
                         ),
                         affected_date=day.date,
+                        activity=ActivityLocator(day_index, binding.activity.activity_index),
                     )
                 )
 

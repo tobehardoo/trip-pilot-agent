@@ -25,6 +25,7 @@ const steps: PipelineStep[] = [
   { stage: 'CANDIDATES_RANKING', label: '筛选地点优先级' },
   { stage: 'ROUTES_CALCULATING', label: '计算交通路线' },
   { stage: 'CONSTRAINTS_SOLVING', label: '协调时间、预算与偏好' },
+  { stage: 'REPAIRING', label: '执行有界修复' },
   { stage: 'KNOWLEDGE_RETRIEVING', label: '补充攻略与实时资料' },
   { stage: 'RESULT_EXPLAINING', label: '生成行程说明' },
   { stage: 'RESULT_PUBLISHING', label: '发布规划结果' },
@@ -42,7 +43,10 @@ const statusLabels = {
   pending: '等待中',
 } as const
 
-const observedStages = computed(() => new Set((props.progressHistory ?? []).map((event) => event.stage)))
+const observedStages = computed(() => new Set([
+  ...(props.progressHistory ?? []).map((event) => event.stage),
+  ...(props.progress ? [props.progress.stage] : []),
+]))
 const currentStepIndex = computed(() => {
   if (!props.progress) return -1
   return steps.findIndex((step) => step.stage === props.progress?.stage)

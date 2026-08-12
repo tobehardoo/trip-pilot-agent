@@ -188,7 +188,7 @@ def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
         95,
     ]
     assert all(event["eventType"] == "PLANNING_PROGRESS" for event in progress_events)
-    assert all(event["schemaVersion"] == 1 for event in progress_events)
+    assert all(event["schemaVersion"] == 2 for event in progress_events)
 
 
 def test_valid_replan_command_uses_the_completed_event_route() -> None:
@@ -210,6 +210,37 @@ def test_valid_replan_command_uses_the_completed_event_route() -> None:
     assert body["taskId"] == REPLAN_COMMAND["taskId"]
     assert body["payload"]["itinerary"]["days"][0]["transitLegs"][0]["distanceMeters"] > 0
     assert body["payload"]["providerProvenance"] is None
+
+
+def test_repairing_progress_may_repeat_with_unique_event_ids() -> None:
+    amqp = import_module("trip_agent.worker.amqp")
+    contracts = import_module("trip_agent.worker.contracts")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+    exchange = FakeExchange()
+    publisher = amqp.PlanningProgressPublisher(exchange, command)
+
+    async def _publish() -> None:
+        await publisher.report(
+            "CONSTRAINTS_SOLVING", "validating", {"tripDays": 1}
+        )
+        await publisher.report(
+            "REPAIRING", "repair one", {"attemptIndex": 1, "actionCount": 1}
+        )
+        await publisher.report(
+            "REPAIRING", "repair two", {"attemptIndex": 2, "actionCount": 1}
+        )
+
+    asyncio.run(_publish())
+    events = [json.loads(message.body) for message, _, _ in exchange.published]
+
+    assert [event["payload"]["stage"] for event in events] == [
+        "CONSTRAINTS_SOLVING",
+        "REPAIRING",
+        "REPAIRING",
+    ]
+    assert [event["payload"]["statistics"]["attemptIndex"] for event in events[1:]] == [1, 2]
+    assert len({event["eventId"] for event in events}) == 3
+    assert all(event["schemaVersion"] == 2 for event in events)
 
 
 def test_replan_without_activity_coordinates_publishes_failure_without_requeue() -> None:

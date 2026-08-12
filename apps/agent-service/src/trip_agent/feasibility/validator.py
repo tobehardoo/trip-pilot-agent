@@ -12,6 +12,7 @@ outcomes and the required-rule set.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,7 +20,12 @@ from uuid import UUID
 from trip_agent.feasibility.catalog import IMPLEMENTED_RULE_IDS, REQUIRED_RULE_IDS
 from trip_agent.feasibility.context import ValidationContext, build_budget_context
 from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
-from trip_agent.feasibility.models import FeasibilityReport, build_feasibility_report
+from trip_agent.feasibility.models import (
+    FeasibilityReport,
+    RepairAttempt,
+    build_feasibility_report,
+)
+from trip_agent.feasibility.repair.catalog import repair_action_for
 from trip_agent.feasibility.rules.continuity import (
     assess_cross_day_continuity,
     assess_route_endpoint_continuity,
@@ -46,7 +52,7 @@ if TYPE_CHECKING:
     from trip_agent.feasibility.inputs import ValidationInputs
     from trip_agent.planning.trip_skeleton import TripSkeleton
 
-VALIDATOR_VERSION = "hard-validator-v4"
+VALIDATOR_VERSION = "hard-validator-v5"
 
 # Stable dispatch: rule_id -> canonical assessor, keyed by the catalog order
 # so the report lists results in the same order as IMPLEMENTED_RULE_IDS.
@@ -67,6 +73,69 @@ _RULE_DISPATCH: dict[str, Callable[[ValidationContext], RuleAssessment]] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class ValidationRun:
+    """The complete immutable output of one canonical validation pass."""
+
+    context: ValidationContext
+    assessments: tuple[RuleAssessment, ...]
+    report: FeasibilityReport
+
+    @property
+    def itinerary(self) -> Itinerary:
+        return self.context.itinerary
+
+
+def _with_repairability(assessment: RuleAssessment) -> RuleAssessment:
+    result = assessment.result
+    repairable = repair_action_for(
+        result.rule_id,
+        result.outcome,
+        result.reason_code,
+    ) is not None
+    if result.repairable == repairable:
+        return assessment
+    return RuleAssessment(
+        result=result.model_copy(update={"repairable": repairable}),
+        findings=assessment.findings,
+    )
+
+
+def run_validation(
+    command: PlanningCreateCommand | PlanningReplanCommand,
+    itinerary: Itinerary,
+    *,
+    report_id: str | UUID,
+    validated_at: datetime,
+    trip_skeleton: TripSkeleton | None = None,
+    validation_inputs: ValidationInputs | None = None,
+    repair_attempts: tuple[RepairAttempt, ...] = (),
+) -> ValidationRun:
+    """Run all rules and retain their canonical findings for repair planning."""
+    ctx = ValidationContext(
+        command=command,
+        itinerary=itinerary,
+        budget=build_budget_context(command, itinerary),
+        trip_skeleton=trip_skeleton,
+        validation_inputs=validation_inputs,
+        validation_time=validated_at,
+    )
+    assessments = tuple(
+        _with_repairability(_RULE_DISPATCH[rule_id](ctx))
+        for rule_id in IMPLEMENTED_RULE_IDS
+    )
+    report = build_feasibility_report(
+        report_id=report_id,
+        validator_version=VALIDATOR_VERSION,
+        itinerary_fingerprint=compute_itinerary_fingerprint(itinerary),
+        validated_at=validated_at,
+        required_rule_ids=REQUIRED_RULE_IDS,
+        rule_results=tuple(assessment.result for assessment in assessments),
+        repair_attempts=repair_attempts,
+    )
+    return ValidationRun(context=ctx, assessments=assessments, report=report)
+
+
 def validate_itinerary(
     command: PlanningCreateCommand | PlanningReplanCommand,
     itinerary: Itinerary,
@@ -75,6 +144,7 @@ def validate_itinerary(
     validated_at: datetime,
     trip_skeleton: TripSkeleton | None = None,
     validation_inputs: ValidationInputs | None = None,
+    repair_attempts: tuple[RepairAttempt, ...] = (),
 ) -> FeasibilityReport:
     """Run every implemented hard rule over the itinerary and aggregate the
     report.
@@ -85,20 +155,12 @@ def validate_itinerary(
     evidence gap (UNKNOWN).  The report may be VERIFIED only when every
     required rule exists and no rule is FAIL or UNKNOWN.
     """
-    ctx = ValidationContext(
+    return run_validation(
         command=command,
         itinerary=itinerary,
-        budget=build_budget_context(command, itinerary),
+        report_id=report_id,
+        validated_at=validated_at,
         trip_skeleton=trip_skeleton,
         validation_inputs=validation_inputs,
-        validation_time=validated_at,
-    )
-    rule_results = tuple(_RULE_DISPATCH[rule_id](ctx).result for rule_id in IMPLEMENTED_RULE_IDS)
-    return build_feasibility_report(
-        report_id=report_id,
-        validator_version=VALIDATOR_VERSION,
-        itinerary_fingerprint=compute_itinerary_fingerprint(itinerary),
-        validated_at=validated_at,
-        required_rule_ids=REQUIRED_RULE_IDS,
-        rule_results=rule_results,
-    )
+        repair_attempts=repair_attempts,
+    ).report

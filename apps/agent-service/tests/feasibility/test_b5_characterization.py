@@ -22,8 +22,8 @@ def test_catalog_is_eleven_of_eleven() -> None:
     assert len(MISSING_RULE_IDS) == 0
 
 
-def test_validator_version_is_v4() -> None:
-    assert VALIDATOR_VERSION == "hard-validator-v4"
+def test_validator_version_is_v5() -> None:
+    assert VALIDATOR_VERSION == "hard-validator-v5"
 
 
 def test_duration_profile_has_eight_fields() -> None:

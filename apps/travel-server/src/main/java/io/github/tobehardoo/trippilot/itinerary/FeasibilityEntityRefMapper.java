@@ -15,7 +15,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
  *
  * Dispatches on the report's validatorVersion:
  *
- * - v4 (hard-validator-v4): refs must be typed strings
+ * - v4/v5 (hard-validator-v4/hard-validator-v5): refs must be typed strings
  *   (activity:/transit:/poi:/text:) per {@code FeasibilityEntityReferenceCodec}.
  *   activity/transit refs are remapped strictly (missing or ambiguous mapping
  *   fails closed); poi:/text: pass through unchanged even when their value
@@ -39,7 +39,7 @@ public final class FeasibilityEntityRefMapper {
                 throw new IllegalStateException(
                         "feasibility report is missing validatorVersion");
             }
-            if ("hard-validator-v4".equals(validatorVersion)) {
+            if (isTyped(validatorVersion)) {
                 remapArrayV4(report.path("ruleResults"), activityRefs, transitRefs,
                         "affectedEntityRefs");
                 remapArrayV4(report.path("repairAttempts"), activityRefs, transitRefs,
@@ -64,6 +64,11 @@ public final class FeasibilityEntityRefMapper {
         return "hard-validator-v1".equals(validatorVersion)
                 || "hard-validator-v2".equals(validatorVersion)
                 || "hard-validator-v3".equals(validatorVersion);
+    }
+
+    private boolean isTyped(String validatorVersion) {
+        return "hard-validator-v4".equals(validatorVersion)
+                || "hard-validator-v5".equals(validatorVersion);
     }
 
     private void remapArrayLegacy(JsonNode containers,
@@ -157,7 +162,7 @@ public final class FeasibilityEntityRefMapper {
                     .parse(reference);
         } catch (IllegalArgumentException exception) {
             throw new IllegalStateException(
-                    "v4 entity reference is invalid: " + reference, exception);
+                    "typed entity reference is invalid: " + reference, exception);
         }
         switch (parsed.kind()) {
             case POI, TEXT -> {

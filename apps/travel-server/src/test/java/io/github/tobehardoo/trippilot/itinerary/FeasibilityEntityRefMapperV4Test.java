@@ -132,4 +132,23 @@ class FeasibilityEntityRefMapperV4Test {
                 input, Map.of(TEMP_ACTIVITY, PERSISTED_ACTIVITY), Map.of());
         assertThat(out).contains("activity:" + PERSISTED_ACTIVITY);
     }
+
+    @Test
+    void v5RepairAttemptRefsUseTheSameTypedRemapping() {
+        String input = """
+                {
+                  "schemaVersion": 1,
+                  "validatorVersion": "hard-validator-v5",
+                  "ruleResults": [],
+                  "repairAttempts": [
+                    {"attemptIndex": 1, "affectedEntityRefs": ["activity:%s"]}
+                  ]
+                }
+                """.formatted(TEMP_ACTIVITY);
+
+        String out = mapper.remap(
+                input, Map.of(TEMP_ACTIVITY, PERSISTED_ACTIVITY), Map.of());
+
+        assertThat(out).contains("activity:" + PERSISTED_ACTIVITY);
+    }
 }

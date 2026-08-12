@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-progress-event-v2.schema.json",
+  "title": "Planning Progress Event v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["eventType", "schemaVersion", "eventId", "traceId", "taskId", "tripId", "occurredAt", "payload"],
+  "properties": {
+    "eventType": {"const": "PLANNING_PROGRESS"},
+    "schemaVersion": {"const": 2},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "sequence", "progress", "message", "statistics"],
+      "properties": {
+        "stage": {
+          "enum": [
+            "TASK_ACCEPTED", "CONTEXT_VALIDATING", "CITY_FACTS_LOADING",
+            "POI_RECALLING", "CANDIDATES_RANKING", "ROUTES_CALCULATING",
+            "CONSTRAINTS_SOLVING", "REPAIRING", "KNOWLEDGE_RETRIEVING",
+            "RESULT_EXPLAINING", "RESULT_PUBLISHING", "RESULT_PERSISTING"
+          ]
+        },
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 100},
+        "progress": {"type": "integer", "minimum": 0, "maximum": 100},
+        "message": {"type": "string", "minLength": 1, "maxLength": 300},
+        "statistics": {
+          "type": "object",
+          "maxProperties": 20,
+          "propertyNames": {"type": "string", "minLength": 1, "maxLength": 60},
+          "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 2147483647}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"stage": {"const": "REPAIRING"}}, "required": ["stage"]},
+          "then": {
+            "properties": {
+              "statistics": {
+                "required": ["attemptIndex", "actionCount"],
+                "properties": {
+                  "attemptIndex": {"type": "integer", "minimum": 1, "maximum": 3},
+                  "actionCount": {"type": "integer", "minimum": 1, "maximum": 16}
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

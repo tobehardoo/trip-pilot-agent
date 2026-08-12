@@ -133,6 +133,7 @@ class PlanningProgressPublisher:
         "CANDIDATES_RANKING",
         "ROUTES_CALCULATING",
         "CONSTRAINTS_SOLVING",
+        "REPAIRING",
         "KNOWLEDGE_RETRIEVING",
         "RESULT_EXPLAINING",
         "RESULT_PUBLISHING",
@@ -145,6 +146,7 @@ class PlanningProgressPublisher:
         "CANDIDATES_RANKING": 45,
         "ROUTES_CALCULATING": 55,
         "CONSTRAINTS_SOLVING": 65,
+        "REPAIRING": 75,
         "KNOWLEDGE_RETRIEVING": 75,
         "RESULT_EXPLAINING": 85,
         "RESULT_PUBLISHING": 95,
@@ -156,7 +158,8 @@ class PlanningProgressPublisher:
         message: str,
         statistics: Mapping[str, int] | None = None,
     ) -> None:
-        if stage in self._emitted_stages:
+        repeated_repair = stage == "REPAIRING"
+        if stage in self._emitted_stages and not repeated_repair:
             return
         rank = self._stage_order.index(stage) + 1
         if rank < self._last_stage_rank:
@@ -169,10 +172,10 @@ class PlanningProgressPublisher:
         self._sequence += 1
         event = PlanningProgressEvent(
             event_type="PLANNING_PROGRESS",
-            schema_version=1,
+            schema_version=2,
             event_id=uuid5(
                 NAMESPACE_URL,
-                f"trip-pilot/planning-progress/{self.command.event_id}/{stage}",
+                f"trip-pilot/planning-progress/{self.command.event_id}/{stage}/{self._sequence}",
             ),
             trace_id=self.command.trace_id,
             task_id=self.command.task_id,
@@ -205,7 +208,8 @@ class PlanningProgressPublisher:
             routing_key=PROGRESS_ROUTING_KEY,
             mandatory=True,
         )
-        self._emitted_stages.add(stage)
+        if not repeated_repair:
+            self._emitted_stages.add(stage)
         self._last_stage_rank = rank
 
 

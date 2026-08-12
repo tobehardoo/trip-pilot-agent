@@ -104,6 +104,40 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void persistsRepeatedV2RepairAttemptsWithIncreasingSequences() throws Exception {
+        PlanningContext context = createPlanningContext("planning-repair-progress@example.com");
+        PlanningProgressEvent first = repairProgressEvent(
+                UUID.randomUUID(), context, 7, 1, 2
+        );
+        PlanningProgressEvent second = repairProgressEvent(
+                UUID.randomUUID(), context, 8, 2, 1
+        );
+
+        progressService.handle(first);
+        progressService.handle(second);
+
+        List<Map<String, Object>> progress = jdbcTemplate.queryForList("""
+                SELECT schema_version,
+                       payload ->> 'stage' AS stage,
+                       (payload -> 'statistics' ->> 'attemptIndex')::integer AS attempt_index,
+                       (payload -> 'statistics' ->> 'actionCount')::integer AS action_count
+                FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_PROGRESS'
+                ORDER BY (payload ->> 'sequence')::integer
+                """, context.taskId());
+
+        assertThat(progress).hasSize(2);
+        assertThat(progress.get(0)).containsEntry("schema_version", 2)
+                .containsEntry("stage", "REPAIRING")
+                .containsEntry("attempt_index", 1)
+                .containsEntry("action_count", 2);
+        assertThat(progress.get(1)).containsEntry("schema_version", 2)
+                .containsEntry("stage", "REPAIRING")
+                .containsEntry("attempt_index", 2)
+                .containsEntry("action_count", 1);
+    }
+
+    @Test
     void ignoresLateProgressAfterCompletionBecauseBrokerRoutesCanArriveOutOfOrder() throws Exception {
         PlanningContext context = createPlanningContext("late-progress@example.com");
         completionService.handle(completedEvent(UUID.randomUUID(), context));
@@ -1348,6 +1382,37 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 """.formatted(
                 eventId, context.traceId(), context.taskId(), context.tripId(), stage, sequence,
                 sequence * 10
+        );
+        return progressEventParser.parse(bytes(body));
+    }
+
+    private PlanningProgressEvent repairProgressEvent(
+            UUID eventId,
+            PlanningContext context,
+            int sequence,
+            int attemptIndex,
+            int actionCount
+    ) {
+        String body = """
+                {
+                  "eventType":"PLANNING_PROGRESS",
+                  "schemaVersion":2,
+                  "eventId":"%s",
+                  "traceId":"%s",
+                  "taskId":"%s",
+                  "tripId":"%s",
+                  "occurredAt":"2026-08-13T08:00:00Z",
+                  "payload":{
+                    "stage":"REPAIRING",
+                    "sequence":%d,
+                    "progress":75,
+                    "message":"Applying bounded repair attempt",
+                    "statistics":{"attemptIndex":%d,"actionCount":%d}
+                  }
+                }
+                """.formatted(
+                eventId, context.traceId(), context.taskId(), context.tripId(),
+                sequence, attemptIndex, actionCount
         );
         return progressEventParser.parse(bytes(body));
     }

@@ -10,7 +10,7 @@ function makeReport(status: FeasibilityReport['status'] = 'VERIFIED'): Feasibili
   return {
     schemaVersion: 1,
     reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
-    validatorVersion: 'hard-validator-v4',
+    validatorVersion: 'hard-validator-v5',
     itineraryFingerprint: 'a'.repeat(64),
     status,
     validatedAt: '2026-08-10T12:00:00Z',
@@ -211,6 +211,26 @@ test('renders repairAttempts when present and empty-state when absent', () => {
 
   render(FeasibilityReportPanel, { props: { report: makeReport('VERIFIED') } })
   expect(screen.getByText('无修复尝试')).toBeTruthy()
+})
+
+test('renders canonical v5 bounded repair history', () => {
+  const report = makeReport('VERIFIED')
+  report.repairAttempts = [{
+    attemptIndex: 1,
+    triggeringRuleIds: ['VISIT_DURATION'],
+    actionCodes: ['CLAMP_VISIT_DURATION'],
+    affectedDates: ['2026-08-01'],
+    affectedEntityRefs: ['activity:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'],
+    beforeFingerprint: 'b'.repeat(64),
+    afterFingerprint: 'c'.repeat(64),
+    resultingStatus: 'VERIFIED',
+  }]
+
+  render(FeasibilityReportPanel, { props: { report } })
+
+  expect(screen.getByText('CLAMP_VISIT_DURATION')).toBeTruthy()
+  expect(screen.getByText(/触发规则：VISIT_DURATION/)).toBeTruthy()
+  expect(screen.getByText('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')).toBeTruthy()
 })
 
 test('renders missing required rules count', () => {

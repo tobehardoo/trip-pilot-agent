@@ -87,6 +87,26 @@ class PlanningReviewRequiredEventParserTest {
     }
 
     @Test
+    void acceptsHardValidatorV5RepairHistory() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedReviewV1Fixture(
+                        "review-v1-needs-repair-demo.json"
+                )
+        );
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("validatorVersion", "hard-validator-v5");
+
+        PlanningReviewRequiredEvent parsed = parser.parse(
+                objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.payload().feasibilityReport().validatorVersion())
+                .isEqualTo("hard-validator-v5");
+        assertThat(parsed.payload().feasibilityReport().repairAttempts())
+                .extracting("attemptIndex")
+                .containsExactly(1);
+    }
+
+    @Test
     void rejectsMismatchedItineraryFingerprint() throws Exception {
         ObjectNode event = sharedReviewEvent();
         ((ObjectNode) event.at("/payload/feasibilityReport"))

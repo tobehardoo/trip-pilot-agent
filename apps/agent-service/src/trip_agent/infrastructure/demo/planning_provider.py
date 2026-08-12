@@ -9,6 +9,7 @@ from decimal import Decimal
 from trip_agent.domain.planning.protocols import (
     OptimizationConflict,
     PlanningInfeasibleError,
+    PlanningRepairRequest,
     PlanningResult,
     RelaxationSuggestion,
 )
@@ -86,6 +87,16 @@ class DemoPlanningProvider:
         return await LocalReplanningProvider(
             DemoRouteProvider(), provider_mode=ProviderExecutionMode.DEMO_ONLY
         ).replan(command)
+
+    async def repair(self, request: PlanningRepairRequest) -> PlanningResult:
+        from trip_agent.application.replan_service import (  # noqa: PLC0415
+            LocalReplanningProvider,
+        )
+        from trip_agent.providers.errors import ProviderExecutionMode  # noqa: PLC0415
+
+        return await LocalReplanningProvider(
+            DemoRouteProvider(), provider_mode=ProviderExecutionMode.DEMO_ONLY
+        ).repair(request)
 
     def _day_skeleton(
         self, command: PlanningCreateCommand, offset: int

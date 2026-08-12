@@ -55,6 +55,7 @@ ACTIVE_SCHEMA_FILES = (
     "planning-failed-event-v1.schema.json",
     "planning-failed-event-v2.schema.json",
     "planning-progress-event-v1.schema.json",
+    "planning-progress-event-v2.schema.json",
     "planning-replan-command-v1.schema.json",
     "planning-completed-event-v9.schema.json",
     "planning-review-required-event-v1.schema.json",
@@ -275,6 +276,33 @@ def test_publishing_progress_stage_matches_its_json_schema() -> None:
 
     schema = _load_schema("planning-progress-event-v1.schema.json")
     Draft202012Validator(schema).validate(event.model_dump(mode="json", by_alias=True))
+
+
+def test_repair_progress_v2_matches_schema_and_requires_attempt_index() -> None:
+    event = PlanningProgressEvent(
+        event_type="PLANNING_PROGRESS",
+        schema_version=2,
+        event_id=UUID("5aa31052-2c21-53af-bddb-6a86614d801b"),
+        trace_id=UUID("ea930620-41a7-4fdc-b6d1-d298a850112a"),
+        task_id=UUID("dfb858fc-b910-4056-a375-2366dcaab690"),
+        trip_id=UUID("d209daf2-f004-42cc-8385-510825f40fe1"),
+        occurred_at=datetime(2026, 7, 27, 8, 0, tzinfo=UTC),
+        payload=PlanningProgressPayload(
+            stage="REPAIRING",
+            sequence=8,
+            progress=75,
+            message="Applying bounded repair attempt",
+            statistics={"attemptIndex": 2, "actionCount": 1},
+        ),
+    )
+    body = event.model_dump(mode="json", by_alias=True)
+    schema = _load_schema("planning-progress-event-v2.schema.json")
+
+    Draft202012Validator(schema).validate(body)
+    invalid = deepcopy(body)
+    del invalid["payload"]["statistics"]["attemptIndex"]
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema).validate(invalid)
 
 
 def _load_schema(file_name: str) -> dict[str, object]:

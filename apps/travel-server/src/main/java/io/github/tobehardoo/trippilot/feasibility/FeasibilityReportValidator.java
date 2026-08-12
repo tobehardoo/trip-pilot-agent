@@ -1,6 +1,8 @@
 package io.github.tobehardoo.trippilot.feasibility;
 
+import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeParseException;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -28,10 +30,14 @@ public final class FeasibilityReportValidator {
     private static final String OPENING_RULE_ID = "OPENING_HOURS";
     private static final String OPENING_EVIDENCE_TYPE = "OPENING_HOURS";
     private static final int MAX_REPAIR_ATTEMPTS = 3;
+    private static final int MAX_REPAIR_VALUES = 16;
+    private static final int MAX_REPAIR_ENTITY_REFS = 64;
     private static final Set<String> LEGACY_VALIDATOR_VERSIONS = Set.of(
             "feasibility-v1", "hard-validator-v1", "hard-validator-v2", "hard-validator-v3"
     );
-    private static final String V4_VALIDATOR_VERSION = "hard-validator-v4";
+    private static final Set<String> TYPED_REF_VALIDATOR_VERSIONS = Set.of(
+            "hard-validator-v4", "hard-validator-v5"
+    );
 
     private FeasibilityReportValidator() {
     }
@@ -50,7 +56,7 @@ public final class FeasibilityReportValidator {
             throw new IllegalArgumentException("validatorVersion must not be blank");
         }
         if (!LEGACY_VALIDATOR_VERSIONS.contains(report.validatorVersion())
-                && !V4_VALIDATOR_VERSION.equals(report.validatorVersion())) {
+                && !TYPED_REF_VALIDATOR_VERSIONS.contains(report.validatorVersion())) {
             throw new IllegalArgumentException(
                     "unknown validatorVersion: " + report.validatorVersion());
         }
@@ -141,13 +147,13 @@ public final class FeasibilityReportValidator {
         validateStatus(report, expectedMissing);
         validateRepairAttempts(report);
         validateEvidenceSafety(results);
-        if (V4_VALIDATOR_VERSION.equals(report.validatorVersion())) {
+        if (TYPED_REF_VALIDATOR_VERSIONS.contains(report.validatorVersion())) {
             validateV4EntityRefs(results, report.repairAttempts());
         }
     }
 
     /**
-     * hard-validator-v4 entity references must be typed strings
+     * hard-validator-v4+ entity references must be typed strings
      * (activity:/transit:/poi:/text:).  Bare UUIDs, unknown kinds,
      * non-canonical UUIDs, empty values and any other grammar violation
      * fail closed.  RuleResult refs and RepairAttempt refs share the same
@@ -228,10 +234,67 @@ public final class FeasibilityReportValidator {
             throw new IllegalArgumentException("repairAttempts must not exceed 3");
         }
         for (int index = 0; index < attempts.size(); index++) {
-            if (attempts.get(index).attemptIndex() != index + 1) {
+            FeasibilityReport.RepairAttempt attempt = attempts.get(index);
+            if (attempt == null) {
+                throw new IllegalArgumentException("repairAttempts elements must not be null");
+            }
+            if (attempt.attemptIndex() != index + 1) {
                 throw new IllegalArgumentException(
                         "repair attempt indices must be contiguous starting from 1");
             }
+            validateRepairStringList(
+                    attempt.triggeringRuleIds(), "triggeringRuleIds",
+                    1, MAX_REPAIR_VALUES, 64, true);
+            validateRepairStringList(
+                    attempt.actionCodes(), "actionCodes",
+                    1, MAX_REPAIR_VALUES, 60, false);
+            validateRepairStringList(
+                    attempt.affectedDates(), "affectedDates",
+                    0, MAX_REPAIR_VALUES, 10, false);
+            for (String affectedDate : attempt.affectedDates()) {
+                try {
+                    LocalDate.parse(affectedDate);
+                } catch (DateTimeParseException exception) {
+                    throw new IllegalArgumentException(
+                            "repair attempt affectedDates must contain ISO dates", exception);
+                }
+            }
+            validateRepairStringList(
+                    attempt.affectedEntityRefs(), "affectedEntityRefs",
+                    0, MAX_REPAIR_ENTITY_REFS, 200, true);
+            if (attempt.beforeFingerprint() == null
+                    || !FINGERPRINT.matcher(attempt.beforeFingerprint()).matches()
+                    || attempt.afterFingerprint() == null
+                    || !FINGERPRINT.matcher(attempt.afterFingerprint()).matches()) {
+                throw new IllegalArgumentException(
+                        "repair attempt fingerprints must be 64 lowercase hex");
+            }
+            if (attempt.resultingStatus() == null) {
+                throw new IllegalArgumentException(
+                        "repair attempt resultingStatus must not be null");
+            }
+        }
+    }
+
+    private static void validateRepairStringList(
+            List<String> values,
+            String field,
+            int minimumSize,
+            int maximumSize,
+            int maximumLength,
+            boolean unique
+    ) {
+        if (values == null || values.size() < minimumSize || values.size() > maximumSize) {
+            throw new IllegalArgumentException(
+                    "repair attempt " + field + " has invalid size");
+        }
+        if (values.stream().anyMatch(value -> isBlank(value) || value.length() > maximumLength)) {
+            throw new IllegalArgumentException(
+                    "repair attempt " + field + " has invalid values");
+        }
+        if (unique && new LinkedHashSet<>(values).size() != values.size()) {
+            throw new IllegalArgumentException(
+                    "repair attempt " + field + " must contain unique values");
         }
     }
 

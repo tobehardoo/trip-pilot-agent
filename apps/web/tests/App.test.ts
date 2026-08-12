@@ -874,13 +874,32 @@ describe('TripPilot application shell', () => {
     expect((await screen.findByRole('status')).textContent).toContain('正在生成行程')
 
     streamController.enqueue(encoder.encode(
-      `id: 2\nevent: PLANNING_COMPLETED\ndata: ${JSON.stringify({
+      `id: 2\nevent: PLANNING_PROGRESS\ndata: ${JSON.stringify({
         eventId: 2,
         taskId: planningTaskResponse.taskId,
-        eventType: 'PLANNING_COMPLETED',
-        schemaVersion: 1,
-        payload: completedPayload(),
+        eventType: 'PLANNING_PROGRESS',
+        schemaVersion: 2,
+        payload: {
+          status: 'RUNNING',
+          stage: 'REPAIRING',
+          sequence: 2,
+          progress: 75,
+          message: '正在执行第 1 轮有界修复',
+          statistics: { attemptIndex: 1, actionCount: 2 },
+        },
         createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
+    ))
+    expect(await screen.findByText('执行有界修复')).toBeTruthy()
+
+    streamController.enqueue(encoder.encode(
+      `id: 3\nevent: PLANNING_COMPLETED\ndata: ${JSON.stringify({
+        eventId: 3,
+        taskId: planningTaskResponse.taskId,
+        eventType: 'PLANNING_COMPLETED',
+        schemaVersion: 9,
+        payload: completedPayload(),
+        createdAt: '2026-07-16T01:00:02Z',
       })}\n\n`,
     ))
     streamController.close()

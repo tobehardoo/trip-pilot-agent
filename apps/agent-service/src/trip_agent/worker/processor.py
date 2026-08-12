@@ -16,6 +16,7 @@ from trip_agent.domain.planning.protocols import (
     PlanningInfeasibleError,
     PlanningProvider,
     PlanningProviderError,
+    PlanningRepairRequest,
     PlanningResult,
     ResolvedTravelAnchors,
 )
@@ -33,7 +34,12 @@ from trip_agent.domain.shared import (  # noqa: F401
     text_matches,
 )
 from trip_agent.evaluation import get_plan_evaluator
-from trip_agent.feasibility.validator import validate_itinerary
+from trip_agent.feasibility.repair.engine import apply_repair_plan, plan_repairs
+from trip_agent.feasibility.repair.session import (
+    advance_repair_session,
+    start_repair_session,
+)
+from trip_agent.feasibility.validator import ValidationRun, run_validation
 from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider  # noqa: F811
 from trip_agent.infrastructure.demo.knowledge_provider import (
     DemoKnowledgeEvidenceProvider,  # noqa: F811
@@ -107,6 +113,23 @@ async def process_planning_create(
         {"guideFactCount": len(effective_command.payload.guide_evidence.facts)},
     )
     result = await provider.plan(effective_command)
+    # B6: authoritative feasibility gate.  The report is derived from the
+    # same itinerary that will be emitted; validated_at is the caller-owned
+    # timestamp and the report id is a deterministic uuid5 of the command.
+    validation = run_validation(
+        command=effective_command,
+        itinerary=result.itinerary,
+        report_id=_feasibility_report_id(command.event_id),
+        validated_at=completed_at,
+        trip_skeleton=result.trip_skeleton,
+        validation_inputs=result.validation_inputs,
+    )
+    result, validation = await _repair_if_needed(
+        effective_command,
+        provider,
+        result,
+        validation,
+    )
     await report_planning_progress(
         "KNOWLEDGE_RETRIEVING",
         "Retrieving supporting travel knowledge",
@@ -124,17 +147,7 @@ async def process_planning_create(
         knowledge,
         checked_at=completed_at,
     )
-    # B6: authoritative feasibility gate.  The report is derived from the
-    # same itinerary that will be emitted; validated_at is the caller-owned
-    # timestamp and the report id is a deterministic uuid5 of the command.
-    report = validate_itinerary(
-        command=effective_command,
-        itinerary=result.itinerary,
-        report_id=_feasibility_report_id(command.event_id),
-        validated_at=completed_at,
-        trip_skeleton=result.trip_skeleton,
-        validation_inputs=result.validation_inputs,
-    )
+    report = validation.report
     if report.status.value == "VERIFIED":
         evaluation = get_plan_evaluator().evaluate(effective_command, result)
         return PlanningCompletedEventV9(
@@ -190,11 +203,7 @@ async def process_planning_replan(
         {"impactedDays": len(command.payload.impacted_dates)},
     )
     result = await provider.replan(command)
-    await report_planning_progress(
-        "RESULT_EXPLAINING",
-        "Preparing the updated local itinerary",
-    )
-    report = validate_itinerary(
+    validation = run_validation(
         command=command,
         itinerary=result.itinerary,
         report_id=_feasibility_report_id(command.event_id),
@@ -202,6 +211,17 @@ async def process_planning_replan(
         trip_skeleton=result.trip_skeleton,
         validation_inputs=result.validation_inputs,
     )
+    result, validation = await _repair_if_needed(
+        command,
+        provider,
+        result,
+        validation,
+    )
+    await report_planning_progress(
+        "RESULT_EXPLAINING",
+        "Preparing the updated local itinerary",
+    )
+    report = validation.report
     if report.status.value == "VERIFIED":
         evaluation = get_plan_evaluator().evaluate(command, result)
         return PlanningCompletedEventV9(
@@ -241,6 +261,67 @@ async def process_planning_replan(
             provider_provenance=result.provider_provenance(),
             feasibility_report=report,
         ),
+    )
+
+
+async def _repair_if_needed(
+    command: PlanningCreateCommand | PlanningReplanCommand,
+    provider: PlanningProvider,
+    result: PlanningResult,
+    validation: ValidationRun,
+) -> tuple[PlanningResult, ValidationRun]:
+    session = start_repair_session(validation)
+    candidate = result
+    while session.stop_reason is None:
+        attempt_index = len(session.attempts) + 1
+        plan = plan_repairs(session.current, attempt_index=attempt_index)
+        if plan is None:
+            break
+        await report_planning_progress(
+            "REPAIRING",
+            "Applying a bounded feasibility repair",
+            {
+                "attemptIndex": attempt_index,
+                "actionCount": len(plan.actions),
+            },
+        )
+        applied = apply_repair_plan(session.current, plan)
+        candidate = _planning_result_with_candidate(candidate, applied.candidate)
+        if applied.provider_dates:
+            candidate = await provider.repair(
+                PlanningRepairRequest(
+                    command=command,
+                    candidate=candidate,
+                    impacted_dates=applied.provider_dates,
+                    attempt_index=attempt_index,
+                )
+            )
+        after = run_validation(
+            command=command,
+            itinerary=candidate.itinerary,
+            report_id=session.current.report.report_id,
+            validated_at=session.current.report.validated_at,
+            trip_skeleton=candidate.trip_skeleton,
+            validation_inputs=candidate.validation_inputs,
+        )
+        session = advance_repair_session(session, plan=plan, after=after)
+    return candidate, session.current
+
+
+def _planning_result_with_candidate(result, candidate) -> PlanningResult:
+    return PlanningResult(
+        provider=result.provider,
+        itinerary=candidate.itinerary,
+        guide_fact_ids=result.guide_fact_ids,
+        requested_provider_mode=result.requested_provider_mode,
+        primary_provider=result.primary_provider,
+        actual_providers=result.actual_providers,
+        fallback_attempted=result.fallback_attempted,
+        fallback_succeeded=result.fallback_succeeded,
+        fallback_reason=result.fallback_reason,
+        fallback_operations=result.fallback_operations,
+        trip_skeleton=candidate.trip_skeleton,
+        validation_inputs=candidate.validation_inputs,
     )
 
 

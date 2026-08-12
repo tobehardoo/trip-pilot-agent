@@ -17,6 +17,7 @@ from trip_agent.domain.planning.protocols import (
     OptimizationConflict,
     PlanningInfeasibleError,
     PlanningProviderError,
+    PlanningRepairRequest,
     PlanningResult,
     RelaxationSuggestion,
     ResolvedTravelAnchors,
@@ -990,6 +991,18 @@ class AmapPlanningProvider:
             provider_mode=self._provider_mode,
             fallback_policy=self._fallback_policy,
         ).replan(command)
+
+    async def repair(self, request: PlanningRepairRequest) -> PlanningResult:
+        from trip_agent.application.replan_service import (  # noqa: PLC0415
+            LocalReplanningProvider,
+        )
+
+        return await LocalReplanningProvider(
+            self._route_provider,
+            self._route_fallback,
+            provider_mode=self._provider_mode,
+            fallback_policy=self._fallback_policy,
+        ).repair(request)
 
     async def _resolve_travel_anchors(
         self, command: PlanningCreateCommand,

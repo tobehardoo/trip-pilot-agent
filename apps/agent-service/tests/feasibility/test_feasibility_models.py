@@ -505,9 +505,15 @@ def test_legacy_versions_accept_bare_refs() -> None:
         assert report.status == FeasibilityStatus.VERIFIED
 
 
-def test_v5_rejects_even_with_valid_typed_refs() -> None:
+def test_v5_accepts_valid_typed_refs() -> None:
+    report = _report_with("hard-validator-v5", ("poi:POI-1",))
+
+    assert report.validator_version == "hard-validator-v5"
+
+
+def test_v6_rejects_even_with_valid_typed_refs() -> None:
     with pytest.raises(ValidationError):
-        _report_with("hard-validator-v5", ("poi:POI-1",))
+        _report_with("hard-validator-v6", ("poi:POI-1",))
 
 
 def test_arbitrary_validator_rejects_with_empty_refs() -> None:

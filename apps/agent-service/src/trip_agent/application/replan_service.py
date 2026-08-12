@@ -5,12 +5,14 @@ Extracted from ``worker/processor.py``.
 
 import logging
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID, uuid5
 
 from trip_agent.domain.planning.protocols import (
     OptimizationConflict,
     PlanningInfeasibleError,
     PlanningProviderError,
+    PlanningRepairRequest,
     PlanningResult,
     RelaxationSuggestion,
 )
@@ -76,15 +78,12 @@ class LocalReplanningProvider:
                 else day.to_itinerary_day()
             )
             days.append(replanned)
-        actual_providers = tuple(sorted({
-            activity.source
-            for day in days
-            for activity in day.activities
-        } | {
-            leg.provider
-            for day in days
-            for leg in day.transit_legs
-        }))
+        actual_providers = tuple(
+            sorted(
+                {activity.source for day in days for activity in day.activities}
+                | {leg.provider for day in days for leg in day.transit_legs}
+            )
+        )
         fallback_operations = tuple(
             leg.fallback_operation
             for day in days
@@ -93,9 +92,7 @@ class LocalReplanningProvider:
         )
         used_route_fallback = bool(fallback_operations)
         primary_provider = (
-            "DEMO"
-            if self._provider_mode == ProviderExecutionMode.DEMO_ONLY
-            else "AMAP"
+            "DEMO" if self._provider_mode == ProviderExecutionMode.DEMO_ONLY else "AMAP"
         )
         itinerary = Itinerary(
             title=snapshot.title,
@@ -122,6 +119,58 @@ class LocalReplanningProvider:
             fallback_operations=fallback_operations,
         )
 
+    async def repair(self, request: PlanningRepairRequest) -> PlanningResult:
+        """Refresh one repaired candidate without fabricating a wire command."""
+        impacted_dates = set(request.impacted_dates)
+        await report_planning_progress(
+            "ROUTES_CALCULATING",
+            "Refreshing routes for a bounded repair attempt",
+            {
+                "attemptIndex": request.attempt_index,
+                "impactedDays": len(impacted_dates),
+            },
+        )
+        days: list[ItineraryDay] = []
+        for day in request.candidate.itinerary.days:
+            replanned = (
+                await self._replan_day(day, request.command.task_id)
+                if day.date in impacted_dates
+                else day
+            )
+            days.append(replanned)
+        itinerary = request.candidate.itinerary.model_copy(update={"days": tuple(days)})
+        actual_providers = tuple(
+            sorted(
+                {activity.source for day in days for activity in day.activities}
+                | {leg.provider for day in days for leg in day.transit_legs}
+            )
+        )
+        fallback_operations = tuple(
+            leg.fallback_operation
+            for day in days
+            for leg in day.transit_legs
+            if leg.fallback_operation is not None
+        )
+        used_route_fallback = bool(fallback_operations)
+        requested_mode = request.candidate.requested_provider_mode or self._provider_mode.value
+        primary_provider = request.candidate.primary_provider or (
+            "DEMO" if requested_mode == ProviderExecutionMode.DEMO_ONLY.value else "AMAP"
+        )
+        return PlanningResult(
+            provider=request.candidate.provider,
+            itinerary=itinerary,
+            guide_fact_ids=request.candidate.guide_fact_ids,
+            requested_provider_mode=requested_mode,
+            primary_provider=primary_provider,
+            actual_providers=actual_providers,
+            fallback_attempted=used_route_fallback,
+            fallback_succeeded=used_route_fallback,
+            fallback_reason=("ROUTE_PROVIDER_FAILURE" if used_route_fallback else None),
+            fallback_operations=fallback_operations,
+            trip_skeleton=request.candidate.trip_skeleton,
+            validation_inputs=request.candidate.validation_inputs,
+        )
+
     def _can_record_provenance(
         self,
         actual_providers: tuple[str, ...],
@@ -135,7 +184,9 @@ class LocalReplanningProvider:
             return "DEMO" in actual_providers
         return actual_providers == ("AMAP",)
 
-    async def _replan_day(self, day: ReplanItineraryDay, task_id: UUID) -> ItineraryDay:
+    async def _replan_day(
+        self, day: ReplanItineraryDay | ItineraryDay, task_id: UUID
+    ) -> ItineraryDay:
         activities = tuple(
             activity
             if activity.activity_id is not None
@@ -181,20 +232,14 @@ class LocalReplanningProvider:
                         longitude=float(destination.coordinates.longitude),
                         latitude=float(destination.coordinates.latitude),
                     ),
-                    mode=(
-                        existing_leg.mode
-                        if existing_leg is not None
-                        else "WALKING"
-                    ),
+                    mode=(existing_leg.mode if existing_leg is not None else "WALKING"),
                     departure_at=origin.end_time,
                     origin_poi_id=origin.provider_poi_id,
                     destination_poi_id=destination.provider_poi_id,
                 )
             )
-            leg_cost = Decimal("0.00") if route.data.mode == "WALKING" else None
-            cost_source = "RULE_ESTIMATE" if route.data.mode == "WALKING" else (
-                "DEMO" if route.provider == "DEMO" else "UNKNOWN"
-            )
+            leg_cost = self._transit_cost(route.data)
+            cost_source = self._transit_cost_source(route)
             transit_id = (
                 existing_leg.transit_id
                 if existing_leg is not None and existing_leg.transit_id is not None
@@ -243,13 +288,34 @@ class LocalReplanningProvider:
             )
         return ItineraryDay(
             date=day.date,
+            day_type=getattr(day, "day_type", None),
             activities=activities,
             transit_legs=tuple(legs),
         )
 
     @staticmethod
+    def _transit_cost(plan: RoutePlan) -> Decimal | None:
+        if plan.mode == "WALKING":
+            return Decimal("0.00")
+        if plan.estimated_cost is not None:
+            return Decimal(str(round(plan.estimated_cost, 2)))
+        return None
+
+    @staticmethod
+    def _transit_cost_source(
+        route: ProviderSuccess[RoutePlan],
+    ) -> Literal["PROVIDER", "RULE_ESTIMATE", "DEMO", "UNKNOWN"]:
+        if route.provider == "DEMO":
+            return "DEMO"
+        if route.data.mode == "WALKING":
+            return "RULE_ESTIMATE"
+        if route.data.estimated_cost is not None:
+            return "PROVIDER"
+        return "UNKNOWN"
+
+    @staticmethod
     def _transit_leg_for_endpoints(
-        day: ReplanItineraryDay,
+        day: ReplanItineraryDay | ItineraryDay,
         from_activity_index: int,
         to_activity_index: int,
     ) -> TransitLeg | None:
@@ -263,9 +329,7 @@ class LocalReplanningProvider:
             raise ValueError("replan day contains duplicate transit endpoints")
         return matches[0] if matches else None
 
-    async def _route(
-        self, request: RouteRequest
-    ) -> ProviderSuccess[RoutePlan]:
+    async def _route(self, request: RouteRequest) -> ProviderSuccess[RoutePlan]:
         result = await self._route_provider.get_route(request)
         fallback_error = None
         if isinstance(result, ProviderFailure):
@@ -277,10 +341,7 @@ class LocalReplanningProvider:
                 self._provider_mode,
                 primary_error.details,
             )
-            if (
-                decision != FallbackDecision.ALLOW_FALLBACK
-                or self._route_fallback is None
-            ):
+            if decision != FallbackDecision.ALLOW_FALLBACK or self._route_fallback is None:
                 raise primary_error.with_fallback(
                     allowed=False,
                     attempted=False,
@@ -304,9 +365,7 @@ class LocalReplanningProvider:
         if (result.provider == "AMAP" and result.estimated) or (
             result.provider == "DEMO" and not result.estimated
         ):
-            raise RuntimeError(
-                "route provider returned inconsistent source metadata"
-            )
+            raise RuntimeError("route provider returned inconsistent source metadata")
         if fallback_error is not None:
             return result.model_copy(update={"fallback_error": fallback_error})
         return result

@@ -253,6 +253,7 @@ def validate_feasibility_report(report: FeasibilityReport) -> None:
         status=report.status,
         missing_required=report.missing_required_rule_ids,
         summary=report.summary,
+        validator_version=report.validator_version,
     )
 
 
@@ -337,7 +338,9 @@ def _validate_opening_evidence_safety(rule_results: tuple[RuleResult, ...]) -> N
 _LEGACY_VALIDATOR_VERSIONS = frozenset(
     {"feasibility-v1", "hard-validator-v1", "hard-validator-v2", "hard-validator-v3"}
 )
-_V4_VALIDATOR_VERSION = "hard-validator-v4"
+_TYPED_REF_VALIDATOR_VERSIONS = frozenset(
+    {"hard-validator-v4", "hard-validator-v5"}
+)
 
 
 def _validate_entity_refs(rule_results: tuple[RuleResult, ...], validator_version: str) -> None:
@@ -348,7 +351,7 @@ def _validate_entity_refs(rule_results: tuple[RuleResult, ...], validator_versio
     other validatorVersion fails closed: an unknown generation must never be
     treated as v4 or silently accept untyped refs.
     """
-    if validator_version == _V4_VALIDATOR_VERSION:
+    if validator_version in _TYPED_REF_VALIDATOR_VERSIONS:
         _validate_v4_rule_refs(rule_results)
         return
     if validator_version in _LEGACY_VALIDATOR_VERSIONS:
@@ -370,7 +373,7 @@ def _validate_v4_rule_refs(rule_results: tuple[RuleResult, ...]) -> None:
 def _validate_repair_entity_refs(
     repair_attempts: tuple[RepairAttempt, ...], validator_version: str
 ) -> None:
-    if validator_version == _V4_VALIDATOR_VERSION:
+    if validator_version in _TYPED_REF_VALIDATOR_VERSIONS:
         _validate_v4_repair_refs(repair_attempts)
         return
     if validator_version in _LEGACY_VALIDATOR_VERSIONS:

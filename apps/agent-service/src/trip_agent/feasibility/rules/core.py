@@ -19,6 +19,7 @@ from unicodedata import normalize
 from trip_agent.domain.shared import CHINA_TIME_ZONE
 from trip_agent.feasibility.context import ValidationContext
 from trip_agent.feasibility.entity_refs import encode_poi_ref
+from trip_agent.feasibility.inputs import ActivityLocator
 from trip_agent.feasibility.models import RuleOutcome, RuleResult
 from trip_agent.worker.contracts import FixedSchedule, ItineraryActivity
 
@@ -42,6 +43,9 @@ class RuleFinding:
     message: str
     affected_date: date | None = None
     affected_entity_refs: tuple[str, ...] = ()
+    # Internal locator used by the pure repair engine.  It is intentionally
+    # absent from RuleResult and therefore never enters the wire contract.
+    activity: ActivityLocator | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -403,11 +403,11 @@ describe('readFeasibilityReport fail-closed regressions', () => {
   })
 
   test('rejects unknown validatorVersion', () => {
-    expect(readFeasibilityReport(verifiedReport({ validatorVersion: 'hard-validator-v5' })).ok).toBe(false)
+    expect(readFeasibilityReport(verifiedReport({ validatorVersion: 'hard-validator-v6' })).ok).toBe(false)
   })
 
   test('accepts all validator versions on the shared whitelist', () => {
-    for (const version of ['feasibility-v1', 'hard-validator-v1', 'hard-validator-v2', 'hard-validator-v3', 'hard-validator-v4']) {
+    for (const version of ['feasibility-v1', 'hard-validator-v1', 'hard-validator-v2', 'hard-validator-v3', 'hard-validator-v4', 'hard-validator-v5']) {
       expect(readFeasibilityReport(verifiedReport({ validatorVersion: version })).ok).toBe(true)
     }
   })
@@ -446,6 +446,57 @@ describe('readFeasibilityReport fail-closed regressions', () => {
       }],
     })
     expect(readFeasibilityReport(input).ok).toBe(false)
+  })
+
+  test('rejects repair history beyond the three-attempt runtime bound', () => {
+    const attempt = {
+      triggeringRuleIds: ['OPENING_HOURS'],
+      actionCodes: ['SHIFT_ACTIVITY_TO_OPENING_WINDOW'],
+      affectedDates: ['2026-08-01'],
+      affectedEntityRefs: [],
+      beforeFingerprint: 'b'.repeat(64),
+      afterFingerprint: 'c'.repeat(64),
+      resultingStatus: 'NEEDS_REPAIR',
+    }
+    expect(readFeasibilityReport(verifiedReport({
+      repairAttempts: [1, 2, 3, 4].map(attemptIndex => ({ ...attempt, attemptIndex })),
+    })).ok).toBe(false)
+  })
+
+  test('rejects non-contiguous repair attempt indices', () => {
+    expect(readFeasibilityReport(verifiedReport({
+      repairAttempts: [{
+        attemptIndex: 2,
+        triggeringRuleIds: ['OPENING_HOURS'],
+        actionCodes: ['SHIFT_ACTIVITY_TO_OPENING_WINDOW'],
+        affectedDates: [],
+        affectedEntityRefs: [],
+        beforeFingerprint: 'b'.repeat(64),
+        afterFingerprint: 'c'.repeat(64),
+        resultingStatus: 'NEEDS_REPAIR',
+      }],
+    })).ok).toBe(false)
+  })
+
+  test.each([
+    { actionCodes: [], label: 'empty action list' },
+    { triggeringRuleIds: [], label: 'empty triggering rules' },
+    { beforeFingerprint: 'not-a-fingerprint', label: 'invalid fingerprint' },
+    { affectedDates: ['2026-02-30'], label: 'invalid affected date' },
+  ])('rejects repair attempt with $label', (override) => {
+    expect(readFeasibilityReport(verifiedReport({
+      repairAttempts: [{
+        attemptIndex: 1,
+        triggeringRuleIds: ['OPENING_HOURS'],
+        actionCodes: ['SHIFT_ACTIVITY_TO_OPENING_WINDOW'],
+        affectedDates: [],
+        affectedEntityRefs: [],
+        beforeFingerprint: 'b'.repeat(64),
+        afterFingerprint: 'c'.repeat(64),
+        resultingStatus: 'NEEDS_REPAIR',
+        ...override,
+      }],
+    })).ok).toBe(false)
   })
 })
 

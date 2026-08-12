@@ -38,6 +38,38 @@ class PlanningProgressEventParserTest {
                 .hasMessageContaining("Invalid PLANNING_PROGRESS event");
     }
 
+    @Test
+    void parsesV2RepairProgressWithBoundedAttemptStatistics() {
+        String body = new String(validBody(), StandardCharsets.UTF_8)
+                .replace("\"schemaVersion\":1", "\"schemaVersion\":2")
+                .replace("CANDIDATES_RANKING", "REPAIRING")
+                .replace("\"candidateCount\":12", "\"attemptIndex\":2,\"actionCount\":3");
+
+        PlanningProgressEvent event = parser.parse(body.getBytes(StandardCharsets.UTF_8));
+
+        assertThat(event.schemaVersion()).isEqualTo(2);
+        assertThat(event.payload().stage()).isEqualTo("REPAIRING");
+        assertThat(event.payload().statistics())
+                .containsEntry("attemptIndex", 2)
+                .containsEntry("actionCount", 3);
+    }
+
+    @Test
+    void rejectsRepairingInV1AndMissingOrOutOfRangeRepairStatistics() {
+        String base = new String(validBody(), StandardCharsets.UTF_8)
+                .replace("CANDIDATES_RANKING", "REPAIRING");
+        String missing = base.replace("\"schemaVersion\":1", "\"schemaVersion\":2");
+        String outOfRange = missing.replace(
+                "\"candidateCount\":12", "\"attemptIndex\":4,\"actionCount\":1");
+
+        assertThatThrownBy(() -> parser.parse(base.getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(PlanningEventContractException.class);
+        assertThatThrownBy(() -> parser.parse(missing.getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(PlanningEventContractException.class);
+        assertThatThrownBy(() -> parser.parse(outOfRange.getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(PlanningEventContractException.class);
+    }
+
     private byte[] validBody() {
         return """
                 {

@@ -256,10 +256,10 @@ def test_validate_itinerary_does_not_mutate_skeleton_or_itinerary() -> None:
 # ── B4B Phase 4: continuity rules in dispatch ──────────────────────────────
 
 
-def test_validator_version_is_v4() -> None:
+def test_validator_version_is_v5() -> None:
     report = _validate()
 
-    assert report.validator_version == "hard-validator-v4"
+    assert report.validator_version == "hard-validator-v5"
 
 
 def test_validator_rule_order_matches_implemented_set() -> None:

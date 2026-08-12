@@ -585,13 +585,25 @@ class PlanningCompletedEventParserTest {
                 .hasMessageContaining("feasibilityReport is invalid");
     }
 
+    @Test
+    void acceptsV9HardValidatorV5Report() throws Exception {
+        ObjectNode event = amapV9Event();
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("validatorVersion", "hard-validator-v5");
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.payload().feasibilityReport().validatorVersion())
+                .isEqualTo("hard-validator-v5");
+    }
+
     private ObjectNode amapV9Event() throws Exception {
         ObjectNode event = (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.completedAmapEventV9(
                         UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
                 ));
         // The Java in-memory v9 fixture still emits hard-validator-v3; the
-        // active v4 contract requires the v4 validator version (shared
+        // active typed-reference contract requires at least v4 (shared
         // completion-v9 fixtures were migrated in B6J.2).
         ((ObjectNode) event.at("/payload/feasibilityReport"))
                 .put("validatorVersion", "hard-validator-v4");

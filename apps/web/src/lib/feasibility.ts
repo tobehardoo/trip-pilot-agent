@@ -116,7 +116,7 @@ export interface CandidateTransitLeg {
   costSource: string | null
 }
 
-// ── Typed entity references (hard-validator-v4 grammar) ──────────────────
+// ── Typed entity references (hard-validator-v4+ grammar) ─────────────────
 
 export type TypedEntityKind = 'activity' | 'transit' | 'poi' | 'text' | 'unknown'
 
@@ -155,7 +155,10 @@ const VALIDATOR_VERSIONS = new Set([
   'hard-validator-v2',
   'hard-validator-v3',
   'hard-validator-v4',
+  'hard-validator-v5',
 ])
+const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -220,12 +223,12 @@ function readRuleResults(input: unknown): FeasibilityRuleResult[] | null {
 
 function readRepairAttempts(input: unknown): RepairAttempt[] | null {
   if (input === undefined || input === null) return null
-  if (!Array.isArray(input)) return null
+  if (!Array.isArray(input) || input.length > 3) return null
   const attempts: RepairAttempt[] = []
-  for (const item of input) {
+  for (const [index, item] of input.entries()) {
     if (!isRecord(item)) return null
     if (typeof item.attemptIndex !== 'number' || !Number.isSafeInteger(item.attemptIndex)
-      || item.attemptIndex < 1) return null
+      || item.attemptIndex !== index + 1) return null
     if (typeof item.resultingStatus !== 'string' || !REPORT_STATUSES.has(item.resultingStatus)) return null
     if (typeof item.beforeFingerprint !== 'string' || typeof item.afterFingerprint !== 'string') return null
     const triggeringRuleIds = readStringArray(item.triggeringRuleIds, 'triggeringRuleIds')
@@ -234,6 +237,17 @@ function readRepairAttempts(input: unknown): RepairAttempt[] | null {
     const affectedEntityRefs = readStringArray(item.affectedEntityRefs, 'affectedEntityRefs')
     if (triggeringRuleIds === null || actionCodes === null
       || affectedDates === null || affectedEntityRefs === null) return null
+    if (triggeringRuleIds.length < 1 || triggeringRuleIds.length > 16
+      || new Set(triggeringRuleIds).size !== triggeringRuleIds.length
+      || triggeringRuleIds.some(value => value.length < 1 || value.length > 64)) return null
+    if (actionCodes.length < 1 || actionCodes.length > 16
+      || actionCodes.some(value => value.length < 1 || value.length > 60)) return null
+    if (affectedDates.length > 16 || affectedDates.some(value => !isValidIsoDate(value))) return null
+    if (affectedEntityRefs.length > 64
+      || new Set(affectedEntityRefs).size !== affectedEntityRefs.length
+      || affectedEntityRefs.some(value => value.length < 1 || value.length > 200)) return null
+    if (!FINGERPRINT_PATTERN.test(item.beforeFingerprint)
+      || !FINGERPRINT_PATTERN.test(item.afterFingerprint)) return null
     attempts.push({
       attemptIndex: item.attemptIndex,
       triggeringRuleIds,
@@ -246,6 +260,15 @@ function readRepairAttempts(input: unknown): RepairAttempt[] | null {
     })
   }
   return attempts
+}
+
+function isValidIsoDate(value: string): boolean {
+  if (!ISO_DATE_PATTERN.test(value)) return false
+  const [year, month, day] = value.split('-').map(Number)
+  const date = new Date(Date.UTC(year!, month! - 1, day))
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month! - 1
+    && date.getUTCDate() === day
 }
 
 function readSummary(input: unknown): FeasibilitySummary | null {

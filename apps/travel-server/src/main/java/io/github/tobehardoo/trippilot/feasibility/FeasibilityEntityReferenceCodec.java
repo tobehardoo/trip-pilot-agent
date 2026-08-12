@@ -3,7 +3,7 @@ package io.github.tobehardoo.trippilot.feasibility;
 import java.util.UUID;
 
 /**
- * Typed entity references for feasibility reports (hard-validator-v4),
+ * Typed entity references for feasibility reports (hard-validator-v4+),
  * grammar-identical to the Python {@code trip_agent.feasibility.entity_refs}
  * module.
  *

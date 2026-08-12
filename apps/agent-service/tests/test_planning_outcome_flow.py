@@ -5,9 +5,10 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
 from plan_evaluation_support import make_command
 
-from trip_agent.domain.planning.protocols import PlanningResult
+from trip_agent.domain.planning.protocols import PlanningProviderError, PlanningResult
 from trip_agent.feasibility.inputs import (
     ActivityLocator,
     MealProjectionState,
@@ -165,6 +166,7 @@ def test_verified_create_emits_v9_completion() -> None:
     assert event.occurred_at == _TS
     assert event.payload.feasibility_report.status is FeasibilityStatus.VERIFIED
     assert event.payload.feasibility_report.validated_at == _TS
+    assert event.payload.feasibility_report.repair_attempts == ()
 
 
 def test_unverified_create_emits_review_required() -> None:
@@ -209,6 +211,9 @@ def test_demo_create_is_review_not_failure() -> None:
 class _FailingProvider:
     """Provider whose itinerary trips a hard rule (route leg missing)."""
 
+    def __init__(self) -> None:
+        self.repair_calls = 0
+
     async def plan(self, command):
         activities = (
             _amap_activity(0, poi="POI-1", title="陈家祠", start_hour=2),
@@ -220,6 +225,132 @@ class _FailingProvider:
             estimated_total_cost=Decimal("100.00"),
         )
         return PlanningResult(provider="AMAP", itinerary=itinerary)
+
+    async def repair(self, request):
+        self.repair_calls += 1
+        return request.candidate
+
+
+class _RepairingDurationProvider:
+    def __init__(self, *, make_progress: bool = True) -> None:
+        self.repair_calls = 0
+        self.make_progress = make_progress
+
+    async def plan(self, command):
+        result = _verified_result()
+        first = result.itinerary.days[0].activities[0]
+        short = first.model_copy(
+            update={"end_time": first.start_time + timedelta(minutes=20)}
+        )
+        day = result.itinerary.days[0].model_copy(
+            update={"activities": (short, result.itinerary.days[0].activities[1])}
+        )
+        itinerary = result.itinerary.model_copy(update={"days": (day,)})
+        return PlanningResult(
+            provider="AMAP",
+            itinerary=itinerary,
+            validation_inputs=result.validation_inputs,
+        )
+
+    async def repair(self, request):
+        self.repair_calls += 1
+        if not self.make_progress:
+            return request.candidate
+        return PlanningResult(
+            provider=request.candidate.provider,
+            itinerary=request.candidate.itinerary,
+            validation_inputs=request.candidate.validation_inputs,
+        )
+
+
+class _ThreeRoundProvider(_FailingProvider):
+    async def repair(self, request):
+        self.repair_calls += 1
+        day = request.candidate.itinerary.days[0]
+        first = day.activities[0].model_copy(
+            update={"activity_id": UUID(int=1000 + self.repair_calls)}
+        )
+        itinerary = request.candidate.itinerary.model_copy(
+            update={
+                "days": (
+                    day.model_copy(update={"activities": (first, day.activities[1])}),
+                )
+            }
+        )
+        return PlanningResult(provider="AMAP", itinerary=itinerary)
+
+
+class _ProviderFailureDuringRepair(_FailingProvider):
+    async def repair(self, request):
+        self.repair_calls += 1
+        raise PlanningProviderError("PROVIDER_UNAVAILABLE")
+
+
+def test_one_local_repair_revalidates_to_verified_completion() -> None:
+    provider = _RepairingDurationProvider()
+
+    event = asyncio.run(
+        process_planning_create(
+            make_command(must_visit_places=("陈家祠", "光孝寺")),
+            provider,
+            occurred_at=_TS,
+        )
+    )
+
+    assert isinstance(event, PlanningCompletedEventV9)
+    assert provider.repair_calls == 0
+    assert len(event.payload.feasibility_report.repair_attempts) == 1
+    assert event.payload.feasibility_report.repair_attempts[0].action_codes == (
+        "CLAMP_VISIT_DURATION",
+    )
+    assert event.payload.itinerary.days[0].activities[0].end_time == (
+        event.payload.itinerary.days[0].activities[0].start_time
+        + timedelta(minutes=45)
+    )
+
+
+def test_no_progress_stops_after_one_attempt_and_reviews() -> None:
+    provider = _FailingProvider()
+
+    event = asyncio.run(
+        process_planning_create(
+            make_command(),
+            provider,
+            occurred_at=_TS,
+        )
+    )
+
+    assert isinstance(event, PlanningReviewRequiredEvent)
+    assert provider.repair_calls == 1
+    assert len(event.payload.feasibility_report.repair_attempts) == 1
+    attempt = event.payload.feasibility_report.repair_attempts[0]
+    assert attempt.action_codes == ("REFRESH_TRANSIT_LEGS",)
+    assert attempt.before_fingerprint == attempt.after_fingerprint
+
+
+def test_repair_runtime_stops_at_three_attempts_and_preserves_history() -> None:
+    provider = _ThreeRoundProvider()
+
+    event = asyncio.run(
+        process_planning_create(make_command(), provider, occurred_at=_TS)
+    )
+
+    assert isinstance(event, PlanningReviewRequiredEvent)
+    assert provider.repair_calls == 3
+    attempts = event.payload.feasibility_report.repair_attempts
+    assert tuple(attempt.attempt_index for attempt in attempts) == (1, 2, 3)
+    assert all(attempt.action_codes == ("REFRESH_TRANSIT_LEGS",) for attempt in attempts)
+    assert len({attempt.after_fingerprint for attempt in attempts}) == 3
+
+
+def test_provider_failure_during_repair_is_not_hidden_as_review() -> None:
+    provider = _ProviderFailureDuringRepair()
+
+    with pytest.raises(PlanningProviderError) as captured:
+        asyncio.run(process_planning_create(make_command(), provider, occurred_at=_TS))
+
+    assert captured.value.details.error_code == "PROVIDER_UNAVAILABLE"
+    assert provider.repair_calls == 1
 
 
 def test_hard_fail_emits_needs_repair_review() -> None:

@@ -21,6 +21,7 @@ public class PlanningProgressEventParser {
             "CANDIDATES_RANKING",
             "ROUTES_CALCULATING",
             "CONSTRAINTS_SOLVING",
+            "REPAIRING",
             "KNOWLEDGE_RETRIEVING",
             "RESULT_EXPLAINING",
             "RESULT_PUBLISHING",
@@ -78,7 +79,8 @@ public class PlanningProgressEventParser {
     }
 
     private void validate(PlanningProgressEvent event) {
-        if (!"PLANNING_PROGRESS".equals(event.eventType()) || event.schemaVersion() != 1) {
+        if (!"PLANNING_PROGRESS".equals(event.eventType())
+                || (event.schemaVersion() != 1 && event.schemaVersion() != 2)) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (event.eventId() == null || event.traceId() == null || event.taskId() == null
@@ -98,6 +100,24 @@ public class PlanningProgressEventParser {
                     || statistic.getValue() < 0) {
                 throw invalid("progress statistics are invalid");
             }
+        }
+        validateRepairProgress(event.schemaVersion(), payload);
+    }
+
+    private void validateRepairProgress(
+            int schemaVersion, PlanningProgressEvent.Payload payload
+    ) {
+        if (!"REPAIRING".equals(payload.stage())) {
+            return;
+        }
+        if (schemaVersion != 2) {
+            throw invalid("REPAIRING requires schemaVersion 2");
+        }
+        Integer attemptIndex = payload.statistics().get("attemptIndex");
+        Integer actionCount = payload.statistics().get("actionCount");
+        if (attemptIndex == null || attemptIndex < 1 || attemptIndex > 3
+                || actionCount == null || actionCount < 1 || actionCount > 16) {
+            throw invalid("REPAIRING statistics are invalid");
         }
     }
 

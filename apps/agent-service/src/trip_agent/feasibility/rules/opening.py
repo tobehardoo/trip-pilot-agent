@@ -14,7 +14,7 @@ from datetime import date, datetime, time, timedelta
 
 from trip_agent.domain.shared import CHINA_TIME_ZONE
 from trip_agent.feasibility.context import ValidationContext
-from trip_agent.feasibility.inputs import OpeningHoursBinding
+from trip_agent.feasibility.inputs import ActivityLocator, OpeningHoursBinding
 from trip_agent.feasibility.models import (
     EvidenceReference,
     EvidenceState,
@@ -208,6 +208,7 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="OPENING_BINDING_MISSING",
                     message=f"no opening-hours evidence for activity {activity_index}",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -220,6 +221,7 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="OPENING_HOURS_UNVERIFIED",
                     message=f"activity {activity_index} time is not verifiable on its day",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -240,6 +242,7 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="OPENING_HOURS_UNVERIFIED",
                     message=f"activity {activity_index} opening hours are {resolved.state.lower()}",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -251,6 +254,7 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="OPENING_HOURS_UNVERIFIED",
                     message=f"activity {activity_index} opening evidence is not hard-eligible",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -263,6 +267,7 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="VENUE_CLOSED",
                     message=f"activity {activity_index} venue is closed",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -277,6 +282,7 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="OPENING_HOURS_UNVERIFIED",
                     message=f"activity {activity_index} has no usable opening window",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -293,6 +299,7 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="ACTIVITY_OUTSIDE_OPENING_WINDOW",
                     message=f"activity {activity_index} is outside the opening window",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -304,6 +311,7 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="ACTIVITY_AFTER_LAST_ENTRY",
                     message=f"activity {activity_index} starts after last entry",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue

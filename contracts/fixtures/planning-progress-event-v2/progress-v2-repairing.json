@@ -1,0 +1,19 @@
+{
+  "eventType": "PLANNING_PROGRESS",
+  "schemaVersion": 2,
+  "eventId": "5aa31052-2c21-53af-bddb-6a86614d801b",
+  "traceId": "ea930620-41a7-4fdc-b6d1-d298a850112a",
+  "taskId": "dfb858fc-b910-4056-a375-2366dcaab690",
+  "tripId": "d209daf2-f004-42cc-8385-510825f40fe1",
+  "occurredAt": "2026-08-13T00:00:00Z",
+  "payload": {
+    "stage": "REPAIRING",
+    "sequence": 8,
+    "progress": 75,
+    "message": "Applying bounded repair attempt",
+    "statistics": {
+      "attemptIndex": 2,
+      "actionCount": 1
+    }
+  }
+}

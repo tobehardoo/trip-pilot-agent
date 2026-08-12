@@ -66,3 +66,27 @@ test('renders a terminal success instead of stale publishing progress', () => {
     .toContain('行程规划已完成')
   expect(view.queryByText('95%')).toBeNull()
 })
+
+test('renders a bounded repair attempt as the active pipeline stage', () => {
+  const view = render(PlanningProgress, {
+    props: {
+      planningState: 'queued',
+      progress: {
+        eventId: 12,
+        stage: 'REPAIRING',
+        sequence: 8,
+        progress: 75,
+        message: 'Applying bounded repair attempt 2',
+        statistics: { attemptIndex: 2, actionCount: 3 },
+        occurredAt: '2026-08-13T08:00:00Z',
+      },
+      progressHistory: [],
+    },
+  })
+
+  expect(view.getByTestId('planning-stage-REPAIRING').textContent)
+    .toContain('进行中')
+  expect(view.getByTestId('planning-current-stage').textContent)
+    .toContain('有界修复')
+  expect(view.getByText('attemptIndex: 2')).toBeTruthy()
+})

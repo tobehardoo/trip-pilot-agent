@@ -935,6 +935,7 @@ const planningProgressStages: PlanningProgressStage[] = [
   'CANDIDATES_RANKING',
   'ROUTES_CALCULATING',
   'CONSTRAINTS_SOLVING',
+  'REPAIRING',
   'KNOWLEDGE_RETRIEVING',
   'RESULT_EXPLAINING',
   'RESULT_PUBLISHING',
@@ -952,6 +953,13 @@ function toPlanningProgressUpdate(event: PlanningTaskEvent): PlanningProgressUpd
   const safeStatistics = Object.fromEntries(Object.entries(statistics ?? {}).filter(([, value]) => (
     Number.isSafeInteger(value) && value >= 0
   )))
+  if (stage === 'REPAIRING' && (event.schemaVersion !== 2
+    || !Number.isSafeInteger(safeStatistics.attemptIndex)
+    || safeStatistics.attemptIndex < 1 || safeStatistics.attemptIndex > 3
+    || !Number.isSafeInteger(safeStatistics.actionCount)
+    || safeStatistics.actionCount < 1 || safeStatistics.actionCount > 16)) {
+    return null
+  }
   return {
     eventId: event.eventId,
     stage: stage as PlanningProgressStage,

@@ -9,6 +9,7 @@ from dataclasses import replace
 from trip_agent.domain.planning.protocols import (
     PlanningProvider,
     PlanningProviderError,
+    PlanningRepairRequest,
     PlanningResult,
 )
 from trip_agent.providers.errors import (
@@ -60,6 +61,14 @@ class FallbackPlanningProvider:
             return await self._primary.replan(command)
         except PlanningProviderError as error:
             return await self._fallback_or_raise(error, command, "replan")
+
+    async def repair(self, request: PlanningRepairRequest) -> PlanningResult:
+        provider = (
+            self._fallback
+            if request.candidate.provider == "DEMO"
+            else self._primary
+        )
+        return await provider.repair(request)
 
     async def _fallback_or_raise(
         self,

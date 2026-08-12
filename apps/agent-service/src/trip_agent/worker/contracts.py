@@ -1143,6 +1143,7 @@ type PlanningProgressStage = Literal[
     "CANDIDATES_RANKING",
     "ROUTES_CALCULATING",
     "CONSTRAINTS_SOLVING",
+    "REPAIRING",
     "KNOWLEDGE_RETRIEVING",
     "RESULT_EXPLAINING",
     "RESULT_PUBLISHING",
@@ -1163,7 +1164,7 @@ class PlanningProgressPayload(MessageModel):
 
 class PlanningProgressEvent(MessageModel):
     event_type: Literal["PLANNING_PROGRESS"]
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     event_id: UUID
     trace_id: UUID
     task_id: UUID
@@ -1175,4 +1176,15 @@ class PlanningProgressEvent(MessageModel):
     def validate_occurred_at(self) -> Self:
         if self.occurred_at.utcoffset() is None:
             raise ValueError("occurredAt must include a timezone")
+        return self
+
+    @model_validator(mode="after")
+    def validate_repair_stage(self) -> Self:
+        if self.schema_version == 1 and self.payload.stage == "REPAIRING":
+            raise ValueError("REPAIRING progress requires schemaVersion 2")
+        if self.payload.stage == "REPAIRING":
+            if not 1 <= self.payload.statistics.get("attemptIndex", 0) <= 3:
+                raise ValueError("REPAIRING progress requires attemptIndex 1..3")
+            if not 1 <= self.payload.statistics.get("actionCount", 0) <= 16:
+                raise ValueError("REPAIRING progress requires actionCount 1..16")
         return self

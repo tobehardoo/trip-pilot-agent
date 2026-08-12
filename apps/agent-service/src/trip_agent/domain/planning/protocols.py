@@ -6,6 +6,7 @@ importing the entire worker module.
 """
 
 from dataclasses import dataclass
+from datetime import date
 from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
@@ -67,6 +68,8 @@ class PlanningProvider(Protocol):
 
     async def replan(self, command: PlanningReplanCommand) -> "PlanningResult": ...
 
+    async def repair(self, request: "PlanningRepairRequest") -> "PlanningResult": ...
+
 
 class KnowledgeEvidenceProvider(Protocol):
     """Sources used by the planning pipeline to explain recommendations."""
@@ -91,12 +94,11 @@ class PlanningResult:
     fallback_reason: str | None = None
     fallback_operations: tuple[FallbackOperation, ...] = ()
     evaluation: object | None = None  # PlanEvaluation — lazy import to avoid cycle
-    # B4A: transient planning-only aggregate.  Never enters messaging,
-    # persistence or API surfaces; worker/processor currently ignores it.
+    # Transient planning-only aggregate consumed by hard validation and
+    # bounded repair. It never enters messaging, persistence, or API surfaces.
     trip_skeleton: "TripSkeleton | None" = None
-    # B5: transient validation inputs (opening/duration/meal evidence).
-    # Transient only — worker, messaging, DB and API never consume them;
-    # Demo and replan results leave this None.
+    # Transient opening/duration/meal inputs consumed by hard validation and
+    # bounded repair. Messaging, DB, and API expose only the resulting report.
     validation_inputs: "ValidationInputs | None" = None
 
     def provider_provenance(self) -> ProviderProvenance | None:
@@ -120,6 +122,28 @@ class PlanningResult:
             fallback_reason=self.fallback_reason,
             fallback_operations=self.fallback_operations,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PlanningRepairRequest:
+    """One bounded provider refresh for a locally repaired candidate."""
+
+    command: PlanningCreateCommand | PlanningReplanCommand
+    candidate: PlanningResult
+    impacted_dates: tuple[date, ...]
+    attempt_index: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "impacted_dates", tuple(self.impacted_dates))
+        if not 1 <= self.attempt_index <= 3:
+            raise ValueError("repair attempt_index must be between one and three")
+        if not self.impacted_dates or len(self.impacted_dates) > 3:
+            raise ValueError("repair must cover between one and three dates")
+        if tuple(sorted(set(self.impacted_dates))) != self.impacted_dates:
+            raise ValueError("repair dates must be unique and sorted")
+        itinerary_dates = {day.date for day in self.candidate.itinerary.days}
+        if any(day not in itinerary_dates for day in self.impacted_dates):
+            raise ValueError("repair dates must belong to the candidate itinerary")
 
 
 @dataclass(frozen=True)

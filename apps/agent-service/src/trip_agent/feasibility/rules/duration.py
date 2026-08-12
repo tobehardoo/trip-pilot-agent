@@ -12,6 +12,7 @@ from datetime import date
 
 from trip_agent.feasibility.context import ValidationContext
 from trip_agent.feasibility.entity_refs import encode_activity_ref, encode_poi_ref
+from trip_agent.feasibility.inputs import ActivityLocator
 from trip_agent.feasibility.models import (
     EvidenceReference,
     EvidenceState,
@@ -115,6 +116,7 @@ def assess_visit_duration(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="VISIT_DURATION_PROFILE_MISSING",
                     message=f"activity {activity_index} has no duration profile",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -127,6 +129,7 @@ def assess_visit_duration(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="VISIT_DURATION_UNVERIFIED",
                     message=f"activity {activity_index} profile is not hard-eligible",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -145,6 +148,7 @@ def assess_visit_duration(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="VISIT_DURATION_UNVERIFIED",
                     message=f"activity {activity_index} times are not timezone-aware",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
             continue
@@ -157,6 +161,7 @@ def assess_visit_duration(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="VISIT_TOO_SHORT",
                     message=f"activity {activity_index} visit is shorter than the minimum",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
         elif duration_minutes > profile.max_minutes:
@@ -167,6 +172,7 @@ def assess_visit_duration(ctx: ValidationContext) -> RuleAssessment:
                     reason_code="VISIT_TOO_LONG",
                     message=f"activity {activity_index} visit is longer than the maximum",
                     affected_date=day_date,
+                    activity=ActivityLocator(day_index, activity_index),
                 )
             )
         else:

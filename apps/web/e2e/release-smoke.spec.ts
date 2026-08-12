@@ -126,6 +126,30 @@ const combinedItinerary = {
 
 const planningTaskId = '33333333-3333-4333-8333-333333333333'
 
+const verifiedFeasibilityReport = {
+  schemaVersion: 1,
+  reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
+  validatorVersion: 'hard-validator-v4',
+  itineraryFingerprint: 'a'.repeat(64),
+  status: 'VERIFIED',
+  validatedAt: '2026-08-02T00:00:00Z',
+  requiredRuleIds: ['OPENING_HOURS'],
+  missingRequiredRuleIds: [],
+  summary: { totalCount: 1, passCount: 1, failCount: 0, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
+  ruleResults: [{
+    ruleId: 'OPENING_HOURS',
+    ruleVersion: 'hard-rule-v1',
+    outcome: 'PASS',
+    reasonCode: 'OPENING_HOURS_VERIFIED',
+    message: 'Opening hours verified',
+    affectedDates: ['2026-08-02'],
+    affectedEntityRefs: [],
+    evidenceRefs: [],
+    repairable: false,
+  }],
+  repairAttempts: [],
+}
+
 const combinedEvaluation = {
   schemaVersion: 1,
   evaluatorVersion: 'rule-v1',
@@ -217,6 +241,7 @@ async function mockReleaseApi(page: Page, options: { combined?: boolean } = {}) 
           baselineTripVersion: 0,
           eventStreamUrl: `/api/planning-tasks/${planningTaskId}/events`,
           evaluation: combinedEvaluation,
+          feasibilityReport: verifiedFeasibilityReport,
           createdAt: '2026-08-02T00:00:00Z',
           updatedAt: '2026-08-02T00:01:00Z',
         },

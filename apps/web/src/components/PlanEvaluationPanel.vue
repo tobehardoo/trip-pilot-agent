@@ -5,6 +5,7 @@
       <span class="sr-only">行程质量</span>
       <span class="evaluation-score" :class="scoreClass">{{ evaluation.overallScore }}/100</span>
     </div>
+    <p class="evaluation-note">仅代表体验质量，不代表硬可行性验证</p>
 
     <div class="evaluation-dimensions">
       <div v-for="dim in dimensions" :key="dim.key" class="dimension-row">
@@ -94,6 +95,7 @@ function subjectTypeLabel(t: string) {
 <style scoped>
 .plan-evaluation-panel { padding: 0.75rem; border-radius: 0.5rem; background: rgba(255,255,255,0.05); }
 .evaluation-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+.evaluation-note { margin: 0 0 0.5rem; font-size: 0.625rem; color: rgba(255,255,255,0.5); }
 .evaluation-score { font-size: 1.25rem; font-weight: 700; }
 .score-high { color: #22c55e; } .score-mid { color: #eab308; } .score-low { color: #ef4444; }
 .dimension-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; font-size: 0.75rem; }

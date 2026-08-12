@@ -2,6 +2,11 @@
 import { GitCompareArrows, History, LoaderCircle, RotateCcw } from 'lucide-vue-next'
 import { computed, ref } from 'vue'
 
+import {
+  FEASIBILITY_STATUS_LABEL,
+  readVersionFeasibilityMetadata,
+  type FeasibilityStatus,
+} from '../lib/feasibility'
 import type { ItineraryVersionDiff, ItineraryVersionSummary } from '../lib/api'
 
 const props = defineProps<{
@@ -29,6 +34,26 @@ const sourceLabels: Record<ItineraryVersionSummary['versionSource'], string> = {
   USER_EDIT: '手动修改',
   LOCAL_REPLAN: '局部重排',
   ROLLBACK: '历史回滚',
+}
+
+type FeasibilityMetaDisplay =
+  | { kind: 'status'; status: FeasibilityStatus }
+  | { kind: 'none' }
+  | { kind: 'unreadable' }
+
+function feasibilityMetaOf(version: ItineraryVersionSummary): FeasibilityMetaDisplay {
+  const result = readVersionFeasibilityMetadata(version.feasibility)
+  if (result.ok && result.value) return { kind: 'status', status: result.value.status }
+  if (result.ok) return { kind: 'none' }
+  return { kind: 'unreadable' }
+}
+
+function feasibilityBadgeClass(status: FeasibilityStatus) {
+  return {
+    VERIFIED: 'rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700',
+    NEEDS_REPAIR: 'rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700',
+    UNVERIFIED: 'rounded-full bg-surface-100 px-2 py-0.5 text-[10px] font-bold text-surface-500',
+  }[status]
 }
 
 function formatDateTime(value: string) {
@@ -116,6 +141,23 @@ async function confirmRollback() {
               <span v-if="version.current" class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">当前</span>
               <span class="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-semibold text-primary-700">
                 {{ sourceLabels[version.versionSource] }}
+              </span>
+              <span
+                v-for="meta in [feasibilityMetaOf(version)]"
+                :key="meta.kind"
+              >
+                <span v-if="meta.kind === 'status'" :class="feasibilityBadgeClass(meta.status)">
+                  {{ FEASIBILITY_STATUS_LABEL[meta.status] }}
+                </span>
+                <span
+                  v-else-if="meta.kind === 'none'"
+                  class="rounded-full bg-surface-100 px-2 py-0.5 text-[10px] font-medium text-surface-400"
+                >
+                  无历史验证
+                </span>
+                <span v-else class="rounded-full bg-surface-100 px-2 py-0.5 text-[10px] font-medium text-surface-400">
+                  验证信息无法读取
+                </span>
               </span>
             </div>
             <p class="mb-0 mt-1 text-xs text-surface-500">

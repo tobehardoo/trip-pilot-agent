@@ -21,6 +21,7 @@ import {
   diffItineraryVersions,
   downloadItineraryExport,
   getCurrentItinerary,
+  getLatestPlanningTask,
   getPlanningTask,
   getTrip,
   listTrips,
@@ -58,6 +59,11 @@ import {
   type Trip,
   type UpdateTripConstraintsInput,
 } from '../lib/api'
+import {
+  readPlanningEventOutcome,
+  readPlanningTaskOutcome,
+  type PlanningOutcome,
+} from '../lib/feasibility'
 import { tripDetailPath, type AppRoute } from '../lib/routes'
 
 class SessionChangedError extends Error {}
@@ -99,10 +105,13 @@ const evaluationError = ref<string | null>(null)
 const itineraryShares = ref<ItineraryShareStatus[]>([])
 const versionBusy = ref(false)
 const versionError = ref<string | null>(null)
-const planningState = ref<'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'>('idle')
+const planningState = ref<'idle' | 'queued' | 'succeeded' | 'waiting_user' | 'failed' | 'cancelled'>('idle')
 const planningError = ref<string | null>(null)
 const planningProgress = ref<PlanningProgressUpdate | null>(null)
 const planningProgressHistory = ref<PlanningProgressUpdate[]>([])
+const authoritativeFeasibilityReport = ref<unknown>(null)
+const candidateItinerary = ref<unknown>(null)
+const feasibilityLoadState = ref<'idle' | 'loaded'>('idle')
 const guideImports = ref<GuideImport[]>([])
 const guideBusy = ref(false)
 const guideError = ref<string | null>(null)
@@ -180,6 +189,9 @@ function clearLocalSession() {
   guideBusy.value = false
   guideError.value = null
   guideRequestSequence += 1
+  authoritativeFeasibilityReport.value = null
+  candidateItinerary.value = null
+  feasibilityLoadState.value = 'idle'
 }
 
 function stopPlanningStream(resetState = true) {
@@ -192,6 +204,9 @@ function stopPlanningStream(resetState = true) {
     activePlanningTaskId.value = null
     planningProgress.value = null
     planningProgressHistory.value = []
+    authoritativeFeasibilityReport.value = null
+    candidateItinerary.value = null
+    feasibilityLoadState.value = 'idle'
   }
 }
 
@@ -245,6 +260,7 @@ async function loadTrip(tripId: string, preserveCurrentTrip = false): Promise<bo
     ])
     if (!isCurrentDetailRequest(requestSequence, tripId) || !isCurrentSession(generation)) return false
     await loadEvaluationForCurrentVersion(tripId, requestSequence, generation)
+    await hydrateLatestPlanningTask(tripId, requestSequence, generation)
     return true
   } catch (cause) {
     if (!isCurrentDetailRequest(requestSequence, tripId)) return false
@@ -299,6 +315,64 @@ function clearEvaluation() {
   evaluation.value = undefined
   evaluationBusy.value = false
   evaluationError.value = null
+  authoritativeFeasibilityReport.value = null
+  candidateItinerary.value = null
+  feasibilityLoadState.value = 'idle'
+}
+
+/** Clears every terminal outcome value without touching planningState. */
+function clearPlanningOutcome() {
+  authoritativeFeasibilityReport.value = null
+  candidateItinerary.value = null
+  evaluation.value = undefined
+  feasibilityLoadState.value = 'idle'
+  evaluationError.value = null
+}
+
+/**
+ * Single state application for every outcome source (Task API hydration,
+ * SSE live, SSE replay).  The outcome parser has already fail-closed the
+ * status/report/candidate/evaluation combination; this only maps the
+ * discriminated result onto component state.
+ */
+function applyOutcomeState(outcome: PlanningOutcome) {
+  switch (outcome.kind) {
+    case 'completed':
+      planningState.value = 'succeeded'
+      authoritativeFeasibilityReport.value = outcome.report
+      candidateItinerary.value = null
+      evaluation.value = outcome.evaluation
+      feasibilityLoadState.value = 'loaded'
+      evaluationError.value = null
+      break
+    case 'review':
+      planningState.value = 'waiting_user'
+      authoritativeFeasibilityReport.value = outcome.report
+      candidateItinerary.value = outcome.candidate
+      evaluation.value = undefined
+      feasibilityLoadState.value = 'loaded'
+      evaluationError.value = null
+      break
+    case 'queued':
+      planningState.value = 'queued'
+      clearPlanningOutcome()
+      break
+    case 'failed':
+      planningState.value = 'failed'
+      planningError.value = outcome.errorMessage ?? '行程规划失败，请调整条件后重试'
+      clearPlanningOutcome()
+      break
+    case 'cancelled':
+      planningState.value = 'cancelled'
+      planningError.value = null
+      clearPlanningOutcome()
+      break
+    case 'malformed':
+      planningState.value = 'failed'
+      planningError.value = '规划结果无法安全读取，请重新规划'
+      clearPlanningOutcome()
+      break
+  }
 }
 
 function isCurrentEvaluationOwner(tripId: string, detailSequence: number, generation: number) {
@@ -335,7 +409,23 @@ async function loadEvaluationForCurrentVersion(
       evaluationError.value = '行程质量评估暂时无法加载，请稍后重试'
       return false
     }
-    evaluation.value = task.status === 'SUCCEEDED' ? task.evaluation ?? null : undefined
+    const outcome = readPlanningTaskOutcome(task)
+    if (outcome.kind === 'malformed') {
+      // The current version's task is corrupt: fail closed instead of
+      // rendering a guessed status.  The evaluation area surfaces the error.
+      evaluation.value = undefined
+      evaluationError.value = '行程质量评估暂时无法加载，请稍后重试'
+      clearPlanningOutcome()
+      return false
+    }
+    if (outcome.kind === 'completed') {
+      applyOutcomeState(outcome)
+      return true
+    }
+    // A current version's task is expected to be SUCCEEDED.  QUEUED/RUNNING/
+    // FAILED/CANCELLED or a (defensive) WAITING_USER never contributes a
+    // report to the current formal version.
+    clearPlanningOutcome()
     return true
   } catch {
     if (requestSequence === evaluationRequestSequence
@@ -352,6 +442,68 @@ async function loadEvaluationForCurrentVersion(
 async function reloadCurrentEvaluation(): Promise<boolean> {
   if (route.value.name !== 'trip-detail') return false
   return loadEvaluationForCurrentVersion(route.value.tripId)
+}
+
+/**
+ * Discovers the newest planning task for the trip on page load.  The latest
+ * task is NOT the current version's task: a WAITING_USER review never
+ * creates a version, so the current VersionSummary.planningTaskId still
+ * points at the old SUCCEEDED task.  Only the latest endpoint can recover a
+ * review-required state after a browser refresh.
+ */
+async function hydrateLatestPlanningTask(
+  tripId: string,
+  detailSequence = detailRequestSequence,
+  generation = sessionGeneration,
+): Promise<void> {
+  if (!isCurrentEvaluationOwner(tripId, detailSequence, generation)) return
+  let latest: PlanningTask | null = null
+  try {
+    latest = await withAccessToken((token) => getLatestPlanningTask(token, tripId))
+  } catch {
+    // 404 means no task exists for this trip: the current version's
+    // report/evaluation (if any) were already hydrated.  Other endpoint
+    // errors must not break the formal itinerary; they only skip recovery.
+    return
+  }
+  if (!isCurrentEvaluationOwner(tripId, detailSequence, generation)) return
+  const outcome = readPlanningTaskOutcome(latest)
+  if (outcome.kind === 'review') {
+    // A review-required task is the newest task but has no version: show the
+    // review panel while the formal itinerary stays untouched.
+    applyOutcomeState(outcome)
+    return
+  }
+  if (outcome.kind === 'queued') {
+    // QUEUED/RUNNING task survived a refresh: resume progress subscription.
+    planningState.value = 'queued'
+    activePlanningTaskId.value = latest.taskId
+    void attachPlanningStream(latest, planningRequestSequence, generation, tripId)
+    return
+  }
+  if (outcome.kind === 'failed' || outcome.kind === 'cancelled') {
+    planningState.value = outcome.kind === 'failed' ? 'failed' : 'cancelled'
+    planningError.value = outcome.kind === 'failed'
+      ? (outcome.errorMessage ?? '行程规划失败，请调整条件后重试')
+      : null
+    clearPlanningOutcome()
+    return
+  }
+  if (outcome.kind === 'completed') {
+    const currentItinerary = itinerary.value
+    const currentVersion = itineraryVersions.value.find((version) => (
+      version.current && version.versionId === currentItinerary?.versionId
+    ))
+    // Only a succeeded task that created the current version may back the
+    // current formal report/evaluation.  An older/newer unrelated succeeded
+    // task must not overwrite the current version's outcome.
+    if (currentVersion?.planningTaskId === latest.taskId) applyOutcomeState(outcome)
+    return
+  }
+  // malformed latest task: fail closed, keep the formal itinerary intact.
+  planningState.value = 'failed'
+  planningError.value = '规划结果无法安全读取，请重新规划'
+  clearPlanningOutcome()
 }
 
 async function loadGuideImportsForTrip(tripId: string): Promise<boolean> {
@@ -811,15 +963,88 @@ function toPlanningProgressUpdate(event: PlanningTaskEvent): PlanningProgressUpd
   }
 }
 
-function planningFailureMessage(payload: PlanningTaskEvent['payload']): string {
-  const parts = [payload.message ?? payload.errorMessage ?? '行程规划失败，请调整条件后重试']
-  for (const conflict of payload.conflicts ?? []) {
-    if (conflict.message && !parts.includes(conflict.message)) parts.push(conflict.message)
+/**
+ * Attaches the SSE subscription with reconnect and applies every terminal
+ * event through the unified outcome parser.  Live events and replay after
+ * reconnection share this single handler.
+ */
+async function attachPlanningStream(
+  task: PlanningTask,
+  requestSequence: number,
+  generation: number,
+  tripId: string,
+): Promise<void> {
+  const controller = new AbortController()
+  planningStreamController = controller
+  let lastEventId: number | undefined
+  let terminal = false
+  let itineraryReload: Promise<boolean> | null = null
+  const handleEvent = (event: PlanningTaskEvent) => {
+    if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
+    lastEventId = event.eventId
+    if (event.eventType === 'PLANNING_PROGRESS') {
+      const update = toPlanningProgressUpdate(event)
+      if (!update || (planningProgress.value && update.sequence <= planningProgress.value.sequence)) {
+        return
+      }
+      planningProgress.value = update
+      // Deduplicate by eventId to allow same-stage multiple updates (B3 fix).
+      // Cap history to prevent unbounded growth on SSE reconnection replay.
+      const MAX_HISTORY = 100
+      const seenIds = new Set(planningProgressHistory.value.map((h) => h.eventId))
+      if (!seenIds.has(update.eventId)) {
+        planningProgressHistory.value = [
+          ...planningProgressHistory.value.slice(-(MAX_HISTORY - 1)),
+          update,
+        ]
+      }
+      return
+    }
+    const outcome = readPlanningEventOutcome(event)
+    if (outcome.kind === 'queued') return
+    terminal = true
+    activePlanningTaskId.value = null
+    if (outcome.kind === 'malformed') {
+      planningState.value = 'failed'
+      planningError.value = '规划结果无法安全读取，请重新规划'
+      clearPlanningOutcome()
+      return
+    }
+    applyOutcomeState(outcome)
+    if (outcome.kind === 'completed') {
+      const detailSequence = detailRequestSequence
+      itineraryReload = Promise.all([
+        loadItinerary(tripId),
+        loadItineraryVersionsForTrip(tripId),
+      ]).then(async ([itineraryLoaded, versionsLoaded]) => (
+        itineraryLoaded
+        && versionsLoaded
+        && await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
+      ))
+    }
   }
-  for (const suggestion of payload.relaxationSuggestions ?? []) {
-    if (suggestion.message) parts.push(`建议：${suggestion.message}`)
+
+  for (let attempt = 0; attempt < 3 && !terminal; attempt += 1) {
+    try {
+      lastEventId = await withAccessToken((token) => streamPlanningTaskEvents(
+        token,
+        task.eventStreamUrl,
+        handleEvent,
+        { lastEventId, signal: controller.signal },
+      ))
+    } catch (cause) {
+      const retriable = cause instanceof TypeError
+        || (cause instanceof ApiError && cause.status >= 500 && cause.status < 600)
+      if (!retriable || attempt === 2) throw cause
+    }
   }
-  return parts.join('；')
+  if (itineraryReload) await itineraryReload
+  if (!terminal && isCurrentPlanningRequest(requestSequence, generation, tripId)) {
+    planningState.value = 'failed'
+    activePlanningTaskId.value = null
+    planningError.value = '任务状态连接已中断，请稍后重试'
+    clearPlanningOutcome()
+  }
 }
 
 async function runPlanningTask(
@@ -835,88 +1060,21 @@ async function runPlanningTask(
   activePlanningTaskId.value = null
   planningProgress.value = null
   planningProgressHistory.value = []
+  clearPlanningOutcome()
 
   try {
     const idempotencyKey = crypto.randomUUID()
     const task = await withAccessToken((token) => createTask(token, idempotencyKey))
     if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
     activePlanningTaskId.value = task.taskId
-    const controller = new AbortController()
-    planningStreamController = controller
-    let lastEventId: number | undefined
-    let terminal = false
-    let itineraryReload: Promise<boolean> | null = null
-    const handleEvent = (event: PlanningTaskEvent) => {
-      if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
-      lastEventId = event.eventId
-      if (event.eventType === 'PLANNING_PROGRESS') {
-        const update = toPlanningProgressUpdate(event)
-        if (!update || (planningProgress.value && update.sequence <= planningProgress.value.sequence)) {
-          return
-        }
-        planningProgress.value = update
-        // Deduplicate by eventId to allow same-stage multiple updates (B3 fix).
-        // Cap history to prevent unbounded growth on SSE reconnection replay.
-        const MAX_HISTORY = 100
-        const seenIds = new Set(planningProgressHistory.value.map((h) => h.eventId))
-        if (!seenIds.has(update.eventId)) {
-          planningProgressHistory.value = [
-            ...planningProgressHistory.value.slice(-(MAX_HISTORY - 1)),
-            update,
-          ]
-        }
-      } else if (event.eventType === 'PLANNING_COMPLETED') {
-        terminal = true
-        planningState.value = 'succeeded'
-        activePlanningTaskId.value = null
-        const detailSequence = detailRequestSequence
-        itineraryReload = Promise.all([
-          loadItinerary(tripId),
-          loadItineraryVersionsForTrip(tripId),
-        ]).then(async ([itineraryLoaded, versionsLoaded]) => (
-          itineraryLoaded
-          && versionsLoaded
-          && await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
-        ))
-      } else if (event.eventType === 'PLANNING_FAILED') {
-        terminal = true
-        planningState.value = 'failed'
-        activePlanningTaskId.value = null
-        planningError.value = planningFailureMessage(event.payload)
-      } else if (event.eventType === 'PLANNING_CANCELLED') {
-        terminal = true
-        planningState.value = 'cancelled'
-        activePlanningTaskId.value = null
-        planningError.value = null
-      }
-    }
-
-    for (let attempt = 0; attempt < 3 && !terminal; attempt += 1) {
-      try {
-        lastEventId = await withAccessToken((token) => streamPlanningTaskEvents(
-          token,
-          task.eventStreamUrl,
-          handleEvent,
-          { lastEventId, signal: controller.signal },
-        ))
-      } catch (cause) {
-        const retriable = cause instanceof TypeError
-          || (cause instanceof ApiError && cause.status >= 500 && cause.status < 600)
-        if (!retriable || attempt === 2) throw cause
-      }
-    }
-    if (itineraryReload) await itineraryReload
-    if (!terminal && isCurrentPlanningRequest(requestSequence, generation, tripId)) {
-      planningState.value = 'failed'
-      activePlanningTaskId.value = null
-      planningError.value = '任务状态连接已中断，请稍后重试'
-    }
+    await attachPlanningStream(task, requestSequence, generation, tripId)
   } catch (cause) {
     if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
     if (cause instanceof DOMException && cause.name === 'AbortError') return
     planningState.value = 'failed'
     activePlanningTaskId.value = null
     planningError.value = errorMessage(cause)
+    clearPlanningOutcome()
   } finally {
     if (requestSequence === planningRequestSequence) planningStreamController = null
   }
@@ -948,6 +1106,7 @@ async function handleCancelPlanning() {
     activePlanningTaskId.value = null
     planningState.value = 'cancelled'
     planningError.value = null
+    clearPlanningOutcome()
   } catch (cause) {
     if (activePlanningTaskId.value !== taskId) return
     planningError.value = errorMessage(cause)
@@ -1033,6 +1192,9 @@ onUnmounted(() => {
       :planning-error="planningError"
       :planning-progress="planningProgress"
       :planning-progress-history="planningProgressHistory"
+      :feasibility-report="authoritativeFeasibilityReport"
+      :candidate-itinerary="candidateItinerary"
+      :feasibility-load-state="feasibilityLoadState"
       :guide-imports="guideImports"
       :guide-busy="guideBusy"
       :guide-error="guideError"

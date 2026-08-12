@@ -176,10 +176,43 @@ function planningEvent(eventType: string, eventId: number, payload: Record<strin
   })}\n\n`
 }
 
+const verifiedFeasibilityReport = {
+  schemaVersion: 1,
+  reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
+  validatorVersion: 'hard-validator-v4',
+  itineraryFingerprint: 'a'.repeat(64),
+  status: 'VERIFIED',
+  validatedAt: '2026-07-16T01:00:01Z',
+  requiredRuleIds: ['OPENING_HOURS'],
+  missingRequiredRuleIds: [],
+  summary: { totalCount: 1, passCount: 1, failCount: 0, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
+  ruleResults: [{
+    ruleId: 'OPENING_HOURS',
+    ruleVersion: 'hard-rule-v1',
+    outcome: 'PASS',
+    reasonCode: 'OPENING_HOURS_VERIFIED',
+    message: '营业时间内开放',
+    affectedDates: ['2026-07-18'],
+    affectedEntityRefs: [],
+    evidenceRefs: [],
+    repairable: false,
+  }],
+  repairAttempts: [],
+}
+
+function completedPayload() {
+  return {
+    status: 'SUCCEEDED',
+    provider: 'DEMO',
+    feasibilityReport: verifiedFeasibilityReport,
+    evaluation: planningEvaluation,
+  }
+}
+
 function completedEventStream(): Response {
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(new TextEncoder().encode(planningEvent('PLANNING_COMPLETED', 2, { status: 'SUCCEEDED' })))
+      controller.enqueue(new TextEncoder().encode(planningEvent('PLANNING_COMPLETED', 2, completedPayload())))
       controller.close()
     },
   })
@@ -544,7 +577,7 @@ describe('TripPilot application shell', () => {
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
       if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
-        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation })
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation, feasibilityReport: verifiedFeasibilityReport })
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
       if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
@@ -628,6 +661,7 @@ describe('TripPilot application shell', () => {
           tripId: secondTrip.id,
           status: 'SUCCEEDED',
           evaluation: planningEvaluation,
+          feasibilityReport: verifiedFeasibilityReport,
         })
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
@@ -697,7 +731,7 @@ describe('TripPilot application shell', () => {
       if (url.endsWith(`/api/trips/${secondTrip.id}/itinerary/versions`)) return response([secondVersion])
       if (url.endsWith('/itinerary/shares')) return response([])
       if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
-        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation })
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation, feasibilityReport: verifiedFeasibilityReport })
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
       if (url.endsWith(`/api/trips/${secondTrip.id}/itinerary`)) return response(secondItinerary)
@@ -750,7 +784,7 @@ describe('TripPilot application shell', () => {
         evaluationLoads += 1
         return evaluationLoads === 1
           ? response({ code: 'SERVICE_UNAVAILABLE', message: 'temporary failure' }, 503)
-          : response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation })
+          : response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation, feasibilityReport: verifiedFeasibilityReport })
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
       if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
@@ -807,7 +841,7 @@ describe('TripPilot application shell', () => {
         return { ok: true, status: 200, body: eventStream } as Response
       }
       if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
-        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation })
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation, feasibilityReport: verifiedFeasibilityReport })
       }
       if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
         versionLoads += 1
@@ -840,7 +874,14 @@ describe('TripPilot application shell', () => {
     expect((await screen.findByRole('status')).textContent).toContain('正在生成行程')
 
     streamController.enqueue(encoder.encode(
-      'id: 2\nevent: PLANNING_COMPLETED\ndata: {"eventId":2,"taskId":"33333333-3333-3333-3333-333333333333","eventType":"PLANNING_COMPLETED","schemaVersion":1,"payload":{"status":"SUCCEEDED"},"createdAt":"2026-07-16T01:00:01Z"}\n\n',
+      `id: 2\nevent: PLANNING_COMPLETED\ndata: ${JSON.stringify({
+        eventId: 2,
+        taskId: planningTaskResponse.taskId,
+        eventType: 'PLANNING_COMPLETED',
+        schemaVersion: 1,
+        payload: completedPayload(),
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
     ))
     streamController.close()
 
@@ -890,7 +931,14 @@ describe('TripPilot application shell', () => {
       'id: 1\nevent: PLANNING_QUEUED\ndata: {"eventId":1,"taskId":"33333333-3333-3333-3333-333333333333","eventType":"PLANNING_QUEUED","schemaVersion":1,"payload":{"status":"QUEUED"},"createdAt":"2026-07-16T01:00:00Z"}\n\n',
     )
     const completedEvent = encoder.encode(
-      'id: 2\nevent: PLANNING_COMPLETED\ndata: {"eventId":2,"taskId":"33333333-3333-3333-3333-333333333333","eventType":"PLANNING_COMPLETED","schemaVersion":1,"payload":{"status":"SUCCEEDED"},"createdAt":"2026-07-16T01:00:01Z"}\n\n',
+      `id: 2\nevent: PLANNING_COMPLETED\ndata: ${JSON.stringify({
+        eventId: 2,
+        taskId: planningTaskResponse.taskId,
+        eventType: 'PLANNING_COMPLETED',
+        schemaVersion: 1,
+        payload: completedPayload(),
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
     )
     let streamLoads = 0
     let itineraryLoads = 0
@@ -1111,7 +1159,7 @@ describe('TripPilot application shell', () => {
 
     expect(await screen.findByRole('heading', { name: '我的旅行' })).toBeTruthy()
     expect(streamSignal?.aborted).toBe(true)
-    streamController.enqueue(new TextEncoder().encode(planningEvent('PLANNING_COMPLETED', 2, { status: 'SUCCEEDED' })))
+    streamController.enqueue(new TextEncoder().encode(planningEvent('PLANNING_COMPLETED', 2, completedPayload())))
     streamController.close()
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(itineraryLoads).toBe(1)
@@ -1647,7 +1695,14 @@ describe('TripPilot application shell', () => {
 })
 
 describe('itinerary knowledge evidence states', () => {
-  afterEach(cleanup)
+  beforeEach(() => {
+    window.history.replaceState({}, '', '/trips')
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
 
   test.each([
     ['REAL', 'FRESH', '真实知识', '来源新鲜'],
@@ -1696,5 +1751,458 @@ describe('itinerary knowledge evidence states', () => {
 
     expect(screen.getByText(evidenceLabel)).toBeTruthy()
     expect(screen.getByText(freshnessText)).toBeTruthy()
+  })
+
+  test('PLANNING_REVIEW_REQUIRED shows waiting user review without replacing the itinerary', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const reviewReport = {
+      schemaVersion: 1,
+      reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
+      validatorVersion: 'hard-validator-v4',
+      itineraryFingerprint: 'a'.repeat(64),
+      status: 'NEEDS_REPAIR',
+      validatedAt: '2026-07-16T01:00:00Z',
+      requiredRuleIds: ['OPENING_HOURS'],
+      missingRequiredRuleIds: [],
+      summary: { totalCount: 1, passCount: 0, failCount: 1, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
+      ruleResults: [{
+        ruleId: 'OPENING_HOURS',
+        ruleVersion: 'hard-rule-v1',
+        outcome: 'FAIL',
+        reasonCode: 'VENUE_CLOSED',
+        message: '景点在行程时间关闭',
+        affectedDates: ['2026-07-18'],
+        affectedEntityRefs: [],
+        evidenceRefs: [],
+        repairable: true,
+      }],
+      repairAttempts: [],
+    }
+    const reviewCandidate = {
+      title: '候选行程',
+      days: [{
+        date: '2026-07-18',
+        dayType: null,
+        activities: [{
+          activityId: '3d76fb9e-362e-4b28-8a9e-18e8ac7050ae',
+          title: '候选活动',
+          startTime: '2026-07-18T01:00:00Z',
+          endTime: '2026-07-18T02:00:00Z',
+          estimatedCost: 0,
+          source: 'DEMO',
+          providerPoiId: null,
+          coordinates: null,
+          address: null,
+          typeCode: null,
+          typeName: null,
+          kind: null,
+          timeFixed: null,
+        }],
+        transitLegs: [],
+      }],
+      estimatedTotalCost: 100,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: '33333333-3333-3333-3333-333333333333',
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith('/api/planning-tasks/33333333-3333-3333-3333-333333333333/events')) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        return response([{
+          ...currentPlanningVersion,
+          feasibility: null,
+        }])
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response(itineraryResponse)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    await screen.findByRole('heading', { name: '结构化约束' })
+    await fireEvent.click(screen.getByRole('button', { name: '重新规划' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
+    })
+    streamController.enqueue(encoder.encode(
+      'id: 1\nevent: PLANNING_QUEUED\ndata: {"eventId":1,"taskId":"33333333-3333-3333-3333-333333333333","eventType":"PLANNING_QUEUED","schemaVersion":1,"payload":{"status":"QUEUED"},"createdAt":"2026-07-16T01:00:00Z"}\n\n',
+    ))
+    streamController.enqueue(encoder.encode(
+      `id: 2\nevent: PLANNING_REVIEW_REQUIRED\ndata: ${JSON.stringify({
+        eventId: 2,
+        taskId: '33333333-3333-3333-3333-333333333333',
+        eventType: 'PLANNING_REVIEW_REQUIRED',
+        schemaVersion: 1,
+        payload: {
+          status: 'WAITING_USER',
+          provider: 'DEMO',
+          candidateItinerary: reviewCandidate,
+          feasibilityReport: reviewReport,
+        },
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
+    ))
+    streamController.close()
+
+    // Waiting-user review panel appears with the authoritative report.
+    expect(await screen.findByText('规划需要确认')).toBeTruthy()
+    expect(screen.getByText('待修复')).toBeTruthy()
+    // Candidate renders as candidate, distinct from the formal itinerary.
+    expect(screen.getAllByText('候选行程').length).toBeGreaterThan(0)
+    expect(screen.getByText('候选活动')).toBeTruthy()
+    // The formal itinerary heading is still the existing one, not replaced.
+    expect(screen.getByRole('heading', { name: '行程时间轴' })).toBeTruthy()
+  })
+
+  test('PLANNING_COMPLETED with VERIFIED report renders authoritative feasibility panel', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const verifiedReport = {
+      schemaVersion: 1,
+      reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
+      validatorVersion: 'hard-validator-v4',
+      itineraryFingerprint: 'a'.repeat(64),
+      status: 'VERIFIED',
+      validatedAt: '2026-07-16T01:00:00Z',
+      requiredRuleIds: ['OPENING_HOURS'],
+      missingRequiredRuleIds: [],
+      summary: { totalCount: 1, passCount: 1, failCount: 0, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
+      ruleResults: [{
+        ruleId: 'OPENING_HOURS',
+        ruleVersion: 'hard-rule-v1',
+        outcome: 'PASS',
+        reasonCode: 'OPENING_HOURS_VERIFIED',
+        message: '营业时间内开放',
+        affectedDates: ['2026-07-18'],
+        affectedEntityRefs: [],
+        evidenceRefs: [],
+        repairable: false,
+      }],
+      repairAttempts: [],
+    }
+    let itineraryLoads = 0
+    let versionLoads = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: '33333333-3333-3333-3333-333333333333',
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith('/api/planning-tasks/33333333-3333-3333-3333-333333333333/events')) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation, feasibilityReport: verifiedReport })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        versionLoads += 1
+        return response(versionLoads === 1 ? [] : [{
+          ...currentPlanningVersion,
+          feasibility: {
+            reportId: verifiedReport.reportId,
+            schemaVersion: 1,
+            validatorVersion: 'hard-validator-v4',
+            status: 'VERIFIED',
+            itineraryFingerprint: 'a'.repeat(64),
+            validatedAt: '2026-07-16T01:00:00Z',
+          },
+        }])
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        itineraryLoads += 1
+        return itineraryLoads === 1
+          ? response({ code: 'ITINERARY_NOT_FOUND', message: 'Itinerary was not found' }, 404)
+          : response(itineraryResponse)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    await screen.findByRole('heading', { name: '结构化约束' })
+    await fireEvent.click(screen.getByRole('button', { name: '开始规划' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
+    })
+    streamController.enqueue(encoder.encode(
+      'id: 1\nevent: PLANNING_QUEUED\ndata: {"eventId":1,"taskId":"33333333-3333-3333-3333-333333333333","eventType":"PLANNING_QUEUED","schemaVersion":1,"payload":{"status":"QUEUED"},"createdAt":"2026-07-16T01:00:00Z"}\n\n',
+    ))
+    streamController.enqueue(encoder.encode(
+      `id: 2\nevent: PLANNING_COMPLETED\ndata: ${JSON.stringify({
+        eventId: 2,
+        taskId: '33333333-3333-3333-3333-333333333333',
+        eventType: 'PLANNING_COMPLETED',
+        schemaVersion: 1,
+        payload: {
+          status: 'SUCCEEDED',
+          provider: 'DEMO',
+          evaluation: planningEvaluation,
+          feasibilityReport: verifiedReport,
+        },
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
+    ))
+    streamController.close()
+
+    expect(await screen.findByRole('heading', { name: '广州 Demo 行程' })).toBeTruthy()
+    // Authoritative feasibility panel with VERIFIED status.
+    // The version record also carries the VERIFIED metadata badge (W5).
+    expect((await screen.findAllByText('已验证')).length).toBeGreaterThan(0)
+    expect(screen.getByText('硬可行性验证')).toBeTruthy()
+    expect(screen.getByText('营业时间内开放')).toBeTruthy()
+    // Evaluation still renders as experience quality.
+    expect(await screen.findByText('91/100')).toBeTruthy()
+  })
+
+  test('fails closed when the SSE review event carries a VERIFIED report', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const reviewCandidate = {
+      title: '候选行程',
+      days: [{
+        date: '2026-07-18',
+        dayType: null,
+        activities: [{ activityId: null, title: '候选活动', startTime: '2026-07-18T01:00:00Z', endTime: '2026-07-18T02:00:00Z', estimatedCost: 0, source: 'DEMO', providerPoiId: null, coordinates: null, address: null, typeCode: null, typeName: null, kind: null, timeFixed: null }],
+        transitLegs: [],
+      }],
+      estimatedTotalCost: 100,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: planningTaskResponse.taskId,
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: planningTaskResponse.eventStreamUrl,
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith(planningTaskResponse.eventStreamUrl)) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        return response([{ ...currentPlanningVersion, feasibility: null }])
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response(itineraryResponse)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks/latest`)) {
+        return response({ code: 'PLANNING_TASK_NOT_FOUND', message: 'Planning task was not found' }, 404)
+      }
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
+        return response({ ...planningTaskResponse, status: 'QUEUED' })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    await screen.findByRole('heading', { name: '结构化约束' })
+    await fireEvent.click(screen.getByRole('button', { name: '重新规划' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
+    })
+    streamController.enqueue(encoder.encode(
+      'id: 1\nevent: PLANNING_QUEUED\ndata: {"eventId":1,"taskId":"33333333-3333-3333-3333-333333333333","eventType":"PLANNING_QUEUED","schemaVersion":1,"payload":{"status":"QUEUED"},"createdAt":"2026-07-16T01:00:00Z"}\n\n',
+    ))
+    streamController.enqueue(encoder.encode(
+      `id: 2\nevent: PLANNING_REVIEW_REQUIRED\ndata: ${JSON.stringify({
+        eventId: 2,
+        taskId: planningTaskResponse.taskId,
+        eventType: 'PLANNING_REVIEW_REQUIRED',
+        schemaVersion: 1,
+        payload: {
+          status: 'WAITING_USER',
+          provider: 'DEMO',
+          candidateItinerary: reviewCandidate,
+          feasibilityReport: verifiedFeasibilityReport,
+        },
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
+    ))
+    streamController.close()
+
+    // The illegal WAITING_USER + VERIFIED combination must fail closed.
+    expect(await screen.findByText('规划结果无法安全读取，请重新规划')).toBeTruthy()
+    expect(screen.queryByText('规划需要确认')).toBeNull()
+    expect(screen.queryByText('已验证')).toBeNull()
+    expect(screen.queryByText('待修复')).toBeNull()
+  })
+
+  test('clears the previous outcome when a new planning task starts', async () => {
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: planningTaskResponse.taskId,
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: planningTaskResponse.eventStreamUrl,
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith(planningTaskResponse.eventStreamUrl)) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        return response([{ ...currentPlanningVersion, feasibility: null }])
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response(itineraryResponse)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks/latest`)) {
+        return response({ code: 'PLANNING_TASK_NOT_FOUND', message: 'Planning task was not found' }, 404)
+      }
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation, feasibilityReport: verifiedFeasibilityReport })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    // Page load hydrates the current version's SUCCEEDED task outcome.
+    expect(await screen.findByText('已验证')).toBeTruthy()
+    expect(await screen.findByText('91/100')).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: '重新规划' }))
+
+    // The old authoritative panel must disappear while the new task is queued.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
+    })
+    expect(screen.queryByText('已验证')).toBeNull()
+    expect(screen.queryByText('91/100')).toBeNull()
+  })
+
+  test('clears the outcome when a planning task is cancelled', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: planningTaskResponse.taskId,
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: planningTaskResponse.eventStreamUrl,
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith(planningTaskResponse.eventStreamUrl)) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) {
+        return response([{ ...currentPlanningVersion, feasibility: null }])
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response(itineraryResponse)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks/latest`)) {
+        return response({ code: 'PLANNING_TASK_NOT_FOUND', message: 'Planning task was not found' }, 404)
+      }
+      if (url.endsWith(`/api/planning-tasks/${planningTaskResponse.taskId}`)) {
+        return response({ ...planningTaskResponse, status: 'SUCCEEDED', evaluation: planningEvaluation, feasibilityReport: verifiedFeasibilityReport })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    expect(await screen.findByText('已验证')).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: '重新规划' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
+    })
+    streamController.enqueue(encoder.encode(
+      `id: 1\nevent: PLANNING_CANCELLED\ndata: ${JSON.stringify({
+        eventId: 1,
+        taskId: planningTaskResponse.taskId,
+        eventType: 'PLANNING_CANCELLED',
+        schemaVersion: 1,
+        payload: { status: 'CANCELLED' },
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
+    ))
+    streamController.close()
+
+    expect(await screen.findByText('规划已取消')).toBeTruthy()
+    expect(screen.queryByText('已验证')).toBeNull()
+    expect(screen.queryByText('91/100')).toBeNull()
   })
 })

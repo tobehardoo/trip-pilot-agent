@@ -71,8 +71,55 @@ function progressEvent(eventId: number, sequence: number, stage: string, progres
   return `id: ${eventId}\ndata: ${JSON.stringify({ eventId, eventType: 'PLANNING_PROGRESS', payload: { stage, sequence, progress, message, statistics: {} }, createdAt: '2026-07-27T00:00:00Z' })}\n\n`
 }
 
+const v2VerifiedReport = {
+  schemaVersion: 1,
+  reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
+  validatorVersion: 'hard-validator-v4',
+  itineraryFingerprint: 'a'.repeat(64),
+  status: 'VERIFIED',
+  validatedAt: '2026-07-27T00:00:02Z',
+  requiredRuleIds: ['OPENING_HOURS'],
+  missingRequiredRuleIds: [],
+  summary: { totalCount: 1, passCount: 1, failCount: 0, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
+  ruleResults: [{
+    ruleId: 'OPENING_HOURS',
+    ruleVersion: 'hard-rule-v1',
+    outcome: 'PASS',
+    reasonCode: 'OPENING_HOURS_VERIFIED',
+    message: 'Opening hours verified',
+    affectedDates: ['2026-08-01'],
+    affectedEntityRefs: [],
+    evidenceRefs: [],
+    repairable: false,
+  }],
+  repairAttempts: [],
+}
+
+const v2Evaluation = {
+  schemaVersion: 1,
+  evaluatorVersion: 'rule-v1',
+  feasible: true,
+  overallScore: 91,
+  dimensions: {
+    constraintSatisfaction: 100,
+    timeFeasibility: 90,
+    budgetFit: 88,
+    routeEfficiency: 85,
+    interestMatch: 80,
+  },
+  warnings: [],
+  decisions: [],
+  summary: 'Trip quality 91/100.',
+  evaluatedAt: '2026-07-27T00:00:02Z',
+}
+
 function completedEvent(eventId: number) {
-  return `id: ${eventId}\ndata: ${JSON.stringify({ eventId, eventType: 'PLANNING_COMPLETED', payload: {}, createdAt: '2026-07-27T00:00:02Z' })}\n\n`
+  return `id: ${eventId}\ndata: ${JSON.stringify({
+    eventId,
+    eventType: 'PLANNING_COMPLETED',
+    payload: { status: 'SUCCEEDED', provider: 'DEMO', feasibilityReport: v2VerifiedReport, evaluation: v2Evaluation },
+    createdAt: '2026-07-27T00:00:02Z',
+  })}\n\n`
 }
 
 async function mockPlanningApi(page: Page) {

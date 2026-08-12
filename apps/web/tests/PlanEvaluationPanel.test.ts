@@ -90,3 +90,17 @@ test('renders not-applicable dimensions explicitly', () => {
 
   expect(view.getAllByText('未适用')).toHaveLength(2)
 })
+
+test('labels the score as experience quality, not hard feasibility', () => {
+  const view = render(PlanEvaluationPanel, { props: { evaluation } })
+
+  expect(view.getByText('仅代表体验质量，不代表硬可行性验证')).toBeTruthy()
+})
+
+test('never renders hard feasibility status words', () => {
+  const view = render(PlanEvaluationPanel, { props: { evaluation } })
+
+  expect(view.queryByText('已验证')).toBeNull()
+  expect(view.queryByText('待修复')).toBeNull()
+  expect(view.queryByText('未验证')).toBeNull()
+})

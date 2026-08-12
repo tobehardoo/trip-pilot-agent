@@ -382,6 +382,12 @@ class PlanningReviewServiceTest {
         }
 
         @Override
+        public Optional<PlanningTaskRecord> findLatestOwnedByTripId(
+                UUID tripId, UUID ownerId) {
+            throw new UnsupportedOperationException("not used in this test");
+        }
+
+        @Override
         public int markRunning(UUID taskId, int expectedVersion) {
             throw new UnsupportedOperationException("not used in this test");
         }

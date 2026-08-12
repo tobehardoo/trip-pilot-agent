@@ -121,6 +121,23 @@ public class PlanningTaskService {
                 ));
     }
 
+    /**
+     * Returns the newest planning task owned by the caller for the trip, or
+     * 404 when the trip has no task (or the trip does not exist / is not
+     * owned by the caller).  Read-only: never mutates task state and never
+     * produces task events.  Ordering is {@code created_at DESC, id DESC}.
+     */
+    @Transactional(readOnly = true)
+    public PlanningTaskResponse latest(UUID ownerId, UUID tripId) {
+        return planningTaskMapper.findLatestOwnedByTripId(tripId, ownerId)
+                .map(this::toResponse)
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.NOT_FOUND,
+                        "PLANNING_TASK_NOT_FOUND",
+                        "Planning task was not found"
+                ));
+    }
+
     private PlanningTaskResponse createTransactional(
             UUID ownerId,
             UUID tripId,

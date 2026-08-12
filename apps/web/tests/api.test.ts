@@ -10,6 +10,7 @@ import {
   createPlanningTask,
   createTrip,
   downloadItineraryExport,
+  getPlanningTask,
   getSharedItinerary,
   listGuideImports,
   logoutSession,
@@ -20,6 +21,7 @@ import {
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
   type CreateTripInput,
+  type PlanningTaskEvent,
 } from '../src/lib/api'
 
 afterEach(() => {
@@ -367,4 +369,172 @@ test('parses chunked multiline SSE data, ignores heartbeats, and sends the last 
       },
     }),
   )
+})
+
+const reviewReport = {
+  schemaVersion: 1,
+  reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
+  validatorVersion: 'hard-validator-v4',
+  itineraryFingerprint: 'a'.repeat(64),
+  status: 'NEEDS_REPAIR',
+  validatedAt: '2026-07-16T01:00:00Z',
+  requiredRuleIds: ['OPENING_HOURS'],
+  missingRequiredRuleIds: [],
+  summary: { totalCount: 1, passCount: 0, failCount: 1, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
+  ruleResults: [],
+  repairAttempts: [],
+}
+const reviewCandidate = {
+  title: '候选行程',
+  days: [{
+    date: '2026-07-18',
+    dayType: null,
+    activities: [{ activityId: null, title: '候选活动', startTime: '2026-07-18T01:00:00Z', endTime: '2026-07-18T02:00:00Z', estimatedCost: 0, source: 'DEMO', providerPoiId: null, coordinates: null, address: null, typeCode: null, typeName: null, kind: null, timeFixed: null }],
+    transitLegs: [],
+  }],
+  estimatedTotalCost: 100,
+}
+const verifiedEvaluation = {
+  schemaVersion: 1,
+  evaluatorVersion: 'rule-v1',
+  feasible: true,
+  overallScore: 91,
+  dimensions: {
+    constraintSatisfaction: 100,
+    timeFeasibility: 90,
+    budgetFit: 88,
+    routeEfficiency: 85,
+    interestMatch: 80,
+  },
+  warnings: [],
+  decisions: [],
+  summary: '行程整体质量 91/100。',
+  evaluatedAt: '2026-07-16T01:00:02Z',
+}
+
+test('loads a planning task with the authoritative report and review candidate', async () => {
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      taskId: '33333333-3333-3333-3333-333333333333',
+      tripId: '22222222-2222-2222-2222-222222222222',
+      taskType: 'CREATE',
+      status: 'WAITING_USER',
+      baselineTripVersion: 0,
+      eventStreamUrl: '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
+      feasibilityReport: reviewReport,
+      candidateItinerary: reviewCandidate,
+      createdAt: '2026-07-16T01:00:00Z',
+      updatedAt: '2026-07-16T01:00:00Z',
+    }),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const task = await getPlanningTask('access-token', '33333333-3333-3333-3333-333333333333')
+
+  expect(task.status).toBe('WAITING_USER')
+  expect(task.feasibilityReport).toEqual(reviewReport)
+  expect(task.candidateItinerary).toEqual(reviewCandidate)
+  expect(fetchMock).toHaveBeenCalledWith(
+    '/api/planning-tasks/33333333-3333-3333-3333-333333333333',
+    expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
+    }),
+  )
+})
+
+test('loads a succeeded planning task with its report and evaluation', async () => {
+  const verifiedReport = { ...reviewReport, status: 'VERIFIED', summary: { ...reviewReport.summary, passCount: 1, failCount: 0 } }
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      taskId: '33333333-3333-3333-3333-333333333333',
+      tripId: '22222222-2222-2222-2222-222222222222',
+      taskType: 'CREATE',
+      status: 'SUCCEEDED',
+      baselineTripVersion: 1,
+      eventStreamUrl: '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
+      feasibilityReport: verifiedReport,
+      evaluation: verifiedEvaluation,
+      createdAt: '2026-07-16T01:00:00Z',
+      updatedAt: '2026-07-16T01:00:05Z',
+    }),
+  } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+
+  const task = await getPlanningTask('access-token', '33333333-3333-3333-3333-333333333333')
+
+  expect(task.status).toBe('SUCCEEDED')
+  expect(task.feasibilityReport).toEqual(verifiedReport)
+  expect(task.evaluation).toEqual(verifiedEvaluation)
+})
+
+test('streams a PLANNING_REVIEW_REQUIRED event with report and candidate payload', async () => {
+  const encoder = new TextEncoder()
+  const payload = {
+    eventId: 5,
+    taskId: '33333333-3333-3333-3333-333333333333',
+    eventType: 'PLANNING_REVIEW_REQUIRED',
+    schemaVersion: 1,
+    payload: { status: 'WAITING_USER', feasibilityReport: reviewReport, candidateItinerary: reviewCandidate },
+    createdAt: '2026-07-16T01:00:01Z',
+  }
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(
+        `event: PLANNING_REVIEW_REQUIRED\ndata: ${JSON.stringify(payload)}\n\n`,
+      ))
+      controller.close()
+    },
+  })
+  const fetchMock = vi.fn(async () => ({ ok: true, status: 200, body } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+  const received: PlanningTaskEvent[] = []
+
+  await streamPlanningTaskEvents(
+    'access-token',
+    '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
+    (event) => received.push(event),
+  )
+
+  expect(received).toHaveLength(1)
+  expect(received[0]!.eventType).toBe('PLANNING_REVIEW_REQUIRED')
+  expect(received[0]!.payload.feasibilityReport).toEqual(reviewReport)
+  expect(received[0]!.payload.candidateItinerary).toEqual(reviewCandidate)
+})
+
+test('streams a PLANNING_COMPLETED event with report and evaluation payload', async () => {
+  const encoder = new TextEncoder()
+  const payload = {
+    eventId: 6,
+    taskId: '33333333-3333-3333-3333-333333333333',
+    eventType: 'PLANNING_COMPLETED',
+    schemaVersion: 1,
+    payload: { status: 'SUCCEEDED', feasibilityReport: { ...reviewReport, status: 'VERIFIED' }, evaluation: verifiedEvaluation },
+    createdAt: '2026-07-16T01:00:02Z',
+  }
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(
+        `event: PLANNING_COMPLETED\ndata: ${JSON.stringify(payload)}\n\n`,
+      ))
+      controller.close()
+    },
+  })
+  const fetchMock = vi.fn(async () => ({ ok: true, status: 200, body } as Response))
+  vi.stubGlobal('fetch', fetchMock)
+  const received: PlanningTaskEvent[] = []
+
+  await streamPlanningTaskEvents(
+    'access-token',
+    '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
+    (event) => received.push(event),
+  )
+
+  expect(received).toHaveLength(1)
+  expect(received[0]!.eventType).toBe('PLANNING_COMPLETED')
+  expect(received[0]!.payload.feasibilityReport).toEqual({ ...reviewReport, status: 'VERIFIED' })
+  expect(received[0]!.payload.evaluation).toEqual(verifiedEvaluation)
 })

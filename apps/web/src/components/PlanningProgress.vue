@@ -5,7 +5,7 @@ import { computed, ref } from 'vue'
 import type { PlanningProgressStage, PlanningProgressUpdate } from '../lib/api'
 
 const props = defineProps<{
-  planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'
+  planningState: 'idle' | 'queued' | 'succeeded' | 'waiting_user' | 'failed' | 'cancelled'
   progress?: PlanningProgressUpdate | null
   progressHistory?: PlanningProgressUpdate[]
 }>()
@@ -50,6 +50,7 @@ const currentStepIndex = computed(() => {
 
 const currentMessage = computed(() => {
   if (props.planningState === 'succeeded') return '行程规划已完成'
+  if (props.planningState === 'waiting_user') return '行程规划待确认'
   if (props.planningState === 'failed') return '行程规划未能完成'
   if (props.planningState === 'cancelled') return '行程规划已取消'
   if (props.progress) return stageMessages[props.progress.stage]

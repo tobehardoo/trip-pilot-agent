@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { readFeasibilityReport } from '../lib/feasibility'
 
 import {
   ApiError,
@@ -57,10 +58,12 @@ import {
 import { useItineraryDraft } from '../composables/useItineraryDraft'
 import GuideIntelligencePanel from './GuideIntelligencePanel.vue'
 import ConstraintEditor from './ConstraintEditor.vue'
+import FeasibilityReportPanel from './FeasibilityReportPanel.vue'
 import ItineraryActionsPanel, { type CreatedItineraryShare } from './ItineraryActionsPanel.vue'
 import ItineraryVersionPanel from './ItineraryVersionPanel.vue'
 import PlanEvaluationPanel from './PlanEvaluationPanel.vue'
 import PlanningProgress from './PlanningProgress.vue'
+import PlanningReviewPanel from './PlanningReviewPanel.vue'
 import TripMap from './TripMap.vue'
 import TripWeatherTimeline from './TripWeatherTimeline.vue'
 import TransitLegControl from './TransitLegControl.vue'
@@ -92,10 +95,13 @@ const props = withDefaults(defineProps<{
   createItineraryShare?: (versionId: string, expiresAt?: string) => Promise<CreatedItineraryShare>
   revokeItineraryShare?: (shareId: string) => Promise<void>
   downloadItineraryExport?: (versionId: string, format: 'ics' | 'pdf') => Promise<void>
-  planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled'
+  planningState: 'idle' | 'queued' | 'succeeded' | 'waiting_user' | 'failed' | 'cancelled'
   planningError: string | null
   planningProgress?: PlanningProgressUpdate | null
   planningProgressHistory?: PlanningProgressUpdate[]
+  feasibilityReport?: unknown
+  candidateItinerary?: unknown
+  feasibilityLoadState?: 'idle' | 'loaded'
   guideImports?: GuideImport[]
   guideBusy?: boolean
   guideError?: string | null
@@ -121,6 +127,7 @@ const props = withDefaults(defineProps<{
   guideImports: () => [],
   planningProgress: null,
   planningProgressHistory: () => [],
+  feasibilityLoadState: 'idle',
   itineraryVersions: () => [],
   itineraryShares: () => [],
   versionBusy: false,
@@ -157,6 +164,8 @@ const emit = defineEmits<{
   back: []
   logout: []
 }>()
+
+const readFeasibilityReportResult = computed(() => readFeasibilityReport(props.feasibilityReport))
 
 const defaultPreferences = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
 const chinaTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -809,6 +818,24 @@ watch(() => props.itinerary, (nextItinerary) => {
               <div><dt class="text-xs text-surface-400">到达 / 返程</dt><dd class="mt-1 text-sm text-surface-600">{{ trip.constraints.arrival?.placeName ?? '未设置' }} / {{ trip.constraints.departure?.placeName ?? '未设置' }}</dd></div>
             </dl>
           </Card>
+        </section>
+
+        <!-- Feasibility Review / Authoritative Report -->
+        <section v-if="planningState === 'waiting_user'" class="mb-6" aria-label="规划需要确认">
+          <PlanningReviewPanel
+            :report="readFeasibilityReportResult.ok ? readFeasibilityReportResult.value : null"
+            :malformed-report="!readFeasibilityReportResult.ok && !!feasibilityReport"
+            :candidate="candidateItinerary"
+            :current-itinerary="itinerary
+              ? { title: itinerary.title, estimatedTotalCost: itinerary.estimatedTotalCost, days: itinerary.days }
+              : null"
+          />
+        </section>
+        <section v-else-if="planningState === 'succeeded' || feasibilityLoadState === 'loaded'" class="mb-6" aria-label="硬可行性验证结果">
+          <FeasibilityReportPanel
+            :report="readFeasibilityReportResult.ok ? readFeasibilityReportResult.value : null"
+            :malformed="!!feasibilityReport && !readFeasibilityReportResult.ok"
+          />
         </section>
 
         <!-- Plan Evaluation -->

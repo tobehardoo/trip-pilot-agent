@@ -30,6 +30,13 @@ public class PlanningTaskController {
         return planningTaskService.get(UUID.fromString(jwt.getSubject()), taskId);
     }
 
+    @GetMapping("/api/trips/{tripId}/planning-tasks/latest")
+    PlanningTaskService.PlanningTaskResponse latest(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable UUID tripId) {
+        return planningTaskService.latest(UUID.fromString(jwt.getSubject()), tripId);
+    }
+
     @PostMapping("/api/trips/{tripId}/planning-tasks")
     @ResponseStatus(HttpStatus.ACCEPTED)
     PlanningTaskService.PlanningTaskResponse create(

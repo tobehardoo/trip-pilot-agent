@@ -101,3 +101,72 @@ test('collapses older version records until explicitly expanded', async () => {
   await fireEvent.click(screen.getByRole('button', { name: '查看其余 2 个较早版本' }))
   expect(view.container.querySelectorAll('ol > li')).toHaveLength(5)
 })
+
+const verifiedMetadata = {
+  reportId: 'report-verified',
+  schemaVersion: 1,
+  validatorVersion: 'hard-validator-v4',
+  status: 'VERIFIED',
+  itineraryFingerprint: 'a'.repeat(64),
+  validatedAt: '2026-07-25T08:00:00Z',
+}
+
+function versionWithFeasibility(feasibility: unknown): ItineraryVersionSummary {
+  return {
+    ...versions[1]!,
+    versionId: 'version-3',
+    versionNumber: 3,
+    current: true,
+    feasibility,
+  }
+}
+
+test('shows VERIFIED feasibility metadata on the version record', () => {
+  render(ItineraryVersionPanel, {
+    props: {
+      versions: [versionWithFeasibility(verifiedMetadata)],
+      currentVersionId: 'version-3', busy: false, error: null,
+      getDiff: async () => diff, rollback: async () => {},
+    },
+  })
+  expect(screen.getByText('已验证')).toBeTruthy()
+})
+
+test('shows NEEDS_REPAIR and UNVERIFIED feasibility metadata', () => {
+  render(ItineraryVersionPanel, {
+    props: {
+      versions: [
+        versionWithFeasibility({ ...verifiedMetadata, status: 'NEEDS_REPAIR' }),
+        { ...versionWithFeasibility({ ...verifiedMetadata, status: 'UNVERIFIED' }), versionId: 'version-4', current: false },
+      ],
+      currentVersionId: 'version-3', busy: false, error: null,
+      getDiff: async () => diff, rollback: async () => {},
+    },
+  })
+  expect(screen.getByText('待修复')).toBeTruthy()
+  expect(screen.getByText('未验证')).toBeTruthy()
+})
+
+test('shows no historical validation copy when metadata is null, not UNVERIFIED', () => {
+  render(ItineraryVersionPanel, {
+    props: {
+      versions: [versionWithFeasibility(null)],
+      currentVersionId: 'version-3', busy: false, error: null,
+      getDiff: async () => diff, rollback: async () => {},
+    },
+  })
+  expect(screen.getByText('无历史验证')).toBeTruthy()
+  expect(screen.queryByText('未验证')).toBeNull()
+})
+
+test('degrades malformed feasibility metadata without showing VERIFIED', () => {
+  render(ItineraryVersionPanel, {
+    props: {
+      versions: [versionWithFeasibility('not-a-report')],
+      currentVersionId: 'version-3', busy: false, error: null,
+      getDiff: async () => diff, rollback: async () => {},
+    },
+  })
+  expect(screen.queryByText('已验证')).toBeNull()
+  expect(screen.getByText('验证信息无法读取')).toBeTruthy()
+})

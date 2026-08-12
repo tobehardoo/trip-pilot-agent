@@ -44,6 +44,9 @@ export default defineConfig(({ mode }) => {
           'src/components/TripMap.vue',
           'src/lib/amap.ts',
           'src/lib/map.ts',
+          'src/lib/feasibility.ts',
+          'src/components/FeasibilityReportPanel.vue',
+          'src/components/PlanningReviewPanel.vue',
         ],
         reporter: ['text'],
         thresholds: {

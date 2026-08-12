@@ -97,7 +97,7 @@ export interface PlanningTask {
   taskId: string
   tripId: string
   taskType: string
-  status: string
+  status: PlanningTaskStatus
   baselineTripVersion: number
   eventStreamUrl: string
   errorCode?: string | null
@@ -115,10 +115,20 @@ export interface PlanningTask {
   actualProviders?: ProviderSource[] | null
   fallbackReason?: string | null
   fallbackOperations?: ProviderFallbackOperation[] | null
+  feasibilityReport?: unknown
+  candidateItinerary?: unknown
   evaluation?: PlanEvaluation | null
   createdAt: string
   updatedAt: string
 }
+
+export type PlanningTaskStatus =
+  | 'SUCCEEDED'
+  | 'WAITING_USER'
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'FAILED'
+  | 'CANCELLED'
 
 export type ProviderExecutionMode =
   | 'DEMO_ONLY'
@@ -224,9 +234,11 @@ export interface PlanningTaskEvent {
       code: string
       message: string
     }>
+    feasibilityReport?: unknown
+    candidateItinerary?: unknown
+    evaluation?: unknown
     [key: string]: unknown
   }
-  evaluation?: PlanEvaluation | null
   createdAt: string
 }
 
@@ -469,6 +481,7 @@ export interface ItineraryVersionSummary {
   rollbackFromVersionId: string | null
   createdAt: string
   current: boolean
+  feasibility: unknown
 }
 
 export interface ItineraryVersionDiff {
@@ -773,6 +786,13 @@ export function cancelPlanningTask(accessToken: string, taskId: string): Promise
 
 export function getPlanningTask(accessToken: string, taskId: string): Promise<PlanningTask> {
   return request(`/api/planning-tasks/${encodeURIComponent(taskId)}`, {}, accessToken)
+}
+
+export function getLatestPlanningTask(
+  accessToken: string,
+  tripId: string,
+): Promise<PlanningTask> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/planning-tasks/latest`, {}, accessToken)
 }
 
 export function getCurrentItinerary(accessToken: string, tripId: string): Promise<Itinerary> {

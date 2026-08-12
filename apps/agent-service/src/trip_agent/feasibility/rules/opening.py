@@ -193,9 +193,13 @@ def assess_opening_hours(ctx: ValidationContext) -> RuleAssessment:
             unknown_count += 1
             affected_dates.add(day_date)
             ref = (
-                f"{activity.activity_id}"
+                f"activity:{activity.activity_id}"
                 if activity.activity_id is not None
-                else (activity.provider_poi_id if activity.provider_poi_id is not None else None)
+                else (
+                    f"poi:{activity.provider_poi_id}"
+                    if activity.provider_poi_id is not None
+                    else None
+                )
             )
             if ref is not None:
                 affected_refs.add(ref)

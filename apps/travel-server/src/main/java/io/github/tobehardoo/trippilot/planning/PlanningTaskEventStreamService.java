@@ -12,7 +12,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 @Service
 public class PlanningTaskEventStreamService {
 
-    private static final Set<String> TERMINAL_STATUSES = Set.of("SUCCEEDED", "FAILED", "CANCELLED");
+    private static final Set<String> TERMINAL_STATUSES =
+            Set.of("SUCCEEDED", "FAILED", "CANCELLED", "WAITING_USER");
 
     private final PlanningTaskMapper taskMapper;
     private final PlanningTaskEventHub eventHub;

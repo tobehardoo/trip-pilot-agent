@@ -18,6 +18,7 @@ from unicodedata import normalize
 
 from trip_agent.domain.shared import CHINA_TIME_ZONE
 from trip_agent.feasibility.context import ValidationContext
+from trip_agent.feasibility.entity_refs import encode_poi_ref
 from trip_agent.feasibility.models import RuleOutcome, RuleResult
 from trip_agent.worker.contracts import FixedSchedule, ItineraryActivity
 
@@ -244,7 +245,7 @@ def assess_duplicate_poi(ctx: ValidationContext) -> RuleAssessment:
                         reason_code="DUPLICATE_POI",
                         message=f"duplicate POI '{poi_id}' appears more than once",
                         affected_date=day.date,
-                        affected_entity_refs=(poi_id,),
+                        affected_entity_refs=(encode_poi_ref(poi_id),),
                     )
                 )
             else:

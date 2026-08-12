@@ -82,6 +82,8 @@ public class PlanningReviewService implements PlanningReviewHandler {
         if (!"QUEUED".equals(task.status()) && !"RUNNING".equals(task.status())) {
             throw rejected("Planning task cannot accept a review event in status " + task.status());
         }
+        validateReport(event);
+        validateCandidateIntegrity(event);
         guard.validateDates(event.payload().itinerary().days(), task);
         if (guard.isStaleTripBaseline(task)) {
             persistStaleFailure(event, task, STALE_TRIP_VERSION,
@@ -104,7 +106,7 @@ public class PlanningReviewService implements PlanningReviewHandler {
                         WAITING_USER,
                         event.runId(),
                         event.payload().provider(),
-                        event.payload().itinerary(),
+                        event.payload().validatedItineraryJson(),
                         event.payload().knowledge(),
                         event.payload().factImpacts(),
                         event.payload().providerProvenance(),
@@ -112,7 +114,7 @@ public class PlanningReviewService implements PlanningReviewHandler {
                 )), now
         );
         requireOne(taskEventMapper.insert(record), "planning task event");
-        eventPublisher.publishEvent(new PlanningTaskEventCreated(record));
+        eventPublisher.publishEvent(new PlanningTaskEventCreated(stored(record)));
     }
 
     private void persistStaleFailure(PlanningReviewRequiredEvent event,
@@ -128,7 +130,13 @@ public class PlanningReviewService implements PlanningReviewHandler {
                 writeJson(new FailurePayload(FAILED, errorCode, message)), now
         );
         requireOne(taskEventMapper.insert(record), "planning task event");
-        eventPublisher.publishEvent(new PlanningTaskEventCreated(record));
+        eventPublisher.publishEvent(new PlanningTaskEventCreated(stored(record)));
+    }
+
+    private PlanningTaskEventRecord stored(PlanningTaskEventRecord record) {
+        return taskEventMapper.findByEventId(record.eventId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Planning task event could not be read"));
     }
 
     private void requireOne(int updatedRows, String operation) {
@@ -145,6 +153,68 @@ public class PlanningReviewService implements PlanningReviewHandler {
         }
     }
 
+    private void validateReport(PlanningReviewRequiredEvent event) {
+        io.github.tobehardoo.trippilot.feasibility.FeasibilityReport report =
+                event.payload().feasibilityReport();
+        if (report == null) {
+            throw rejected("Review event is missing its feasibility report");
+        }
+        try {
+            io.github.tobehardoo.trippilot.feasibility.FeasibilityReportValidator.validate(report);
+        } catch (IllegalArgumentException exception) {
+            throw rejected("Review event feasibility report is invalid: "
+                    + exception.getMessage());
+        }
+        if (report.status() == io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.VERIFIED) {
+            throw rejected("Review event feasibility report must be UNVERIFIED or NEEDS_REPAIR");
+        }
+    }
+
+    /**
+     * Second-line integrity gate for the review candidate (the service may be
+     * invoked without the parser, so it must not blindly trust the event).
+     *
+     * Requires:
+     * <ol>
+     *   <li>the validated raw itinerary snapshot exists and is an object;</li>
+     *   <li>the raw snapshot matches the report fingerprint;</li>
+     *   <li>the raw snapshot strictly deserialises into the typed
+     *       {@link PlanningCompletedEvent.Itinerary} and is semantically
+     *       equal to {@code event.payload().itinerary()} (no unknown fields,
+     *       no structure drift).</li>
+     * </ol>
+     *
+     * All failures happen before markWaitingUser / task_event insert / SSE
+     * publish.
+     */
+    private void validateCandidateIntegrity(PlanningReviewRequiredEvent event) {
+        com.fasterxml.jackson.databind.JsonNode raw =
+                event.payload().validatedItineraryJson();
+        if (raw == null || !raw.isObject()) {
+            throw rejected("Review event is missing its validated itinerary snapshot");
+        }
+        io.github.tobehardoo.trippilot.feasibility.FeasibilityReport report =
+                event.payload().feasibilityReport();
+        if (report == null
+                || !io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                        .matches(raw, report.itineraryFingerprint())) {
+            throw rejected("Review event raw candidate does not match the report fingerprint");
+        }
+        PlanningCompletedEvent.Itinerary typed;
+        try {
+            typed = objectMapper.readerFor(PlanningCompletedEvent.Itinerary.class)
+                    .with(com.fasterxml.jackson.databind.DeserializationFeature
+                            .FAIL_ON_UNKNOWN_PROPERTIES)
+                    .readValue(raw);
+        } catch (java.io.IOException exception) {
+            throw rejected("Review event raw candidate is not a valid itinerary: "
+                    + exception.getMessage());
+        }
+        if (!typed.equals(event.payload().itinerary())) {
+            throw rejected("Review event raw candidate differs from the typed itinerary");
+        }
+    }
+
     private PlanningEventRejectedException rejected(String message) {
         return new PlanningEventRejectedException(message);
     }
@@ -153,7 +223,7 @@ public class PlanningReviewService implements PlanningReviewHandler {
             String status,
             UUID runId,
             String provider,
-            PlanningCompletedEvent.Itinerary candidateItinerary,
+            com.fasterxml.jackson.databind.JsonNode candidateItinerary,
             PlanningCompletedEvent.KnowledgeEvidence knowledge,
             java.util.List<PlanningCompletedEvent.FactImpact> factImpacts,
             PlanningCompletedEvent.ProviderProvenance providerProvenance,

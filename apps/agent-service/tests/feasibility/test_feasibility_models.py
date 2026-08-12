@@ -458,3 +458,82 @@ def test_transit_pass_with_no_evidence_accepted() -> None:
         required=("TRANSIT",),
     )
     assert report.status == FeasibilityStatus.VERIFIED
+
+
+# B6J.2.1 F2: explicit validatorVersion policy (Java-aligned whitelist)
+
+
+def _rule_with_refs(refs: tuple[str, ...]) -> RuleResult:
+    return RuleResult(
+        rule_id="R1",
+        rule_version="1",
+        outcome=RuleOutcome.PASS,
+        reason_code="REASON_OK",
+        message="ok",
+        affected_dates=(),
+        affected_entity_refs=refs,
+        evidence_refs=(),
+        repairable=False,
+    )
+
+
+def _report_with(validator_version: str, refs: tuple[str, ...] = ()) -> FeasibilityReport:
+    return build_feasibility_report(
+        report_id=REPORT_ID,
+        validator_version=validator_version,
+        itinerary_fingerprint=_fingerprint(),
+        validated_at=_ts(),
+        required_rule_ids=("R1",),
+        rule_results=(_rule_with_refs(refs),),
+        repair_attempts=(),
+    )
+
+
+def test_v4_accepts_valid_typed_refs() -> None:
+    report = _report_with("hard-validator-v4", ("poi:POI-1",))
+    assert report.status == FeasibilityStatus.VERIFIED
+
+
+def test_v4_rejects_bare_ref() -> None:
+    with pytest.raises(ValidationError):
+        _report_with("hard-validator-v4", ("8f5ef9c2-c194-4292-b847-5b9dcfda978b",))
+
+
+def test_legacy_versions_accept_bare_refs() -> None:
+    for legacy in ("feasibility-v1", "hard-validator-v1", "hard-validator-v2", "hard-validator-v3"):
+        report = _report_with(legacy, ("8f5ef9c2-c194-4292-b847-5b9dcfda978b",))
+        assert report.status == FeasibilityStatus.VERIFIED
+
+
+def test_v5_rejects_even_with_valid_typed_refs() -> None:
+    with pytest.raises(ValidationError):
+        _report_with("hard-validator-v5", ("poi:POI-1",))
+
+
+def test_arbitrary_validator_rejects_with_empty_refs() -> None:
+    with pytest.raises(ValidationError):
+        _report_with("arbitrary-validator")
+
+
+def test_repair_attempt_refs_are_strict_in_v4() -> None:
+    with pytest.raises(ValidationError):
+        build_feasibility_report(
+            report_id=REPORT_ID,
+            validator_version="hard-validator-v4",
+            itinerary_fingerprint=_fingerprint(),
+            validated_at=_ts(),
+            required_rule_ids=("R1",),
+            rule_results=(_rule_with_refs(()),),
+            repair_attempts=(
+                RepairAttempt(
+                    attempt_index=1,
+                    triggering_rule_ids=("R1",),
+                    action_codes=("MOVE",),
+                    affected_dates=(),
+                    affected_entity_refs=("8f5ef9c2-c194-4292-b847-5b9dcfda978b",),
+                    before_fingerprint=_fingerprint("b"),
+                    after_fingerprint=_fingerprint("c"),
+                    resulting_status=FeasibilityStatus.VERIFIED,
+                ),
+            ),
+        )

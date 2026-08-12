@@ -62,7 +62,7 @@ def test_single_missing_fails() -> None:
 
     assert assessment.result.outcome is RuleOutcome.FAIL
     assert assessment.result.reason_code == "MUST_VISIT_PLACE_MISSING"
-    assert assessment.result.affected_entity_refs == ("陈家祠",)
+    assert assessment.result.affected_entity_refs == ("text:陈家祠",)
     assert assessment.result.affected_dates == ()
 
 
@@ -84,7 +84,7 @@ def test_child_poi_does_not_cover_must_visit() -> None:
     assessment = assess_must_visit_coverage(_ctx(must_visit=("陈家祠",), titles=("陈家祠公交站",)))
 
     assert assessment.result.outcome is RuleOutcome.FAIL
-    assert "陈家祠" in assessment.result.affected_entity_refs
+    assert "text:陈家祠" in assessment.result.affected_entity_refs
 
 
 def test_structural_activity_does_not_cover_must_visit() -> None:

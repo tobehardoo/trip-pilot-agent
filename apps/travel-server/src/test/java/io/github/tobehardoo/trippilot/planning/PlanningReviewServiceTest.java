@@ -113,22 +113,31 @@ class PlanningReviewServiceTest {
         taskMapper.completionContext = Optional.of(completionContext("RUNNING"));
         taskEventMapper.eventByEventId = Optional.empty();
         PlanningReviewRequiredEvent event = reviewEvent();
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        PlanningCompletedEvent.Itinerary outOfRangeItinerary =
+                new PlanningCompletedEvent.Itinerary(
+                        event.payload().itinerary().title(),
+                        List.of(new PlanningCompletedEvent.Day(
+                                LocalDate.parse("2026-08-02"),
+                                event.payload().itinerary().days().get(0).activities(),
+                                List.of()
+                        )),
+                        event.payload().itinerary().estimatedTotalCost()
+                );
+        com.fasterxml.jackson.databind.JsonNode rawOutOfRange =
+                mapper.valueToTree(outOfRangeItinerary);
+        String fingerprint = io.github.tobehardoo.trippilot.feasibility
+                .ItineraryFingerprintVerifier.compute(rawOutOfRange);
         PlanningReviewRequiredEvent outOfRange = new PlanningReviewRequiredEvent(
                 event.eventType(), event.schemaVersion(), event.eventId(), event.traceId(),
                 event.taskId(), event.tripId(), event.runId(), event.occurredAt(),
                 new PlanningReviewRequiredEvent.Payload(
                         event.payload().status(), event.payload().provider(),
-                        new PlanningCompletedEvent.Itinerary(
-                                event.payload().itinerary().title(),
-                                List.of(new PlanningCompletedEvent.Day(
-                                        LocalDate.parse("2026-08-02"),
-                                        event.payload().itinerary().days().get(0).activities(),
-                                        List.of()
-                                )),
-                                event.payload().itinerary().estimatedTotalCost()
-                        ),
+                        outOfRangeItinerary,
                         event.payload().knowledge(), event.payload().factImpacts(),
-                        event.payload().providerProvenance(), event.payload().feasibilityReport()
+                        event.payload().providerProvenance(),
+                        withFingerprint(event.payload().feasibilityReport(), fingerprint),
+                        rawOutOfRange.deepCopy()
                 )
         );
 
@@ -136,6 +145,18 @@ class PlanningReviewServiceTest {
                 .isInstanceOf(PlanningEventRejectedException.class)
                 .hasMessageContaining("within the trip range");
         assertThat(taskMapper.markedWaitingUserTaskId).isNull();
+    }
+
+    private io.github.tobehardoo.trippilot.feasibility.FeasibilityReport withFingerprint(
+            io.github.tobehardoo.trippilot.feasibility.FeasibilityReport report,
+            String fingerprint
+    ) {
+        return new io.github.tobehardoo.trippilot.feasibility.FeasibilityReport(
+                report.schemaVersion(), report.reportId(), report.validatorVersion(),
+                fingerprint, report.status(), report.validatedAt(),
+                report.requiredRuleIds(), report.missingRequiredRuleIds(), report.summary(),
+                report.ruleResults(), report.repairAttempts()
+        );
     }
 
     @Test
@@ -256,36 +277,55 @@ class PlanningReviewServiceTest {
     }
 
     private PlanningReviewRequiredEvent reviewEvent() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        PlanningCompletedEvent.Itinerary itinerary =
+                new PlanningCompletedEvent.Itinerary(
+                        "Benchmark itinerary",
+                        List.of(new PlanningCompletedEvent.Day(
+                                LocalDate.parse("2026-08-01"),
+                                List.of(new PlanningCompletedEvent.Activity(
+                                        null, "Activity 1",
+                                        OffsetDateTime.parse("2026-08-01T09:00:00Z"),
+                                        OffsetDateTime.parse("2026-08-01T10:00:00Z"),
+                                        new java.math.BigDecimal("0"),
+                                        "DEMO", null, null, null, null, null
+                                )),
+                                List.of()
+                        )),
+                        new java.math.BigDecimal("0")
+                );
+        // The raw validated snapshot must be the exact tree the typed
+        // itinerary deserialises from, and the report fingerprint must bind
+        // it (B6J.2.2 integrity gate).
+        com.fasterxml.jackson.databind.JsonNode rawItinerary =
+                mapper.valueToTree(itinerary);
+        String fingerprint = io.github.tobehardoo.trippilot.feasibility
+                .ItineraryFingerprintVerifier.compute(rawItinerary);
+
+        io.github.tobehardoo.trippilot.feasibility.FeasibilityReport.RuleResult rule =
+                new io.github.tobehardoo.trippilot.feasibility.FeasibilityReport.RuleResult(
+                        "R1", "1",
+                        io.github.tobehardoo.trippilot.feasibility.RuleOutcome.UNKNOWN,
+                        "REASON_OK", "evaluated",
+                        List.of(), List.of(), List.of(), false
+                );
         io.github.tobehardoo.trippilot.feasibility.FeasibilityReport report =
                 new io.github.tobehardoo.trippilot.feasibility.FeasibilityReport(
                         1, UUID.randomUUID(), "hard-validator-v3",
-                        "dce5e94d5981b3ffec3a0aff9dcfc29245d874552e863f4b432a47985bc7d025",
+                        fingerprint,
                         io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.UNVERIFIED,
                         OffsetDateTime.parse("2026-08-10T12:00:00Z"),
-                        List.of(), List.of(),
+                        List.of("R1"), List.of(),
                         new io.github.tobehardoo.trippilot.feasibility.FeasibilityReport.Summary(
-                                0, 0, 0, 0, 0, 0),
-                        List.of(), List.of()
+                                1, 0, 0, 1, 0, 0),
+                        List.of(rule), List.of()
                 );
         PlanningReviewRequiredEvent.Payload payload =
                 new PlanningReviewRequiredEvent.Payload(
                         "WAITING_USER", "DEMO",
-                        new PlanningCompletedEvent.Itinerary(
-                                "Benchmark itinerary",
-                                List.of(new PlanningCompletedEvent.Day(
-                                        LocalDate.parse("2026-08-01"),
-                                        List.of(new PlanningCompletedEvent.Activity(
-                                                null, "Activity 1",
-                                                OffsetDateTime.parse("2026-08-01T09:00:00Z"),
-                                                OffsetDateTime.parse("2026-08-01T10:00:00Z"),
-                                                new java.math.BigDecimal("0"),
-                                                "DEMO", null, null, null, null, null
-                                        )),
-                                        List.of()
-                                )),
-                                new java.math.BigDecimal("0")
-                        ),
-                        null, List.of(), null, report
+                        itinerary,
+                        null, List.of(), null, report,
+                        rawItinerary.deepCopy()
                 );
         return new PlanningReviewRequiredEvent(
                 "PLANNING_REVIEW_REQUIRED", 1, EVENT_ID, TRACE_ID, TASK_ID, TRIP_ID, RUN_ID,
@@ -376,6 +416,10 @@ class PlanningReviewServiceTest {
         @Override
         public int insert(PlanningTaskEventRecord event) {
             inserted = event;
+            eventByEventId = Optional.of(new PlanningTaskEventRecord(
+                    1L, event.eventId(), event.taskId(), event.eventType(),
+                    event.schemaVersion(), event.payloadJson(), event.createdAt()
+            ));
             return insertResult;
         }
 
@@ -400,7 +444,7 @@ class PlanningReviewServiceTest {
         }
 
         @Override
-        public Optional<PlanningTaskEventRecord> findLatestTerminal(UUID taskId) {
+        public Optional<PlanningTaskEventRecord> findLatestOutcome(UUID taskId) {
             throw new UnsupportedOperationException("not used in this test");
         }
     }

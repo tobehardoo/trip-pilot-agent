@@ -99,7 +99,7 @@
     "feasibilityReport": {
       "schemaVersion": 1,
       "reportId": "9b31da4c-3d0d-4d9e-bef8-d7d1871f303a",
-      "validatorVersion": "hard-validator-v3",
+      "validatorVersion": "hard-validator-v4",
       "itineraryFingerprint": "dce5e94d5981b3ffec3a0aff9dcfc29245d874552e863f4b432a47985bc7d025",
       "status": "NEEDS_REPAIR",
       "validatedAt": "2026-08-10T12:00:00Z",
@@ -180,8 +180,8 @@
             "2026-08-01"
           ],
           "affectedEntityRefs": [
-            "10000000-0000-4000-8000-000000000031",
-            "10000000-0000-4000-8000-000000000032"
+            "poi:10000000-0000-4000-8000-000000000031",
+            "poi:10000000-0000-4000-8000-000000000032"
           ],
           "evidenceRefs": [],
           "repairable": true
@@ -273,7 +273,7 @@
             "2026-08-01"
           ],
           "affectedEntityRefs": [
-            "10000000-0000-4000-8000-000000000032"
+            "poi:10000000-0000-4000-8000-000000000032"
           ],
           "beforeFingerprint": "dce5e94d5981b3ffec3a0aff9dcfc29245d874552e863f4b432a47985bc7d025",
           "afterFingerprint": "dce5e94d5981b3ffec3a0aff9dcfc29245d874552e863f4b432a47985bc7d025",

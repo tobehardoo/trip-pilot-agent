@@ -352,8 +352,8 @@ def test_route_activity_ref_prefers_activity_id_then_poi_id() -> None:
     assessment = assess_route_endpoint_continuity(ctx)
 
     refs = assessment.result.affected_entity_refs
-    assert "3d76fb9e-362e-4b28-8a9e-18e8ac7050ad" in refs
-    assert "POI-2" in refs
+    assert "activity:3d76fb9e-362e-4b28-8a9e-18e8ac7050ad" in refs
+    assert "poi:POI-2" in refs
 
 
 # ── CROSS_DAY_CONTINUITY ───────────────────────────────────────────────────
@@ -498,7 +498,7 @@ def test_cross_confirmed_poi_id_mismatch_fails() -> None:
 
     assert assessment.result.outcome is RuleOutcome.FAIL
     assert assessment.result.reason_code == "OVERNIGHT_ENDPOINT_MISMATCH"
-    assert "HOTEL-1" in assessment.result.affected_entity_refs
+    assert "poi:HOTEL-1" in assessment.result.affected_entity_refs
 
 
 def test_cross_confirmed_coordinates_mismatch_fails() -> None:

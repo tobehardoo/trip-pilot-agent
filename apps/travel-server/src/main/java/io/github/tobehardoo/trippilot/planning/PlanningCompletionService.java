@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.itinerary.ItineraryService;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
@@ -111,10 +112,10 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
             ItineraryService.CreateItineraryResult result =
                     itineraryService.createReplanVersion(
                             task.tripId(), event, task, clock);
-            persistFeasibilityReportIfPresent(event, result);
+            String reportJson = persistFeasibilityReport(event, result);
             updateTaskToSucceeded(
                     event, task, result, "PLANNING_COMPLETED",
-                    writeJson(completionPayload(event, result)));
+                    writeJson(completionPayload(event, result, reportJson)));
             return;
         }
         ItineraryService.CreateItineraryResult result =
@@ -122,24 +123,26 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         task.tripId(), event, task.id(),
                         task.constraintSnapshotJson(), clock);
         persistFactImpacts(event, result.versionId());
-        persistFeasibilityReportIfPresent(event, result);
+        String reportJson = persistFeasibilityReport(event, result);
         updateTaskToSucceeded(
                 event, task, result, "PLANNING_COMPLETED",
-                writeJson(completionPayload(event, result)));
+                writeJson(completionPayload(event, result, reportJson)));
     }
 
     /**
      * Persists the VERIFIED feasibility report of a v9 completion atomically
-     * with the itinerary version and the SUCCEEDED transition.  A v9
-     * completion always carries a report (enforced by the service gate), so a
-     * missing report here is a programming error and must not be silently
-     * tolerated.  A failed insert rolls the whole completion transaction back.
+     * with the itinerary version and the SUCCEEDED transition, and returns
+     * the exact remapped report JSON.
      *
-     * Temporary activity/transit references inside the report are remapped to
-     * the persisted node ids before storage; provider POI ids and plain text
-     * references pass through unchanged.
+     * The same JSON is used for the V33 report_json column and the
+     * PLANNING_COMPLETED task event payload.feasibilityReport, so the two
+     * stores never diverge.  Temporary activity/transit references are
+     * remapped to the persisted node ids once, here; provider POI ids and
+     * plain text references pass through unchanged.  A v9 completion always
+     * carries a report (enforced by the service gate), so a missing report is
+     * a programming error; a failed insert rolls the whole transaction back.
      */
-    private void persistFeasibilityReportIfPresent(
+    private String persistFeasibilityReport(
             PlanningCompletedEvent event,
             ItineraryService.CreateItineraryResult result
     ) {
@@ -147,6 +150,13 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                 event.payload().feasibilityReport();
         if (report == null) {
             throw new IllegalStateException("v9 completion is missing its feasibility report");
+        }
+        try {
+            io.github.tobehardoo.trippilot.feasibility.FeasibilityReportValidator.validate(report);
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalStateException(
+                    "v9 completion feasibility report is invalid: " + exception.getMessage(),
+                    exception);
         }
         java.util.Map<java.util.UUID, java.util.UUID> activityRefs = new java.util.HashMap<>();
         for (ItineraryService.PersistedActivityReference ref : result.persistedActivities()) {
@@ -169,11 +179,13 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         reportJson
                 )
         ), "itinerary feasibility report");
+        return reportJson;
     }
 
     private CompletionPayload completionPayload(
             PlanningCompletedEvent event,
-            ItineraryService.CreateItineraryResult result
+            ItineraryService.CreateItineraryResult result,
+            String feasibilityReportJson
     ) {
         PlanningCompletedEvent.ProviderProvenance provenance =
                 event.payload().providerProvenance();
@@ -184,7 +196,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                     null, null, null, null, null,
                     remapEvaluation(
                             event.payload().evaluation(),
-                            result.persistedActivities(), result.persistedTransit())
+                            result.persistedActivities(), result.persistedTransit()),
+                    feasibilityReportNode(feasibilityReportJson)
             );
         }
         return new CompletionPayload(
@@ -196,8 +209,17 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         provenance.fallbackOperations(), result.persistedTransit()),
                 remapEvaluation(
                         event.payload().evaluation(),
-                        result.persistedActivities(), result.persistedTransit())
+                        result.persistedActivities(), result.persistedTransit()),
+                feasibilityReportNode(feasibilityReportJson)
         );
+    }
+
+    private JsonNode feasibilityReportNode(String reportJson) {
+        try {
+            return objectMapper.readTree(reportJson);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("Cannot re-parse remapped feasibility report", e);
+        }
     }
 
     private PlanningCompletedEvent.PlanEvaluation remapEvaluation(
@@ -417,7 +439,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
             Boolean fallbackSucceeded,
             String fallbackReason,
             List<CompletionFallbackOperation> fallbackOperations,
-            PlanningCompletedEvent.PlanEvaluation evaluation
+            PlanningCompletedEvent.PlanEvaluation evaluation,
+            JsonNode feasibilityReport
     ) {
     }
 

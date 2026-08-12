@@ -521,4 +521,96 @@ class PlanningCompletedEventParserTest {
                 .isInstanceOf(PlanningEventContractException.class)
                 .hasMessageContaining("unsupported eventType or schemaVersion");
     }
+
+    // ── B6J.2.1 F1: v4 typed refs semantic gate ───────────────────────────
+
+    @Test
+    void rejectsV9BareUuidEntityRef() throws Exception {
+        ObjectNode event = amapV9Event();
+        setFirstRuleRef(event, "8f5ef9c2-c194-4292-b847-5b9dcfda978b");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsV9UnknownKindEntityRef() throws Exception {
+        ObjectNode event = amapV9Event();
+        setFirstRuleRef(event, "unknown:value");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsV9NonCanonicalActivityUuidRef() throws Exception {
+        ObjectNode event = amapV9Event();
+        setFirstRuleRef(event, "activity:10000000-0000-4000-8000-AABBCCDDEEFF");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsV9InvalidRepairAttemptRef() throws Exception {
+        ObjectNode event = amapV9Event();
+        ArrayNode attempts = objectMapper.createArrayNode();
+        ObjectNode attempt = attempts.addObject();
+        attempt.put("attemptIndex", 1);
+        attempt.putArray("triggeringRuleIds").add("DUPLICATE_POI");
+        attempt.putArray("actionCodes").add("REMOVE_DUPLICATE");
+        attempt.putArray("affectedDates").add("2026-08-01");
+        attempt.putArray("affectedEntityRefs").add("8f5ef9c2-c194-4292-b847-5b9dcfda978b");
+        attempt.put("beforeFingerprint", "e8e68b0750eed9238cfbee315b813a44319172020c7b52e32e47b0ca9e7aa21e");
+        attempt.put("afterFingerprint", "e8e68b0750eed9238cfbee315b813a44319172020c7b52e32e47b0ca9e7aa21e");
+        attempt.put("resultingStatus", "VERIFIED");
+        ((ObjectNode) event.at("/payload/feasibilityReport")).set("repairAttempts", attempts);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsV9UnknownValidatorVersion() throws Exception {
+        ObjectNode event = amapV9Event();
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("validatorVersion", "hard-validator-v9");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    private ObjectNode amapV9Event() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID()
+                ));
+        // The Java in-memory v9 fixture still emits hard-validator-v3; the
+        // active v4 contract requires the v4 validator version (shared
+        // completion-v9 fixtures were migrated in B6J.2).
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("validatorVersion", "hard-validator-v4");
+        return event;
+    }
+
+    private void setFirstRuleRef(ObjectNode event, String value) {
+        com.fasterxml.jackson.databind.JsonNode results =
+                event.at("/payload/feasibilityReport/ruleResults");
+        for (com.fasterxml.jackson.databind.JsonNode rule : results) {
+            if (rule.path("affectedEntityRefs").isArray()
+                    && rule.path("affectedEntityRefs").size() > 0) {
+                ((ArrayNode) rule.path("affectedEntityRefs"))
+                        .set(0, objectMapper.getNodeFactory().textNode(value));
+                return;
+            }
+        }
+        ArrayNode refs = objectMapper.createArrayNode();
+        refs.add(value);
+        ((ObjectNode) results.get(0)).set("affectedEntityRefs", refs);
+    }
 }

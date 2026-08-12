@@ -117,6 +117,188 @@ class PlanningReviewRequiredEventParserTest {
                 .hasMessageContaining("unsupported eventType or schemaVersion");
     }
 
+    // ── B6J.2.1 F1: v4 typed refs semantic gate ───────────────────────────
+
+    @Test
+    void rejectsV4BareUuidEntityRef() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        setFirstRuleRef(event, "8f5ef9c2-c194-4292-b847-5b9dcfda978b");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsV4UnknownKindEntityRef() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        setFirstRuleRef(event, "unknown:value");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsV4NonCanonicalActivityUuidRef() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        setFirstRuleRef(event, "activity:10000000-0000-4000-8000-AABBCCDDEEFF");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsV4InvalidRepairAttemptRef() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        com.fasterxml.jackson.databind.node.ArrayNode attempts = objectMapper.createArrayNode();
+        ObjectNode attempt = attempts.addObject();
+        attempt.put("attemptIndex", 1);
+        attempt.putArray("triggeringRuleIds").add("DUPLICATE_POI");
+        attempt.putArray("actionCodes").add("REMOVE_DUPLICATE");
+        attempt.putArray("affectedDates").add("2026-08-01");
+        attempt.putArray("affectedEntityRefs").add("8f5ef9c2-c194-4292-b847-5b9dcfda978b");
+        attempt.put("beforeFingerprint", "dce5e94d5981b3ffec3a0aff9dcfc29245d874552e863f4b432a47985bc7d025");
+        attempt.put("afterFingerprint", "dce5e94d5981b3ffec3a0aff9dcfc29245d874552e863f4b432a47985bc7d025");
+        attempt.put("resultingStatus", "NEEDS_REPAIR");
+        ((ObjectNode) event.at("/payload/feasibilityReport")).set("repairAttempts", attempts);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsUnknownValidatorVersionWithTypedRefs() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("validatorVersion", "hard-validator-v9");
+        setFirstRuleRef(event, "poi:POI-1");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    @Test
+    void rejectsUnknownValidatorVersionEvenWithEmptyRefs() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("validatorVersion", "arbitrary-validator");
+        clearAllRuleRefs(event);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport is invalid");
+    }
+
+    private void setFirstRuleRef(ObjectNode event, String value) {
+        com.fasterxml.jackson.databind.JsonNode results =
+                event.at("/payload/feasibilityReport/ruleResults");
+        for (com.fasterxml.jackson.databind.JsonNode rule : results) {
+            if (rule.path("affectedEntityRefs").isArray()
+                    && rule.path("affectedEntityRefs").size() > 0) {
+                ((com.fasterxml.jackson.databind.node.ArrayNode) rule.path("affectedEntityRefs"))
+                        .set(0, objectMapper.getNodeFactory().textNode(value));
+                return;
+            }
+        }
+        com.fasterxml.jackson.databind.node.ArrayNode refs = objectMapper.createArrayNode();
+        refs.add(value);
+        ((ObjectNode) results.get(0)).set("affectedEntityRefs", refs);
+    }
+
+    private void clearAllRuleRefs(ObjectNode event) {
+        com.fasterxml.jackson.databind.JsonNode results =
+                event.at("/payload/feasibilityReport/ruleResults");
+        for (com.fasterxml.jackson.databind.JsonNode rule : results) {
+            ((ObjectNode) rule).set("affectedEntityRefs", objectMapper.createArrayNode());
+        }
+    }
+
+    // ── B6J.2.2 R1: validated raw itinerary snapshot ──────────────────────
+
+    @Test
+    void parsedEventCarriesRawItinerarySnapshot() throws Exception {
+        PlanningReviewRequiredEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.sharedReviewV1Fixture(
+                        "review-v1-needs-repair-demo.json"
+                )
+        ));
+
+        com.fasterxml.jackson.databind.JsonNode snapshot =
+                event.payload().validatedItineraryJson();
+        assertThat(snapshot).isNotNull();
+        assertThat(snapshot.isObject()).isTrue();
+        assertThat(snapshot.path("title").asText()).isEqualTo("Benchmark itinerary");
+    }
+
+    @Test
+    void snapshotDeepEqualsInputWireItinerary() throws Exception {
+        ObjectNode tree = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedReviewV1Fixture(
+                        "review-v1-needs-repair-demo.json"
+                )
+        );
+        com.fasterxml.jackson.databind.JsonNode wireItinerary =
+                tree.at("/payload/itinerary");
+
+        PlanningReviewRequiredEvent event = parser.parse(
+                objectMapper.writeValueAsBytes(tree));
+
+        assertThat(event.payload().validatedItineraryJson())
+                .isEqualTo(wireItinerary);
+    }
+
+    @Test
+    void serializedParsedEventNeverContainsInternalSnapshotField() throws Exception {
+        PlanningReviewRequiredEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.sharedReviewV1Fixture(
+                        "review-v1-needs-repair-demo.json"
+                )
+        ));
+
+        String serialized = objectMapper.writeValueAsString(event);
+        assertThat(serialized).doesNotContain("validatedItineraryJson");
+        assertThat(serialized).doesNotContain("rawItinerary");
+        // The wire candidate is still the typed itinerary under payload.
+        assertThat(objectMapper.readTree(serialized).at("/payload/itinerary").isObject())
+                .isTrue();
+    }
+
+    @Test
+    void snapshotIsDefensiveCopyNotAffectedByExternalMutation() throws Exception {
+        ObjectNode tree = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedReviewV1Fixture(
+                        "review-v1-needs-repair-demo.json"
+                )
+        );
+        PlanningReviewRequiredEvent event = parser.parse(
+                objectMapper.writeValueAsBytes(tree));
+
+        // Mutate the caller's tree after parse; the internal snapshot must not
+        // change (deepCopy captured at parse time).
+        ((ObjectNode) tree.at("/payload/itinerary")).put("title", "mutated");
+        assertThat(event.payload().validatedItineraryJson().path("title").asText())
+                .isEqualTo("Benchmark itinerary");
+    }
+
+    @Test
+    void fingerprintMismatchStillRejectedWithSnapshotDesign() throws Exception {
+        ObjectNode tree = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedReviewV1Fixture(
+                        "review-v1-needs-repair-demo.json"
+                )
+        );
+        ((ObjectNode) tree.at("/payload/feasibilityReport"))
+                .put("itineraryFingerprint", "0".repeat(64));
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(tree)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("itineraryFingerprint does not match");
+    }
+
     private ObjectNode sharedReviewEvent() throws Exception {
         return (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.sharedReviewV1Fixture(

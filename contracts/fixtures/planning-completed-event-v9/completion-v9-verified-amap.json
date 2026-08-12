@@ -172,7 +172,7 @@
     "feasibilityReport": {
       "schemaVersion": 1,
       "reportId": "e7b7cf53-62cf-428b-84ff-f68dfff8a6cd",
-      "validatorVersion": "hard-validator-v3",
+      "validatorVersion": "hard-validator-v4",
       "itineraryFingerprint": "e8e68b0750eed9238cfbee315b813a44319172020c7b52e32e47b0ca9e7aa21e",
       "status": "VERIFIED",
       "validatedAt": "2026-08-10T12:00:00Z",

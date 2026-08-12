@@ -48,9 +48,23 @@ public class ItineraryVersionService {
                         version.id(), version.versionNumber(), version.parentVersionId(),
                         version.planningTaskId(), version.versionSource(), version.title(),
                         version.estimatedTotalCost(), version.provider(),
-                        version.rollbackFromVersionId(), version.createdAt(), version.current()
+                        version.rollbackFromVersionId(), version.createdAt(), version.current(),
+                        feasibilityMetadata(version)
                 ))
                 .toList();
+    }
+
+    private FeasibilityMetadata feasibilityMetadata(
+            ItineraryVersionMapper.VersionSummaryRecord version
+    ) {
+        if (version.reportId() == null) {
+            return null;
+        }
+        return new FeasibilityMetadata(
+                version.reportId(), version.reportSchemaVersion(),
+                version.reportValidatorVersion(), version.reportStatus(),
+                version.reportItineraryFingerprint(), version.reportValidatedAt()
+        );
     }
 
     @Transactional(readOnly = true)
@@ -444,7 +458,18 @@ public class ItineraryVersionService {
             UUID versionId, int versionNumber, UUID parentVersionId,
             UUID planningTaskId, String versionSource, String title,
             BigDecimal estimatedTotalCost, String provider,
-            UUID rollbackFromVersionId, Instant createdAt, boolean current
+            UUID rollbackFromVersionId, Instant createdAt, boolean current,
+            FeasibilityMetadata feasibility
+    ) {
+    }
+
+    public record FeasibilityMetadata(
+            UUID reportId,
+            int schemaVersion,
+            String validatorVersion,
+            String status,
+            String itineraryFingerprint,
+            Instant validatedAt
     ) {
     }
     public record ActivityView(

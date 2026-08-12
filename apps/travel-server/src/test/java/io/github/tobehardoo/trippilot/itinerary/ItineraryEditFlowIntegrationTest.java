@@ -1,6 +1,7 @@
 package io.github.tobehardoo.trippilot.itinerary;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutionException;
@@ -28,6 +29,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -539,6 +541,62 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(count("business.itinerary_version")).isEqualTo(4);
         assertThat(count("business.itinerary_rollback")).isEqualTo(1);
+    }
+
+    @Test
+    void listsVersionSummariesWithNestedFeasibilityMetadataAndNullForHistory() throws Exception {
+        PlanningContext context = completedItinerary("version-summary-feasibility@example.com");
+        JsonNode initial = currentItinerary(context);
+        UUID initialVersionId = uuid(initial, "versionId");
+        UUID activityId = uuid(initial.at("/days/0/activities/0"), "id");
+        json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits",
+                                context.tripId()
+                        )
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(
+                                initialVersionId,
+                                "DELETE_ACTIVITY",
+                                activityId,
+                                null
+                        )))
+                .andExpect(status().isOk())
+                .andReturn());
+
+        Map<String, Object> reportRow = jdbcTemplate.queryForMap("""
+                SELECT report_id, schema_version, validator_version, status,
+                       itinerary_fingerprint,
+                       report_json ->> 'validatedAt' AS validated_at_iso
+                FROM business.itinerary_feasibility_report
+                WHERE itinerary_version_id = ?
+                """, initialVersionId);
+        assertThat(reportRow).isNotEmpty();
+
+        mockMvc.perform(get(
+                                "/api/trips/{tripId}/itinerary/versions",
+                                context.tripId()
+                        )
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                // Current USER_EDIT version has no feasibility report: null.
+                .andExpect(jsonPath("$[0].feasibility").value(nullValue()))
+                // Completed version nests the report metadata from V33.
+                .andExpect(jsonPath("$[1].feasibility.reportId")
+                        .value(reportRow.get("report_id").toString()))
+                .andExpect(jsonPath("$[1].feasibility.schemaVersion")
+                        .value(reportRow.get("schema_version")))
+                .andExpect(jsonPath("$[1].feasibility.validatorVersion")
+                        .value(reportRow.get("validator_version").toString()))
+                .andExpect(jsonPath("$[1].feasibility.status")
+                        .value(reportRow.get("status").toString()))
+                .andExpect(jsonPath("$[1].feasibility.itineraryFingerprint")
+                        .value(reportRow.get("itinerary_fingerprint").toString()))
+                .andExpect(jsonPath("$[1].feasibility.validatedAt")
+                        .value(reportRow.get("validated_at_iso").toString()))
+                .andExpect(jsonPath("$[1].feasibility.status").value("VERIFIED"));
     }
 
     @Test

@@ -11,6 +11,7 @@ from __future__ import annotations
 from unicodedata import normalize
 
 from trip_agent.feasibility.context import ValidationContext
+from trip_agent.feasibility.entity_refs import encode_text_ref
 from trip_agent.feasibility.models import RuleOutcome, RuleResult
 from trip_agent.feasibility.rules.core import (
     MAX_AFFECTED_ENTITY_REFS,
@@ -84,18 +85,19 @@ def assess_must_visit_coverage(ctx: ValidationContext) -> RuleAssessment:
             )
         )
     bounded = missing[:MAX_AFFECTED_ENTITY_REFS]
+    typed_bounded = tuple(encode_text_ref(place) for place in bounded)
     return RuleAssessment(
         result=_result(
             RuleOutcome.FAIL,
             "MUST_VISIT_PLACE_MISSING",
             f"{len(missing)} must-visit place(s) are not covered",
-            affected_entity_refs=bounded,
+            affected_entity_refs=typed_bounded,
         ),
         findings=tuple(
             RuleFinding(
                 reason_code="MUST_VISIT_PLACE_MISSING",
                 message=f"must-visit place {place} is not covered",
-                affected_entity_refs=(place,),
+                affected_entity_refs=(encode_text_ref(place),),
             )
             for place in bounded
         ),

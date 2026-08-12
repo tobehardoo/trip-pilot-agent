@@ -25,6 +25,7 @@ class FeasibilityEntityRefMapperTest {
     void mapsTemporaryActivityAndTransitReferencesInRuleResults() {
         String report = """
                 {
+                  "validatorVersion": "hard-validator-v3",
                   "ruleResults": [
                     {
                       "ruleId": "DUPLICATE_POI",
@@ -58,6 +59,7 @@ class FeasibilityEntityRefMapperTest {
     void mapsRepairAttemptEntityRefsToo() {
         String report = """
                 {
+                  "validatorVersion": "hard-validator-v3",
                   "ruleResults": [],
                   "repairAttempts": [
                     {
@@ -82,6 +84,7 @@ class FeasibilityEntityRefMapperTest {
     void keepsNonUuidTextReferencesUnchanged() {
         String report = """
                 {
+                  "validatorVersion": "hard-validator-v3",
                   "ruleResults": [
                     {
                       "ruleId": "OPENING_HOURS",
@@ -105,6 +108,7 @@ class FeasibilityEntityRefMapperTest {
         String unknown = UUID.randomUUID().toString();
         String report = """
                 {
+                  "validatorVersion": "hard-validator-v3",
                   "ruleResults": [
                     {"ruleId": "X", "affectedEntityRefs": ["%s"]}
                   ],
@@ -126,6 +130,7 @@ class FeasibilityEntityRefMapperTest {
         // typed entity refs would be needed to disambiguate.
         String report = """
                 {
+                  "validatorVersion": "hard-validator-v3",
                   "ruleResults": [
                     {"ruleId": "X", "affectedEntityRefs": ["%s"]}
                   ],
@@ -143,6 +148,7 @@ class FeasibilityEntityRefMapperTest {
     void failsClosedWhenAReferenceIsAmbiguousAcrossActivityAndTransit() {
         String report = """
                 {
+                  "validatorVersion": "hard-validator-v3",
                   "ruleResults": [
                     {"ruleId": "X", "affectedEntityRefs": ["%s"]}
                   ],

@@ -188,7 +188,7 @@ def test_eligible_duration_too_short_fails() -> None:
     assert assessment.result.reason_code == "VISIT_TOO_SHORT"
     assert assessment.result.affected_dates == (date(2026, 8, 1),)
     assert assessment.result.affected_entity_refs == (
-        "00000000-0000-0000-0000-000000000001",
+        "activity:00000000-0000-0000-0000-000000000001",
     )  # activity_id
 
 

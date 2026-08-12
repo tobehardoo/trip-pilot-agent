@@ -57,6 +57,7 @@ public class PlanningTaskService {
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
     private final PlanningMetrics metrics;
+    private final PlanningTaskOutcomeReadModel outcomeReadModel;
 
     public PlanningTaskService(PlanningTaskMapper planningTaskMapper,
                                ItineraryMapper itineraryMapper,
@@ -71,7 +72,8 @@ public class PlanningTaskService {
                                ObjectMapper objectMapper,
                                ApplicationEventPublisher eventPublisher,
                                PlatformTransactionManager transactionManager,
-                               PlanningMetrics metrics) {
+                               PlanningMetrics metrics,
+                               PlanningTaskOutcomeReadModel outcomeReadModel) {
         this.planningTaskMapper = planningTaskMapper;
         this.itineraryMapper = itineraryMapper;
         this.itineraryService = itineraryService;
@@ -86,6 +88,7 @@ public class PlanningTaskService {
         this.eventPublisher = eventPublisher;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.metrics = metrics;
+        this.outcomeReadModel = outcomeReadModel;
     }
 
     public PlanningTaskResponse create(UUID ownerId, UUID tripId, UUID idempotencyKey) {
@@ -404,121 +407,43 @@ public class PlanningTaskService {
                 metadata.requestedProviderMode(), metadata.primaryProvider(),
                 metadata.actualProviders(), metadata.fallbackReason(),
                 metadata.fallbackOperations(), metadata.evaluation(),
+                metadata.feasibilityReport(), metadata.candidateItinerary(),
                 task.createdAt(), task.updatedAt()
         );
     }
 
     private TerminalMetadata terminalMetadata(PlanningTaskRecord task) {
-        return planningTaskEventMapper.findLatestTerminal(task.id())
-                .map(event -> readTerminalMetadata(task, event.payloadJson()))
+        return planningTaskEventMapper.findLatestOutcome(task.id())
+                .map(event -> toTerminalMetadata(task, event))
                 .orElseGet(() -> new TerminalMetadata(
                         task.errorCode(), null, null, null, null, null,
                         null, null, task.errorMessage(), null, null, null,
-                        List.of(), null, List.of(), null
+                        List.of(), null, List.of(), null, null, null
                 ));
     }
 
-    private TerminalMetadata readTerminalMetadata(PlanningTaskRecord task, String payloadJson) {
-        try {
-            JsonNode payload = objectMapper.readTree(payloadJson);
-            return new TerminalMetadata(
-                    text(payload, "errorCode", task.errorCode()),
-                    text(payload, "errorCategory", legacyErrorCategory(task.errorCode())),
-                    text(payload, "provider", null),
-                    text(payload, "operation", null),
-                    optionalBoolean(payload, "retryable"),
-                    optionalInteger(payload, "retryCount"),
-                    optionalBoolean(payload, "fallbackAttempted"),
-                    optionalBoolean(payload, "fallbackSucceeded"),
-                    text(payload, "safeMessage", text(payload, "message", task.errorMessage())),
-                    text(payload, "safeProviderCode", null),
-                    text(payload, "requestedProviderMode", null),
-                    text(payload, "primaryProvider", null),
-                    nullableStringList(payload, "actualProviders"),
-                    text(payload, "fallbackReason", null),
-                    fallbackOperationList(payload, "fallbackOperations"),
-                    parseEvaluation(payload)
-            );
-        } catch (JsonProcessingException exception) {
-            throw new IllegalStateException("Planning task terminal event is invalid", exception);
-        }
-    }
-
-    private PlanEvaluation parseEvaluation(JsonNode payload) {
-        JsonNode evalNode = payload.get("evaluation");
-        if (evalNode == null || evalNode.isNull()) {
-            return null;
-        }
-        try {
-            return objectMapper.treeToValue(evalNode, PlanEvaluation.class);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException(
-                    "Planning task evaluation payload is invalid", e);
-        }
+    private TerminalMetadata toTerminalMetadata(
+            PlanningTaskRecord task, PlanningTaskEventRecord event
+    ) {
+        PlanningTaskOutcomeReadModel.Outcome outcome = outcomeReadModel.read(task, event);
+        String errorCategory = outcome.errorCategory() != null
+                ? outcome.errorCategory() : legacyErrorCategory(outcome.errorCode());
+        return new TerminalMetadata(
+                outcome.errorCode(), errorCategory, outcome.provider(), outcome.operation(),
+                outcome.retryable(), outcome.retryCount(), outcome.fallbackAttempted(),
+                outcome.fallbackSucceeded(), outcome.safeMessage(), outcome.safeProviderCode(),
+                outcome.requestedProviderMode(), outcome.primaryProvider(),
+                outcome.actualProviders(), outcome.fallbackReason(),
+                outcome.fallbackOperations(), outcome.evaluation(),
+                outcome.feasibilityReport() == null ? null
+                        : objectMapper.valueToTree(outcome.feasibilityReport()),
+                outcome.candidateItinerary()
+        );
     }
 
     private String legacyErrorCategory(String errorCode) {
         return "NO_FEASIBLE_ITINERARY".equals(errorCode)
                 ? "PLANNING_INFEASIBLE" : null;
-    }
-
-    private String text(JsonNode payload, String field, String fallback) {
-        JsonNode value = payload.get(field);
-        return value == null || value.isNull() ? fallback : value.asText();
-    }
-
-    private Boolean optionalBoolean(JsonNode payload, String field) {
-        JsonNode value = payload.get(field);
-        return value == null || value.isNull() ? null : value.asBoolean();
-    }
-
-    private Integer optionalInteger(JsonNode payload, String field) {
-        JsonNode value = payload.get(field);
-        return value == null || value.isNull() ? null : value.asInt();
-    }
-
-    private List<String> nullableStringList(JsonNode payload, String field) {
-        JsonNode value = payload.get(field);
-        if (value == null || value.isNull()) {
-            return null;
-        }
-        if (!value.isArray()) {
-            throw new IllegalStateException(
-                    "Planning task terminal event field must be an array: " + field);
-        }
-        java.util.ArrayList<String> result = new java.util.ArrayList<>();
-        value.forEach(item -> result.add(item.asText()));
-        return List.copyOf(result);
-    }
-
-    private List<FallbackOperationResponse> fallbackOperationList(
-            JsonNode payload, String field) {
-        JsonNode value = payload.get(field);
-        if (value == null || value.isNull()) {
-            return null;
-        }
-        if (!value.isArray()) {
-            throw new IllegalStateException(
-                    "Planning task terminal event field must be an array: " + field);
-        }
-        java.util.ArrayList<FallbackOperationResponse> result = new java.util.ArrayList<>();
-        value.forEach(item -> result.add(new FallbackOperationResponse(
-                text(item, "operation", null), optionalUuid(item, "transitId"),
-                optionalUuid(item, "fromActivityId"),
-                optionalUuid(item, "toActivityId"),
-                text(item, "requestedMode", null),
-                text(item, "actualProvider", null),
-                text(item, "errorCategory", null),
-                text(item, "errorCode", null),
-                item.path("retryCount").asInt()
-        )));
-        return List.copyOf(result);
-    }
-
-    private UUID optionalUuid(JsonNode payload, String field) {
-        JsonNode value = payload.get(field);
-        return value == null || value.isNull()
-                ? null : UUID.fromString(value.asText());
     }
 
     @Transactional(readOnly = true)
@@ -557,6 +482,8 @@ public class PlanningTaskService {
             String fallbackReason,
             List<FallbackOperationResponse> fallbackOperations,
             PlanEvaluation evaluation,
+            JsonNode feasibilityReport,
+            JsonNode candidateItinerary,
             Instant createdAt,
             Instant updatedAt
     ) {
@@ -578,7 +505,9 @@ public class PlanningTaskService {
             List<String> actualProviders,
             String fallbackReason,
             List<FallbackOperationResponse> fallbackOperations,
-            PlanEvaluation evaluation
+            PlanEvaluation evaluation,
+            JsonNode feasibilityReport,
+            JsonNode candidateItinerary
     ) {
     }
 

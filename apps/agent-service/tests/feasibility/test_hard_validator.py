@@ -256,10 +256,10 @@ def test_validate_itinerary_does_not_mutate_skeleton_or_itinerary() -> None:
 # ── B4B Phase 4: continuity rules in dispatch ──────────────────────────────
 
 
-def test_validator_version_is_v3() -> None:
+def test_validator_version_is_v4() -> None:
     report = _validate()
 
-    assert report.validator_version == "hard-validator-v3"
+    assert report.validator_version == "hard-validator-v4"
 
 
 def test_validator_rule_order_matches_implemented_set() -> None:
@@ -274,9 +274,7 @@ def test_route_unknown_keeps_report_unverified() -> None:
     report = _validate()
 
     route = next(
-        result
-        for result in report.rule_results
-        if result.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
+        result for result in report.rule_results if result.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
     )
     assert route.outcome.value == "UNKNOWN"
     assert report.status is FeasibilityStatus.UNVERIFIED
@@ -365,9 +363,7 @@ def test_continuity_fail_yields_needs_repair() -> None:
     report = _validate(itinerary=itinerary)
 
     route = next(
-        result
-        for result in report.rule_results
-        if result.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
+        result for result in report.rule_results if result.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
     )
     assert route.outcome.value == "FAIL"
     assert report.status is FeasibilityStatus.NEEDS_REPAIR

@@ -63,11 +63,12 @@ public interface PlanningTaskEventMapper {
                    payload::text AS payload_json, created_at
             FROM business.planning_task_event
             WHERE task_id = #{taskId}
-              AND event_type IN ('PLANNING_COMPLETED', 'PLANNING_FAILED')
+              AND event_type IN ('PLANNING_COMPLETED', 'PLANNING_FAILED',
+                                 'PLANNING_REVIEW_REQUIRED', 'PLANNING_CANCELLED')
             ORDER BY id DESC
             LIMIT 1
             """)
-    Optional<PlanningTaskEventRecord> findLatestTerminal(UUID taskId);
+    Optional<PlanningTaskEventRecord> findLatestOutcome(UUID taskId);
 
     record LatestProgressRecord(String stage, java.time.Instant createdAt) {
     }

@@ -28,6 +28,10 @@ public final class FeasibilityReportValidator {
     private static final String OPENING_RULE_ID = "OPENING_HOURS";
     private static final String OPENING_EVIDENCE_TYPE = "OPENING_HOURS";
     private static final int MAX_REPAIR_ATTEMPTS = 3;
+    private static final Set<String> LEGACY_VALIDATOR_VERSIONS = Set.of(
+            "feasibility-v1", "hard-validator-v1", "hard-validator-v2", "hard-validator-v3"
+    );
+    private static final String V4_VALIDATOR_VERSION = "hard-validator-v4";
 
     private FeasibilityReportValidator() {
     }
@@ -44,6 +48,11 @@ public final class FeasibilityReportValidator {
         }
         if (isBlank(report.validatorVersion())) {
             throw new IllegalArgumentException("validatorVersion must not be blank");
+        }
+        if (!LEGACY_VALIDATOR_VERSIONS.contains(report.validatorVersion())
+                && !V4_VALIDATOR_VERSION.equals(report.validatorVersion())) {
+            throw new IllegalArgumentException(
+                    "unknown validatorVersion: " + report.validatorVersion());
         }
         if (report.itineraryFingerprint() == null
                 || !FINGERPRINT.matcher(report.itineraryFingerprint()).matches()) {
@@ -132,6 +141,44 @@ public final class FeasibilityReportValidator {
         validateStatus(report, expectedMissing);
         validateRepairAttempts(report);
         validateEvidenceSafety(results);
+        if (V4_VALIDATOR_VERSION.equals(report.validatorVersion())) {
+            validateV4EntityRefs(results, report.repairAttempts());
+        }
+    }
+
+    /**
+     * hard-validator-v4 entity references must be typed strings
+     * (activity:/transit:/poi:/text:).  Bare UUIDs, unknown kinds,
+     * non-canonical UUIDs, empty values and any other grammar violation
+     * fail closed.  RuleResult refs and RepairAttempt refs share the same
+     * grammar, so both are checked here (the review path never reaches
+     * FeasibilityEntityRefMapper, so this is the only review-side gate).
+     */
+    private static void validateV4EntityRefs(
+            List<FeasibilityReport.RuleResult> results,
+            List<FeasibilityReport.RepairAttempt> repairAttempts
+    ) {
+        for (FeasibilityReport.RuleResult result : results) {
+            validateV4RefList(result.affectedEntityRefs(), "rule " + result.ruleId());
+        }
+        for (FeasibilityReport.RepairAttempt attempt : repairAttempts) {
+            validateV4RefList(attempt.affectedEntityRefs(),
+                    "repair attempt " + attempt.attemptIndex());
+        }
+    }
+
+    private static void validateV4RefList(List<String> refs, String owner) {
+        if (refs == null) {
+            throw new IllegalArgumentException(owner + " affectedEntityRefs must not be null");
+        }
+        for (String ref : refs) {
+            try {
+                FeasibilityEntityReferenceCodec.parse(ref);
+            } catch (IllegalArgumentException exception) {
+                throw new IllegalArgumentException(
+                        owner + " contains an invalid entity reference: " + ref, exception);
+            }
+        }
     }
 
     private static boolean isBlank(String value) {

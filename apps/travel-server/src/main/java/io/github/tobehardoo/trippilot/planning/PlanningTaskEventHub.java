@@ -111,7 +111,8 @@ public class PlanningTaskEventHub {
 
     private boolean isTerminal(String eventType) {
         return "PLANNING_COMPLETED".equals(eventType) || "PLANNING_FAILED".equals(eventType)
-                || "PLANNING_CANCELLED".equals(eventType);
+                || "PLANNING_CANCELLED".equals(eventType)
+                || "PLANNING_REVIEW_REQUIRED".equals(eventType);
     }
 
     private void remove(UUID taskId, SseEmitter emitter) {

@@ -19,10 +19,18 @@ public interface ItineraryVersionMapper {
                    version.planning_task_id, version.version_source, version.title,
                    version.estimated_total_cost, version.provider,
                    version.rollback_from_version_id, version.created_at,
-                   (itinerary.current_version_id = version.id) AS current
+                   (itinerary.current_version_id = version.id) AS current,
+                   report.report_id AS report_id,
+                   report.schema_version AS report_schema_version,
+                   report.validator_version AS report_validator_version,
+                   report.status AS report_status,
+                   report.itinerary_fingerprint AS report_itinerary_fingerprint,
+                   report.validated_at AS report_validated_at
             FROM business.itinerary_version version
             JOIN business.itinerary ON itinerary.id = version.itinerary_id
             JOIN business.trip ON trip.id = itinerary.trip_id
+            LEFT JOIN business.itinerary_feasibility_report report
+              ON report.itinerary_version_id = version.id
             WHERE itinerary.trip_id = #{tripId} AND trip.owner_id = #{ownerId}
             ORDER BY version.version_number DESC
             """)
@@ -115,7 +123,13 @@ public interface ItineraryVersionMapper {
             String provider,
             UUID rollbackFromVersionId,
             Instant createdAt,
-            boolean current
+            boolean current,
+            UUID reportId,
+            Integer reportSchemaVersion,
+            String reportValidatorVersion,
+            String reportStatus,
+            String reportItineraryFingerprint,
+            Instant reportValidatedAt
     ) {
     }
 

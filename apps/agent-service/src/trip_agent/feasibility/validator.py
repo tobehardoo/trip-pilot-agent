@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from trip_agent.feasibility.inputs import ValidationInputs
     from trip_agent.planning.trip_skeleton import TripSkeleton
 
-VALIDATOR_VERSION = "hard-validator-v3"
+VALIDATOR_VERSION = "hard-validator-v4"
 
 # Stable dispatch: rule_id -> canonical assessor, keyed by the catalog order
 # so the report lists results in the same order as IMPLEMENTED_RULE_IDS.
@@ -93,9 +93,7 @@ def validate_itinerary(
         validation_inputs=validation_inputs,
         validation_time=validated_at,
     )
-    rule_results = tuple(
-        _RULE_DISPATCH[rule_id](ctx).result for rule_id in IMPLEMENTED_RULE_IDS
-    )
+    rule_results = tuple(_RULE_DISPATCH[rule_id](ctx).result for rule_id in IMPLEMENTED_RULE_IDS)
     return build_feasibility_report(
         report_id=report_id,
         validator_version=VALIDATOR_VERSION,

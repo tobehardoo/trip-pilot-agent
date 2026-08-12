@@ -408,4 +408,99 @@ public class FeasibilityReportContractTest {
         assertThatThrownBy(() -> FeasibilityReportValidator.validate(blankEvidenceType))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    // ── B6J.2.1 F1: validatorVersion policy (legacy vs v4 vs unknown) ─────
+
+    @Test
+    void v4RuleResultRefsAreValidatedStrictly() {
+        FeasibilityReport report = reportWithValidatorVersion(
+                "hard-validator-v4",
+                List.of(new FeasibilityReport.RuleResult(
+                        "OPENING_HOURS", "1", RuleOutcome.PASS, "REASON_OK", "ok",
+                        List.of(), List.of("8f5ef9c2-c194-4292-b847-5b9dcfda978b"),
+                        List.of(verifiedOpeningEvidence()), false)),
+                List.of());
+        assertThatThrownBy(() -> FeasibilityReportValidator.validate(report))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("entity reference");
+    }
+
+    @Test
+    void v4RepairAttemptRefsAreValidatedStrictly() {
+        FeasibilityReport report = reportWithValidatorVersion(
+                "hard-validator-v4",
+                List.of(openingPassRule(List.of(verifiedOpeningEvidence()))),
+                List.of(new FeasibilityReport.RepairAttempt(
+                        1, List.of("OPENING_HOURS"), List.of("MOVE_ACTIVITY"),
+                        List.of("2026-08-09"), List.of("unknown:value"),
+                        "a".repeat(64), "a".repeat(64), FeasibilityStatus.VERIFIED)));
+        assertThatThrownBy(() -> FeasibilityReportValidator.validate(report))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("entity reference");
+    }
+
+    @Test
+    void v4ValidTypedRefsPass() {
+        FeasibilityReport report = reportWithValidatorVersion(
+                "hard-validator-v4",
+                List.of(new FeasibilityReport.RuleResult(
+                        "OPENING_HOURS", "1", RuleOutcome.PASS, "REASON_OK", "ok",
+                        List.of(),
+                        List.of("poi:POI-1",
+                                "activity:10000000-0000-4000-8000-000000000031"),
+                        List.of(verifiedOpeningEvidence()), false)),
+                List.of());
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                () -> FeasibilityReportValidator.validate(report));
+    }
+
+    @Test
+    void legacyVersionsKeepUnprefixedRefsCompatible() {
+        for (String legacy : new String[]{
+                "feasibility-v1", "hard-validator-v1", "hard-validator-v2",
+                "hard-validator-v3"}) {
+            FeasibilityReport report = reportWithValidatorVersion(
+                    legacy,
+                    List.of(new FeasibilityReport.RuleResult(
+                            "OPENING_HOURS", "1", RuleOutcome.PASS, "REASON_OK", "ok",
+                            List.of(), List.of("8f5ef9c2-c194-4292-b847-5b9dcfda978b"),
+                            List.of(verifiedOpeningEvidence()), false)),
+                    List.of());
+            org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+                    () -> FeasibilityReportValidator.validate(report),
+                    "legacy version " + legacy + " must keep unprefixed refs");
+        }
+    }
+
+    @Test
+    void unknownValidatorVersionFailsClosedEvenWithValidTypedRefs() {
+        FeasibilityReport report = reportWithValidatorVersion(
+                "hard-validator-v9",
+                List.of(new FeasibilityReport.RuleResult(
+                        "OPENING_HOURS", "1", RuleOutcome.PASS, "REASON_OK", "ok",
+                        List.of(), List.of("poi:POI-1"),
+                        List.of(verifiedOpeningEvidence()), false)),
+                List.of());
+        assertThatThrownBy(() -> FeasibilityReportValidator.validate(report))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("validatorVersion");
+    }
+
+    private FeasibilityReport reportWithValidatorVersion(
+            String validatorVersion,
+            List<FeasibilityReport.RuleResult> ruleResults,
+            List<FeasibilityReport.RepairAttempt> repairAttempts) {
+        return new FeasibilityReport(
+                1,
+                UUID.fromString("c9c467cc-65c4-8ff1-e175-4af42f2ed545"),
+                validatorVersion,
+                "a".repeat(64),
+                FeasibilityStatus.VERIFIED,
+                OffsetDateTime.parse("2026-08-09T12:00:00Z"),
+                List.of("OPENING_HOURS"),
+                List.of(),
+                new FeasibilityReport.Summary(ruleResults.size(), 1, 0, 0, 0, 0),
+                ruleResults,
+                repairAttempts);
+    }
 }

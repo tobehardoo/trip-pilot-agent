@@ -22,6 +22,7 @@ from __future__ import annotations
 from datetime import date
 
 from trip_agent.feasibility.context import ValidationContext
+from trip_agent.feasibility.entity_refs import encode_activity_ref, encode_poi_ref
 from trip_agent.feasibility.models import RuleOutcome, RuleResult
 from trip_agent.feasibility.rules.core import (
     MAX_AFFECTED_DATES,
@@ -38,9 +39,9 @@ CROSS_RULE_ID = "CROSS_DAY_CONTINUITY"
 
 def _activity_ref(activity: ItineraryActivity) -> str | None:
     if activity.activity_id is not None:
-        return str(activity.activity_id)
+        return encode_activity_ref(activity.activity_id)
     if activity.provider_poi_id is not None:
-        return activity.provider_poi_id
+        return encode_poi_ref(activity.provider_poi_id)
     return None
 
 
@@ -315,7 +316,7 @@ def assess_cross_day_continuity(ctx: ValidationContext) -> RuleAssessment:
                 fail_count += 1
                 affected_dates.update((overnight.from_date, overnight.to_date))
                 if accommodation.provider_poi_id is not None:
-                    affected_refs.add(accommodation.provider_poi_id)
+                    affected_refs.add(encode_poi_ref(accommodation.provider_poi_id))
                 findings.append(
                     RuleFinding(
                         reason_code="OVERNIGHT_ENDPOINT_MISMATCH",
@@ -325,7 +326,7 @@ def assess_cross_day_continuity(ctx: ValidationContext) -> RuleAssessment:
                         ),
                         affected_date=overnight.from_date,
                         affected_entity_refs=(
-                            (accommodation.provider_poi_id,)
+                            (encode_poi_ref(accommodation.provider_poi_id),)
                             if accommodation.provider_poi_id is not None
                             else ()
                         ),

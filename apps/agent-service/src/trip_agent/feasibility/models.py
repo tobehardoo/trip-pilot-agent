@@ -175,7 +175,9 @@ class FeasibilityReport(BaseModel):
             status=self.status,
             missing_required=self.missing_required_rule_ids,
             summary=self.summary,
+            validator_version=self.validator_version,
         )
+        _validate_repair_entity_refs(self.repair_attempts, self.validator_version)
         return self
 
 
@@ -261,6 +263,7 @@ def _validate_semantics(
     status: FeasibilityStatus,
     missing_required: tuple[str, ...],
     summary: FeasibilitySummary,
+    validator_version: str,
 ) -> None:
     rule_ids = tuple(result.rule_id for result in rule_results)
     if len(set(rule_ids)) != len(rule_ids):
@@ -293,6 +296,7 @@ def _validate_semantics(
         raise ValueError(f"status must be {expected_status.value} for the given rule results")
 
     _validate_opening_evidence_safety(rule_results)
+    _validate_entity_refs(rule_results, validator_version)
 
 
 def _aggregate_status(
@@ -328,3 +332,59 @@ def _validate_opening_evidence_safety(rule_results: tuple[RuleResult, ...]) -> N
             raise ValueError(
                 f"rule {result.rule_id} with only non-verified opening evidence must be UNKNOWN"
             )
+
+
+_LEGACY_VALIDATOR_VERSIONS = frozenset(
+    {"feasibility-v1", "hard-validator-v1", "hard-validator-v2", "hard-validator-v3"}
+)
+_V4_VALIDATOR_VERSION = "hard-validator-v4"
+
+
+def _validate_entity_refs(rule_results: tuple[RuleResult, ...], validator_version: str) -> None:
+    """Validate affected_entity_refs per validator generation.
+
+    v4 reports must use typed refs (activity:/transit:/poi:/text:); v1-v3 and
+    the historical feasibility-v1 keep the legacy raw-id heuristic.  Any
+    other validatorVersion fails closed: an unknown generation must never be
+    treated as v4 or silently accept untyped refs.
+    """
+    if validator_version == _V4_VALIDATOR_VERSION:
+        _validate_v4_rule_refs(rule_results)
+        return
+    if validator_version in _LEGACY_VALIDATOR_VERSIONS:
+        return
+    raise ValueError(f"unknown validatorVersion: {validator_version!r}")
+
+
+def _validate_v4_rule_refs(rule_results: tuple[RuleResult, ...]) -> None:
+    from trip_agent.feasibility.entity_refs import validate_entity_ref
+
+    for result in rule_results:
+        for ref in result.affected_entity_refs:
+            if not validate_entity_ref(ref):
+                raise ValueError(
+                    f"rule {result.rule_id} contains an invalid entity reference {ref!r}"
+                )
+
+
+def _validate_repair_entity_refs(
+    repair_attempts: tuple[RepairAttempt, ...], validator_version: str
+) -> None:
+    if validator_version == _V4_VALIDATOR_VERSION:
+        _validate_v4_repair_refs(repair_attempts)
+        return
+    if validator_version in _LEGACY_VALIDATOR_VERSIONS:
+        return
+    raise ValueError(f"unknown validatorVersion: {validator_version!r}")
+
+
+def _validate_v4_repair_refs(repair_attempts: tuple[RepairAttempt, ...]) -> None:
+    from trip_agent.feasibility.entity_refs import validate_entity_ref
+
+    for attempt in repair_attempts:
+        for ref in attempt.affected_entity_refs:
+            if not validate_entity_ref(ref):
+                raise ValueError(
+                    f"repair attempt {attempt.attempt_index} contains an invalid "
+                    f"entity reference {ref!r}"
+                )

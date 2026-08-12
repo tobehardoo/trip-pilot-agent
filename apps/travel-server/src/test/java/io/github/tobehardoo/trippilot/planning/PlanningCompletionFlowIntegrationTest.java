@@ -917,6 +917,59 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
         assertThat(count("business.itinerary_version")).isZero();
     }
 
+    // ── B6J.2.1 F5: PLANNING_COMPLETED task-event insert failure rollback ──
+
+    @Test
+    void completedTaskEventInsertFailureRollsBackTheWholeCompletionTransaction()
+            throws Exception {
+        PlanningContext context = createPlanningContext("completion-event-fail@example.com");
+        jdbcTemplate.execute("""
+                CREATE FUNCTION business.fail_completed_event_insert() RETURNS trigger AS $$
+                BEGIN
+                    IF NEW.event_type = 'PLANNING_COMPLETED' THEN
+                        RAISE EXCEPTION 'forced completed event failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """);
+        jdbcTemplate.execute("""
+                CREATE TRIGGER fail_completed_event_insert
+                BEFORE INSERT ON business.planning_task_event
+                FOR EACH ROW EXECUTE FUNCTION business.fail_completed_event_insert()
+                """);
+
+        try {
+            io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent event =
+                    eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
+                            PlanningCompletedEventFixture.completedAmapEventV3(
+                                    UUID.randomUUID(), context.traceId(),
+                                    context.taskId(), context.tripId()
+                            )
+                    )));
+            assertThatThrownBy(() -> completionService.handle(event))
+                    .rootCause()
+                    .hasMessageContaining("forced completed event failure");
+        } finally {
+            jdbcTemplate.execute(
+                    "DROP TRIGGER fail_completed_event_insert ON business.planning_task_event");
+            jdbcTemplate.execute("DROP FUNCTION business.fail_completed_event_insert()");
+        }
+
+        // The terminal task event is written after version/day/activity/
+        // transit/report inside the same transaction, so its failure must
+        // roll everything back: no new rows, current unchanged, task not
+        // SUCCEEDED, and no PLANNING_COMPLETED event.
+        assertThat(count("business.itinerary")).isZero();
+        assertThat(count("business.itinerary_version")).isZero();
+        assertThat(count("business.itinerary_day")).isZero();
+        assertThat(count("business.activity")).isZero();
+        assertThat(count("business.transit_leg")).isZero();
+        assertThat(count("business.itinerary_feasibility_report")).isZero();
+        assertThat(count("business.planning_task_event")).isEqualTo(1L);
+        assertThat(taskStatus(context.taskId())).isEqualTo("QUEUED");
+    }
+
     @Test
     void marksAStaleCompletedResultFailedWithoutCreatingAnItinerary() throws Exception {
         PlanningContext context = createPlanningContext("completion-stale@example.com");
@@ -1049,10 +1102,40 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(request().asyncStarted())
                 .andReturn();
 
-        mockMvc.perform(asyncDispatch(stream))
+        MvcResult dispatched = mockMvc.perform(asyncDispatch(stream))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("event:PLANNING_COMPLETED")))
-                .andExpect(content().string(not(containsString("event:PLANNING_QUEUED"))));
+                .andReturn();
+        String body = new String(
+                dispatched.getResponse().getContentAsByteArray(), StandardCharsets.UTF_8);
+        List<SseFrame> frames = parseSseFrames(body);
+        assertThat(frames).hasSize(1);
+        SseFrame completionFrame = frames.get(0);
+        assertThat(completionFrame.event()).isEqualTo("PLANNING_COMPLETED");
+        // Last-Event-ID excludes the QUEUED event.
+        assertThat(completionFrame.id()).isGreaterThan(queuedEventId);
+
+        // Deep-compare the replayed payload with the stored DB payload and
+        // verify the event envelope comes from the stored record.
+        Map<String, Object> stored = jdbcTemplate.queryForMap("""
+                SELECT payload::text AS payload, id, event_id
+                FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_COMPLETED'
+                ORDER BY id DESC LIMIT 1
+                """, context.taskId());
+        assertThat(completionFrame.id()).isEqualTo(((Number) stored.get("id")).longValue());
+        // TaskEventView.eventId is the stored DB row id (the SSE stream id).
+        assertThat(completionFrame.data().path("eventId").asLong())
+                .isEqualTo(((Number) stored.get("id")).longValue());
+        JsonNode dbPayload = objectMapper.readTree((String) stored.get("payload"));
+        assertThat(completionFrame.data().path("payload")).isEqualTo(dbPayload);
+
+        // Payload semantics: VERIFIED report + evaluation present, no candidate.
+        assertThat(dbPayload.path("feasibilityReport").path("status").asText())
+                .isEqualTo("VERIFIED");
+        assertThat(dbPayload.path("evaluation").isMissingNode()
+                || dbPayload.path("evaluation").isNull()).isFalse();
+        assertThat(dbPayload.path("candidateItinerary").isMissingNode()
+                || dbPayload.path("candidateItinerary").isNull()).isTrue();
     }
 
     @Test
@@ -1092,10 +1175,41 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
 
         completionService.handle(completedEvent(UUID.randomUUID(), context));
 
-        mockMvc.perform(asyncDispatch(stream))
+        MvcResult dispatched = mockMvc.perform(asyncDispatch(stream))
                 .andExpect(status().isOk())
-                .andExpect(content().string(containsString("event:PLANNING_QUEUED")))
-                .andExpect(content().string(containsString("event:PLANNING_COMPLETED")));
+                .andReturn();
+        String body = new String(
+                dispatched.getResponse().getContentAsByteArray(), StandardCharsets.UTF_8);
+        List<SseFrame> frames = parseSseFrames(body);
+        // QUEUED replay + live completion event.
+        assertThat(frames).hasSize(2);
+        SseFrame completionFrame = frames.stream()
+                .filter(f -> "PLANNING_COMPLETED".equals(f.event()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no completion frame"));
+
+        // Deep-compare the live payload with the stored DB payload; the event
+        // id and envelope must come from the stored record.
+        Map<String, Object> stored = jdbcTemplate.queryForMap("""
+                SELECT payload::text AS payload, id, event_id
+                FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_COMPLETED'
+                ORDER BY id DESC LIMIT 1
+                """, context.taskId());
+        assertThat(completionFrame.id()).isEqualTo(((Number) stored.get("id")).longValue());
+        // TaskEventView.eventId is the stored DB row id (the SSE stream id).
+        assertThat(completionFrame.data().path("eventId").asLong())
+                .isEqualTo(((Number) stored.get("id")).longValue());
+        JsonNode dbPayload = objectMapper.readTree((String) stored.get("payload"));
+        assertThat(completionFrame.data().path("payload")).isEqualTo(dbPayload);
+
+        // Payload semantics: VERIFIED report + evaluation present, no candidate.
+        assertThat(dbPayload.path("feasibilityReport").path("status").asText())
+                .isEqualTo("VERIFIED");
+        assertThat(dbPayload.path("evaluation").isMissingNode()
+                || dbPayload.path("evaluation").isNull()).isFalse();
+        assertThat(dbPayload.path("candidateItinerary").isMissingNode()
+                || dbPayload.path("candidateItinerary").isNull()).isTrue();
     }
 
     @Test
@@ -1290,6 +1404,74 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 """, Integer.class)).isZero();
     }
 
+    // ── B6J.2.1 F1: service-level gate rejects invalid v4 reports ─────────
+
+    @Test
+    void serviceRejectsInvalidV4ReportEvenWhenCalledDirectly() throws Exception {
+        PlanningContext context = createPlanningContext("completion-direct-invalid-ref@example.com");
+        ObjectNode v9 = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        ((ObjectNode) v9.at("/payload/feasibilityReport"))
+                .put("validatorVersion", "hard-validator-v4");
+        com.fasterxml.jackson.databind.JsonNode results =
+                v9.at("/payload/feasibilityReport/ruleResults");
+        for (com.fasterxml.jackson.databind.JsonNode rule : results) {
+            if (rule.path("affectedEntityRefs").isArray()
+                    && rule.path("affectedEntityRefs").size() > 0) {
+                ((ArrayNode) rule.path("affectedEntityRefs"))
+                        .set(0, objectMapper.getNodeFactory()
+                                .textNode("8f5ef9c2-c194-4292-b847-5b9dcfda978b"));
+                break;
+            }
+        }
+        if (v9.at("/payload/feasibilityReport/ruleResults/0/affectedEntityRefs").isEmpty()) {
+            ArrayNode refs = objectMapper.createArrayNode();
+            refs.add("8f5ef9c2-c194-4292-b847-5b9dcfda978b");
+            ((ObjectNode) v9.at("/payload/feasibilityReport/ruleResults/0"))
+                    .set("affectedEntityRefs", refs);
+        }
+        PlanningCompletedEvent event = objectMapper.treeToValue(v9, PlanningCompletedEvent.class);
+
+        assertThatThrownBy(() -> completionService.handle(event))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("feasibility report is invalid");
+        assertThat(taskStatus(context.taskId())).isEqualTo("QUEUED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_version
+                """, Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.planning_task_event
+                """, Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void serviceRejectsUnknownValidatorVersionEvenWhenCalledDirectly() throws Exception {
+        PlanningContext context = createPlanningContext(
+                "completion-direct-unknown-version@example.com");
+        ObjectNode v9 = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        ((ObjectNode) v9.at("/payload/feasibilityReport"))
+                .put("validatorVersion", "hard-validator-v9");
+        PlanningCompletedEvent event = objectMapper.treeToValue(v9, PlanningCompletedEvent.class);
+
+        assertThatThrownBy(() -> completionService.handle(event))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("feasibility report is invalid");
+        assertThat(taskStatus(context.taskId())).isEqualTo("QUEUED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_version
+                """, Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.planning_task_event
+                """, Integer.class)).isEqualTo(1);
+    }
+
     @Test
     void serviceRejectsCompletionWithoutFeasibilityReportEvenWhenCalledDirectly()
             throws Exception {
@@ -1410,6 +1592,62 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 """, String.class, persistedVersionId)).isEqualTo("PLANNING_TASK");
     }
 
+    @Test
+    void completionTaskEventPayloadContainsVerifiedReportMatchingV33() throws Exception {
+        PlanningContext context = createPlanningContext("completion-event-report@example.com");
+        io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent event =
+                eventParser.parse(bytes(PlanningCompletedEventFixture.upgradeToV9(
+                        PlanningCompletedEventFixture.completedAmapEventV3(
+                                UUID.randomUUID(), context.traceId(),
+                                context.taskId(), context.tripId()
+                        )
+                )));
+
+        completionService.handle(event);
+
+        // V33 report row.
+        Map<String, Object> reportRow = jdbcTemplate.queryForMap("""
+                SELECT report_json::text AS report_json
+                FROM business.itinerary_feasibility_report
+                WHERE report_id = ?
+                """, event.payload().feasibilityReport().reportId());
+        JsonNode v33Report = objectMapper.readTree((String) reportRow.get("report_json"));
+
+        // PLANNING_COMPLETED task event payload.
+        Map<String, Object> eventRow = jdbcTemplate.queryForMap("""
+                SELECT payload::text AS payload
+                FROM business.planning_task_event
+                WHERE event_type = 'PLANNING_COMPLETED' AND task_id = ?
+                ORDER BY id DESC LIMIT 1
+                """, context.taskId());
+        JsonNode taskPayload = objectMapper.readTree((String) eventRow.get("payload"));
+
+        // Task event payload must carry the feasibilityReport.
+        assertThat(taskPayload.has("feasibilityReport"))
+                .as("completion task event payload must contain feasibilityReport")
+                .isTrue();
+        JsonNode eventReport = taskPayload.path("feasibilityReport");
+        assertThat(eventReport.path("status").asText()).isEqualTo("VERIFIED");
+
+        // Deep structure equality between V33 report_json and task event report.
+        assertThat(eventReport).isEqualTo(v33Report);
+
+        // activity/transit refs in the report are persisted IDs.
+        for (JsonNode rule : eventReport.path("ruleResults")) {
+            for (JsonNode ref : rule.path("affectedEntityRefs")) {
+                String value = ref.asText();
+                if (value.startsWith("activity:") || value.startsWith("transit:")) {
+                    String uuid = value.substring(value.indexOf(':') + 1);
+                    assertThat(jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM business.activity WHERE id = ?",
+                            Integer.class, java.util.UUID.fromString(uuid)))
+                            .describedAs("persisted activity ref %s", value)
+                            .isEqualTo(1);
+                }
+            }
+        }
+    }
+
     private String taskStatus(UUID taskId) {
         return jdbcTemplate.queryForObject(
                 "SELECT status FROM business.planning_task WHERE id = ?", String.class, taskId
@@ -1449,5 +1687,46 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
             UUID taskId,
             UUID traceId
     ) {
+    }
+
+    /**
+     * Parses a raw SSE body into frames with id/event/data so payloads can be
+     * deep-compared instead of checked with containsString.
+     */
+    private List<SseFrame> parseSseFrames(String body) throws Exception {
+        java.util.ArrayList<SseFrame> frames = new java.util.ArrayList<>();
+        String currentId = null;
+        String currentEvent = null;
+        StringBuilder data = new StringBuilder();
+        for (String line : body.split("\\R")) {
+            if (line.startsWith("id:")) {
+                currentId = line.substring(3).trim();
+            } else if (line.startsWith("event:")) {
+                currentEvent = line.substring(6).trim();
+            } else if (line.startsWith("data:")) {
+                if (data.length() > 0) {
+                    data.append('\n');
+                }
+                data.append(line.substring(5).trim());
+            } else if (line.isEmpty() && currentEvent != null) {
+                frames.add(new SseFrame(
+                        currentId == null ? 0L : Long.parseLong(currentId),
+                        currentEvent,
+                        objectMapper.readTree(data.toString())));
+                currentId = null;
+                currentEvent = null;
+                data.setLength(0);
+            }
+        }
+        if (currentEvent != null) {
+            frames.add(new SseFrame(
+                    currentId == null ? 0L : Long.parseLong(currentId),
+                    currentEvent,
+                    objectMapper.readTree(data.toString())));
+        }
+        return frames;
+    }
+
+    private record SseFrame(long id, String event, JsonNode data) {
     }
 }

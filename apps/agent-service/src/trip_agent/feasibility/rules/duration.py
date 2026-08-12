@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date
 
 from trip_agent.feasibility.context import ValidationContext
+from trip_agent.feasibility.entity_refs import encode_activity_ref, encode_poi_ref
 from trip_agent.feasibility.models import (
     EvidenceReference,
     EvidenceState,
@@ -64,9 +65,9 @@ def _profile_evidence(profile: VisitDurationProfile) -> EvidenceReference:
 
 def _activity_ref(activity: object) -> str | None:
     if activity.activity_id is not None:
-        return str(activity.activity_id)
+        return encode_activity_ref(activity.activity_id)
     if activity.provider_poi_id is not None:
-        return activity.provider_poi_id
+        return encode_poi_ref(activity.provider_poi_id)
     return None
 
 

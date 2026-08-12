@@ -99,7 +99,7 @@
     "feasibilityReport": {
       "schemaVersion": 1,
       "reportId": "3d76fb9e-362e-4b28-8a9e-18e8ac7050ad",
-      "validatorVersion": "hard-validator-v3",
+      "validatorVersion": "hard-validator-v4",
       "itineraryFingerprint": "dce5e94d5981b3ffec3a0aff9dcfc29245d874552e863f4b432a47985bc7d025",
       "status": "UNVERIFIED",
       "validatedAt": "2026-08-10T12:00:00Z",

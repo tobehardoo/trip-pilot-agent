@@ -51,11 +51,38 @@ public class PlanningReviewRequiredEventParser {
             PlanningReviewRequiredEvent event =
                     reader.readValue(tree.traverse(objectMapper));
             validate(event);
-            return event;
+            return withValidatedItinerary(event, tree.at("/payload/itinerary"));
         } catch (IOException exception) {
             throw new PlanningEventContractException(
                     "Invalid PLANNING_REVIEW_REQUIRED event", exception);
         }
+    }
+
+    /**
+     * Rebuilds the parsed event with the validated raw itinerary snapshot.
+     *
+     * The snapshot is a defensive deep copy of the wire itinerary tree that
+     * already passed schema, type, semantic and fingerprint validation.  The
+     * review service persists this exact tree as candidateItinerary so the
+     * Task API read model can re-verify the report fingerprint against a
+     * byte-identical candidate (no typed-DTO re-serialisation drift).  The
+     * field is {@code @JsonIgnore} internal metadata and never appears on
+     * the wire.
+     */
+    private PlanningReviewRequiredEvent withValidatedItinerary(
+            PlanningReviewRequiredEvent event, JsonNode wireItinerary
+    ) {
+        PlanningReviewRequiredEvent.Payload payload = event.payload();
+        return new PlanningReviewRequiredEvent(
+                event.eventType(), event.schemaVersion(), event.eventId(), event.traceId(),
+                event.taskId(), event.tripId(), event.runId(), event.occurredAt(),
+                new PlanningReviewRequiredEvent.Payload(
+                        payload.status(), payload.provider(), payload.itinerary(),
+                        payload.knowledge(), payload.factImpacts(),
+                        payload.providerProvenance(), payload.feasibilityReport(),
+                        wireItinerary.deepCopy()
+                )
+        );
     }
 
     private void validateJsonTypes(JsonNode event) {

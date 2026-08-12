@@ -309,7 +309,7 @@ def test_duplicate_poi_fails_with_repeated_attraction_across_days() -> None:
         == f"duplicate POI '{first.provider_poi_id}' appears more than once"
     )
     assert assessment.result.affected_dates == (date(2026, 8, 2),)
-    assert assessment.result.affected_entity_refs == (first.provider_poi_id,)
+    assert assessment.result.affected_entity_refs == (f"poi:{first.provider_poi_id}",)
 
 
 def test_duplicate_poi_ignores_none_provider_poi_ids() -> None:
@@ -361,7 +361,7 @@ def test_duplicate_poi_keeps_one_finding_per_repeat_and_stable_order() -> None:
         finding.message == f"duplicate POI '{first.provider_poi_id}' appears more than once"
         for finding in assessment.findings
     )
-    assert assessment.result.affected_entity_refs == (first.provider_poi_id,)
+    assert assessment.result.affected_entity_refs == (f"poi:{first.provider_poi_id}",)
 
 
 # ── ACTIVITY_OVERLAP ─────────────────────────────────────────────────────
@@ -533,7 +533,7 @@ def test_duplicate_poi_bounds_aggregate_refs_at_64() -> None:
     assert assessment.result.outcome.value == "FAIL"
     assert len(assessment.findings) == 65
     assert len(assessment.result.affected_entity_refs) == 64
-    assert assessment.result.affected_entity_refs == tuple(f"P-{i:03d}" for i in range(64))
+    assert assessment.result.affected_entity_refs == tuple(f"poi:P-{i:03d}" for i in range(64))
 
 
 def test_duplicate_poi_public_refs_are_input_order_stable() -> None:
@@ -564,7 +564,9 @@ def test_duplicate_poi_public_refs_are_input_order_stable() -> None:
     assert forward_assessment.result.affected_entity_refs == (
         backward_assessment.result.affected_entity_refs
     )
-    assert forward_assessment.result.affected_entity_refs == tuple(f"P-{i:03d}" for i in range(64))
+    assert forward_assessment.result.affected_entity_refs == tuple(
+        f"poi:P-{i:03d}" for i in range(64)
+    )
 
 
 def test_trip_date_range_bounds_aggregate_dates_at_16() -> None:

@@ -300,8 +300,35 @@ class PlanningTaskReadModelIntegrationTest extends PostgresIntegrationTest {
 
         JsonNode latest = getLatestTask(context);
 
-        UUID expected = firstTaskId.compareTo(secondTaskId) > 0 ? firstTaskId : secondTaskId;
+        // PostgreSQL orders uuid values as unsigned 16-byte big-endian, which
+        // can disagree with Java UUID.compareTo (signed longs) once the most
+        // significant byte crosses 0x80.  The production SQL is correct;
+        // the expected value must use the database ordering semantics.
+        UUID expected = compareAsPostgresUuid(firstTaskId, secondTaskId) > 0
+                ? firstTaskId
+                : secondTaskId;
         assertThat(latest.path("taskId").asText()).isEqualTo(expected.toString());
+    }
+
+    @Test
+    void postgresUuidOrderingTreatsBothHalvesAsUnsigned() {
+        // Most-significant end: Java compareTo sees 7fff... as positive and
+        // 8000... as negative, so it orders 8000... first; PostgreSQL orders
+        // 8000... after 7fff... (unsigned).  The helper must match the
+        // database, not Java.
+        UUID signedPositiveMost = UUID.fromString("7fffffff-ffff-ffff-ffff-ffffffffffff");
+        UUID signedNegativeMost = UUID.fromString("80000000-0000-0000-0000-000000000000");
+        assertThat(signedNegativeMost.compareTo(signedPositiveMost)).isLessThan(0);
+        assertThat(compareAsPostgresUuid(signedNegativeMost, signedPositiveMost)).isGreaterThan(0);
+        assertThat(compareAsPostgresUuid(signedPositiveMost, signedNegativeMost)).isLessThan(0);
+
+        // Least-significant end: same unsigned-vs-signed disagreement once the
+        // least significant long crosses 0x80.
+        UUID signedPositiveLeast = UUID.fromString("00000000-0000-0000-7fff-ffffffffffff");
+        UUID signedNegativeLeast = UUID.fromString("00000000-0000-0000-8000-000000000000");
+        assertThat(signedNegativeLeast.compareTo(signedPositiveLeast)).isLessThan(0);
+        assertThat(compareAsPostgresUuid(signedNegativeLeast, signedPositiveLeast)).isGreaterThan(0);
+        assertThat(compareAsPostgresUuid(signedPositiveLeast, signedNegativeLeast)).isLessThan(0);
     }
 
     @Test
@@ -542,5 +569,25 @@ class PlanningTaskReadModelIntegrationTest extends PostgresIntegrationTest {
 
     private String bearer(String token) {
         return "Bearer " + token;
+    }
+
+    /**
+     * Orders two UUIDs the way PostgreSQL orders uuid values: unsigned
+     * big-endian comparison of the 16 bytes.  Java's {@link UUID#compareTo}
+     * uses signed longs, which reverses the order whenever the most
+     * significant byte crosses 0x80.
+     */
+    private static int compareAsPostgresUuid(UUID left, UUID right) {
+        int mostSignificant = Long.compareUnsigned(
+                left.getMostSignificantBits(),
+                right.getMostSignificantBits()
+        );
+        if (mostSignificant != 0) {
+            return mostSignificant;
+        }
+        return Long.compareUnsigned(
+                left.getLeastSignificantBits(),
+                right.getLeastSignificantBits()
+        );
     }
 }

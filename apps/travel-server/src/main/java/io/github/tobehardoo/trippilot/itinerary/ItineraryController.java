@@ -74,18 +74,17 @@ public class ItineraryController {
     }
 
     @PostMapping("/rollbacks")
-    ItineraryService.ItineraryResponse rollback(
+    @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.ACCEPTED)
+    io.github.tobehardoo.trippilot.planning.PlanningTaskService.PlanningTaskResponse rollback(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID tripId,
             @RequestHeader("Idempotency-Key") UUID idempotencyKey,
             @RequestBody ItineraryVersionService.RollbackRequest request
     ) {
-        return versionService.rollback(
-                UUID.fromString(jwt.getSubject()),
-                tripId,
-                idempotencyKey,
-                request
-        );
+        JsonNode tree = objectMapper.valueToTree(request);
+        return versionService.validateRollback(
+                UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
+                request, editRequestFingerprint.forRollback(tree));
     }
 
     @GetMapping
@@ -103,24 +102,26 @@ public class ItineraryController {
     }
 
     @PostMapping("/edits")
-    ItineraryService.ItineraryResponse applyEdit(
+    @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.ACCEPTED)
+    io.github.tobehardoo.trippilot.planning.PlanningTaskService.PlanningTaskResponse applyEdit(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID tripId,
             @RequestHeader("Idempotency-Key") UUID idempotencyKey,
             @RequestBody JsonNode request) {
-        return itineraryService.applyEdit(
+        return itineraryService.validateEditCandidate(
                 UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
                 read(request, ItineraryService.ItineraryEditRequest.class),
                 editRequestFingerprint.forEdit(request));
     }
 
     @PostMapping("/edits/commit")
-    ItineraryService.ItineraryResponse commitEdits(
+    @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.ACCEPTED)
+    io.github.tobehardoo.trippilot.planning.PlanningTaskService.PlanningTaskResponse commitEdits(
             @AuthenticationPrincipal Jwt jwt,
             @PathVariable UUID tripId,
             @RequestHeader("Idempotency-Key") UUID idempotencyKey,
             @RequestBody JsonNode request) {
-        return itineraryService.applyEdits(
+        return itineraryService.validateEditCandidates(
                 UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
                 read(request, ItineraryService.ItineraryBatchEditRequest.class),
                 editRequestFingerprint.forBatch(request));

@@ -16,6 +16,7 @@ from trip_agent.worker.contracts import (
     FallbackOperation,
     Itinerary,
     KnowledgeEvidence,
+    PlanningCandidateValidationCommand,
     PlanningCreateCommand,
     PlanningReplanCommand,
     ProviderProvenance,
@@ -66,7 +67,9 @@ class PlanningProvider(Protocol):
 
     async def plan(self, command: PlanningCreateCommand) -> "PlanningResult": ...
 
-    async def replan(self, command: PlanningReplanCommand) -> "PlanningResult": ...
+    async def replan(
+        self, command: PlanningReplanCommand | PlanningCandidateValidationCommand
+    ) -> "PlanningResult": ...
 
     async def repair(self, request: "PlanningRepairRequest") -> "PlanningResult": ...
 
@@ -128,7 +131,7 @@ class PlanningResult:
 class PlanningRepairRequest:
     """One bounded provider refresh for a locally repaired candidate."""
 
-    command: PlanningCreateCommand | PlanningReplanCommand
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand
     candidate: PlanningResult
     impacted_dates: tuple[date, ...]
     attempt_index: int

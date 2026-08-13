@@ -90,7 +90,9 @@ public class PlanningReviewService implements PlanningReviewHandler {
                     "Trip constraints changed while planning was running");
             return;
         }
-        if ("REPLAN".equals(task.taskType())
+        if (("REPLAN".equals(task.taskType())
+                || "EDIT_VALIDATE".equals(task.taskType())
+                || "ROLLBACK_VALIDATE".equals(task.taskType()))
                 && guard.isStaleReplanBaseline(task, currentVersionProvider.currentVersionId(
                         task.tripId()))) {
             persistStaleFailure(event, task, STALE_ITINERARY_VERSION,

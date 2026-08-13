@@ -87,6 +87,26 @@ class PlanningReviewRequiredEventParserTest {
     }
 
     @Test
+    void acceptsExplicitUnavailableKnowledgeFreshnessFromCandidateOutcome() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        ObjectNode knowledge = (ObjectNode) event.at("/payload/knowledge");
+        knowledge.put("status", "DEMO");
+        knowledge.put("message", "Local demo evidence is unavailable");
+        knowledge.putArray("citations");
+        ObjectNode freshness = knowledge.putObject("freshness");
+        freshness.put("status", "UNAVAILABLE");
+        freshness.putNull("checkedAt");
+        freshness.putNull("staleReason");
+
+        PlanningReviewRequiredEvent parsed = parser.parse(
+                objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.payload().knowledge().freshness().status())
+                .isEqualTo("UNAVAILABLE");
+        assertThat(parsed.payload().knowledge().freshness().checkedAt()).isNull();
+    }
+
+    @Test
     void acceptsHardValidatorV5RepairHistory() throws Exception {
         ObjectNode event = (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.sharedReviewV1Fixture(

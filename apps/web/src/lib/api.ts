@@ -99,6 +99,8 @@ export interface PlanningTask {
   taskType: string
   status: PlanningTaskStatus
   baselineTripVersion: number
+  baselineItineraryVersionId?: string | null
+  candidateType?: 'EDIT' | 'ROLLBACK' | null
   eventStreamUrl: string
   errorCode?: string | null
   errorCategory?: ProviderErrorCategory | null
@@ -827,7 +829,7 @@ export function rollbackItinerary(
   sourceVersionId: string,
   expectedCurrentVersionId: string,
   idempotencyKey: string = crypto.randomUUID(),
-): Promise<Itinerary> {
+): Promise<PlanningTask> {
   return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/rollbacks`, {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },
@@ -851,7 +853,7 @@ export function applyItineraryEdit(
   tripId: string,
   input: ItineraryEditInput,
   idempotencyKey: string,
-): Promise<Itinerary> {
+): Promise<PlanningTask> {
   return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/edits`, {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },
@@ -865,7 +867,7 @@ export function commitItineraryEdits(
   baseVersionId: string,
   edits: ItineraryEditInput[],
   idempotencyKey: string,
-): Promise<Itinerary> {
+): Promise<PlanningTask> {
   return request(`/api/trips/${encodeURIComponent(tripId)}/itinerary/edits/commit`, {
     method: 'POST',
     headers: { 'Idempotency-Key': idempotencyKey },

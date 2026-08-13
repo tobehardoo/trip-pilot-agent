@@ -18,13 +18,16 @@ public interface PlanningTaskMapper {
                 id, trip_id, idempotency_key, task_type, status,
                 baseline_trip_version, baseline_itinerary_version_id, impacted_dates,
                 constraint_snapshot, guide_evidence_snapshot,
-                trace_id, retry_count, version
+                trace_id, retry_count, version, candidate_type,
+                candidate_source_version_id, candidate_request_hash, changed_dates
             ) VALUES (
                 #{id}, #{tripId}, #{idempotencyKey}, #{taskType}, #{status},
                 #{baselineTripVersion}, #{baselineItineraryVersionId},
                 CAST(#{impactedDatesJson} AS jsonb), CAST(#{constraintSnapshotJson} AS jsonb),
                 CAST(#{guideEvidenceSnapshotJson} AS jsonb),
-                #{traceId}, #{retryCount}, #{version}
+                #{traceId}, #{retryCount}, #{version}, #{candidateType},
+                #{candidateSourceVersionId}, #{candidateRequestHash},
+                CAST(#{changedDatesJson} AS jsonb)
             )
             ON CONFLICT DO NOTHING
             """)
@@ -39,7 +42,11 @@ public interface PlanningTaskMapper {
                    planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
                    planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
                    planning_task.error_message, planning_task.version,
-                   planning_task.created_at, planning_task.updated_at
+                   planning_task.created_at, planning_task.updated_at,
+                   planning_task.candidate_type,
+                   planning_task.candidate_source_version_id,
+                   planning_task.candidate_request_hash,
+                   planning_task.changed_dates::text AS changed_dates_json
             FROM business.planning_task
             JOIN business.trip ON trip.id = planning_task.trip_id
             WHERE planning_task.trip_id = #{tripId}
@@ -60,7 +67,11 @@ public interface PlanningTaskMapper {
                    planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
                    planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
                    planning_task.error_message, planning_task.version,
-                   planning_task.created_at, planning_task.updated_at
+                   planning_task.created_at, planning_task.updated_at,
+                   planning_task.candidate_type,
+                   planning_task.candidate_source_version_id,
+                   planning_task.candidate_request_hash,
+                   planning_task.changed_dates::text AS changed_dates_json
             FROM business.planning_task
             JOIN business.trip ON trip.id = planning_task.trip_id
             WHERE planning_task.id = #{taskId} AND trip.owner_id = #{ownerId}
@@ -78,7 +89,11 @@ public interface PlanningTaskMapper {
                    planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
                    planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
                    planning_task.error_message, planning_task.version,
-                   planning_task.created_at, planning_task.updated_at
+                   planning_task.created_at, planning_task.updated_at,
+                   planning_task.candidate_type,
+                   planning_task.candidate_source_version_id,
+                   planning_task.candidate_request_hash,
+                   planning_task.changed_dates::text AS changed_dates_json
             FROM business.planning_task
             JOIN business.trip ON trip.id = planning_task.trip_id
             WHERE planning_task.trip_id = #{tripId} AND trip.owner_id = #{ownerId}
@@ -102,6 +117,8 @@ public interface PlanningTaskMapper {
                    trip.start_date AS trip_start_date,
                    trip.end_date AS trip_end_date,
                    planning_task.created_at
+                   , planning_task.candidate_type
+                   , planning_task.candidate_source_version_id
             FROM business.planning_task
             JOIN business.trip ON trip.id = planning_task.trip_id
             LEFT JOIN business.itinerary ON itinerary.trip_id = planning_task.trip_id

@@ -57,6 +57,7 @@ ACTIVE_SCHEMA_FILES = (
     "planning-progress-event-v1.schema.json",
     "planning-progress-event-v2.schema.json",
     "planning-replan-command-v1.schema.json",
+    "planning-candidate-validation-command-v1.schema.json",
     "planning-completed-event-v9.schema.json",
     "planning-review-required-event-v1.schema.json",
 )
@@ -310,6 +311,16 @@ def _load_schema(file_name: str) -> dict[str, object]:
         return json.load(schema_file)
 
 
+def _local_schema_registry():
+    from referencing import Registry, Resource
+
+    registry = Registry()
+    for path in CONTRACT_DIRECTORY.glob("*.schema.json"):
+        schema = json.loads(path.read_text(encoding="utf-8"))
+        registry = registry.with_resource(schema["$id"], Resource.from_contents(schema))
+    return registry
+
+
 def test_every_active_messaging_schema_is_a_valid_draft_2020_12_schema() -> None:
     for file_name in ACTIVE_SCHEMA_FILES:
         Draft202012Validator.check_schema(_load_schema(file_name))
@@ -426,6 +437,7 @@ def test_active_schema_check_includes_v9_and_review() -> None:
 def test_all_active_schemas_have_matching_fixture_sets() -> None:
     import json
 
+    registry = _local_schema_registry()
     for schema_name in ACTIVE_SCHEMA_FILES:
         schema = _load_schema(schema_name)
         base = schema_name.removesuffix(".schema.json")
@@ -433,14 +445,20 @@ def test_all_active_schemas_have_matching_fixture_sets() -> None:
         if not fixture_dir.exists():
             continue
         for fixture in fixture_dir.glob("*.json"):
-            Draft202012Validator(schema).validate(json.loads(fixture.read_text(encoding="utf-8")))
+            Draft202012Validator(schema, registry=registry).validate(
+                json.loads(fixture.read_text(encoding="utf-8"))
+            )
     # v9/review fixtures are covered explicitly below.
     v9 = _load_schema("planning-completed-event-v9.schema.json")
     review = _load_schema("planning-review-required-event-v1.schema.json")
     for fixture in COMPLETION_V9_FIXTURE_DIRECTORY.glob("*.json"):
-        Draft202012Validator(v9).validate(json.loads(fixture.read_text(encoding="utf-8")))
+        Draft202012Validator(v9, registry=registry).validate(
+            json.loads(fixture.read_text(encoding="utf-8"))
+        )
     for fixture in REVIEW_V1_FIXTURE_DIRECTORY.glob("*.json"):
-        Draft202012Validator(review).validate(json.loads(fixture.read_text(encoding="utf-8")))
+        Draft202012Validator(review, registry=registry).validate(
+            json.loads(fixture.read_text(encoding="utf-8"))
+        )
 
 
 def test_schema_and_model_agree_on_v9_required_fields() -> None:

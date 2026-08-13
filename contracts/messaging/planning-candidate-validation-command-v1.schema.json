@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-candidate-validation-command-v1.schema.json",
+  "title": "Planning Candidate Validation Command v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType", "schemaVersion", "eventId", "traceId", "taskId",
+    "tripId", "occurredAt", "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_CANDIDATE_VALIDATION_REQUESTED"},
+    "schemaVersion": {"const": 1},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskType", "candidateType", "baselineTripVersion",
+        "baselineItineraryVersionId", "rollbackFromVersionId", "idempotencyKey",
+        "changedDates", "impactedDates", "trip", "itinerary", "knowledge",
+        "planningContext"
+      ],
+      "properties": {
+        "taskType": {"enum": ["EDIT_VALIDATE", "ROLLBACK_VALIDATE"]},
+        "candidateType": {"enum": ["EDIT", "ROLLBACK"]},
+        "baselineTripVersion": {"type": "integer", "minimum": 0},
+        "baselineItineraryVersionId": {"type": "string", "format": "uuid"},
+        "rollbackFromVersionId": {
+          "type": ["string", "null"],
+          "format": "uuid"
+        },
+        "idempotencyKey": {"type": "string", "format": "uuid"},
+        "changedDates": {"$ref": "#/$defs/dateScope"},
+        "impactedDates": {"$ref": "#/$defs/dateScope"},
+        "trip": {"$ref": "planning-create-command-v2.schema.json#/$defs/trip"},
+        "itinerary": {"$ref": "#/$defs/candidateItinerary"},
+        "knowledge": {
+          "$ref": "planning-completed-event-v9.schema.json#/$defs/knowledgeEvidence"
+        },
+        "planningContext": {
+          "oneOf": [
+            {"type": "null"},
+            {"$ref": "planning-create-command-v3.schema.json#/$defs/planningContext"}
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"candidateType": {"const": "EDIT"}}},
+          "then": {
+            "properties": {
+              "taskType": {"const": "EDIT_VALIDATE"},
+              "rollbackFromVersionId": {"type": "null"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"candidateType": {"const": "ROLLBACK"}}},
+          "then": {
+            "properties": {
+              "taskType": {"const": "ROLLBACK_VALIDATE"},
+              "rollbackFromVersionId": {"type": "string", "format": "uuid"}
+            }
+          }
+        }
+      ]
+    },
+    "dateScope": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {"type": "string", "format": "date"}
+    },
+    "candidateItinerary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "provider", "days", "estimatedTotalCost"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "provider": {"enum": ["AMAP", "DEMO", "MIXED"]},
+        "days": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 7,
+          "items": {"$ref": "#/$defs/candidateDay"}
+        },
+        "estimatedTotalCost": {
+          "$ref": "planning-completed-event-v9.schema.json#/$defs/money"
+        }
+      }
+    },
+    "candidateDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "dayType", "activities", "transitLegs"],
+      "properties": {
+        "date": {"type": "string", "format": "date"},
+        "dayType": {
+          "enum": [
+            "ARRIVAL_DAY", "FULL_DAY", "DEPARTURE_DAY",
+            "SPECIAL_ACTIVITY_DAY", null
+          ]
+        },
+        "activities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {"$ref": "planning-completed-event-v9.schema.json#/$defs/amapActivity"},
+              {"$ref": "planning-completed-event-v9.schema.json#/$defs/demoActivity"}
+            ]
+          }
+        },
+        "transitLegs": {
+          "type": "array",
+          "maxItems": 999,
+          "items": {
+            "$ref": "planning-completed-event-v9.schema.json#/$defs/transitLeg"
+          }
+        }
+      }
+    }
+  }
+}

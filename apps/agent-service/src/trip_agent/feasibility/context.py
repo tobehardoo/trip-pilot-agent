@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from trip_agent.worker.contracts import (
     Itinerary,
+    PlanningCandidateValidationCommand,
     PlanningCreateCommand,
     PlanningReplanCommand,
 )
@@ -38,7 +39,7 @@ class BudgetContext:
 
 
 def build_budget_context(
-    command: PlanningCreateCommand | PlanningReplanCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     itinerary: Itinerary,
 ) -> BudgetContext:
     """Derive the budget view from command constraints and itinerary cost.
@@ -62,7 +63,7 @@ def build_budget_context(
 class ValidationContext:
     """Everything a hard rule may read.  Immutable by construction."""
 
-    command: PlanningCreateCommand | PlanningReplanCommand
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand
     itinerary: Itinerary
     budget: BudgetContext
     # B4B: transient planning aggregate supplied by the caller when the

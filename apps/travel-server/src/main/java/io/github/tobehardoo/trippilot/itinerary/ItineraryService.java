@@ -139,6 +139,70 @@ public class ItineraryService {
         return getVersion(ownerId, tripId, resultVersionId);
     }
 
+    /**
+     * Builds an immutable edit candidate and submits it to the authoritative
+     * planning validation gate. No itinerary version is written here.
+     */
+    @Transactional
+    public PlanningTaskService.PlanningTaskResponse validateEditCandidate(
+            UUID ownerId, UUID tripId, UUID idempotencyKey,
+            ItineraryEditRequest request, String requestHash
+    ) {
+        ItineraryMapper.EditableCurrentVersion version = lockCurrentVersionForEdit(ownerId, tripId);
+        if (request == null || request.baseVersionId() == null
+                || !request.baseVersionId().equals(version.versionId())) {
+            throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                    "The itinerary was updated. Reload it before applying this edit");
+        }
+        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        EditEvaluation evaluation = evaluate(itinerary, request, budgetFrom(version.constraintSnapshotJson()));
+        if (!evaluation.canApply()) {
+            throw evaluation.toApiException();
+        }
+        apply(itinerary, request, evaluation.operation());
+        ItineraryResponse candidate = toCandidateResponse(version, itinerary);
+        return planningTaskService.createCandidateValidation(
+                ownerId, tripId, idempotencyKey, "EDIT", version.versionId(),
+                version.versionId(), requestHash, evaluation.impact().dates(), candidate
+        );
+    }
+
+    @Transactional
+    public PlanningTaskService.PlanningTaskResponse validateEditCandidates(
+            UUID ownerId, UUID tripId, UUID idempotencyKey,
+            ItineraryBatchEditRequest request, String requestHash
+    ) {
+        ItineraryMapper.EditableCurrentVersion version = lockCurrentVersionForEdit(ownerId, tripId);
+        if (request == null || request.baseVersionId() == null
+                || !request.baseVersionId().equals(version.versionId())) {
+            throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                    "The itinerary draft does not match the current version");
+        }
+        if (request.edits() == null || request.edits().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "ITINERARY_EDIT_EMPTY",
+                    "At least one itinerary edit is required");
+        }
+        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        LinkedHashSet<LocalDate> changedDates = new LinkedHashSet<>();
+        for (ItineraryEditRequest edit : request.edits()) {
+            if (edit == null || !version.versionId().equals(edit.baseVersionId())) {
+                throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                        "The itinerary draft does not match the current version");
+            }
+            EditEvaluation evaluation = evaluate(
+                    itinerary, edit, budgetFrom(version.constraintSnapshotJson()));
+            if (!evaluation.canApply()) {
+                throw evaluation.toApiException();
+            }
+            changedDates.addAll(evaluation.impact().dates());
+            apply(itinerary, edit, evaluation.operation());
+        }
+        return planningTaskService.createCandidateValidation(
+                ownerId, tripId, idempotencyKey, "EDIT", version.versionId(),
+                version.versionId(), requestHash, List.copyOf(changedDates),
+                toCandidateResponse(version, itinerary));
+    }
+
     /** Commits a user-reviewed draft as one immutable version. */
     @Transactional
     public ItineraryResponse applyEdits(
@@ -615,6 +679,41 @@ public class ItineraryService {
         requireOne(itineraryMapper.updateCurrentVersion(sourceVersion.itineraryId(), versionId),
                 "current itinerary version");
         return versionId;
+    }
+
+    private ItineraryResponse toCandidateResponse(
+            ItineraryMapper.EditableCurrentVersion version,
+            EditableItinerary itinerary
+    ) {
+        List<DayResponse> days = itinerary.days().stream().map(day -> {
+            Map<UUID, Integer> orders = new HashMap<>();
+            List<ActivityResponse> activities = new ArrayList<>();
+            for (int index = 0; index < day.activities().size(); index++) {
+                EditableActivity activity = day.activities().get(index);
+                orders.put(activity.id(), index);
+                activities.add(new ActivityResponse(
+                        activity.id(), activity.title(), activity.startTime(), activity.endTime(),
+                        activity.estimatedCost(), activity.source(), activity.providerPoiId(),
+                        activity.longitude() == null ? null : new CoordinatesResponse(
+                                activity.longitude(), activity.latitude()),
+                        activity.address(), activity.locked(), activity.typeCode(),
+                        activity.typeName(), activity.kind(), activity.timeFixed()
+                ));
+            }
+            List<TransitLegResponse> transit = day.transitNeedsRefresh
+                    ? List.of()
+                    : day.transitLegs().stream()
+                            .filter(leg -> orders.containsKey(leg.fromActivityId())
+                                    && orders.containsKey(leg.toActivityId()))
+                            .map(this::toTransitLegResponse)
+                            .toList();
+            return new DayResponse(day.date(), activities, transit, day.dayType());
+        }).toList();
+        return new ItineraryResponse(
+                version.versionId(), version.versionNumber(), version.parentVersionId(),
+                version.title(), itinerary.totalCost(), version.provider(), days,
+                toKnowledgeResponse(version.versionId()), List.of(), version.createdAt(), null
+        );
     }
 
     private void copyTransitLegs(
@@ -1095,7 +1194,7 @@ public class ItineraryService {
         List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (int dayIndex = 0; dayIndex < result.days().size(); dayIndex++) {
             PersistedDayReferences references = persistDay(
-                    versionId, dayIndex, result.days().get(dayIndex));
+                    versionId, dayIndex, result.days().get(dayIndex), false);
             persistedActivities.addAll(references.activities());
             persistedTransit.addAll(references.transit());
         }
@@ -1107,6 +1206,51 @@ public class ItineraryService {
                 versionId, versionNumber, provider,
                 persistedActivities, persistedTransit
         );
+    }
+
+    /** Persists a validated edit/rollback candidate as a new formal version. */
+    @Transactional
+    public CreateItineraryResult createCandidateVersion(
+            UUID tripId,
+            PlanningCompletedEvent event,
+            PlanningTaskCompletionRecord task,
+            Clock clock
+    ) {
+        ItineraryMapper.ItineraryState itinerary = itineraryMapper.findStateForUpdate(tripId)
+                .orElseThrow(() -> rejected("Itinerary was not found for candidate validation"));
+        if (!task.baselineItineraryVersionId().equals(itinerary.currentVersionId())) {
+            throw rejected("Candidate baseline no longer matches the current itinerary");
+        }
+        PlanningCompletedEvent.Itinerary result = event.payload().itinerary();
+        UUID versionId = UUID.randomUUID();
+        String versionSource = "ROLLBACK".equals(task.candidateType())
+                ? "ROLLBACK" : "USER_EDIT";
+        String provider = completionProvider(event);
+        requireOne(itineraryMapper.insertVersion(new ItineraryMapper.VersionWrite(
+                versionId, itinerary.id(), itinerary.currentVersionNumber() + 1,
+                itinerary.currentVersionId(), task.id(), versionSource,
+                result.title().strip(), result.estimatedTotalCost(), provider,
+                task.constraintSnapshotJson(), clock.instant()
+        )), "candidate itinerary version");
+        if ("ROLLBACK".equals(task.candidateType())) {
+            requireOne(itineraryMapper.setRollbackSource(
+                    versionId, task.candidateSourceVersionId()), "rollback source");
+        }
+        versionPersister.persistKnowledge(
+                versionId, event.payload().knowledge(), "candidate knowledge evidence");
+        List<PersistedActivityReference> persistedActivities = new ArrayList<>();
+        List<PersistedTransitReference> persistedTransit = new ArrayList<>();
+        for (int dayIndex = 0; dayIndex < result.days().size(); dayIndex++) {
+            PersistedDayReferences references = persistDay(
+                    versionId, dayIndex, result.days().get(dayIndex), true);
+            persistedActivities.addAll(references.activities());
+            persistedTransit.addAll(references.transit());
+        }
+        requireOne(itineraryMapper.updateCurrentVersion(itinerary.id(), versionId),
+                "current candidate version");
+        return new CreateItineraryResult(
+                versionId, itinerary.currentVersionNumber() + 1, provider,
+                persistedActivities, persistedTransit);
     }
 
     // ---- planning completion: REPLAN path ----------------------------------
@@ -1222,7 +1366,11 @@ public class ItineraryService {
     // ---- planning-completion helpers (moved from PlanningCompletionService) --
 
     private PersistedDayReferences persistDay(
-            UUID versionId, int dayIndex, PlanningCompletedEvent.Day day) {
+            UUID versionId,
+            int dayIndex,
+            PlanningCompletedEvent.Day day,
+            boolean preserveCandidateLocks
+    ) {
         UUID dayId = UUID.randomUUID();
         requireOne(
                 itineraryMapper.insertDay(
@@ -1260,7 +1408,8 @@ public class ItineraryService {
                                             ? null : coordinates.longitude(),
                                     coordinates == null
                                             ? null : coordinates.latitude(),
-                                    activity.address(), false,
+                                    activity.address(),
+                                    preserveCandidateLocks && Boolean.TRUE.equals(activity.locked()),
                                     activity.typeCode(), activity.typeName(),
                                     activity.kind(),
                                     Boolean.TRUE.equals(activity.timeFixed())
@@ -1290,7 +1439,8 @@ public class ItineraryService {
                                     leg.mode(), leg.distanceMeters(),
                                     leg.durationSeconds(), leg.provider(),
                                     leg.estimated(),
-                                    writeJson(leg.polyline()), false,
+                                    writeJson(leg.polyline()),
+                                    preserveCandidateLocks && Boolean.TRUE.equals(leg.locked()),
                                     leg.estimatedCost(),
                                     null, Instant.now(), false
                             )

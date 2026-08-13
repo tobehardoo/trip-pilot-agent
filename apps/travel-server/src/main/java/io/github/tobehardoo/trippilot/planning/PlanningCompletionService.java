@@ -102,6 +102,22 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                     "Trip constraints changed while planning was running");
             return;
         }
+        if (isCandidateTask(task)) {
+            if (guard.isStaleReplanBaseline(
+                    task, itineraryService.getCurrentVersionForTask(task.tripId()))) {
+                persistStaleFailure(event, task, "STALE_ITINERARY_VERSION",
+                        "The itinerary changed while the candidate was validated");
+                return;
+            }
+            ItineraryService.CreateItineraryResult result =
+                    itineraryService.createCandidateVersion(task.tripId(), event, task, clock);
+            persistFactImpacts(event, result.versionId());
+            String reportJson = persistFeasibilityReport(event, result);
+            updateTaskToSucceeded(
+                    event, task, result, "PLANNING_COMPLETED",
+                    writeJson(completionPayload(event, result, reportJson)));
+            return;
+        }
         if ("REPLAN".equals(task.taskType())) {
             if (guard.isStaleReplanBaseline(
                     task, itineraryService.getCurrentVersionForTask(task.tripId()))) {
@@ -127,6 +143,11 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         updateTaskToSucceeded(
                 event, task, result, "PLANNING_COMPLETED",
                 writeJson(completionPayload(event, result, reportJson)));
+    }
+
+    private static boolean isCandidateTask(PlanningTaskCompletionRecord task) {
+        return "EDIT_VALIDATE".equals(task.taskType())
+                || "ROLLBACK_VALIDATE".equals(task.taskType());
     }
 
     /**

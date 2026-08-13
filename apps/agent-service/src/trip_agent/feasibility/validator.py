@@ -44,6 +44,7 @@ from trip_agent.feasibility.rules.meal import assess_meal_window
 from trip_agent.feasibility.rules.opening import assess_opening_hours
 from trip_agent.worker.contracts import (
     Itinerary,
+    PlanningCandidateValidationCommand,
     PlanningCreateCommand,
     PlanningReplanCommand,
 )
@@ -102,7 +103,7 @@ def _with_repairability(assessment: RuleAssessment) -> RuleAssessment:
 
 
 def run_validation(
-    command: PlanningCreateCommand | PlanningReplanCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     itinerary: Itinerary,
     *,
     report_id: str | UUID,
@@ -137,7 +138,7 @@ def run_validation(
 
 
 def validate_itinerary(
-    command: PlanningCreateCommand | PlanningReplanCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     itinerary: Itinerary,
     *,
     report_id: str | UUID,

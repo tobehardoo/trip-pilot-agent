@@ -40,6 +40,9 @@ public class PlanningTaskService {
     private static final String ROUTING_KEY = "planning.create";
     private static final String REPLAN_COMMAND_TYPE = "PLANNING_REPLAN_REQUESTED";
     private static final String REPLAN_ROUTING_KEY = "planning.replan";
+    private static final String CANDIDATE_COMMAND_TYPE =
+            "PLANNING_CANDIDATE_VALIDATION_REQUESTED";
+    private static final String CANDIDATE_ROUTING_KEY = "planning.candidate-validation";
     private static final String CANCEL_COMMAND_TYPE = "PLANNING_CANCEL_REQUESTED";
     private static final String CANCEL_ROUTING_KEY = "planning.cancel";
     private static final long MAX_TRIP_DAYS = 7;
@@ -311,6 +314,120 @@ public class PlanningTaskService {
         return toResponse(task);
     }
 
+    @Transactional
+    public PlanningTaskResponse createCandidateValidation(
+            UUID ownerId,
+            UUID tripId,
+            UUID idempotencyKey,
+            String candidateType,
+            UUID baselineVersionId,
+            UUID sourceVersionId,
+            String requestHash,
+            List<LocalDate> changedDates,
+            ItineraryService.ItineraryResponse candidate
+    ) {
+        TripService.TripResponse trip = tripService.get(ownerId, tripId);
+        List<LocalDate> canonicalChanged = validateCandidateDates(changedDates, trip);
+        List<LocalDate> impacted = expandCandidateDates(canonicalChanged, trip);
+        var existing = planningTaskMapper.findOwnedByIdempotencyKey(
+                tripId, idempotencyKey, ownerId);
+        if (existing.isPresent()) {
+            PlanningTaskIdempotency.requireCandidateMatch(
+                    existing.get(), candidateType, baselineVersionId, sourceVersionId,
+                    requestHash, canonicalChanged, impacted, objectMapper);
+            return toResponse(existing.get());
+        }
+        ItineraryMapper.EditableCurrentVersion current = itineraryMapper
+                .findCurrentVersionOwnedForEditForUpdate(tripId, ownerId)
+                .orElseThrow(() -> new ApiException(
+                        HttpStatus.NOT_FOUND, "ITINERARY_NOT_FOUND", "Itinerary was not found"));
+        if (!baselineVersionId.equals(current.versionId())) {
+            throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                    "The itinerary was updated. Reload it before validating this candidate");
+        }
+        if (planningTaskMapper.existsActiveByTripId(tripId)) {
+            throw new ApiException(HttpStatus.CONFLICT, "PLANNING_TASK_ACTIVE",
+                    "This trip already has an active planning task");
+        }
+        Instant now = Instant.now();
+        List<GuideImportService.PlanningGuideFact> guideFacts =
+                guideImportService.planningEvidence(ownerId, tripId, now);
+        PlanningTaskRecord task = new PlanningTaskRecord(
+                UUID.randomUUID(), tripId, idempotencyKey, candidateType + "_VALIDATE",
+                TASK_STATUS, trip.version(), baselineVersionId, writeJson(impacted),
+                writeJson(trip.constraints()), writeJson(new GuideEvidenceSnapshot(guideFacts)),
+                UUID.randomUUID(), 0, null, null, 0, now, now,
+                candidateType, sourceVersionId, requestHash, writeJson(canonicalChanged)
+        );
+        if (planningTaskMapper.insert(task) == 0) {
+            return planningTaskMapper.findOwnedByIdempotencyKey(tripId, idempotencyKey, ownerId)
+                    .map(found -> {
+                        PlanningTaskIdempotency.requireCandidateMatch(
+                                found, candidateType, baselineVersionId, sourceVersionId,
+                                requestHash, canonicalChanged, impacted, objectMapper);
+                        return toResponse(found);
+                    })
+                    .orElseThrow(() -> new ApiException(
+                            HttpStatus.CONFLICT, "PLANNING_TASK_ACTIVE",
+                            "This trip already has an active planning task"));
+        }
+        metrics.taskCreated(task.taskType());
+        PlanningContextSnapshot context = planningContextSnapshotService.freeze(
+                ownerId, task.id(), trip, guideFacts, now);
+        if (planningTaskEventMapper.insert(new PlanningTaskEventRecord(
+                null, UUID.randomUUID(), task.id(), "PLANNING_QUEUED", 1,
+                writeJson(new TaskStatusPayload(TASK_STATUS)), now
+        )) != 1) {
+            throw new IllegalStateException("Could not persist candidate planning queued event");
+        }
+        UUID eventId = UUID.randomUUID();
+        PlanningCandidateValidationCommand command = new PlanningCandidateValidationCommand(
+                CANDIDATE_COMMAND_TYPE, 1, eventId, task.traceId(), task.id(), tripId, now,
+                new PlanningCandidateValidationPayload(
+                        task.taskType(), candidateType, trip.version(), baselineVersionId,
+                        "ROLLBACK".equals(candidateType) ? sourceVersionId : null,
+                        idempotencyKey, canonicalChanged, impacted,
+                        new TripSnapshot(
+                                trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
+                                trip.status(), trip.version(), trip.constraints()),
+                        toReplanSnapshot(candidate), candidate.knowledge(), context
+                )
+        );
+        if (outboxMapper.insert(new OutboxEventRecord(
+                eventId, "PLANNING_TASK", task.id(), CANDIDATE_COMMAND_TYPE,
+                CANDIDATE_ROUTING_KEY, writeJson(command), "PENDING", 0,
+                now, null, now, null
+        )) != 1) {
+            throw new IllegalStateException("Could not persist candidate validation outbox event");
+        }
+        return toResponse(task);
+    }
+
+    private List<LocalDate> validateCandidateDates(
+            List<LocalDate> dates, TripService.TripResponse trip) {
+        if (dates == null || dates.isEmpty()) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "ITINERARY_EDIT_INVALID", "Candidate changes must identify a trip date");
+        }
+        List<LocalDate> canonical = dates.stream().distinct().sorted().toList();
+        if (canonical.size() != dates.size() || canonical.stream().anyMatch(date ->
+                date.isBefore(trip.startDate()) || date.isAfter(trip.endDate()))) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY,
+                    "ITINERARY_EDIT_INVALID", "Candidate dates must belong to the trip");
+        }
+        return canonical;
+    }
+
+    private List<LocalDate> expandCandidateDates(
+            List<LocalDate> changed, TripService.TripResponse trip) {
+        return changed.stream()
+                .flatMap(date -> java.util.stream.Stream.of(
+                        date.minusDays(1), date, date.plusDays(1)))
+                .filter(date -> !date.isBefore(trip.startDate())
+                        && !date.isAfter(trip.endDate()))
+                .distinct().sorted().toList();
+    }
+
     private List<LocalDate> validateReplanDates(List<LocalDate> requestedDates, UUID versionId) {
         if (requestedDates == null || requestedDates.isEmpty()) {
             throw invalidReplanScope("At least one itinerary date must be selected");
@@ -342,7 +459,9 @@ public class PlanningTaskService {
                 activities.add(new ReplanActivitySnapshot(
                         activity.title(), activity.startTime(), activity.endTime(),
                         activity.estimatedCost(), activity.source(), activity.providerPoiId(),
-                        activity.coordinates(), activity.address()
+                        activity.coordinates(), activity.address(), activity.typeCode(),
+                        activity.typeName(), activity.kind(), activity.timeFixed(),
+                        activity.locked()
                 ));
             }
             List<ReplanTransitSnapshot> transitLegs = day.transitLegs().stream()
@@ -350,10 +469,10 @@ public class PlanningTaskService {
                             activityIndexes.get(leg.fromActivityId()),
                             activityIndexes.get(leg.toActivityId()), leg.mode(),
                             leg.distanceMeters(), leg.durationSeconds(), leg.provider(),
-                            leg.estimated(), leg.polyline()
+                            leg.estimated(), leg.polyline(), leg.locked()
                     ))
                     .toList();
-            return new ReplanDaySnapshot(day.date(), activities, transitLegs);
+            return new ReplanDaySnapshot(day.date(), activities, transitLegs, day.dayType());
         }).toList();
         return new ReplanItinerarySnapshot(
                 itinerary.title(), planningProvider(itinerary), days,
@@ -362,6 +481,9 @@ public class PlanningTaskService {
     }
 
     private String planningProvider(ItineraryService.ItineraryResponse itinerary) {
+        if ("MIXED".equals(itinerary.provider())) {
+            return "MIXED";
+        }
         return itinerary.days().stream()
                 .flatMap(day -> day.activities().stream())
                 .map(ItineraryService.ActivityResponse::source)
@@ -416,6 +538,7 @@ public class PlanningTaskService {
         TerminalMetadata metadata = terminalMetadata(task);
         return new PlanningTaskResponse(
                 task.id(), task.tripId(), task.taskType(), task.status(), task.baselineTripVersion(),
+                task.baselineItineraryVersionId(), task.candidateType(),
                 "/api/planning-tasks/" + task.id() + "/events",
                 metadata.errorCode(), metadata.errorCategory(), metadata.provider(),
                 metadata.operation(), metadata.retryable(), metadata.retryCount(),
@@ -482,6 +605,8 @@ public class PlanningTaskService {
             String taskType,
             String status,
             int baselineTripVersion,
+            UUID baselineItineraryVersionId,
+            String candidateType,
             String eventStreamUrl,
             String errorCode,
             String errorCategory,
@@ -590,6 +715,34 @@ public class PlanningTaskService {
     ) {
     }
 
+    private record PlanningCandidateValidationCommand(
+            String eventType,
+            int schemaVersion,
+            UUID eventId,
+            UUID traceId,
+            UUID taskId,
+            UUID tripId,
+            Instant occurredAt,
+            PlanningCandidateValidationPayload payload
+    ) {
+    }
+
+    private record PlanningCandidateValidationPayload(
+            String taskType,
+            String candidateType,
+            int baselineTripVersion,
+            UUID baselineItineraryVersionId,
+            UUID rollbackFromVersionId,
+            UUID idempotencyKey,
+            List<LocalDate> changedDates,
+            List<LocalDate> impactedDates,
+            TripSnapshot trip,
+            ReplanItinerarySnapshot itinerary,
+            ItineraryService.KnowledgeResponse knowledge,
+            PlanningContextSnapshot planningContext
+    ) {
+    }
+
     private record ReplanItinerarySnapshot(
             String title,
             String provider,
@@ -601,7 +754,8 @@ public class PlanningTaskService {
     private record ReplanDaySnapshot(
             LocalDate date,
             List<ReplanActivitySnapshot> activities,
-            List<ReplanTransitSnapshot> transitLegs
+            List<ReplanTransitSnapshot> transitLegs,
+            String dayType
     ) {
     }
 
@@ -613,7 +767,12 @@ public class PlanningTaskService {
             String source,
             String providerPoiId,
             ItineraryService.CoordinatesResponse coordinates,
-            String address
+            String address,
+            String typeCode,
+            String typeName,
+            String kind,
+            boolean timeFixed,
+            boolean locked
     ) {
     }
 
@@ -625,7 +784,8 @@ public class PlanningTaskService {
             int durationSeconds,
             String provider,
             boolean estimated,
-            List<ItineraryService.CoordinatesResponse> polyline
+            List<ItineraryService.CoordinatesResponse> polyline,
+            boolean locked
     ) {
     }
 

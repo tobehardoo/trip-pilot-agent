@@ -2,10 +2,7 @@
 
 from datetime import time
 
-import pytest
-
 from trip_agent.guide_intelligence.opening_hours import (
-    ParsedOpeningHours,
     TimeInterval,
     WeekdayRule,
     opening_normalized_value,

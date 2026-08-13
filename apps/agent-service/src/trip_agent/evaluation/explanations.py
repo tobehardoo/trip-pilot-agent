@@ -16,7 +16,15 @@ from trip_agent.evaluation.rules import (
     DayStats,
     activity_covers_fixed_schedule,
 )
-from trip_agent.worker.contracts import PlanningCreateCommand, PlanningReplanCommand
+from trip_agent.worker.contracts import (
+    PlanningCandidateValidationCommand,
+    PlanningCreateCommand,
+    PlanningReplanCommand,
+)
+
+PlanningCommand = (
+    PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand
+)
 
 
 class DeterministicPlanExplanationGenerator:
@@ -25,7 +33,7 @@ class DeterministicPlanExplanationGenerator:
     def generate(
         self,
         *,
-        command: PlanningCreateCommand | PlanningReplanCommand,
+        command: PlanningCommand,
         result: PlanningResult,
         budget_ctx: BudgetContext,
         day_stats: tuple[DayStats, ...],
@@ -115,7 +123,7 @@ class DeterministicPlanExplanationGenerator:
     def summary(
         self,
         *,
-        command: PlanningCreateCommand | PlanningReplanCommand,
+        command: PlanningCommand,
         result: PlanningResult,
         dimensions: EvaluationDimensions,
     ) -> str:
@@ -137,7 +145,7 @@ class DeterministicPlanExplanationGenerator:
 
     def _plan_level(
         self,
-        command: PlanningCreateCommand | PlanningReplanCommand,
+        command: PlanningCommand,
         result: PlanningResult,
     ) -> DecisionExplanation:
         constraints = command.payload.trip.constraints
@@ -174,7 +182,7 @@ class DeterministicPlanExplanationGenerator:
 
     def _day_level(
         self,
-        command: PlanningCreateCommand | PlanningReplanCommand,
+        command: PlanningCommand,
         result: PlanningResult,
         stats: DayStats,
     ) -> tuple[DecisionExplanation, ...]:

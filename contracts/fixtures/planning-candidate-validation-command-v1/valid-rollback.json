@@ -1,0 +1,88 @@
+{
+  "eventType": "PLANNING_CANDIDATE_VALIDATION_REQUESTED",
+  "schemaVersion": 1,
+  "eventId": "0e9438ed-16f5-4bd6-a19f-606c8aef05df",
+  "traceId": "30285ae6-df62-4f7f-a281-bda93b4eb4d7",
+  "taskId": "5724cc64-da93-41ea-b779-b98bf62b9f1c",
+  "tripId": "fb21f112-d17f-4e4f-8598-b1cd1c64ca04",
+  "occurredAt": "2026-08-13T04:01:00Z",
+  "payload": {
+    "taskType": "ROLLBACK_VALIDATE",
+    "candidateType": "ROLLBACK",
+    "baselineTripVersion": 3,
+    "baselineItineraryVersionId": "5ed1e169-04ec-45ed-9102-f75d833f2b8c",
+    "rollbackFromVersionId": "1b748af8-58fc-4515-8c39-29c68c5ae9f3",
+    "idempotencyKey": "00000000-0000-4000-8000-000000000002",
+    "changedDates": ["2026-08-01", "2026-08-02"],
+    "impactedDates": ["2026-08-01", "2026-08-02"],
+    "trip": {
+      "title": "Guangzhou weekend",
+      "destination": "Guangzhou",
+      "startDate": "2026-08-01",
+      "endDate": "2026-08-02",
+      "status": "DRAFT",
+      "version": 3,
+      "constraints": {
+        "budgetAmount": 1000,
+        "travelers": 2,
+        "travelerType": "FRIENDS",
+        "pace": "BALANCED",
+        "preferences": ["history"],
+        "fixedSchedules": [],
+        "arrival": null,
+        "departure": null,
+        "accommodation": null,
+        "mustVisitPlaces": [],
+        "avoidPlaces": [],
+        "mealWindows": [],
+        "mobilityLevel": "STANDARD",
+        "schemaVersion": 2
+      }
+    },
+    "itinerary": {
+      "title": "Historical Guangzhou route",
+      "provider": "DEMO",
+      "estimatedTotalCost": 0,
+      "days": [
+        {
+          "date": "2026-08-01",
+          "dayType": "FULL_DAY",
+          "activities": [
+            {
+              "title": "Historic district",
+              "startTime": "2026-08-01T09:00:00+08:00",
+              "endTime": "2026-08-01T11:00:00+08:00",
+              "estimatedCost": 0,
+              "source": "DEMO",
+              "locked": false
+            }
+          ],
+          "transitLegs": []
+        },
+        {
+          "date": "2026-08-02",
+          "dayType": "DEPARTURE_DAY",
+          "activities": [
+            {
+              "title": "Riverside walk",
+              "startTime": "2026-08-02T09:00:00+08:00",
+              "endTime": "2026-08-02T10:30:00+08:00",
+              "estimatedCost": 0,
+              "source": "DEMO",
+              "locked": false
+            }
+          ],
+          "transitLegs": []
+        }
+      ]
+    },
+    "knowledge": {
+      "status": "DEMO",
+      "query": "Guangzhou history FRIENDS",
+      "citations": [],
+      "freshness": {"status": "UNAVAILABLE"},
+      "message": "No production knowledge was used"
+    },
+    "planningContext": null
+  }
+}

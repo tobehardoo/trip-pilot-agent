@@ -130,6 +130,10 @@ public class PlanningCompletedEventParser {
                         && !activity.path("timeFixed").isBoolean()) {
                     throw invalid("activity timeFixed must be a boolean");
                 }
+                if (activity.has("locked") && !activity.path("locked").isNull()
+                        && !activity.path("locked").isBoolean()) {
+                    throw invalid("activity locked must be boolean or null");
+                }
                 validateActivityMetadataTypes(activity);
                 if (activity.has("activityId")
                         && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9)
@@ -253,7 +257,8 @@ public class PlanningCompletedEventParser {
                 && !knowledge.path("message").isTextual()) {
             throw invalid("knowledge message must be text");
         }
-        if (freshness.has("checkedAt") && !freshness.path("checkedAt").isTextual()) {
+        if (freshness.has("checkedAt") && !freshness.path("checkedAt").isNull()
+                && !freshness.path("checkedAt").isTextual()) {
             throw invalid("knowledge checkedAt must be text");
         }
         if (freshness.has("staleReason") && !freshness.path("staleReason").isNull()

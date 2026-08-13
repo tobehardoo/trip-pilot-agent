@@ -10,6 +10,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from trip_agent.application.candidate_validation import CandidateValidationProvider
 from trip_agent.application.replan_service import LocalReplanningProvider  # noqa: F811
 from trip_agent.domain.planning.protocols import (
     KnowledgeEvidenceProvider,
@@ -55,6 +56,7 @@ from trip_agent.worker.contracts import (
     KnowledgeCitationSnapshot,
     KnowledgeEvidence,
     KnowledgeFreshness,
+    PlanningCandidateValidationCommand,
     PlanningCompletedEventV9,
     PlanningCompletedPayloadV9,
     PlanningConflict,
@@ -90,6 +92,7 @@ __all__ = [
     "ResolvedTravelAnchors",
     "planning_failed_event",
     "process_planning_create",
+    "process_candidate_validation",
     "process_planning_replan",
 ]
 
@@ -264,9 +267,66 @@ async def process_planning_replan(
     )
 
 
+async def process_candidate_validation(
+    command: PlanningCandidateValidationCommand,
+    provider: CandidateValidationProvider,
+    *,
+    occurred_at: datetime | None = None,
+) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
+    completed_at = occurred_at or datetime.now(UTC)
+    await report_planning_progress(
+        "CONTEXT_VALIDATING",
+        "Validating an immutable edit or rollback candidate",
+        {"impactedDays": len(command.payload.impacted_dates)},
+    )
+    result = await provider.validate(command)
+    validation = run_validation(
+        command=command,
+        itinerary=result.itinerary,
+        report_id=_feasibility_report_id(command.event_id),
+        validated_at=completed_at,
+        trip_skeleton=result.trip_skeleton,
+        validation_inputs=result.validation_inputs,
+    )
+    result, validation = await _repair_if_needed(command, provider, result, validation)
+    report = validation.report
+    common = {
+        "provider": result.provider,
+        "itinerary": result.itinerary,
+        "knowledge": command.payload.knowledge,
+        "fact_impacts": _candidate_fact_impacts(command, result),
+        "provider_provenance": result.provider_provenance(),
+        "feasibility_report": report,
+    }
+    if report.status.value == "VERIFIED":
+        return PlanningCompletedEventV9(
+            event_type="PLANNING_COMPLETED",
+            schema_version=9,
+            event_id=_completed_event_id(command.event_id),
+            trace_id=command.trace_id,
+            task_id=command.task_id,
+            trip_id=command.trip_id,
+            run_id=_run_id(command.task_id),
+            occurred_at=completed_at,
+            payload=PlanningCompletedPayloadV9(
+                **common,
+                evaluation=get_plan_evaluator().evaluate(command, result),
+            ),
+        )
+    return PlanningReviewRequiredEvent(
+        event_type="PLANNING_REVIEW_REQUIRED",
+        schema_version=1,
+        event_id=_completed_event_id(command.event_id),
+        trace_id=command.trace_id,
+        task_id=command.task_id,
+        trip_id=command.trip_id,
+        run_id=_run_id(command.task_id),
+        occurred_at=completed_at,
+        payload=PlanningReviewRequiredPayload(status="WAITING_USER", **common),
+    )
 async def _repair_if_needed(
-    command: PlanningCreateCommand | PlanningReplanCommand,
-    provider: PlanningProvider,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
+    provider: PlanningProvider | CandidateValidationProvider,
     result: PlanningResult,
     validation: ValidationRun,
 ) -> tuple[PlanningResult, ValidationRun]:
@@ -342,7 +402,7 @@ def _command_with_fresh_guide_evidence(
 
 
 def planning_failed_event(
-    command: PlanningCreateCommand | PlanningReplanCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     failure: PlanningInfeasibleError | PlanningProviderError | Exception,
     *,
     occurred_at: datetime | None = None,
@@ -490,6 +550,22 @@ def _merge_guide_evidence(
 
 def _fact_impacts(
     command: PlanningCreateCommand,
+    result: PlanningResult,
+) -> tuple[PlanningFactImpact, ...]:
+    context = command.payload.planning_context
+    if context is None:
+        return ()
+    scheduled = tuple(
+        (day.date, activity.title) for day in result.itinerary.days for activity in day.activities
+    )
+    return tuple(
+        PlanningFactImpact.model_validate(asdict(impact))
+        for impact in planning_fact_impacts(context, scheduled)
+    )
+
+
+def _candidate_fact_impacts(
+    command: PlanningCandidateValidationCommand,
     result: PlanningResult,
 ) -> tuple[PlanningFactImpact, ...]:
     context = command.payload.planning_context

@@ -26,7 +26,11 @@ from trip_agent.evaluation.rules import (
     time_warnings,
 )
 from trip_agent.evaluation.scoring import weighted_overall_score
-from trip_agent.worker.contracts import PlanningCreateCommand, PlanningReplanCommand
+from trip_agent.worker.contracts import (
+    PlanningCandidateValidationCommand,
+    PlanningCreateCommand,
+    PlanningReplanCommand,
+)
 
 EVALUATOR_VERSION = "rule-v3"
 
@@ -51,7 +55,7 @@ class PlanEvaluator:
 
     def evaluate(
         self,
-        command: PlanningCreateCommand | PlanningReplanCommand,
+        command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
         result: PlanningResult,
     ) -> PlanEvaluation:
         """Produce a complete, deterministic plan evaluation.

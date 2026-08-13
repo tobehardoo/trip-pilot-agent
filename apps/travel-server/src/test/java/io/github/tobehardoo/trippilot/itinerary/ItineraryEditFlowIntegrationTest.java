@@ -16,16 +16,28 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEventParser;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningReviewRequiredEvent;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningReviewRequiredEventParser;
 import io.github.tobehardoo.trippilot.planning.PlanningCompletionService;
 import io.github.tobehardoo.trippilot.planning.PlanningEventRejectedException;
+import io.github.tobehardoo.trippilot.planning.PlanningReviewService;
 import io.github.tobehardoo.trippilot.support.PlanningCompletedEventFixture;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.context.annotation.Import;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,6 +47,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+@Import(ItineraryEditFlowIntegrationTest.LegacyEditRegressionController.class)
 class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     private static UUID nextIdempotencyKey() {
@@ -55,6 +68,12 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private PlanningCompletionService completionService;
+
+    @Autowired
+    private PlanningReviewRequiredEventParser reviewEventParser;
+
+    @Autowired
+    private PlanningReviewService reviewService;
 
     @Autowired
     private ItineraryService itineraryService;
@@ -87,13 +106,324 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void submitsEditCandidateForValidationWithoutChangingCurrentVersion() throws Exception {
+        PlanningContext context = completedItinerary("edit-candidate@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID versionId = uuid(current, "versionId");
+        UUID activityId = uuid(current.at("/days/0/activities/0"), "id");
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(versionId, "DELETE_ACTIVITY", activityId, null)))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.taskType").value("EDIT_VALIDATE"))
+                .andExpect(jsonPath("$.status").value("QUEUED"))
+                .andExpect(jsonPath("$.baselineItineraryVersionId").value(versionId.toString()));
+
+        assertThat(uuid(currentItinerary(context), "versionId")).isEqualTo(versionId);
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT event_type FROM business.outbox_event
+                WHERE aggregate_id = (
+                    SELECT id FROM business.planning_task
+                    WHERE trip_id = ? AND task_type = 'EDIT_VALIDATE'
+                )
+                """, String.class, context.tripId()))
+               .isEqualTo("PLANNING_CANDIDATE_VALIDATION_REQUESTED");
+    }
+
+    @Test
+    void candidateValidationIsIdempotentAndRejectsSemanticKeyReuse() throws Exception {
+        PlanningContext context = completedItinerary("edit-candidate-idempotency@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID versionId = uuid(current, "versionId");
+        UUID firstActivityId = uuid(current.at("/days/0/activities/0"), "id");
+        UUID secondActivityId = uuid(current.at("/days/0/activities/1"), "id");
+        UUID idempotencyKey = nextIdempotencyKey();
+        String original = editJson(versionId, "LOCK_ACTIVITY", firstActivityId, null);
+
+        String firstTaskId = json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(original))
+                .andExpect(status().isAccepted())
+                .andReturn()).get("taskId").asText();
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(original))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.taskId").value(firstTaskId));
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(versionId, "LOCK_ACTIVITY", secondActivityId, null)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+
+        assertThat(uuid(currentItinerary(context), "versionId")).isEqualTo(versionId);
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+    }
+
+    @Test
+    void candidateCommandsCoverDeleteMoveTransitAndExactCrossDayScope() throws Exception {
+        PlanningContext context = completedTwoDayItinerary("edit-candidate-operations@example.com");
+        JsonNode current = currentItinerary(context);
+        UUID versionId = uuid(current, "versionId");
+        UUID deleteActivityId = uuid(current.at("/days/0/activities/0"), "id");
+
+        UUID deleteTaskId = uuid(json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(versionId, "DELETE_ACTIVITY", deleteActivityId, null)))
+                .andExpect(status().isAccepted())
+                .andReturn()), "taskId");
+        JsonNode deleteCommand = candidateCommand(deleteTaskId);
+        assertThat(deleteCommand.at("/payload/changedDates/0").asText())
+                .isEqualTo("2026-08-01");
+        assertThat(deleteCommand.at("/payload/impactedDates").size()).isEqualTo(2);
+        assertThat(deleteCommand.at("/payload/itinerary/days/0/activities").size())
+                .isEqualTo(1);
+        jdbcTemplate.update("UPDATE business.planning_task SET status = 'CANCELLED' WHERE id = ?",
+                deleteTaskId);
+
+        UUID moveActivityId = uuid(current.at("/days/0/activities/1"), "id");
+        String move = """
+                ,
+                "targetDate": "2026-08-02",
+                "targetOrder": 0,
+                "targetStartTime": "2026-08-02T06:30:00+08:00",
+                "targetEndTime": "2026-08-02T08:30:00+08:00"
+                """;
+        UUID moveTaskId = uuid(json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(versionId, "MOVE_ACTIVITY", moveActivityId, move)))
+                .andExpect(status().isAccepted())
+                .andReturn()), "taskId");
+        JsonNode moveCommand = candidateCommand(moveTaskId);
+        assertThat(moveCommand.at("/payload/changedDates").size()).isEqualTo(2);
+        assertThat(moveCommand.at("/payload/impactedDates").size()).isEqualTo(2);
+        assertThat(moveCommand.at("/payload/itinerary/days/0/activities").size())
+                .isEqualTo(1);
+        assertThat(moveCommand.at("/payload/itinerary/days/1/activities").size())
+                .isEqualTo(3);
+        jdbcTemplate.update("UPDATE business.planning_task SET status = 'CANCELLED' WHERE id = ?",
+                moveTaskId);
+
+        UUID transitId = uuid(current.at("/days/0/transitLegs/0"), "id");
+        UUID transitTaskId = uuid(json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(versionId, transitId, "WALKING", true)))
+                .andExpect(status().isAccepted())
+                .andReturn()), "taskId");
+        JsonNode transitCommand = candidateCommand(transitTaskId);
+        assertThat(transitCommand.at("/payload/changedDates/0").asText())
+                .isEqualTo("2026-08-01");
+        assertThat(transitCommand.at("/payload/impactedDates").size()).isEqualTo(2);
+        assertThat(transitCommand.at("/payload/itinerary/days/0/transitLegs/0/locked")
+                .asBoolean()).isTrue();
+
+        assertThat(uuid(currentItinerary(context), "versionId")).isEqualTo(versionId);
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+    }
+
+    @Test
+    void staleEditCandidateCompletionFailsWithoutCreatingAVersion() throws Exception {
+        PlanningContext context = completedItinerary("edit-candidate-stale@example.com");
+        JsonNode baseline = currentItinerary(context);
+        UUID baselineVersionId = uuid(baseline, "versionId");
+        UUID activityId = uuid(baseline.at("/days/0/activities/0"), "id");
+
+        UUID taskId = uuid(json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(
+                                baselineVersionId, "LOCK_ACTIVITY", activityId, null)))
+                .andExpect(status().isAccepted())
+                .andReturn()), "taskId");
+        JsonNode command = candidateCommand(taskId);
+
+        jdbcTemplate.update("UPDATE business.planning_task SET status = 'CANCELLED' WHERE id = ?",
+                taskId);
+        JsonNode newer = json(mockMvc.perform(post(
+                                "/api/test/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(
+                                baselineVersionId, "LOCK_ACTIVITY", activityId, null)))
+                .andExpect(status().isOk())
+                .andReturn());
+        jdbcTemplate.update("""
+                UPDATE business.planning_task
+                SET status = 'QUEUED', version = version + 1
+                WHERE id = ?
+                """, taskId);
+
+        completionService.handle(candidateCompletedEvent(context.tripId(), taskId, command));
+
+        assertThat(uuid(currentItinerary(context), "versionId"))
+                .isEqualTo(uuid(newer, "versionId"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT error_code FROM business.planning_task WHERE id = ?", String.class, taskId))
+                .isEqualTo("STALE_ITINERARY_VERSION");
+        assertThat(count("business.itinerary_version")).isEqualTo(2);
+    }
+
+    @Test
+    void submitsRollbackCandidateWithoutCopyingHistoricalValidationState() throws Exception {
+        PlanningContext context = completedItinerary("rollback-candidate@example.com");
+        JsonNode initial = currentItinerary(context);
+        UUID initialVersionId = uuid(initial, "versionId");
+        UUID activityId = uuid(initial.at("/days/0/activities/0"), "id");
+
+        JsonNode edited = json(mockMvc.perform(post(
+                                "/api/test/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(initialVersionId, "LOCK_ACTIVITY", activityId, null)))
+                .andExpect(status().isOk())
+                .andReturn());
+        UUID editedVersionId = uuid(edited, "versionId");
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/rollbacks", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sourceVersionId":"%s","expectedCurrentVersionId":"%s"}
+                                """.formatted(initialVersionId, editedVersionId)))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.taskType").value("ROLLBACK_VALIDATE"))
+                .andExpect(jsonPath("$.candidateType").value("ROLLBACK"))
+                .andExpect(jsonPath("$.baselineItineraryVersionId")
+                        .value(editedVersionId.toString()));
+
+        assertThat(uuid(currentItinerary(context), "versionId")).isEqualTo(editedVersionId);
+        assertThat(count("business.itinerary_version")).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT candidate_source_version_id
+                FROM business.planning_task
+                WHERE trip_id = ? AND task_type = 'ROLLBACK_VALIDATE'
+                """, UUID.class, context.tripId())).isEqualTo(initialVersionId);
+        assertThat(count("business.itinerary_feasibility_report")).isEqualTo(1);
+    }
+
+    @Test
+    void verifiedEditCandidateAtomicallyBecomesCurrentWithFreshReport() throws Exception {
+        PlanningContext context = completedItinerary("edit-candidate-verified@example.com");
+        JsonNode baseline = currentItinerary(context);
+        UUID baselineVersionId = uuid(baseline, "versionId");
+        UUID activityId = uuid(baseline.at("/days/0/activities/0"), "id");
+
+        UUID taskId = uuid(json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(
+                                baselineVersionId, "LOCK_ACTIVITY", activityId, null)))
+                .andExpect(status().isAccepted())
+                .andReturn()), "taskId");
+        JsonNode command = candidateCommand(taskId);
+        assertThat(uuid(currentItinerary(context), "versionId")).isEqualTo(baselineVersionId);
+
+        completionService.handle(candidateCompletedEvent(context.tripId(), taskId, command));
+
+        JsonNode promoted = currentItinerary(context);
+        UUID promotedVersionId = uuid(promoted, "versionId");
+        assertThat(promotedVersionId).isNotEqualTo(baselineVersionId);
+        assertThat(promoted.at("/days/0/activities/0/locked").asBoolean()).isTrue();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT version_source FROM business.itinerary_version WHERE id = ?
+                """, String.class, promotedVersionId)).isEqualTo("USER_EDIT");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM business.itinerary_feasibility_report
+                WHERE itinerary_version_id = ? AND status = 'VERIFIED'
+                """, Integer.class, promotedVersionId)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT status FROM business.planning_task WHERE id = ?",
+                String.class, taskId)).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void rollbackCandidateReviewKeepsCurrentAndStoresCandidateOnlyOnTask() throws Exception {
+        PlanningContext context = completedItinerary("rollback-candidate-review@example.com");
+        JsonNode initial = currentItinerary(context);
+        UUID initialVersionId = uuid(initial, "versionId");
+        UUID activityId = uuid(initial.at("/days/0/activities/0"), "id");
+        JsonNode current = json(mockMvc.perform(post(
+                                "/api/test/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(editJson(
+                                initialVersionId, "LOCK_ACTIVITY", activityId, null)))
+                .andExpect(status().isOk())
+                .andReturn());
+        UUID currentVersionId = uuid(current, "versionId");
+
+        UUID taskId = uuid(json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/rollbacks", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceVersionId": "%s",
+                                  "expectedCurrentVersionId": "%s"
+                                }
+                                """.formatted(initialVersionId, currentVersionId)))
+                .andExpect(status().isAccepted())
+                .andReturn()), "taskId");
+        JsonNode command = candidateCommand(taskId);
+
+        reviewService.handle(candidateReviewEvent(context.tripId(), taskId, command));
+
+        assertThat(uuid(currentItinerary(context), "versionId")).isEqualTo(currentVersionId);
+        assertThat(count("business.itinerary_version")).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT status FROM business.planning_task WHERE id = ?",
+                String.class, taskId)).isEqualTo("WAITING_USER");
+        JsonNode storedPayload = objectMapper.readTree(jdbcTemplate.queryForObject("""
+                SELECT payload::text FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_REVIEW_REQUIRED'
+                """, String.class, taskId));
+        ObjectNode expectedCandidate = command.at("/payload/itinerary").deepCopy();
+        expectedCandidate.remove("provider");
+        assertThat(storedPayload.path("candidateItinerary"))
+                .isEqualTo(expectedCandidate);
+        assertThat(storedPayload.at("/feasibilityReport/status").asText())
+                .isEqualTo("NEEDS_REPAIR");
+    }
+
+    @Test
     void deletesAnActivityByCreatingANewImmutableVersion() throws Exception {
         PlanningContext context = completedItinerary("edit-delete@example.com");
         JsonNode current = currentItinerary(context);
         UUID versionId = uuid(current, "versionId");
         UUID activityId = uuid(current.at("/days/0/activities/0"), "id");
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -124,7 +454,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID idempotencyKey = nextIdempotencyKey();
         String originalRequest = editJson(initialVersionId, "DELETE_ACTIVITY", deletedActivityId, null);
 
-        MvcResult original = mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        MvcResult original = mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -140,14 +470,14 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         JsonNode changed = currentItinerary(context);
         UUID remainingActivityId = uuid(changed.at("/days/0/activities/0"), "id");
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(uuid(changed, "versionId"), "LOCK_ACTIVITY", remainingActivityId, null)))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -155,7 +485,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.versionId").value(originalResultVersionId.toString()));
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -255,7 +585,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         JsonNode current = currentItinerary(context);
         UUID idempotencyKey = nextIdempotencyKey();
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -373,7 +703,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 ) VALUES (?, ?, '', NULL, 'COMPLETED')
                 """, context.tripId(), idempotencyKey);
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", idempotencyKey)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -403,7 +733,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 """.formatted(versionId, versionId, firstActivityId, versionId, secondActivityId);
         UUID idempotencyKey = nextIdempotencyKey();
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits/commit", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", idempotencyKey.toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -413,7 +743,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.days[0].activities.length()").value(1))
                 .andExpect(jsonPath("$.days[0].activities[0].locked").value(true));
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits/commit", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", idempotencyKey.toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -431,7 +761,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID initialVersionId = uuid(initial, "versionId");
         UUID activityId = uuid(initial.at("/days/0/activities/0"), "id");
         JsonNode edited = json(mockMvc.perform(post(
-                                "/api/trips/{tripId}/itinerary/edits",
+                                "/api/test/trips/{tripId}/itinerary/edits",
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
@@ -491,7 +821,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 }
                 """.formatted(initialVersionId, editedVersionId);
         MvcResult firstRollback = mockMvc.perform(post(
-                                "/api/trips/{tripId}/itinerary/rollbacks",
+                                "/api/test/trips/{tripId}/itinerary/rollbacks",
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
@@ -510,7 +840,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 "id"
         );
         mockMvc.perform(post(
-                                "/api/trips/{tripId}/itinerary/edits",
+                                "/api/test/trips/{tripId}/itinerary/edits",
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
@@ -526,7 +856,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.versionNumber").value(4));
 
         mockMvc.perform(post(
-                                "/api/trips/{tripId}/itinerary/rollbacks",
+                                "/api/test/trips/{tripId}/itinerary/rollbacks",
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
@@ -550,7 +880,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID initialVersionId = uuid(initial, "versionId");
         UUID activityId = uuid(initial.at("/days/0/activities/0"), "id");
         json(mockMvc.perform(post(
-                                "/api/trips/{tripId}/itinerary/edits",
+                                "/api/test/trips/{tripId}/itinerary/edits",
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
@@ -619,7 +949,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 """, firstTitle, firstProviderPoiId, secondActivityId);
 
         JsonNode edited = json(mockMvc.perform(post(
-                                "/api/trips/{tripId}/itinerary/edits",
+                                "/api/test/trips/{tripId}/itinerary/edits",
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
@@ -656,7 +986,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID versionId = uuid(current, "versionId");
         UUID activityId = uuid(current.at("/days/0/activities/0"), "id");
 
-        MvcResult lockResult = mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        MvcResult lockResult = mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -686,7 +1016,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_ACTIVITY_LOCKED"))
                 .andExpect(jsonPath("$.blockingReasons[0].message").isNotEmpty());
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -703,7 +1033,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.canApply").value(false))
                 .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_ACTIVITY_LOCKED"));
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -720,7 +1050,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID legId = uuid(current.at("/days/0/transitLegs/0"), "id");
 
         MvcResult transitEdit = mockMvc.perform(post(
-                                "/api/trips/{tripId}/itinerary/edits",
+                                "/api/test/trips/{tripId}/itinerary/edits",
                                 context.tripId()
                         )
                         .header("Authorization", bearer(context.accessToken()))
@@ -791,7 +1121,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.warnings[0]").value("The selected transit mode requires schedule replanning"))
                 .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_TRANSIT_CONFLICT"));
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -807,7 +1137,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID versionId = uuid(current, "versionId");
         UUID activityId = uuid(current.at("/days/0/activities/0"), "id");
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -835,7 +1165,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 "targetEndTime": "2026-08-01T08:30:00+08:00"
                 """;
 
-        MvcResult movedResult = mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        MvcResult movedResult = mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -866,7 +1196,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.canApply").value(false))
                 .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_ACTIVITY_CONFLICT"));
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -882,14 +1212,14 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         UUID versionId = uuid(current, "versionId");
         UUID activityId = uuid(current.at("/days/0/activities/0"), "id");
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(editJson(versionId, "LOCK_ACTIVITY", activityId, null)))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -919,7 +1249,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.canApply").value(false))
                 .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_PLANNING_ACTIVE"));
 
-        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -933,7 +1263,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         PlanningContext context = completedTwoDayItinerary("local-replan@example.com");
         JsonNode current = currentItinerary(context);
         UUID secondDayActivityId = uuid(current.at("/days/1/activities/0"), "id");
-        JsonNode locked = json(mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        JsonNode locked = json(mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -948,7 +1278,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 "targetStartTime": "2026-08-01T06:30:00+08:00",
                 "targetEndTime": "2026-08-01T08:30:00+08:00"
                 """;
-        JsonNode edited = json(mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        JsonNode edited = json(mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -1099,7 +1429,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         jdbcTemplate.update("UPDATE business.planning_task SET status = 'CANCELLED' WHERE id = ?", taskId);
         UUID activityId = uuid(baseline.at("/days/1/activities/0"), "id");
-        JsonNode newer = json(mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
+        JsonNode newer = json(mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -1210,6 +1540,64 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 WHERE aggregate_id = ? AND event_type = 'PLANNING_REPLAN_REQUESTED'
                 """, String.class, taskId);
         return objectMapper.readTree(payload);
+    }
+
+    private JsonNode candidateCommand(UUID taskId) throws Exception {
+        String payload = jdbcTemplate.queryForObject("""
+                SELECT payload::text
+                FROM business.outbox_event
+                WHERE aggregate_id = ?
+                  AND event_type = 'PLANNING_CANDIDATE_VALIDATION_REQUESTED'
+                """, String.class, taskId);
+        return objectMapper.readTree(payload);
+    }
+
+    private PlanningCompletedEvent candidateCompletedEvent(
+            UUID tripId, UUID taskId, JsonNode command) throws Exception {
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("eventType", "PLANNING_COMPLETED");
+        root.put("schemaVersion", 5);
+        root.put("eventId", UUID.randomUUID().toString());
+        root.put("traceId", command.path("traceId").asText());
+        root.put("taskId", taskId.toString());
+        root.put("tripId", tripId.toString());
+        root.put("runId", UUID.randomUUID().toString());
+        root.put("occurredAt", "2026-08-13T04:00:00Z");
+        ObjectNode payload = root.putObject("payload");
+        payload.put("provider", command.at("/payload/itinerary/provider").asText());
+        payload.set("knowledge", command.at("/payload/knowledge").deepCopy());
+        ObjectNode itinerary = command.at("/payload/itinerary").deepCopy();
+        itinerary.remove("provider");
+        payload.set("itinerary", itinerary);
+        return eventParser.parse(
+                PlanningCompletedEventFixture.upgradeToV9(
+                        objectMapper.writeValueAsString(root)
+                ).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private PlanningReviewRequiredEvent candidateReviewEvent(
+            UUID tripId, UUID taskId, JsonNode command) throws Exception {
+        ObjectNode root = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.sharedReviewV1Fixture(
+                        "review-v1-needs-repair-demo.json"));
+        root.put("eventId", UUID.randomUUID().toString());
+        root.put("traceId", command.path("traceId").asText());
+        root.put("taskId", taskId.toString());
+        root.put("tripId", tripId.toString());
+        root.put("runId", UUID.randomUUID().toString());
+        ObjectNode payload = (ObjectNode) root.path("payload");
+        payload.put("provider", command.at("/payload/itinerary/provider").asText());
+        ObjectNode itinerary = command.at("/payload/itinerary").deepCopy();
+        itinerary.remove("provider");
+        payload.set("itinerary", itinerary);
+        payload.set("knowledge", command.at("/payload/knowledge").deepCopy());
+        payload.set("factImpacts", objectMapper.createArrayNode());
+        payload.set("providerProvenance", null);
+        ObjectNode report = (ObjectNode) payload.path("feasibilityReport");
+        report.put("itineraryFingerprint",
+                io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                        .compute(payload.path("itinerary")));
+        return reviewEventParser.parse(objectMapper.writeValueAsBytes(root));
     }
 
     private PlanningCompletedEvent replanCompletedEvent(
@@ -1432,5 +1820,76 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     private record PlanningContext(String accessToken, UUID tripId) {
+    }
+
+    /** Keeps legacy direct-write service regressions testable without exposing a production bypass. */
+    @RestController
+    @RequestMapping("/api/test/trips/{tripId}/itinerary")
+    static class LegacyEditRegressionController {
+        private final ItineraryService itineraryService;
+        private final ItineraryVersionService versionService;
+        private final ObjectMapper objectMapper;
+        private final EditRequestFingerprint fingerprint;
+
+        LegacyEditRegressionController(
+                ItineraryService itineraryService,
+                ItineraryVersionService versionService,
+                ObjectMapper objectMapper,
+                EditRequestFingerprint fingerprint
+        ) {
+            this.itineraryService = itineraryService;
+            this.versionService = versionService;
+            this.objectMapper = objectMapper;
+            this.fingerprint = fingerprint;
+        }
+
+        @PostMapping("/edits")
+        ItineraryService.ItineraryResponse applyEdit(
+                @AuthenticationPrincipal Jwt jwt,
+                @PathVariable UUID tripId,
+                @RequestHeader("Idempotency-Key") UUID idempotencyKey,
+                @RequestBody JsonNode request
+        ) {
+            return itineraryService.applyEdit(
+                    UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
+                    read(request, ItineraryService.ItineraryEditRequest.class),
+                    fingerprint.forEdit(request)
+            );
+        }
+
+        @PostMapping("/edits/commit")
+        ItineraryService.ItineraryResponse commitEdits(
+                @AuthenticationPrincipal Jwt jwt,
+                @PathVariable UUID tripId,
+                @RequestHeader("Idempotency-Key") UUID idempotencyKey,
+                @RequestBody JsonNode request
+        ) {
+            return itineraryService.applyEdits(
+                    UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
+                    read(request, ItineraryService.ItineraryBatchEditRequest.class),
+                    fingerprint.forBatch(request)
+            );
+        }
+
+        @PostMapping("/rollbacks")
+        ItineraryService.ItineraryResponse rollback(
+                @AuthenticationPrincipal Jwt jwt,
+                @PathVariable UUID tripId,
+                @RequestHeader("Idempotency-Key") UUID idempotencyKey,
+                @RequestBody JsonNode request
+        ) {
+            return versionService.rollback(
+                    UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
+                    read(request, ItineraryVersionService.RollbackRequest.class)
+            );
+        }
+
+        private <T> T read(JsonNode request, Class<T> type) {
+            try {
+                return objectMapper.treeToValue(request, type);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+                throw new IllegalArgumentException("Invalid regression-test request", exception);
+            }
+        }
     }
 }

@@ -385,9 +385,12 @@ public class PlanningReviewRequiredEventParser {
                 || !"UNAVAILABLE".equals(knowledge.freshness().status())) {
             throw invalid("non-real knowledge evidence must be explicitly unavailable");
         }
+        boolean unavailable = "UNAVAILABLE".equals(knowledge.freshness().status());
         if (!("FRESH".equals(knowledge.freshness().status())
-                || "STALE".equals(knowledge.freshness().status()))
-                || knowledge.freshness().checkedAt() == null
+                || "STALE".equals(knowledge.freshness().status()) || unavailable)
+                || (!unavailable && knowledge.freshness().checkedAt() == null)
+                || (unavailable && (knowledge.freshness().checkedAt() != null
+                || knowledge.freshness().staleReason() != null))
                 || ("FRESH".equals(knowledge.freshness().status())
                 && knowledge.freshness().staleReason() != null)
                 || (knowledge.freshness().staleReason() != null

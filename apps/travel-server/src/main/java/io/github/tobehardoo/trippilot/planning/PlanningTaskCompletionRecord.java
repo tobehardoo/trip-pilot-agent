@@ -19,6 +19,26 @@ public record PlanningTaskCompletionRecord(
         UUID currentItineraryVersionId,
         LocalDate tripStartDate,
         LocalDate tripEndDate,
-        Instant createdAt
+        Instant createdAt,
+        String candidateType,
+        UUID candidateSourceVersionId
 ) {
+    @org.apache.ibatis.annotations.AutomapConstructor
+    public PlanningTaskCompletionRecord {
+    }
+
+    public PlanningTaskCompletionRecord(
+            UUID id, UUID tripId, String taskType, String status,
+            int baselineTripVersion, UUID baselineItineraryVersionId,
+            String impactedDatesJson, UUID traceId, int taskVersion,
+            String constraintSnapshotJson, int currentTripVersion,
+            UUID currentItineraryVersionId, LocalDate tripStartDate,
+            LocalDate tripEndDate, Instant createdAt
+    ) {
+        this(id, tripId, taskType, status, baselineTripVersion,
+                baselineItineraryVersionId, impactedDatesJson, traceId,
+                taskVersion, constraintSnapshotJson, currentTripVersion,
+                currentItineraryVersionId, tripStartDate, tripEndDate,
+                createdAt, null, null);
+    }
 }

@@ -89,7 +89,8 @@ public record PlanningCompletedEvent(
             String typeCode,
             String typeName,
             String kind,
-            Boolean timeFixed
+            Boolean timeFixed,
+            Boolean locked
     ) {
         public Activity(
                 UUID activityId,
@@ -105,7 +106,18 @@ public record PlanningCompletedEvent(
                 String typeName
         ) {
             this(activityId, title, startTime, endTime, estimatedCost, source,
-                    providerPoiId, coordinates, address, typeCode, typeName, null, null);
+                    providerPoiId, coordinates, address, typeCode, typeName, null, null, null);
+        }
+
+        public Activity(
+                UUID activityId, String title, OffsetDateTime startTime,
+                OffsetDateTime endTime, BigDecimal estimatedCost, String source,
+                String providerPoiId, Coordinates coordinates, String address,
+                String typeCode, String typeName, String kind, Boolean timeFixed
+        ) {
+            this(activityId, title, startTime, endTime, estimatedCost, source,
+                    providerPoiId, coordinates, address, typeCode, typeName,
+                    kind, timeFixed, null);
         }
     }
 
@@ -123,11 +135,24 @@ public record PlanningCompletedEvent(
             boolean estimated,
             List<Coordinates> polyline,
             BigDecimal estimatedCost,
-            String costSource
+            String costSource,
+            Boolean locked
     ) {
         public TransitLeg {
             polyline = polyline == null ? List.of() : List.copyOf(polyline);
             costSource = costSource == null || costSource.isBlank() ? "UNKNOWN" : costSource;
+        }
+
+
+        public TransitLeg(
+                UUID transitId, int fromActivityIndex, int toActivityIndex,
+                String mode, int distanceMeters, int durationSeconds,
+                String provider, boolean estimated, List<Coordinates> polyline,
+                BigDecimal estimatedCost, String costSource
+        ) {
+            this(transitId, fromActivityIndex, toActivityIndex, mode,
+                    distanceMeters, durationSeconds, provider, estimated,
+                    polyline, estimatedCost, costSource, null);
         }
     }
 

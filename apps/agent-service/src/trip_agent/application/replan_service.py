@@ -30,6 +30,7 @@ from trip_agent.worker.contracts import (
     FallbackOperation,
     Itinerary,
     ItineraryDay,
+    PlanningCandidateValidationCommand,
     PlanningReplanCommand,
     ReplanItineraryDay,
     TransitLeg,
@@ -62,7 +63,9 @@ class LocalReplanningProvider:
         self._provider_mode = provider_mode
         self._fallback_policy = fallback_policy or ProviderFallbackPolicy()
 
-    async def replan(self, command: PlanningReplanCommand) -> PlanningResult:
+    async def replan(
+        self, command: PlanningReplanCommand | PlanningCandidateValidationCommand
+    ) -> PlanningResult:
         snapshot = command.payload.itinerary
         impacted_dates = set(command.payload.impacted_dates)
         await report_planning_progress(

@@ -47,6 +47,14 @@ public interface ItineraryMapper {
             """)
     int insertVersion(VersionWrite version);
 
+    @Update("""
+            UPDATE business.itinerary_version
+            SET rollback_from_version_id = #{sourceVersionId}
+            WHERE id = #{versionId}
+            """)
+    int setRollbackSource(@Param("versionId") UUID versionId,
+                          @Param("sourceVersionId") UUID sourceVersionId);
+
     @Insert("""
             INSERT INTO business.itinerary_day(id, itinerary_version_id, day_date, day_index, day_type)
             VALUES (#{id}, #{itineraryVersionId}, #{date}, #{dayIndex}, #{dayType})

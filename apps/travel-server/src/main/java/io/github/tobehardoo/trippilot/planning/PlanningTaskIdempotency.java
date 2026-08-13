@@ -2,6 +2,7 @@ package io.github.tobehardoo.trippilot.planning;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -35,6 +36,29 @@ final class PlanningTaskIdempotency {
                 || !canonicalDates(request.dates()).equals(
                         storedDates(existing.impactedDatesJson(), objectMapper)
                 )) {
+            throw reusedKey();
+        }
+    }
+
+    static void requireCandidateMatch(
+            PlanningTaskRecord existing,
+            String candidateType,
+            UUID baselineVersionId,
+            UUID sourceVersionId,
+            String requestHash,
+            List<LocalDate> changedDates,
+            List<LocalDate> impactedDates,
+            ObjectMapper objectMapper
+    ) {
+        if (!(candidateType + "_VALIDATE").equals(existing.taskType())
+                || !candidateType.equals(existing.candidateType())
+                || !baselineVersionId.equals(existing.baselineItineraryVersionId())
+                || !sourceVersionId.equals(existing.candidateSourceVersionId())
+                || !requestHash.equals(existing.candidateRequestHash())
+                || !canonicalDates(changedDates).equals(
+                        storedDates(existing.changedDatesJson(), objectMapper))
+                || !canonicalDates(impactedDates).equals(
+                        storedDates(existing.impactedDatesJson(), objectMapper))) {
             throw reusedKey();
         }
     }

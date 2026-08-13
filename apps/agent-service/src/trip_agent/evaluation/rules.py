@@ -27,6 +27,7 @@ from trip_agent.worker.contracts import (
     FallbackOperation,
     Itinerary,
     ItineraryDay,
+    PlanningCandidateValidationCommand,
     PlanningCreateCommand,
     PlanningReplanCommand,
     TransitLeg,
@@ -385,7 +386,7 @@ def route_warnings(days: tuple[ItineraryDay, ...]) -> tuple[object, ...]:
 # ── Constraint satisfaction ────────────────────────────────────────────────
 
 def score_constraint_satisfaction(
-    command: PlanningCreateCommand | PlanningReplanCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     itinerary: Itinerary,
 ) -> int:
     """Score how well constraints are satisfied.  Start at 100, deduct for relaxations."""
@@ -461,7 +462,7 @@ _PREFERENCE_TYPENAME_KEYWORDS: dict[str, tuple[str, ...]] = {
 
 
 def score_interest_match(
-    command: PlanningCreateCommand | PlanningReplanCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     itinerary: Itinerary,
 ) -> int:
     """Score how well the itinerary matches user preferences.
@@ -596,7 +597,7 @@ def provider_fallback_warnings(
 # ── Constraint consistency guard ───────────────────────────────────────────
 
 def detect_hard_constraint_violations(
-    command: PlanningCreateCommand | PlanningReplanCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     itinerary: Itinerary,
     budget_ctx: BudgetContext,
 ) -> list[str]:

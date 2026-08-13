@@ -21,6 +21,7 @@ from pydantic import Field, SecretStr, ValidationError, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from trip_agent.acquisition.registry import SourceCatalog
+from trip_agent.application.candidate_validation import CandidateValidationProvider
 from trip_agent.domain.planning.protocols import (
     KnowledgeEvidenceProvider,
     PlanningInfeasibleError,
@@ -52,6 +53,7 @@ from trip_agent.retrieval.embeddings import (
 from trip_agent.retrieval.repository import PsycopgKnowledgeRepository
 from trip_agent.worker.contracts import (
     PlanningCancelCommand,
+    PlanningCandidateValidationCommand,
     PlanningCreateCommand,
     PlanningProgressEvent,
     PlanningProgressPayload,
@@ -66,6 +68,7 @@ from trip_agent.worker.knowledge import (
 )
 from trip_agent.worker.processor import (
     planning_failed_event,
+    process_candidate_validation,
     process_planning_create,
     process_planning_replan,
 )
@@ -80,6 +83,7 @@ CANCEL_QUEUE = "planning.cancel.queue"
 DEAD_LETTER_QUEUE = "planning.dead-letter.queue"
 CREATE_ROUTING_KEY = "planning.create"
 REPLAN_ROUTING_KEY = "planning.replan"
+CANDIDATE_VALIDATION_ROUTING_KEY = "planning.candidate-validation"
 CANCEL_ROUTING_KEY = "planning.cancel"
 COMPLETED_ROUTING_KEY = "planning.completed"
 REVIEW_REQUIRED_ROUTING_KEY = "planning.review-required"
@@ -120,7 +124,7 @@ class PlanningProgressPublisher:
     """Publishes each observed worker milestone once per planning command."""
 
     event_exchange: EventExchange
-    command: PlanningCreateCommand | PlanningReplanCommand
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand
     _emitted_stages: set[PlanningProgressStage] = field(default_factory=set)
     _last_stage_rank: int = 0
     _sequence: int = 0
@@ -544,11 +548,12 @@ async def handle_delivery(
         if not isinstance(raw_command, dict):
             raise ValueError("planning command must be a JSON object")
         event_type = raw_command.get("eventType")
-        command = (
-            PlanningReplanCommand.model_validate(raw_command)
-            if event_type == "PLANNING_REPLAN_REQUESTED"
-            else PlanningCreateCommand.model_validate(raw_command)
-        )
+        if event_type == "PLANNING_REPLAN_REQUESTED":
+            command = PlanningReplanCommand.model_validate(raw_command)
+        elif event_type == "PLANNING_CANDIDATE_VALIDATION_REQUESTED":
+            command = PlanningCandidateValidationCommand.model_validate(raw_command)
+        else:
+            command = PlanningCreateCommand.model_validate(raw_command)
     except (ValidationError, TypeError, ValueError) as exception:
         error_count = exception.error_count() if isinstance(exception, ValidationError) else 1
         logger.warning("rejecting invalid planning command: %s", error_count)
@@ -581,7 +586,14 @@ async def handle_delivery(
                 },
             )
             processing_command = True
-            if isinstance(command, PlanningReplanCommand):
+            if isinstance(command, PlanningCandidateValidationCommand):
+                process_task = asyncio.create_task(
+                    process_candidate_validation(
+                        command,
+                        CandidateValidationProvider(planning_provider),
+                    )
+                )
+            elif isinstance(command, PlanningReplanCommand):
                 process_task = asyncio.create_task(
                     process_planning_replan(
                         command,
@@ -686,7 +698,7 @@ async def handle_delivery(
 async def _publish_terminal_failure(
     message: IncomingDelivery,
     event_exchange: EventExchange,
-    command: PlanningCreateCommand | PlanningReplanCommand,
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     failure: Exception,
     cancellation_registry: CancellationRegistry | None,
     cancellation_oracle: CancellationOracle | None,
@@ -811,6 +823,9 @@ async def _consume(
         dead_letter_queue = await channel.declare_queue(DEAD_LETTER_QUEUE, durable=True)
         await command_queue.bind(command_exchange, routing_key=CREATE_ROUTING_KEY)
         await command_queue.bind(command_exchange, routing_key=REPLAN_ROUTING_KEY)
+        await command_queue.bind(
+            command_exchange, routing_key=CANDIDATE_VALIDATION_ROUTING_KEY
+        )
         await cancel_queue.bind(command_exchange, routing_key=CANCEL_ROUTING_KEY)
         await dead_letter_queue.bind(dead_letter_exchange, routing_key="planning.#")
         cancellation_registry = CancellationRegistry()

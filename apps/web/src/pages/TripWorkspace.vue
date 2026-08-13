@@ -767,35 +767,19 @@ async function handlePreviewItineraryEdit(input: ItineraryEditInput): Promise<It
 async function handleApplyItineraryEdit(input: ItineraryEditInput) {
   if (!selectedTrip.value) throw new Error('No trip is selected')
   const tripId = selectedTrip.value.id
-  const detailSequence = detailRequestSequence
-  const generation = sessionGeneration
   const idempotencyKey = input.idempotencyKey ?? crypto.randomUUID()
-  const updated = await withAccessToken(
-      (token) => applyItineraryEdit(token, tripId, input, idempotencyKey))
-  if (isCurrentEvaluationOwner(tripId, detailSequence, generation)) {
-    clearEvaluation()
-    itinerary.value = updated
-    itineraryError.value = null
-    await loadItineraryVersionsForTrip(tripId)
-    await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
-  }
+  await runPlanningTask((token) => applyItineraryEdit(
+    token, tripId, input, idempotencyKey,
+  ))
 }
 
 async function handleCommitItineraryEdits(baseVersionId: string, edits: ItineraryEditInput[]) {
   if (!selectedTrip.value) throw new Error('No trip is selected')
   const tripId = selectedTrip.value.id
-  const detailSequence = detailRequestSequence
-  const generation = sessionGeneration
-  const updated = await withAccessToken((token) => commitItineraryEdits(
-    token, tripId, baseVersionId, edits, crypto.randomUUID(),
+  const idempotencyKey = crypto.randomUUID()
+  await runPlanningTask((token) => commitItineraryEdits(
+    token, tripId, baseVersionId, edits, idempotencyKey,
   ))
-  if (isCurrentEvaluationOwner(tripId, detailSequence, generation)) {
-    clearEvaluation()
-    itinerary.value = updated
-    itineraryError.value = null
-    await loadItineraryVersionsForTrip(tripId)
-    await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
-  }
 }
 
 async function handleGetItineraryVersionDiff(
@@ -816,22 +800,9 @@ async function handleRollbackItinerary(
 ) {
   if (!selectedTrip.value) throw new Error('No trip is selected')
   const tripId = selectedTrip.value.id
-  const detailSequence = detailRequestSequence
-  const generation = sessionGeneration
-  const rolledBack = await withAccessToken((token) => rollbackItinerary(
-    token,
-    tripId,
-    sourceVersionId,
-    expectedCurrentVersionId,
-    idempotencyKey,
+  await runPlanningTask((token) => rollbackItinerary(
+    token, tripId, sourceVersionId, expectedCurrentVersionId, idempotencyKey,
   ))
-  if (isCurrentEvaluationOwner(tripId, detailSequence, generation)) {
-    clearEvaluation()
-    itinerary.value = rolledBack
-    itineraryError.value = null
-    await loadItineraryVersionsForTrip(tripId)
-    await loadEvaluationForCurrentVersion(tripId, detailSequence, generation)
-  }
 }
 
 async function handleCreateItineraryShare(versionId: string, expiresAt?: string) {

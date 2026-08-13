@@ -41,6 +41,14 @@ final class EditRequestFingerprint {
         return sha256(canonical);
     }
 
+    String forRollback(JsonNode request) {
+        ObjectNode canonical = objectMapper.createObjectNode();
+        canonical.put("requestType", "ITINERARY_ROLLBACK_VALIDATION");
+        canonical.set("sourceVersionId", fieldState(request, "sourceVersionId"));
+        canonical.set("expectedCurrentVersionId", fieldState(request, "expectedCurrentVersionId"));
+        return sha256(canonical);
+    }
+
     private ObjectNode canonicalEdit(JsonNode request) {
         ObjectNode canonical = objectMapper.createObjectNode();
         for (String field : EDIT_FIELDS) {

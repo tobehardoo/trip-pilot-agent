@@ -534,6 +534,10 @@ class ItineraryActivity(MessageModel):
     type_name: str | None = None
     kind: ActivityKind | None = None
     time_fixed: bool | None = None
+    # Candidate-validation only. Existing create/replan events omit it;
+    # explicit edits preserve the persistence lock without changing legacy
+    # semantics.
+    locked: bool | None = None
 
     @model_validator(mode="after")
     def validate_source_metadata(self) -> Self:
@@ -567,13 +571,13 @@ class TransitLeg(MessageModel):
         default="UNKNOWN", exclude=True
     )
     fallback_operation: FallbackOperation | None = Field(default=None, exclude=True)
+    # Candidate-validation only; None keeps historic v9/review payloads valid.
+    locked: bool | None = None
 
     @model_validator(mode="after")
     def validate_cost(self) -> Self:
         if self.estimated_cost is not None and self.estimated_cost < 0:
             raise ValueError("transit leg estimated cost must not be negative")
-        if self.provider == "DEMO" and self.estimated_cost is None:
-            raise ValueError("DEMO transit leg must provide an estimated cost")
         return self
 
     @model_validator(mode="after")
@@ -686,6 +690,7 @@ class KnowledgeEvidence(MessageModel):
 
 class ReplanItineraryDay(InboundMessageModel):
     date: date
+    day_type: DayType | None = None
     activities: tuple[ItineraryActivity, ...] = Field(min_length=1)
     transit_legs: tuple[TransitLeg, ...]
 
@@ -705,6 +710,7 @@ class ReplanItineraryDay(InboundMessageModel):
     def to_itinerary_day(self) -> ItineraryDay:
         return ItineraryDay(
             date=self.date,
+            day_type=self.day_type,
             activities=self.activities,
             transit_legs=self.transit_legs,
         )
@@ -1187,4 +1193,98 @@ class PlanningProgressEvent(MessageModel):
                 raise ValueError("REPAIRING progress requires attemptIndex 1..3")
             if not 1 <= self.payload.statistics.get("actionCount", 0) <= 16:
                 raise ValueError("REPAIRING progress requires actionCount 1..16")
+        return self
+
+
+class CandidateItinerarySnapshot(ReplanItinerarySnapshot):
+    provider: Literal["AMAP", "DEMO", "MIXED"]
+
+    @model_validator(mode="after")
+    def validate_activity_sources(self) -> Self:
+        sources = {activity.source for day in self.days for activity in day.activities}
+        if self.provider == "MIXED":
+            if not sources <= {"AMAP", "DEMO"}:
+                raise ValueError("candidate activity source is unsupported")
+        elif sources != {self.provider}:
+            raise ValueError("candidate activity source must match itinerary provider")
+        return self
+
+
+class PlanningCandidateValidationPayload(InboundMessageModel):
+    task_type: Literal["EDIT_VALIDATE", "ROLLBACK_VALIDATE"]
+    candidate_type: Literal["EDIT", "ROLLBACK"]
+    baseline_trip_version: int = Field(strict=True, ge=0)
+    baseline_itinerary_version_id: UUID
+    rollback_from_version_id: UUID | None = None
+    idempotency_key: UUID
+    changed_dates: tuple[date, ...] = Field(min_length=1, max_length=7)
+    impacted_dates: tuple[date, ...] = Field(min_length=1, max_length=7)
+    trip: TripSnapshot
+    itinerary: CandidateItinerarySnapshot
+    knowledge: KnowledgeEvidence
+    planning_context: PlanningContextSnapshot | None = None
+
+    @model_validator(mode="after")
+    def validate_candidate_scope(self) -> Self:
+        expected_task_type = f"{self.candidate_type}_VALIDATE"
+        if self.task_type != expected_task_type:
+            raise ValueError("candidateType must match taskType")
+        if (self.candidate_type == "ROLLBACK") != (
+            self.rollback_from_version_id is not None
+        ):
+            raise ValueError("rollback candidates require rollbackFromVersionId")
+        if self.baseline_trip_version != self.trip.version:
+            raise ValueError("baselineTripVersion must match trip.version")
+        expected_dates = tuple(
+            self.trip.start_date + timedelta(days=offset)
+            for offset in range((self.trip.end_date - self.trip.start_date).days + 1)
+        )
+        if tuple(day.date for day in self.itinerary.days) != expected_dates:
+            raise ValueError("candidate itinerary must contain every trip date in order")
+        expected_set = set(expected_dates)
+        changed = set(self.changed_dates)
+        if len(changed) != len(self.changed_dates) or not changed <= expected_set:
+            raise ValueError("changedDates must be unique itinerary dates")
+        impacted = set(self.impacted_dates)
+        if len(impacted) != len(self.impacted_dates) or not impacted <= expected_set:
+            raise ValueError("impactedDates must be unique itinerary dates")
+        expanded = {
+            candidate
+            for changed_date in changed
+            for candidate in (
+                changed_date - timedelta(days=1),
+                changed_date,
+                changed_date + timedelta(days=1),
+            )
+            if candidate in expected_set
+        }
+        if impacted != expanded:
+            raise ValueError("impactedDates must be the exact N-1/N/N+1 scope")
+        return self
+
+
+class PlanningCandidateValidationCommand(InboundMessageModel):
+    event_type: Literal["PLANNING_CANDIDATE_VALIDATION_REQUESTED"]
+    schema_version: Literal[1]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    occurred_at: datetime
+    payload: PlanningCandidateValidationPayload
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        if self.occurred_at.utcoffset() is None:
+            raise ValueError("occurredAt must include a timezone")
+        context = self.payload.planning_context
+        if context is not None and (
+            context.trip_id != self.trip_id
+            or context.planning_task_id != self.task_id
+            or context.city != self.payload.trip.destination
+            or context.travel_start_date != self.payload.trip.start_date
+            or context.travel_end_date != self.payload.trip.end_date
+            or context.generated_at > self.occurred_at
+        ):
+            raise ValueError("planning context identity must match the command")
         return self

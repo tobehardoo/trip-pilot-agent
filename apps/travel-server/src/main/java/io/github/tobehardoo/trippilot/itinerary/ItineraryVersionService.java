@@ -14,6 +14,7 @@ import java.util.UUID;
 
 import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.planning.PlanningFactImpactMapper;
+import io.github.tobehardoo.trippilot.planning.PlanningTaskService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,19 +27,22 @@ public class ItineraryVersionService {
     private final ItineraryVersionPersister versionPersister;
     private final ItineraryService itineraryService;
     private final PlanningFactImpactMapper factImpactMapper;
+    private final PlanningTaskService planningTaskService;
 
     public ItineraryVersionService(
             ItineraryVersionMapper versionMapper,
             ItineraryMapper itineraryMapper,
             ItineraryVersionPersister versionPersister,
             ItineraryService itineraryService,
-            PlanningFactImpactMapper factImpactMapper
+            PlanningFactImpactMapper factImpactMapper,
+            @org.springframework.context.annotation.Lazy PlanningTaskService planningTaskService
     ) {
         this.versionMapper = versionMapper;
         this.itineraryMapper = itineraryMapper;
         this.versionPersister = versionPersister;
         this.itineraryService = itineraryService;
         this.factImpactMapper = factImpactMapper;
+        this.planningTaskService = planningTaskService;
     }
 
     @Transactional(readOnly = true)
@@ -163,6 +167,30 @@ public class ItineraryVersionService {
                 )
         ), "rollback audit");
         return itineraryService.getVersion(ownerId, tripId, versionId);
+    }
+
+    @Transactional
+    public PlanningTaskService.PlanningTaskResponse validateRollback(
+            UUID ownerId, UUID tripId, UUID idempotencyKey,
+            RollbackRequest request, String requestHash
+    ) {
+        ItineraryMapper.ItineraryState state = versionMapper.lockOwnedState(tripId, ownerId)
+                .orElseThrow(this::notFound);
+        if (request == null || request.sourceVersionId() == null
+                || request.expectedCurrentVersionId() == null
+                || !request.expectedCurrentVersionId().equals(state.currentVersionId())) {
+            throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                    "The itinerary changed before rollback; reload and retry");
+        }
+        versionMapper.findOwnedVersion(tripId, request.sourceVersionId(), ownerId)
+                .orElseThrow(this::notFound);
+        ItineraryService.ItineraryResponse candidate = itineraryService.getVersion(
+                ownerId, tripId, request.sourceVersionId());
+        List<LocalDate> changedDates = candidate.days().stream()
+                .map(ItineraryService.DayResponse::date).toList();
+        return planningTaskService.createCandidateValidation(
+                ownerId, tripId, idempotencyKey, "ROLLBACK", state.currentVersionId(),
+                request.sourceVersionId(), requestHash, changedDates, candidate);
     }
 
     private void copyVersion(UUID sourceVersionId, UUID targetVersionId) {

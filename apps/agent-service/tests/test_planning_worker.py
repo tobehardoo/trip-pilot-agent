@@ -277,9 +277,15 @@ def test_demo_provider_builds_one_explicitly_sourced_day_per_trip_date() -> None
         "2026-08-03",
         "2026-08-04",
     ]
-    assert all(len(day.activities) == 1 for day in completed.payload.itinerary.days)
+    # B9.4: Demo days now carry explicit meal placeholders on top of the
+    # exploration block; every activity stays DEMO-sourced.
+    assert all(len(day.activities) >= 1 for day in completed.payload.itinerary.days)
     assert all(day.transit_legs == () for day in completed.payload.itinerary.days)
-    assert all(day.activities[0].source == "DEMO" for day in completed.payload.itinerary.days)
+    assert all(
+        activity.source == "DEMO"
+        for day in completed.payload.itinerary.days
+        for activity in day.activities
+    )
     assert completed.payload.itinerary.estimated_total_cost == 0
 
 

@@ -84,7 +84,10 @@ def test_repair_provider_refreshes_only_requested_days_and_preserves_inputs() ->
     assert len(routes.requests) == 1
     assert repaired.itinerary.days[0].transit_legs
     assert repaired.itinerary.days[1] is candidate.itinerary.days[1]
-    assert repaired.validation_inputs is candidate.validation_inputs
+    # B9.1: repair re-projects inputs from the repaired itinerary instead of
+    # reusing the stale pre-repair bindings/locators.
+    assert repaired.validation_inputs is not None
+    assert repaired.validation_inputs is not candidate.validation_inputs
 
 
 def test_repair_provider_preserves_day_type_and_provider_route_cost() -> None:

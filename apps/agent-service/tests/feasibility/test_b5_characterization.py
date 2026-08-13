@@ -40,17 +40,25 @@ def test_duration_profile_has_eight_fields() -> None:
     )
 
 
-def test_demo_planning_result_has_no_validation_inputs() -> None:
+def test_demo_planning_result_projects_validation_state() -> None:
     from test_planning_worker import COMMAND
 
+    from trip_agent.feasibility.inputs import MealProjectionState
     from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
     from trip_agent.worker.contracts import PlanningCreateCommand
 
     command = PlanningCreateCommand.model_validate(COMMAND)
     result = asyncio.run(DemoPlanningProvider().plan(command))
 
-    assert result.trip_skeleton is None
-    assert result.validation_inputs is None
+    # B9.1: Demo now projects its own skeleton/inputs; the meal projection is
+    # explicitly UNAVAILABLE and no opening evidence is fabricated.
+    assert result.trip_skeleton is not None
+    assert result.validation_inputs is not None
+    assert result.validation_inputs.opening_hours_bindings == ()
+    assert (
+        result.validation_inputs.meal_projection_state
+        is MealProjectionState.UNAVAILABLE
+    )
 
 
 def test_amap_planning_result_has_no_validation_inputs() -> None:

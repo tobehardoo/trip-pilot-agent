@@ -27,7 +27,7 @@ in the plan either way, so a provider failure never silently removes meal time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal
 
@@ -93,6 +93,62 @@ class FixedSchedule:
 
 
 @dataclass(frozen=True, slots=True)
+class OpeningAvailability:
+    """Planning-domain opening constraint for one candidate on one day.
+
+    B9.2 — derived exclusively from the resolver's VERIFIED_WINDOW /
+    VERIFIED_CLOSED verdicts with ``hard_constraint_eligible=True``.  Any
+    UNKNOWN/STALE/CONFLICTING/ineligible evidence maps to ``UNKNOWN`` and
+    never constrains placement.  This type intentionally does not import the
+    resolver or worker contracts.
+    """
+
+    kind: Literal["VERIFIED_WINDOW", "VERIFIED_CLOSED", "UNKNOWN"]
+    windows: tuple[tuple[int, int], ...] = ()
+    last_entry_minute: int | None = None
+
+    @property
+    def constrains_placement(self) -> bool:
+        return self.kind == "VERIFIED_WINDOW"
+
+
+def _time_to_minute(value: time) -> int:
+    return value.hour * 60 + value.minute
+
+
+def opening_availability_from_resolved(resolved: object) -> OpeningAvailability:
+    """Map a resolver verdict onto the placement-domain constraint.
+
+    Only VERIFIED_WINDOW / VERIFIED_CLOSED with ``hard_constraint_eligible``
+    may constrain placement; every other state (UNKNOWN/STALE/CONFLICTING or
+    ineligible evidence) maps to UNKNOWN and leaves the scheduler
+    unconstrained.  Cross-midnight windows keep their close minute past 1440
+    so the earliest-legal-window search never truncates them silently.
+    """
+    state = getattr(resolved, "state", None)
+    if not getattr(resolved, "hard_constraint_eligible", False) or state not in {
+        "VERIFIED_WINDOW",
+        "VERIFIED_CLOSED",
+    }:
+        return OpeningAvailability(kind="UNKNOWN")
+    if state == "VERIFIED_CLOSED":
+        return OpeningAvailability(kind="VERIFIED_CLOSED")
+    windows = tuple(
+        (
+            _time_to_minute(window.open),
+            _time_to_minute(window.close) + window.close_day_offset * 1440,
+        )
+        for window in (getattr(resolved, "windows", None) or ())
+    )
+    last_entry = getattr(resolved, "last_entry", None)
+    return OpeningAvailability(
+        kind="VERIFIED_WINDOW",
+        windows=windows,
+        last_entry_minute=(_time_to_minute(last_entry) if last_entry is not None else None),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateActivity:
     """A candidate placed into the schedule.
 
@@ -115,6 +171,22 @@ class CandidateActivity:
     # B5: optional versioned duration profile.  When present, the scheduler
     # uses recommended_minutes; otherwise it falls back to the magnitude map.
     visit_duration_profile: VisitDurationProfile | None = None
+    # B9.2: verified opening constraint; only VERIFIED eligible evidence
+    # constrains placement, everything else is UNKNOWN and unconstrained.
+    opening: OpeningAvailability | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MealWindowConstraint:
+    """Planning-domain explicit meal window (B9.4).
+
+    Independent of worker contracts.  A cross-midnight window stores its
+    end minute past 1440 so day-local comparison stays total and correct.
+    """
+
+    meal_type: MealType
+    start_minute: int
+    end_minute: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,11 +405,7 @@ def compute_free_windows(
             if end < high:
                 next_bounds.append((end, high))
         bounds = next_bounds
-    return tuple(
-        (low, high)
-        for low, high in bounds
-        if high - low >= MIN_SLOT_MINUTES
-    )
+    return tuple((low, high) for low, high in bounds if high - low >= MIN_SLOT_MINUTES)
 
 
 def build_meal_demands(
@@ -350,22 +418,39 @@ def build_meal_demands(
     preferences: tuple[str, ...] = (),
     budget_per_person: Decimal | None = None,
     pace: Pace = "BALANCED",
+    explicit_windows: tuple[MealWindowConstraint, ...] = (),
 ) -> tuple[MealDemand, ...]:
     """Reserve meal time inside the day's capacity.
 
-    The reservation is kept even if the provider later fails to resolve a real
-    restaurant: it represents guaranteed eating time, not a booking.
+    Explicit meal windows take precedence over the default suggested
+    minutes; the reservation is kept even if the provider later fails to
+    resolve a real restaurant: it represents guaranteed eating time, not a
+    booking.
     """
     demands: list[MealDemand] = []
     lunch = _meal_demand(
-        "LUNCH", day_type, window_start_minute, window_end_minute,
-        free_windows, primary_region, preferences, budget_per_person,
+        "LUNCH",
+        day_type,
+        window_start_minute,
+        window_end_minute,
+        free_windows,
+        primary_region,
+        preferences,
+        budget_per_person,
+        explicit_windows=explicit_windows,
     )
     if lunch is not None:
         demands.append(lunch)
     dinner = _meal_demand(
-        "DINNER", day_type, window_start_minute, window_end_minute,
-        free_windows, primary_region, preferences, budget_per_person,
+        "DINNER",
+        day_type,
+        window_start_minute,
+        window_end_minute,
+        free_windows,
+        primary_region,
+        preferences,
+        budget_per_person,
+        explicit_windows=explicit_windows,
     )
     if dinner is not None:
         demands.append(dinner)
@@ -392,13 +477,14 @@ def choose_activities(
         special_candidate = _choose_special_day(movable)
         if special_candidate is None or not slots:
             return _fill_slots(
-                movable, slots, pace=pace, mobility_reduced=mobility_reduced,
+                movable,
+                slots,
+                pace=pace,
+                mobility_reduced=mobility_reduced,
                 primary_region=primary_region,
             )
         main_slot = slots[0]
-        special = (
-            _place(movable, special_candidate, main_slot[0]),
-        )
+        special = (_place(movable, special_candidate, main_slot[0]),)
         special_minutes = _total_minutes(special)
         remaining_slots = tuple(
             (low, high)
@@ -418,7 +504,10 @@ def choose_activities(
         return (*special, *extras)
 
     return _fill_slots(
-        movable, slots, pace=pace, mobility_reduced=mobility_reduced,
+        movable,
+        slots,
+        pace=pace,
+        mobility_reduced=mobility_reduced,
         primary_region=primary_region,
     )
 
@@ -438,6 +527,7 @@ def plan_day(
     mobility_reduced: bool = False,
     meal_preferences: tuple[str, ...] = (),
     budget_per_person: Decimal | None = None,
+    meal_windows: tuple[MealWindowConstraint, ...] = (),
 ) -> DayPlan:
     """Build a full daily plan from constraints and candidates.
 
@@ -446,7 +536,11 @@ def plan_day(
     the provider, which may re-space the items using actual transit durations.
     """
     day_type = classify_day_type(
-        trip_date, start_date, end_date, arrival, departure,
+        trip_date,
+        start_date,
+        end_date,
+        arrival,
+        departure,
         has_full_day_experience=has_full_day_experience,
     )
     window_start, window_end = day_window_minutes(
@@ -454,9 +548,13 @@ def plan_day(
     )
     if window_end <= window_start:
         return DayPlan(
-            date=trip_date, day_type=day_type,
-            window_start_minute=window_start, window_end_minute=window_end,
-            items=(), meal_demands=(), origin=None,
+            date=trip_date,
+            day_type=day_type,
+            window_start_minute=window_start,
+            window_end_minute=window_end,
+            items=(),
+            meal_demands=(),
+            origin=None,
             accommodation_unknown=not accommodation_known,
             warnings=("NO_USABLE_DAY_WINDOW",),
             primary_region=None,
@@ -464,48 +562,56 @@ def plan_day(
 
     time_fixed = tuple(c for c in candidates if c.time_fixed)
     movable = tuple(c for c in candidates if not c.time_fixed)
-    fixed_items = build_fixed_items(
-        trip_date, arrival, departure, fixed_schedules, time_fixed
-    )
+    fixed_items = build_fixed_items(trip_date, arrival, departure, fixed_schedules, time_fixed)
     free_windows = compute_free_windows(fixed_items, window_start, window_end)
 
     primary_region = _primary_region(movable, fixed_items)
-    special_candidate = (
-        _choose_special_day(movable)
-        if day_type == "SPECIAL_ACTIVITY_DAY"
-        else None
-    )
+    special_candidate = _choose_special_day(movable) if day_type == "SPECIAL_ACTIVITY_DAY" else None
     # A FULL_DAY experience covers in-scenic dining, so no separate meal slots
     # are reserved on that day (avoids overlapping the main route).
-    skip_meals = (
-        special_candidate is not None
-        and special_candidate.magnitude == "FULL_DAY"
-    )
+    skip_meals = special_candidate is not None and special_candidate.magnitude == "FULL_DAY"
     meal_demands = (
         ()
         if skip_meals
         else build_meal_demands(
-            day_type, window_start, window_end, free_windows,
+            day_type,
+            window_start,
+            window_end,
+            free_windows,
             primary_region=primary_region,
             preferences=meal_preferences,
             budget_per_person=budget_per_person,
             pace=pace,
+            explicit_windows=meal_windows,
         )
     )
-    slots = _split_windows_by_meals(
-        free_windows, meal_demands, BUFFER_BETWEEN_MINUTES[pace]
-    )
+    slots = _split_windows_by_meals(free_windows, meal_demands, BUFFER_BETWEEN_MINUTES[pace])
 
     placed = choose_activities(
-        movable, slots,
-        day_type=day_type, pace=pace, mobility_reduced=mobility_reduced,
+        movable,
+        slots,
+        day_type=day_type,
+        pace=pace,
+        mobility_reduced=mobility_reduced,
         primary_region=primary_region,
     )
 
     items = _assemble_items(
-        fixed_items, meal_demands, placed, pace=pace,
+        fixed_items,
+        meal_demands,
+        placed,
+        pace=pace,
     )
     warnings = _build_warnings(fixed_items, movable, placed)
+    # B9.4: an explicit meal window that ended up without its meal is a real
+    # conflict — never silently dropped.
+    placed_meal_types = {meal.meal_type for meal in meal_demands}
+    for meal_window in meal_windows:
+        if (
+            _meal_allowed(meal_window.meal_type, day_type)
+            and meal_window.meal_type not in placed_meal_types
+        ):
+            warnings.append(f"MEAL_WINDOW_CONFLICT:{meal_window.meal_type}")
 
     origin = VirtualDayOrigin(
         label="酒店" if accommodation_known else "城市中心",
@@ -513,9 +619,13 @@ def plan_day(
         accommodation_known=accommodation_known,
     )
     return DayPlan(
-        date=trip_date, day_type=day_type,
-        window_start_minute=window_start, window_end_minute=window_end,
-        items=items, meal_demands=meal_demands, origin=origin,
+        date=trip_date,
+        day_type=day_type,
+        window_start_minute=window_start,
+        window_end_minute=window_end,
+        items=items,
+        meal_demands=meal_demands,
+        origin=origin,
         accommodation_unknown=not accommodation_known,
         warnings=tuple(warnings),
         primary_region=primary_region,
@@ -523,6 +633,7 @@ def plan_day(
 
 
 # -- internal helpers --------------------------------------------------------
+
 
 def _anchor_minute(value: datetime | None) -> int | None:
     if value is None:
@@ -557,8 +668,37 @@ def _meal_demand(
     primary_region: str | None,
     preferences: tuple[str, ...],
     budget_per_person: Decimal | None,
+    *,
+    explicit_windows: tuple[MealWindowConstraint, ...] = (),
 ) -> MealDemand | None:
     if not _meal_allowed(meal_type, day_type):
+        return None
+    matching = tuple(window for window in explicit_windows if window.meal_type == meal_type)
+    if matching:
+        # Explicit window wins: the meal is placed inside it.  The earliest
+        # window that still has room is used deterministically.
+        for explicit in sorted(matching, key=lambda w: (w.start_minute, w.end_minute)):
+            target = _nearest_free_window(
+                tuple(
+                    (max(low, explicit.start_minute), min(high, explicit.end_minute))
+                    for low, high in free_windows
+                    if high > explicit.start_minute and low < explicit.end_minute
+                ),
+                explicit.start_minute,
+            )
+            if target is not None:
+                low, high = target
+                start = max(low, explicit.start_minute)
+                if start + MEAL_DURATION_MINUTES > min(high, explicit.end_minute):
+                    continue
+                return MealDemand(
+                    meal_type=meal_type,
+                    start_minute=start,
+                    end_minute=start + MEAL_DURATION_MINUTES,
+                    region=primary_region,
+                    budget_per_person=budget_per_person,
+                    preferences=preferences,
+                )
         return None
     preferred = DEFAULT_MEAL_MINUTE[meal_type]
     target = _nearest_free_window(free_windows, preferred)
@@ -601,9 +741,7 @@ def _primary_region(
         if not activity.region:
             continue
         weight = 3 if activity.must_include else 1
-        region_scores[activity.region] = (
-            region_scores.get(activity.region, 0) + weight
-        )
+        region_scores[activity.region] = region_scores.get(activity.region, 0) + weight
     if not region_scores:
         return None
     return max(region_scores, key=lambda key: (region_scores[key], key))
@@ -684,6 +822,27 @@ def _fill_slots(
                 continue
             duration = _activity_duration_minutes(activity)
             needed = duration + (buffer if cursor > low else 0)
+            if activity.opening is not None and activity.opening.constrains_placement:
+                # VERIFIED_WINDOW: place inside the earliest legal window;
+                # the last-entry bound caps the start minute.
+                start = _earliest_opening_placement(activity, low, high, cursor, duration, buffer)
+                if start is None:
+                    continue
+                placed.append(
+                    PlacedActivity(
+                        candidate=activity,
+                        start_minute=start,
+                        end_minute=start + duration,
+                    )
+                )
+                cursor = start + duration + buffer
+                if cursor >= high:
+                    break
+                continue
+            if activity.opening is not None and activity.opening.kind == "VERIFIED_CLOSED":
+                # A verified closure means the candidate cannot run on this
+                # day; it is excluded rather than silently moved.
+                continue
             if needed > capacity - (cursor - low):
                 continue
             placed.append(
@@ -699,15 +858,43 @@ def _fill_slots(
     return tuple(placed)
 
 
+def _earliest_opening_placement(
+    activity: CandidateActivity,
+    slot_low: int,
+    slot_high: int,
+    cursor: int,
+    duration: int,
+    buffer: int,
+) -> int | None:
+    """Pick the earliest deterministic legal start for a VERIFIED_WINDOW candidate."""
+    opening = activity.opening
+    assert opening is not None and opening.constrains_placement
+    start_cursor = max(cursor, slot_low)
+    for window_low, window_high in sorted(opening.windows):
+        candidate_start = max(start_cursor, window_low)
+        last_entry = opening.last_entry_minute
+        if last_entry is not None:
+            candidate_start = min(candidate_start, last_entry)
+        if candidate_start < window_low:
+            candidate_start = window_low
+        if last_entry is not None and candidate_start > last_entry:
+            continue
+        candidate_end = candidate_start + duration
+        if candidate_end > window_high:
+            continue
+        if candidate_end > slot_high:
+            continue
+        return candidate_start
+    return None
+
+
 def _split_windows_by_meals(
     free_windows: tuple[tuple[int, int], ...],
     meal_demands: tuple[MealDemand, ...],
     buffer: int,
 ) -> tuple[tuple[int, int], ...]:
     del buffer
-    spans = sorted(
-        (meal.start_minute, meal.end_minute) for meal in meal_demands
-    )
+    spans = sorted((meal.start_minute, meal.end_minute) for meal in meal_demands)
     slots: list[tuple[int, int]] = []
     for low, high in free_windows:
         cursor = low
@@ -794,9 +981,13 @@ def _build_warnings(
             warnings.append(f"FIXED_OVERLAP:{previous.title}:{current.title}")
     placed_ids = {item.candidate.poi_id for item in placed}
     missing = tuple(
-        candidate for candidate in movable
+        candidate
+        for candidate in movable
         if candidate.must_include and candidate.poi_id not in placed_ids
     )
     for candidate in missing:
-        warnings.append(f"MUST_VISIT_UNSCHEDULED:{candidate.title}")
+        if candidate.opening is not None and candidate.opening.kind == "VERIFIED_CLOSED":
+            warnings.append(f"MUST_VISIT_CLOSED:{candidate.title}")
+        else:
+            warnings.append(f"MUST_VISIT_UNSCHEDULED:{candidate.title}")
     return warnings

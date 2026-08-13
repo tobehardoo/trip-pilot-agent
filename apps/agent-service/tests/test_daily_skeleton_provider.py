@@ -461,12 +461,24 @@ def test_planning_result_defaults_trip_skeleton_to_none() -> None:
     assert result.trip_skeleton is None
 
 
-def test_demo_provider_result_trip_skeleton_stays_none() -> None:
+def test_demo_provider_result_projects_unresolved_skeleton() -> None:
     from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
+    from trip_agent.planning.trip_skeleton import (
+        AccommodationState,
+        UnresolvedAccommodation,
+    )
 
     result = asyncio.run(DemoPlanningProvider().plan(_command()))
 
-    assert result.trip_skeleton is None
+    # B9.1: Demo now derives the same projection as every entry point, with
+    # overnights strictly UNRESOLVED (never fabricated as confirmed).
+    assert result.trip_skeleton is not None
+    assert result.trip_skeleton.accommodation_states == (
+        AccommodationState.UNRESOLVED,
+        AccommodationState.UNRESOLVED,
+    )
+    for overnight in result.trip_skeleton.overnights:
+        assert isinstance(overnight.accommodation, UnresolvedAccommodation)
 
 
 def test_amap_result_carries_transient_trip_skeleton() -> None:
@@ -620,13 +632,17 @@ def test_demo_chain_validates_unknown_and_unverified() -> None:
 
     command = _command()
     result = asyncio.run(DemoPlanningProvider().plan(command))
-    assert result.trip_skeleton is None
+    # B9.1: the Demo chain now carries its own projected skeleton/inputs.
+    assert result.trip_skeleton is not None
+    assert result.validation_inputs is not None
 
     report = validate_itinerary(
         command=command,
         itinerary=result.itinerary,
         report_id="3d76fb9e-362e-4b28-8a9e-18e8ac7050ad",
         validated_at=datetime(2026, 8, 9, 12, 0, tzinfo=UTC),
+        trip_skeleton=result.trip_skeleton,
+        validation_inputs=result.validation_inputs,
     )
 
     route = next(
@@ -635,11 +651,10 @@ def test_demo_chain_validates_unknown_and_unverified() -> None:
     cross = next(
         r for r in report.rule_results if r.rule_id == "CROSS_DAY_CONTINUITY"
     )
-    # Demo produces a single activity per day (no adjacent pairs), so the
-    # route rule is N/A — never PASS; multi-day without a skeleton makes the
-    # cross-day rule UNKNOWN.  Either way the report must stay UNVERIFIED.
+    # Demo never resolves real restaurants or real route evidence, so the
+    # route rule can never PASS; with the projected skeleton the cross-day
+    # rule stays UNKNOWN.  Either way the report must stay UNVERIFIED.
     assert route.outcome is not RuleOutcome.PASS
-    assert route.outcome is RuleOutcome.NOT_APPLICABLE
     assert cross.outcome is RuleOutcome.UNKNOWN
     assert report.status is FeasibilityStatus.UNVERIFIED
 

@@ -17,6 +17,7 @@ from trip_agent.domain.planning.protocols import (
     RelaxationSuggestion,
 )
 from trip_agent.domain.shared import coordinate_decimal
+from trip_agent.planning.validation_projection import project_validation_state
 from trip_agent.providers.errors import (
     FallbackDecision,
     ProviderExecutionMode,
@@ -102,6 +103,11 @@ class LocalReplanningProvider:
             days=tuple(days),
             estimated_total_cost=snapshot.estimated_total_cost,
         )
+        # B9.1: rebuild the transient projection from the final candidate so
+        # locators/bindings never point at stale positions.  Replan commands
+        # carry no guide facts, so opening evidence stays absent (UNVERIFIED)
+        # rather than being fabricated.
+        skeleton, inputs = self._project(command, itinerary)
         if not self._can_record_provenance(actual_providers, used_route_fallback):
             logger.warning(
                 "replan_provider_provenance_unrecorded mode=%s actual_providers=%s task_id=%s",
@@ -109,7 +115,12 @@ class LocalReplanningProvider:
                 actual_providers,
                 command.task_id,
             )
-            return PlanningResult(provider=snapshot.provider, itinerary=itinerary)
+            return PlanningResult(
+                provider=snapshot.provider,
+                itinerary=itinerary,
+                trip_skeleton=skeleton,
+                validation_inputs=inputs,
+            )
         return PlanningResult(
             provider=snapshot.provider,
             itinerary=itinerary,
@@ -120,6 +131,8 @@ class LocalReplanningProvider:
             fallback_succeeded=used_route_fallback,
             fallback_reason=("ROUTE_PROVIDER_FAILURE" if used_route_fallback else None),
             fallback_operations=fallback_operations,
+            trip_skeleton=skeleton,
+            validation_inputs=inputs,
         )
 
     async def repair(self, request: PlanningRepairRequest) -> PlanningResult:
@@ -159,6 +172,9 @@ class LocalReplanningProvider:
         primary_provider = request.candidate.primary_provider or (
             "DEMO" if requested_mode == ProviderExecutionMode.DEMO_ONLY.value else "AMAP"
         )
+        # B9.1: repair must re-project from the repaired itinerary; stale
+        # bindings/locators from the pre-repair candidate are never reused.
+        skeleton, inputs = self._project(request.command, itinerary)
         return PlanningResult(
             provider=request.candidate.provider,
             itinerary=itinerary,
@@ -170,8 +186,27 @@ class LocalReplanningProvider:
             fallback_succeeded=used_route_fallback,
             fallback_reason=("ROUTE_PROVIDER_FAILURE" if used_route_fallback else None),
             fallback_operations=fallback_operations,
-            trip_skeleton=request.candidate.trip_skeleton,
-            validation_inputs=request.candidate.validation_inputs,
+            trip_skeleton=skeleton,
+            validation_inputs=inputs,
+        )
+
+    def _project(
+        self,
+        command: PlanningReplanCommand | PlanningCandidateValidationCommand,
+        itinerary: Itinerary,
+    ):
+        trip = command.payload.trip
+        requested = trip.constraints.accommodation
+        meal_windows = tuple(trip.constraints.meal_windows)
+        facts = ()
+        if isinstance(command, PlanningCandidateValidationCommand):
+            context = command.payload.planning_context
+            facts = context.facts if context is not None else ()
+        return project_validation_state(
+            itinerary,
+            requested_accommodation_label=(requested.place_name if requested is not None else None),
+            meal_windows=meal_windows,
+            facts=facts,
         )
 
     def _can_record_provenance(

@@ -8,6 +8,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningReviewRequiredEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class PlanningReviewService implements PlanningReviewHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(PlanningReviewService.class);
 
     private static final String WAITING_USER = "WAITING_USER";
     private static final String FAILED = "FAILED";
@@ -66,6 +70,16 @@ public class PlanningReviewService implements PlanningReviewHandler {
     @Transactional
     @Override
     public void handle(PlanningReviewRequiredEvent event) {
+        try (PlanningLogContext ctx = PlanningLogContext.open()
+                .put(PlanningLogContext.EVENT_TYPE, "PLANNING_REVIEW_REQUIRED")
+                .put(PlanningLogContext.PROVIDER, event.payload() == null
+                        ? null : event.payload().provider())
+                .put(PlanningLogContext.OUTCOME_STATUS, WAITING_USER)) {
+            handleInScope(event);
+        }
+    }
+
+    private void handleInScope(PlanningReviewRequiredEvent event) {
         PlanningTaskCompletionRecord task = taskMapper.findCompletionContextForUpdate(event.taskId())
                 .orElseThrow(() -> rejected("Planning task was not found"));
         guard.validateIdentity(event.tripId(), event.traceId(), task, "Review event");
@@ -75,6 +89,7 @@ public class PlanningReviewService implements PlanningReviewHandler {
             boolean isSameReviewDelivery = existing.taskId().equals(task.id())
                     && "PLANNING_REVIEW_REQUIRED".equals(existing.eventType());
             if (isSameReviewDelivery) {
+                log.info("duplicate ignored: review event already applied");
                 return;
             }
             throw rejected("Review eventId already belongs to another planning task event");
@@ -86,6 +101,7 @@ public class PlanningReviewService implements PlanningReviewHandler {
         validateCandidateIntegrity(event);
         guard.validateDates(event.payload().itinerary().days(), task);
         if (guard.isStaleTripBaseline(task)) {
+            log.warn("stale baseline rejected: trip constraints changed during planning");
             persistStaleFailure(event, task, STALE_TRIP_VERSION,
                     "Trip constraints changed while planning was running");
             return;
@@ -95,6 +111,7 @@ public class PlanningReviewService implements PlanningReviewHandler {
                 || "ROLLBACK_VALIDATE".equals(task.taskType()))
                 && guard.isStaleReplanBaseline(task, currentVersionProvider.currentVersionId(
                         task.tripId()))) {
+            log.warn("stale baseline rejected: itinerary changed during validation");
             persistStaleFailure(event, task, STALE_ITINERARY_VERSION,
                     "The itinerary changed while local replanning was running");
             return;
@@ -117,6 +134,7 @@ public class PlanningReviewService implements PlanningReviewHandler {
         );
         requireOne(taskEventMapper.insert(record), "planning task event");
         eventPublisher.publishEvent(new PlanningTaskEventCreated(stored(record)));
+        log.info("review persisted: task waiting for user");
     }
 
     private void persistStaleFailure(PlanningReviewRequiredEvent event,
@@ -133,6 +151,7 @@ public class PlanningReviewService implements PlanningReviewHandler {
         );
         requireOne(taskEventMapper.insert(record), "planning task event");
         eventPublisher.publishEvent(new PlanningTaskEventCreated(stored(record)));
+        log.warn("task failed: errorCode={}", errorCode);
     }
 
     private PlanningTaskEventRecord stored(PlanningTaskEventRecord record) {

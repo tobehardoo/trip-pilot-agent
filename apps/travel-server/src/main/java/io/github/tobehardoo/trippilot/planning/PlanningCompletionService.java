@@ -11,12 +11,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.itinerary.ItineraryService;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PlanningCompletionService implements PlanningCompletionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(PlanningCompletionService.class);
 
     private static final String SUCCEEDED = "SUCCEEDED";
     private static final String FAILED = "FAILED";
@@ -63,6 +67,16 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     @Transactional
     @Override
     public void handle(PlanningCompletedEvent event) {
+        try (PlanningLogContext ctx = PlanningLogContext.open()
+                .put(PlanningLogContext.EVENT_TYPE, "PLANNING_COMPLETED")
+                .put(PlanningLogContext.PROVIDER, event.payload() == null
+                        ? null : event.payload().provider())
+                .put(PlanningLogContext.OUTCOME_STATUS, "SUCCEEDED")) {
+            handleInScope(event);
+        }
+    }
+
+    private void handleInScope(PlanningCompletedEvent event) {
         // Second fail-closed gate: the parser already rejects non-v9 wire
         // events, but a caller that bypasses the parser must not be able to
         // create a formal itinerary version without a VERIFIED report.
@@ -89,6 +103,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                     && ("PLANNING_COMPLETED".equals(existing.eventType())
                     || "PLANNING_FAILED".equals(existing.eventType()));
             if (isSameCompletedDelivery) {
+                log.info("duplicate ignored: completion event already applied");
                 return;
             }
             throw rejected("Completed eventId already belongs to another planning task event");
@@ -98,6 +113,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         }
         guard.validateDates(event.payload().itinerary().days(), task);
         if (guard.isStaleTripBaseline(task)) {
+            log.warn("stale baseline rejected: trip constraints changed during planning");
             persistStaleFailure(event, task, "STALE_TRIP_VERSION",
                     "Trip constraints changed while planning was running");
             return;
@@ -105,6 +121,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         if (isCandidateTask(task)) {
             if (guard.isStaleReplanBaseline(
                     task, itineraryService.getCurrentVersionForTask(task.tripId()))) {
+                log.warn("stale baseline rejected: itinerary changed during candidate validation");
                 persistStaleFailure(event, task, "STALE_ITINERARY_VERSION",
                         "The itinerary changed while the candidate was validated");
                 return;
@@ -113,6 +130,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                     itineraryService.createCandidateVersion(task.tripId(), event, task, clock);
             persistFactImpacts(event, result.versionId());
             String reportJson = persistFeasibilityReport(event, result);
+            log.info("candidate queued: version persisted versionId={} versionNumber={}",
+                    result.versionId(), result.versionNumber());
             updateTaskToSucceeded(
                     event, task, result, "PLANNING_COMPLETED",
                     writeJson(completionPayload(event, result, reportJson)));
@@ -121,6 +140,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         if ("REPLAN".equals(task.taskType())) {
             if (guard.isStaleReplanBaseline(
                     task, itineraryService.getCurrentVersionForTask(task.tripId()))) {
+                log.warn("stale baseline rejected: itinerary changed during local replanning");
                 persistStaleFailure(event, task, "STALE_ITINERARY_VERSION",
                         "The itinerary changed while local replanning was running");
                 return;
@@ -129,6 +149,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                     itineraryService.createReplanVersion(
                             task.tripId(), event, task, clock);
             String reportJson = persistFeasibilityReport(event, result);
+            log.info("version persisted: replan versionId={} versionNumber={}",
+                    result.versionId(), result.versionNumber());
             updateTaskToSucceeded(
                     event, task, result, "PLANNING_COMPLETED",
                     writeJson(completionPayload(event, result, reportJson)));
@@ -140,6 +162,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         task.constraintSnapshotJson(), clock);
         persistFactImpacts(event, result.versionId());
         String reportJson = persistFeasibilityReport(event, result);
+        log.info("version persisted: initial versionId={} versionNumber={}",
+                result.versionId(), result.versionNumber());
         updateTaskToSucceeded(
                 event, task, result, "PLANNING_COMPLETED",
                 writeJson(completionPayload(event, result, reportJson)));
@@ -393,6 +417,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         publishAfterCommit(insertTaskEvent(new PlanningTaskEventRecord(
                 null, event.eventId(), task.id(), eventType, 1, payloadJson, now
         )));
+        log.info("task completed: taskType={} versionNumber={}",
+                task.taskType(), version.versionNumber());
     }
 
     private void persistStaleFailure(PlanningCompletedEvent event,
@@ -411,6 +437,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         FAILED, errorCode, message
                 )), now
         )));
+        log.warn("task failed: errorCode={}", errorCode);
     }
 
     private PlanningTaskEventRecord insertTaskEvent(PlanningTaskEventRecord event) {

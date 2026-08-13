@@ -8,6 +8,7 @@ and workflow composition in ``workflow/``.
 
 from dataclasses import asdict
 from datetime import UTC, datetime
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from trip_agent.application.candidate_validation import CandidateValidationProvider
@@ -70,6 +71,7 @@ from trip_agent.worker.contracts import (
     PlanningReviewRequiredPayload,
 )
 from trip_agent.worker.progress import report_planning_progress
+from trip_agent.worker.structured_logging import planning_logger
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider  # noqa: F811
 
 __all__ = [
@@ -105,6 +107,15 @@ async def process_planning_create(
     occurred_at: datetime | None = None,
 ) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
     completed_at = occurred_at or datetime.now(UTC)
+    log = planning_logger(
+        "trip_agent.worker.processor",
+        trace_id=str(command.trace_id),
+        event_id=str(command.event_id),
+        task_id=str(command.task_id),
+        trip_id=str(command.trip_id),
+        task_type="CREATE",
+    )
+    log.info("command received: PLANNING_CREATE")
     await report_planning_progress(
         "CONTEXT_VALIDATING",
         "Validating the planning context and constraints",
@@ -115,7 +126,9 @@ async def process_planning_create(
         "Loading current city facts and guide evidence",
         {"guideFactCount": len(effective_command.payload.guide_evidence.facts)},
     )
+    log.info("provider started", extra={"provider": "PLANNING"})
     result = await provider.plan(effective_command)
+    log.info("provider completed", extra={"provider": result.provider})
     # B6: authoritative feasibility gate.  The report is derived from the
     # same itinerary that will be emitted; validated_at is the caller-owned
     # timestamp and the report id is a deterministic uuid5 of the command.
@@ -127,11 +140,17 @@ async def process_planning_create(
         trip_skeleton=result.trip_skeleton,
         validation_inputs=result.validation_inputs,
     )
+    log.info(
+        "validation result: %s",
+        validation.report.status.value,
+        extra={"outcome_status": validation.report.status.value},
+    )
     result, validation = await _repair_if_needed(
         effective_command,
         provider,
         result,
         validation,
+        log=log,
     )
     await report_planning_progress(
         "KNOWLEDGE_RETRIEVING",
@@ -153,6 +172,7 @@ async def process_planning_create(
     report = validation.report
     if report.status.value == "VERIFIED":
         evaluation = get_plan_evaluator().evaluate(effective_command, result)
+        log.info("outcome emitted: PLANNING_COMPLETED", extra={"outcome_status": "VERIFIED"})
         return PlanningCompletedEventV9(
             event_type="PLANNING_COMPLETED",
             schema_version=9,
@@ -172,6 +192,7 @@ async def process_planning_create(
                 feasibility_report=report,
             ),
         )
+    log.info("outcome emitted: PLANNING_REVIEW_REQUIRED", extra={"outcome_status": "WAITING_USER"})
     return PlanningReviewRequiredEvent(
         event_type="PLANNING_REVIEW_REQUIRED",
         schema_version=1,
@@ -200,12 +221,23 @@ async def process_planning_replan(
     occurred_at: datetime | None = None,
 ) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
     completed_at = occurred_at or datetime.now(UTC)
+    log = planning_logger(
+        "trip_agent.worker.processor",
+        trace_id=str(command.trace_id),
+        event_id=str(command.event_id),
+        task_id=str(command.task_id),
+        trip_id=str(command.trip_id),
+        task_type="REPLAN",
+    )
+    log.info("command received: PLANNING_REPLAN")
     await report_planning_progress(
         "CONTEXT_VALIDATING",
         "Validating the local replanning scope",
         {"impactedDays": len(command.payload.impacted_dates)},
     )
+    log.info("provider started", extra={"provider": "REPLAN"})
     result = await provider.replan(command)
+    log.info("provider completed", extra={"provider": result.provider})
     validation = run_validation(
         command=command,
         itinerary=result.itinerary,
@@ -214,11 +246,17 @@ async def process_planning_replan(
         trip_skeleton=result.trip_skeleton,
         validation_inputs=result.validation_inputs,
     )
+    log.info(
+        "validation result: %s",
+        validation.report.status.value,
+        extra={"outcome_status": validation.report.status.value},
+    )
     result, validation = await _repair_if_needed(
         command,
         provider,
         result,
         validation,
+        log=log,
     )
     await report_planning_progress(
         "RESULT_EXPLAINING",
@@ -227,6 +265,7 @@ async def process_planning_replan(
     report = validation.report
     if report.status.value == "VERIFIED":
         evaluation = get_plan_evaluator().evaluate(command, result)
+        log.info("outcome emitted: PLANNING_COMPLETED", extra={"outcome_status": "VERIFIED"})
         return PlanningCompletedEventV9(
             event_type="PLANNING_COMPLETED",
             schema_version=9,
@@ -246,6 +285,7 @@ async def process_planning_replan(
                 feasibility_report=report,
             ),
         )
+    log.info("outcome emitted: PLANNING_REVIEW_REQUIRED", extra={"outcome_status": "WAITING_USER"})
     return PlanningReviewRequiredEvent(
         event_type="PLANNING_REVIEW_REQUIRED",
         schema_version=1,
@@ -274,12 +314,24 @@ async def process_candidate_validation(
     occurred_at: datetime | None = None,
 ) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
     completed_at = occurred_at or datetime.now(UTC)
+    log = planning_logger(
+        "trip_agent.worker.processor",
+        trace_id=str(command.trace_id),
+        event_id=str(command.event_id),
+        task_id=str(command.task_id),
+        trip_id=str(command.trip_id),
+        task_type=command.payload.task_type,
+        candidate_type=command.payload.candidate_type,
+    )
+    log.info("command received: PLANNING_CANDIDATE_VALIDATION")
     await report_planning_progress(
         "CONTEXT_VALIDATING",
         "Validating an immutable edit or rollback candidate",
         {"impactedDays": len(command.payload.impacted_dates)},
     )
+    log.info("provider started", extra={"provider": "CANDIDATE_VALIDATION"})
     result = await provider.validate(command)
+    log.info("provider completed", extra={"provider": result.provider})
     validation = run_validation(
         command=command,
         itinerary=result.itinerary,
@@ -288,7 +340,12 @@ async def process_candidate_validation(
         trip_skeleton=result.trip_skeleton,
         validation_inputs=result.validation_inputs,
     )
-    result, validation = await _repair_if_needed(command, provider, result, validation)
+    log.info(
+        "validation result: %s",
+        validation.report.status.value,
+        extra={"outcome_status": validation.report.status.value},
+    )
+    result, validation = await _repair_if_needed(command, provider, result, validation, log=log)
     report = validation.report
     common = {
         "provider": result.provider,
@@ -299,6 +356,7 @@ async def process_candidate_validation(
         "feasibility_report": report,
     }
     if report.status.value == "VERIFIED":
+        log.info("outcome emitted: PLANNING_COMPLETED", extra={"outcome_status": "VERIFIED"})
         return PlanningCompletedEventV9(
             event_type="PLANNING_COMPLETED",
             schema_version=9,
@@ -313,6 +371,7 @@ async def process_candidate_validation(
                 evaluation=get_plan_evaluator().evaluate(command, result),
             ),
         )
+    log.info("outcome emitted: PLANNING_REVIEW_REQUIRED", extra={"outcome_status": "WAITING_USER"})
     return PlanningReviewRequiredEvent(
         event_type="PLANNING_REVIEW_REQUIRED",
         schema_version=1,
@@ -324,11 +383,15 @@ async def process_candidate_validation(
         occurred_at=completed_at,
         payload=PlanningReviewRequiredPayload(status="WAITING_USER", **common),
     )
+
+
 async def _repair_if_needed(
     command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     provider: PlanningProvider | CandidateValidationProvider,
     result: PlanningResult,
     validation: ValidationRun,
+    *,
+    log: Any = None,
 ) -> tuple[PlanningResult, ValidationRun]:
     session = start_repair_session(validation)
     candidate = result
@@ -337,6 +400,11 @@ async def _repair_if_needed(
         plan = plan_repairs(session.current, attempt_index=attempt_index)
         if plan is None:
             break
+        if log is not None:
+            log.info(
+                "repair attempt started",
+                extra={"attempt_index": attempt_index},
+            )
         await report_planning_progress(
             "REPAIRING",
             "Applying a bounded feasibility repair",
@@ -365,6 +433,13 @@ async def _repair_if_needed(
             validation_inputs=candidate.validation_inputs,
         )
         session = advance_repair_session(session, plan=plan, after=after)
+        if log is not None:
+            log.info(
+                "repair attempt completed",
+                extra={"attempt_index": attempt_index},
+            )
+    if log is not None and session.stop_reason is not None:
+        log.info("repair stopped: %s", session.stop_reason)
     return candidate, session.current
 
 

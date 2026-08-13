@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- Local-first console logging.  The planning pipeline's MDC correlation
+         fields are surfaced through Spring Boot's LOG_CORRELATION_PATTERN slot;
+         no file appender and no remote sink (the project runs locally). -->
+    <property name="LOG_CORRELATION_PATTERN"
+              value="[%X{traceId:-}|%X{taskId:-}|%X{tripId:-}] "/>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+    <logger name="io.github.tobehardoo.trippilot.planning" level="INFO"/>
+    <logger name="io.github.tobehardoo.trippilot.infrastructure.mq" level="INFO"/>
+</configuration>

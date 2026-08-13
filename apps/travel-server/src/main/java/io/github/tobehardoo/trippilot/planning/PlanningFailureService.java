@@ -6,12 +6,16 @@ import java.time.Instant;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class PlanningFailureService {
+
+    private static final Logger log = LoggerFactory.getLogger(PlanningFailureService.class);
 
     private final PlanningTaskMapper taskMapper;
     private final PlanningTaskEventMapper eventMapper;
@@ -36,6 +40,14 @@ public class PlanningFailureService {
 
     @Transactional
     public void handle(PlanningFailedEvent event) {
+        try (PlanningLogContext ctx = PlanningLogContext.open()
+                .put(PlanningLogContext.EVENT_TYPE, "PLANNING_FAILED")
+                .put(PlanningLogContext.OUTCOME_STATUS, "FAILED")) {
+            handleInScope(event);
+        }
+    }
+
+    private void handleInScope(PlanningFailedEvent event) {
         PlanningTaskCompletionRecord task = taskMapper.findCompletionContextForUpdate(event.taskId())
                 .orElseThrow(() -> rejected("Planning task was not found"));
         if (!event.tripId().equals(task.tripId()) || !event.traceId().equals(task.traceId())) {
@@ -45,11 +57,13 @@ public class PlanningFailureService {
         if (existing.isPresent()) {
             PlanningTaskEventRecord stored = existing.get();
             if (stored.taskId().equals(task.id()) && "PLANNING_FAILED".equals(stored.eventType())) {
+                log.info("duplicate ignored: failure event already applied");
                 return;
             }
             throw rejected("Failed eventId already belongs to another planning task event");
         }
         if ("FAILED".equals(task.status())) {
+            log.info("duplicate ignored: task already FAILED");
             return;
         }
         if (!"QUEUED".equals(task.status()) && !"RUNNING".equals(task.status())) {
@@ -73,6 +87,8 @@ public class PlanningFailureService {
         PlanningTaskEventRecord stored = eventMapper.findByEventId(event.eventId())
                 .orElseThrow(() -> new IllegalStateException("Failure event could not be read"));
         eventPublisher.publishEvent(new PlanningTaskEventCreated(stored));
+        log.warn("task failed: errorCode={} errorCategory={}",
+                payload.errorCode(), payload.errorCategory());
     }
 
     private String writeJson(Object value) {

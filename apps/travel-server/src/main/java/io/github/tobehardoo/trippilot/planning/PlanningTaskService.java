@@ -23,6 +23,8 @@ import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent.PlanEvaluation;
 import io.github.tobehardoo.trippilot.planning.PlanningContextSnapshotService.PlanningContextSnapshot;
 import io.github.tobehardoo.trippilot.trip.TripService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -32,6 +34,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class PlanningTaskService {
+
+    private static final Logger log = LoggerFactory.getLogger(PlanningTaskService.class);
 
     private static final String CREATE_TASK_TYPE = "CREATE";
     private static final String REPLAN_TASK_TYPE = "REPLAN";
@@ -224,6 +228,7 @@ public class PlanningTaskService {
                 eventId, "PLANNING_TASK", task.id(), COMMAND_TYPE, ROUTING_KEY,
                 writeJson(command), "PENDING", 0, now, null, now, null
         ));
+        log.info("task queued: taskType=CREATE");
         return toResponse(task);
     }
 
@@ -311,6 +316,7 @@ public class PlanningTaskService {
                 eventId, "PLANNING_TASK", task.id(), REPLAN_COMMAND_TYPE, REPLAN_ROUTING_KEY,
                 writeJson(command), "PENDING", 0, now, null, now, null
         ));
+        log.info("task queued: taskType=REPLAN");
         return toResponse(task);
     }
 
@@ -400,6 +406,8 @@ public class PlanningTaskService {
         )) != 1) {
             throw new IllegalStateException("Could not persist candidate validation outbox event");
         }
+        log.info("candidate queued: taskType={} candidateType={}",
+                task.taskType(), candidateType);
         return toResponse(task);
     }
 

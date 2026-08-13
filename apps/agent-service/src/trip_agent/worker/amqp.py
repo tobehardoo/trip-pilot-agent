@@ -73,6 +73,7 @@ from trip_agent.worker.processor import (
     process_planning_replan,
 )
 from trip_agent.worker.progress import planning_progress_reporting
+from trip_agent.worker.structured_logging import planning_logger
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider
 
 COMMAND_EXCHANGE = "trip.command.exchange"
@@ -560,6 +561,14 @@ async def handle_delivery(
         await message.reject(requeue=False)
         return
 
+    planning_logger(
+        "trip_agent.worker",
+        trace_id=str(command.trace_id),
+        event_id=str(command.event_id),
+        task_id=str(command.task_id),
+        trip_id=str(command.trip_id),
+    ).info("command received: %s", command.event_type)
+
     try:
         planning_provider = provider or DemoPlanningProvider()
         progress_publisher = PlanningProgressPublisher(event_exchange, command)
@@ -721,6 +730,16 @@ async def _publish_terminal_failure(
         await message.ack()
         return
     failed = planning_failed_event(command, failure)
+    planning_logger(
+        "trip_agent.worker",
+        trace_id=str(failed.trace_id),
+        event_id=str(failed.event_id),
+        task_id=str(failed.task_id),
+        trip_id=str(failed.trip_id),
+    ).warning(
+        "outcome emitted: PLANNING_FAILED",
+        extra={"outcome_status": "FAILED", "reason_code": failed.payload.error_code},
+    )
     outgoing = aio_pika.Message(
         body=failed.model_dump_json(by_alias=True, exclude_none=True).encode(),
         content_type="application/json",
@@ -823,9 +842,7 @@ async def _consume(
         dead_letter_queue = await channel.declare_queue(DEAD_LETTER_QUEUE, durable=True)
         await command_queue.bind(command_exchange, routing_key=CREATE_ROUTING_KEY)
         await command_queue.bind(command_exchange, routing_key=REPLAN_ROUTING_KEY)
-        await command_queue.bind(
-            command_exchange, routing_key=CANDIDATE_VALIDATION_ROUTING_KEY
-        )
+        await command_queue.bind(command_exchange, routing_key=CANDIDATE_VALIDATION_ROUTING_KEY)
         await cancel_queue.bind(command_exchange, routing_key=CANCEL_ROUTING_KEY)
         await dead_letter_queue.bind(dead_letter_exchange, routing_key="planning.#")
         cancellation_registry = CancellationRegistry()

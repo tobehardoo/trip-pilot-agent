@@ -398,6 +398,11 @@ class PlanningReviewServiceTest {
         }
 
         @Override
+        public int abandonWaitingUserOwned(UUID taskId, UUID ownerId) {
+            throw new UnsupportedOperationException("not used in this test");
+        }
+
+        @Override
         public boolean existsActiveByTripId(UUID tripId) {
             throw new UnsupportedOperationException("not used in this test");
         }

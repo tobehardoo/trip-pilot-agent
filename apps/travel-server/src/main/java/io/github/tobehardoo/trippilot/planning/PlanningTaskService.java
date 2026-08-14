@@ -508,7 +508,19 @@ public class PlanningTaskService {
         if ("CANCELLED".equals(existing.status())) {
             return toResponse(existing);
         }
-        if (planningTaskMapper.cancelOwned(taskId, ownerId) != 1) {
+        // B12: WAITING_USER review candidates are abandoned locally.  The
+        // review outcome is already complete on the Python side, so the
+        // abandonment only transitions the task, writes one terminal event
+        // and notifies SSE subscribers — no cancel-command outbox, no
+        // itinerary version, no feasibility report, no current-version
+        // change.  QUEUED/RUNNING/CANCELLING keep the original cancel
+        // semantics (with cancel-command outbox).
+        boolean cancelledQueuedOrRunning = planningTaskMapper.cancelOwned(taskId, ownerId) == 1;
+        boolean abandonedReview = false;
+        if (!cancelledQueuedOrRunning) {
+            abandonedReview = planningTaskMapper.abandonWaitingUserOwned(taskId, ownerId) == 1;
+        }
+        if (!cancelledQueuedOrRunning && !abandonedReview) {
             throw new ApiException(
                     HttpStatus.CONFLICT,
                     "PLANNING_TASK_TERMINAL",
@@ -524,16 +536,18 @@ public class PlanningTaskService {
         if (planningTaskEventMapper.insert(event) != 1) {
             throw new IllegalStateException("Could not persist planning cancelled event");
         }
-        UUID cancelEventId = UUID.randomUUID();
-        PlanningCancelCommand cancelCommand = new PlanningCancelCommand(
-                CANCEL_COMMAND_TYPE, 1, cancelEventId, existing.traceId(), taskId,
-                existing.tripId(), now
-        );
-        outboxMapper.insert(new OutboxEventRecord(
-                cancelEventId, "PLANNING_TASK", taskId, CANCEL_COMMAND_TYPE,
-                CANCEL_ROUTING_KEY, writeJson(cancelCommand), "PENDING", 0,
-                now, null, now, null
-        ));
+        if (!abandonedReview) {
+            UUID cancelEventId = UUID.randomUUID();
+            PlanningCancelCommand cancelCommand = new PlanningCancelCommand(
+                    CANCEL_COMMAND_TYPE, 1, cancelEventId, existing.traceId(), taskId,
+                    existing.tripId(), now
+            );
+            outboxMapper.insert(new OutboxEventRecord(
+                    cancelEventId, "PLANNING_TASK", taskId, CANCEL_COMMAND_TYPE,
+                    CANCEL_ROUTING_KEY, writeJson(cancelCommand), "PENDING", 0,
+                    now, null, now, null
+            ));
+        }
         PlanningTaskEventRecord stored = planningTaskEventMapper.findByEventId(event.eventId())
                 .orElseThrow(() -> new IllegalStateException("Cancelled event could not be read"));
         eventPublisher.publishEvent(new PlanningTaskEventCreated(stored));

@@ -64,6 +64,7 @@ import {
   readPlanningTaskOutcome,
   type PlanningOutcome,
 } from '../lib/feasibility'
+import { createTerminalShortCircuit } from '../lib/planning-stream'
 import { tripDetailPath, type AppRoute } from '../lib/routes'
 
 class SessionChangedError extends Error {}
@@ -116,6 +117,8 @@ const guideImports = ref<GuideImport[]>([])
 const guideBusy = ref(false)
 const guideError = ref<string | null>(null)
 const activePlanningTaskId = ref<string | null>(null)
+const reviewTaskId = ref<string | null>(null)
+const abandonBusy = ref(false)
 let sessionGeneration = 0
 let detailRequestSequence = 0
 let itineraryRequestSequence = 0
@@ -318,6 +321,7 @@ function clearEvaluation() {
   authoritativeFeasibilityReport.value = null
   candidateItinerary.value = null
   feasibilityLoadState.value = 'idle'
+  reviewTaskId.value = null
 }
 
 /** Clears every terminal outcome value without touching planningState. */
@@ -327,6 +331,7 @@ function clearPlanningOutcome() {
   evaluation.value = undefined
   feasibilityLoadState.value = 'idle'
   evaluationError.value = null
+  reviewTaskId.value = null
 }
 
 /**
@@ -338,6 +343,7 @@ function clearPlanningOutcome() {
 function applyOutcomeState(outcome: PlanningOutcome) {
   switch (outcome.kind) {
     case 'completed':
+      reviewTaskId.value = null
       planningState.value = 'succeeded'
       authoritativeFeasibilityReport.value = outcome.report
       candidateItinerary.value = null
@@ -354,20 +360,24 @@ function applyOutcomeState(outcome: PlanningOutcome) {
       evaluationError.value = null
       break
     case 'queued':
+      reviewTaskId.value = null
       planningState.value = 'queued'
       clearPlanningOutcome()
       break
     case 'failed':
+      reviewTaskId.value = null
       planningState.value = 'failed'
       planningError.value = outcome.errorMessage ?? '行程规划失败，请调整条件后重试'
       clearPlanningOutcome()
       break
     case 'cancelled':
+      reviewTaskId.value = null
       planningState.value = 'cancelled'
       planningError.value = null
       clearPlanningOutcome()
       break
     case 'malformed':
+      reviewTaskId.value = null
       planningState.value = 'failed'
       planningError.value = '规划结果无法安全读取，请重新规划'
       clearPlanningOutcome()
@@ -470,7 +480,9 @@ async function hydrateLatestPlanningTask(
   const outcome = readPlanningTaskOutcome(latest)
   if (outcome.kind === 'review') {
     // A review-required task is the newest task but has no version: show the
-    // review panel while the formal itinerary stays untouched.
+    // review panel while the formal itinerary stays untouched.  Remember the
+    // task id so the user can explicitly abandon the candidate.
+    reviewTaskId.value = latest.taskId
     applyOutcomeState(outcome)
     return
   }
@@ -958,8 +970,14 @@ async function attachPlanningStream(
   let lastEventId: number | undefined
   let terminal = false
   let itineraryReload: Promise<boolean> | null = null
+  // B12: direct terminal short-circuit.  Once the first terminal frame of
+  // this stream has been applied, every later frame (duplicate terminal,
+  // cross-kind terminal, late progress) is ignored before it can touch
+  // lastEventId, planning state, candidates or trigger another reload.
+  const terminalShortCircuit = createTerminalShortCircuit()
   const handleEvent = (event: PlanningTaskEvent) => {
     if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
+    if (!terminalShortCircuit.accept(event)) return
     lastEventId = event.eventId
     if (event.eventType === 'PLANNING_PROGRESS') {
       const update = toPlanningProgressUpdate(event)
@@ -990,6 +1008,9 @@ async function attachPlanningStream(
       return
     }
     applyOutcomeState(outcome)
+    if (outcome.kind === 'review') {
+      reviewTaskId.value = task.taskId
+    }
     if (outcome.kind === 'completed') {
       const detailSequence = detailRequestSequence
       itineraryReload = Promise.all([
@@ -1092,6 +1113,32 @@ async function handleCancelPlanning() {
   }
 }
 
+/**
+ * B12: explicit abandonment of a WAITING_USER review candidate.  It reuses
+ * the existing DELETE task endpoint; the backend cancels the review locally
+ * (no worker command) and the formal itinerary stays untouched.
+ */
+async function handleAbandonCandidate() {
+  const taskId = reviewTaskId.value
+  if (planningState.value !== 'waiting_user' || !taskId || abandonBusy.value) return
+  abandonBusy.value = true
+  try {
+    await withAccessToken((token) => cancelPlanningTask(token, taskId))
+    if (reviewTaskId.value !== taskId || planningState.value !== 'waiting_user') return
+    stopPlanningStream(false)
+    reviewTaskId.value = null
+    activePlanningTaskId.value = null
+    planningState.value = 'cancelled'
+    planningError.value = null
+    clearPlanningOutcome()
+  } catch (cause) {
+    if (reviewTaskId.value !== taskId || planningState.value !== 'waiting_user') return
+    planningError.value = errorMessage(cause)
+  } finally {
+    abandonBusy.value = false
+  }
+}
+
 async function logout() {
   error.value = null
   try {
@@ -1185,6 +1232,8 @@ onUnmounted(() => {
       :start-replanning="handleStartReplanning"
       :start-planning="handleStartPlanning"
       :cancel-planning="handleCancelPlanning"
+      :abandon-busy="abandonBusy"
+      @abandon="handleAbandonCandidate"
       :update-constraints="handleUpdateConstraints"
       :reload-trip="reloadSelectedTrip"
       @back="backToTrips"

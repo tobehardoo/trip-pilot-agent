@@ -171,6 +171,27 @@ public interface PlanningTaskMapper {
             """)
     int cancelOwned(@Param("taskId") UUID taskId, @Param("ownerId") UUID ownerId);
 
+    /**
+     * B12: explicit abandonment of a WAITING_USER review candidate.  The
+     * review outcome is already complete on the Python side, so this
+     * transition is purely local: it never publishes a cancel command and
+     * never touches itinerary versions, feasibility reports or the current
+     * version pointer.  Optimistic: only WAITING_USER rows owned by the
+     * caller are updated.
+     */
+    @Update("""
+            UPDATE business.planning_task
+            SET status = 'CANCELLED', error_code = NULL,
+                error_message = NULL, version = planning_task.version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            FROM business.trip
+            WHERE planning_task.id = #{taskId}
+              AND business.trip.id = planning_task.trip_id
+              AND business.trip.owner_id = #{ownerId}
+              AND planning_task.status = 'WAITING_USER'
+            """)
+    int abandonWaitingUserOwned(@Param("taskId") UUID taskId, @Param("ownerId") UUID ownerId);
+
     @Select("""
             SELECT EXISTS (
                 SELECT 1 FROM business.planning_task

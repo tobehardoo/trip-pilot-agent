@@ -295,6 +295,7 @@ async function mockBaseline(page: Page, options: {
   tasks?: Record<string, unknown>
   streamBody?: string
   onStream?: () => void
+  onDeleteTask?: () => void
 }) {
   await page.route('**/api/**', async (route) => {
     const request = route.request()
@@ -327,6 +328,13 @@ async function mockBaseline(page: Page, options: {
     if (path === `/api/planning-tasks/${taskId}/events`) {
       options.onStream?.()
       return route.fulfill({ contentType: 'text/event-stream', body: options.streamBody ?? '' })
+    }
+    if (path === `/api/planning-tasks/${taskId}` && request.method() === 'DELETE') {
+      options.onDeleteTask?.()
+      const task = options.tasks?.[taskId]
+      return task
+        ? route.fulfill({ json: { ...task, status: 'CANCELLED' } })
+        : route.fulfill({ status: 404, json: { code: 'PLANNING_TASK_NOT_FOUND', message: 'Planning task was not found' } })
     }
     const taskMatch = path.match(/^\/api\/planning-tasks\/([0-9a-f-]+)$/)
     if (taskMatch) {
@@ -541,4 +549,84 @@ test('fails closed on an illegal WAITING_USER + VERIFIED combination', async ({ 
 
   await expect(page.getByText('规划结果无法安全读取，请重新规划')).toBeVisible()
   await expect(page.locator('body')).not.toContainText('已验证')
+})
+
+test('applies a duplicated terminal frame only once and reloads the itinerary once', async ({ page }) => {
+  let itineraryLoads = 0
+  await mockBaseline(page, {
+    versions: () => [versionSummary({
+      reportId: verifiedReport.reportId,
+      schemaVersion: 1,
+      validatorVersion: 'hard-validator-v4',
+      status: 'VERIFIED',
+      itineraryFingerprint: 'a'.repeat(64),
+      validatedAt: '2026-07-27T01:00:00Z',
+    }, taskId)],
+    itinerary,
+    streamBody: queuedEvent(1) + completedEvent(2) + completedEvent(3) + progressEvent(4, 'RESULT_PUBLISHING', 10),
+    tasks: {
+      [taskId]: planningTask(taskId, 'SUCCEEDED', { feasibilityReport: verifiedReport, evaluation }),
+    },
+  })
+  // Registered after mockBaseline, so this route wins for the itinerary path
+  // and counts how many times the terminal outcome triggered a reload.
+  await page.route(`**/api/trips/${tripId}/itinerary`, async (route) => {
+    itineraryLoads += 1
+    return route.fulfill({ json: itinerary })
+  })
+
+  await page.goto('/trips')
+  await page.getByRole('button', { name: '打开 Controlled feasibility trip' }).click()
+  await page.getByTestId('start-planning').click()
+
+  await expect(page.getByRole('heading', { name: '硬可行性验证' })).toBeVisible()
+  await expect(page.getByText('已验证').first()).toBeVisible()
+  await expect(page.locator('body')).not.toContainText('规划结果无法安全读取，请重新规划')
+  // Initial hydration load plus exactly one terminal-triggered reload; the
+  // duplicated COMPLETED and the late progress frame must be short-circuited.
+  expect(itineraryLoads).toBe(2)
+})
+
+test('abandons a waiting-user candidate via the cancel API and keeps the formal itinerary', async ({ page }) => {
+  let deleteCalls = 0
+  await mockBaseline(page, {
+    versions: [versionSummary({
+      reportId: verifiedReport.reportId,
+      schemaVersion: 1,
+      validatorVersion: 'hard-validator-v4',
+      status: 'VERIFIED',
+      itineraryFingerprint: 'a'.repeat(64),
+      validatedAt: '2026-07-27T01:00:00Z',
+    }, oldTaskId)],
+    itinerary,
+    latest: planningTask(taskId, 'WAITING_USER', {
+      feasibilityReport: needsRepairReport,
+      candidateItinerary: candidate,
+    }),
+    tasks: {
+      [oldTaskId]: planningTask(oldTaskId, 'SUCCEEDED', { feasibilityReport: verifiedReport, evaluation }),
+      [taskId]: planningTask(taskId, 'WAITING_USER', {
+        feasibilityReport: needsRepairReport,
+        candidateItinerary: candidate,
+      }),
+    },
+    onDeleteTask: () => { deleteCalls += 1 },
+  })
+
+  await page.goto('/trips')
+  await page.getByRole('button', { name: '打开 Controlled feasibility trip' }).click()
+
+  // The review was recovered through the latest endpoint after a "refresh".
+  await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
+  await expect(page.getByText(/放弃候选不会删除当前正式版本/)).toBeVisible()
+
+  await page.getByTestId('abandon-candidate').click()
+
+  // The review is abandoned: cancelled state, no candidate, no report, and
+  // the formal itinerary with its old version stays untouched.
+  await expect(page.getByText('规划已取消', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Formal itinerary' })).toBeVisible()
+  await expect(page.getByText('Candidate itinerary')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '规划需要确认' })).toHaveCount(0)
+  expect(deleteCalls).toBe(1)
 })

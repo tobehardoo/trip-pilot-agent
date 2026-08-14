@@ -45,6 +45,7 @@ export default defineConfig(({ mode }) => {
           'src/lib/amap.ts',
           'src/lib/map.ts',
           'src/lib/feasibility.ts',
+          'src/lib/planning-stream.ts',
           'src/components/FeasibilityReportPanel.vue',
           'src/components/PlanningReviewPanel.vue',
         ],

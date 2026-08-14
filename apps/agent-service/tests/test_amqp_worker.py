@@ -220,15 +220,9 @@ def test_repairing_progress_may_repeat_with_unique_event_ids() -> None:
     publisher = amqp.PlanningProgressPublisher(exchange, command)
 
     async def _publish() -> None:
-        await publisher.report(
-            "CONSTRAINTS_SOLVING", "validating", {"tripDays": 1}
-        )
-        await publisher.report(
-            "REPAIRING", "repair one", {"attemptIndex": 1, "actionCount": 1}
-        )
-        await publisher.report(
-            "REPAIRING", "repair two", {"attemptIndex": 2, "actionCount": 1}
-        )
+        await publisher.report("CONSTRAINTS_SOLVING", "validating", {"tripDays": 1})
+        await publisher.report("REPAIRING", "repair one", {"attemptIndex": 1, "actionCount": 1})
+        await publisher.report("REPAIRING", "repair two", {"attemptIndex": 2, "actionCount": 1})
 
     asyncio.run(_publish())
     events = [json.loads(message.body) for message, _, _ in exchange.published]
@@ -595,6 +589,18 @@ def test_real_worker_settings_require_a_secret_amap_key_at_startup() -> None:
 
     assert settings.amap_web_service_key.get_secret_value() == "worker-local-secret"
     assert "worker-local-secret" not in repr(settings)
+
+
+def test_worker_settings_default_to_demo_only_when_provider_mode_is_unset() -> None:
+    # B12: no PROVIDER_MODE / DEMO_MODE in the environment must resolve to
+    # DEMO_ONLY, matching the compose.prod.yaml and documentation default.
+    amqp = import_module("trip_agent.worker.amqp")
+    processor = import_module("trip_agent.worker.processor")
+
+    settings = amqp.WorkerSettings(_env_file=None)
+
+    assert settings.resolved_provider_mode is amqp.ProviderExecutionMode.DEMO_ONLY
+    assert isinstance(amqp.build_planning_provider(settings), processor.DemoPlanningProvider)
 
 
 def test_real_dashscope_worker_settings_require_a_secret_embedding_key() -> None:

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AlertTriangle, CalendarDays, Coins, GitCompareArrows, Route } from 'lucide-vue-next'
+import { AlertTriangle, CalendarDays, Coins, GitCompareArrows, Route, X } from 'lucide-vue-next'
 
 import {
   formatValidatedAt,
@@ -12,12 +12,14 @@ import {
 } from '../lib/feasibility'
 import FeasibilityReportPanel from './FeasibilityReportPanel.vue'
 import Badge from './ui/Badge.vue'
+import Button from './ui/Button.vue'
 import Card from './ui/Card.vue'
 
 const props = withDefaults(defineProps<{
   report: FeasibilityReport | null
   malformedReport?: boolean
   candidate: unknown
+  abandonBusy?: boolean
   currentItinerary: {
     title: string
     estimatedTotalCost: number
@@ -36,7 +38,10 @@ const props = withDefaults(defineProps<{
   } | null
 }>(), {
   malformedReport: false,
+  abandonBusy: false,
 })
+
+const emit = defineEmits<{ abandon: [] }>()
 
 const reportRead = computed(() => readFeasibilityReport(props.report))
 const candidateRead = computed(() => readCandidateItinerary(props.candidate))
@@ -131,6 +136,23 @@ function candidateDays(candidate: CandidateItinerary) {
     <p class="mt-3 text-sm text-surface-600">
       你可以调整约束后重新规划；此界面不会把候选行程写入正式版本。
     </p>
+
+    <!-- Abandon action: the only user action on a review candidate. -->
+    <div class="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-surface-200/70 p-3">
+      <Button
+        variant="outline"
+        size="sm"
+        data-testid="abandon-candidate"
+        :disabled="abandonBusy"
+        @click="emit('abandon')"
+      >
+        <X v-if="!abandonBusy" :size="14" aria-hidden="true" />
+        {{ abandonBusy ? '正在放弃…' : '放弃候选' }}
+      </Button>
+      <p class="m-0 text-xs text-surface-500">
+        放弃候选不会删除当前正式版本，之后可以调整约束重新规划。
+      </p>
+    </div>
 
     <!-- Feasibility report -->
     <div class="mt-4">

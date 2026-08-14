@@ -69,6 +69,8 @@ services:
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN is required}
       INTERNAL_DIAGNOSTICS_TOKEN: ${INTERNAL_DIAGNOSTICS_TOKEN:?INTERNAL_DIAGNOSTICS_TOKEN is required}
       CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT: ${CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT:-PT2S}
+      OUTBOX_PUBLISHER_ENABLED: ${OUTBOX_PUBLISHER_ENABLED:-true}
+      EVENT_CONSUMER_ENABLED: ${EVENT_CONSUMER_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,7 +91,10 @@ services:
       dockerfile: apps/agent-service/Dockerfile
     restart: unless-stopped
     environment:
-      PROVIDER_MODE: ${PROVIDER_MODE:-REAL_ONLY}
+      # Local-first default: DEMO_ONLY.  REAL_ONLY / REAL_WITH_EXPLICIT_FALLBACK
+      # must be set explicitly and REAL_ONLY requires AMAP_WEB_SERVICE_KEY;
+      # authentication/permission provider errors never fall back to Demo.
+      PROVIDER_MODE: ${PROVIDER_MODE:-DEMO_ONLY}
       AMAP_WEB_SERVICE_KEY: ${AMAP_WEB_SERVICE_KEY:-}
       PROVIDER_MAX_ATTEMPTS: ${PROVIDER_MAX_ATTEMPTS:-3}
       PROVIDER_RETRY_BASE_DELAY_SECONDS: ${PROVIDER_RETRY_BASE_DELAY_SECONDS:-0.2}

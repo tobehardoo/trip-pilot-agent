@@ -51,9 +51,14 @@ public class PlanningProgressService implements PlanningProgressHandler {
             }
             throw rejected("Progress eventId already belongs to another planning task event");
         }
-        if ("SUCCEEDED".equals(task.status()) || "FAILED".equals(task.status()) || "CANCELLED".equals(task.status())) {
-            // Progress and completion use distinct broker routes. A late progress event is
-            // expected when completion reaches the server first, so it must not be retried.
+        if ("SUCCEEDED".equals(task.status()) || "FAILED".equals(task.status())
+                || "CANCELLED".equals(task.status()) || "WAITING_USER".equals(task.status())) {
+            // Progress and completion use distinct broker routes. A late
+            // progress event is expected when any terminal outcome reaches
+            // the server first, so it must not be retried.  WAITING_USER is
+            // terminal for the worker too: the review already carries the
+            // final outcome and late progress must be silently ignored
+            // instead of being rejected into the dead-letter queue.
             return;
         }
         if (!"QUEUED".equals(task.status()) && !"RUNNING".equals(task.status())) {

@@ -113,6 +113,7 @@ const props = withDefaults(defineProps<{
   startReplanning?: (input: ItineraryReplanInput) => Promise<void>
   startPlanning: () => Promise<void>
   cancelPlanning: () => Promise<void>
+  abandonBusy?: boolean
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
   reloadTrip: () => Promise<boolean>
   evaluation?: PlanEvaluation | null
@@ -158,11 +159,13 @@ const props = withDefaults(defineProps<{
   applyItineraryEdit: async () => {},
   commitItineraryEdits: async () => {},
   startReplanning: async () => {},
+  abandonBusy: false,
 })
 
 const emit = defineEmits<{
   back: []
   logout: []
+  abandon: []
 }>()
 
 const readFeasibilityReportResult = computed(() => readFeasibilityReport(props.feasibilityReport))
@@ -826,9 +829,11 @@ watch(() => props.itinerary, (nextItinerary) => {
             :report="readFeasibilityReportResult.ok ? readFeasibilityReportResult.value : null"
             :malformed-report="!readFeasibilityReportResult.ok && !!feasibilityReport"
             :candidate="candidateItinerary"
+            :abandon-busy="abandonBusy"
             :current-itinerary="itinerary
               ? { title: itinerary.title, estimatedTotalCost: itinerary.estimatedTotalCost, days: itinerary.days }
               : null"
+            @abandon="emit('abandon')"
           />
         </section>
         <section v-else-if="planningState === 'succeeded' || feasibilityLoadState === 'loaded'" class="mb-6" aria-label="硬可行性验证结果">

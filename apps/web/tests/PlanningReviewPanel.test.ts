@@ -157,6 +157,49 @@ test('never offers accept / force save / skip verification buttons', () => {
   expect(screen.queryByText(/跳过验证/)).toBeNull()
 })
 
+test('offers only the abandon-candidate action with formal-version-safe wording', () => {
+  render(PlanningReviewPanel, {
+    props: {
+      report: makeReport('NEEDS_REPAIR'),
+      candidate: makeCandidate(),
+      currentItinerary: null,
+    },
+  })
+  const abandon = screen.getByTestId('abandon-candidate')
+  expect(abandon).toBeTruthy()
+  expect(screen.getByText('放弃候选')).toBeTruthy()
+  expect(screen.getByText(/放弃候选不会删除当前正式版本/)).toBeTruthy()
+  // Abandonment is still the only action; acceptance is not offered.
+  expect(screen.queryByText(/接受/)).toBeNull()
+})
+
+test('emits abandon exactly once per click', async () => {
+  const { emitted } = render(PlanningReviewPanel, {
+    props: {
+      report: makeReport('UNVERIFIED'),
+      candidate: makeCandidate(),
+      currentItinerary: null,
+    },
+  })
+  const abandon = screen.getByTestId('abandon-candidate')
+  await abandon.click()
+  await abandon.click()
+  expect(emitted('abandon')).toHaveLength(2)
+})
+
+test('disables the abandon action while a request is in flight', () => {
+  render(PlanningReviewPanel, {
+    props: {
+      report: makeReport('UNVERIFIED'),
+      candidate: makeCandidate(),
+      currentItinerary: null,
+      abandonBusy: true,
+    },
+  })
+  expect((screen.getByTestId('abandon-candidate') as HTMLButtonElement).disabled).toBe(true)
+  expect(screen.getByText('正在放弃…')).toBeTruthy()
+})
+
 test('malformed candidate shows stable error panel', () => {
   render(PlanningReviewPanel, {
     props: {

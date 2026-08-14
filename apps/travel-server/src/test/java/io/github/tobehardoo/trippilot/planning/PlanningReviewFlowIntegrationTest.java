@@ -9,6 +9,7 @@ import java.util.UUID;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEventParser;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningProgressEventParser;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningReviewRequiredEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningReviewRequiredEventParser;
 import io.github.tobehardoo.trippilot.itinerary.ItineraryService;
@@ -876,6 +877,68 @@ class PlanningReviewFlowIntegrationTest extends PostgresIntegrationTest {
         // Only the two versions we created exist; review added none.
         long versionCount = count("business.itinerary_version");
         assertThat(versionCount).isEqualTo(2L);
+    }
+
+    // ── B12: late progress after WAITING_USER is idempotently ignored ──────
+
+    @Autowired
+    private PlanningProgressService progressService;
+
+    @Autowired
+    private PlanningProgressEventParser progressEventParser;
+
+    @Test
+    void lateProgressAfterReviewIsIgnoredWithoutTouchingTheTerminalState() throws Exception {
+        PlanningContext context = createPlanningContext("review-late-progress@example.com");
+        reviewService.handle(reviewEvent(context, "review-v1-needs-repair-demo.json"));
+        assertThat(taskStatus(context.taskId())).isEqualTo("WAITING_USER");
+
+        // The review outcome reached the server first; the worker's progress
+        // route arrives afterwards.  It must be a silent no-op: no exception,
+        // no state change, no extra event rows, no DLQ-inducing rejection.
+        progressService.handle(progressEvent(
+                UUID.randomUUID(), context, "RESULT_PUBLISHING", 10
+        ));
+
+        assertThat(taskStatus(context.taskId())).isEqualTo("WAITING_USER");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_PROGRESS'
+                """, Integer.class, context.taskId())).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_REVIEW_REQUIRED'
+                """, Integer.class, context.taskId())).isEqualTo(1);
+    }
+
+    private io.github.tobehardoo.trippilot.infrastructure.mq.PlanningProgressEvent progressEvent(
+            UUID eventId,
+            PlanningContext context,
+            String stage,
+            int sequence
+    ) {
+        String body = """
+                {
+                  "eventType":"PLANNING_PROGRESS",
+                  "schemaVersion":1,
+                  "eventId":"%s",
+                  "traceId":"%s",
+                  "taskId":"%s",
+                  "tripId":"%s",
+                  "occurredAt":"2026-07-27T08:00:00Z",
+                  "payload":{
+                    "stage":"%s",
+                    "sequence":%d,
+                    "progress":%d,
+                    "message":"Planning progress update",
+                    "statistics":{"tripDays":1}
+                  }
+                }
+                """.formatted(
+                eventId, context.traceId(), context.taskId(), context.tripId(),
+                stage, sequence, sequence * 10
+        );
+        return progressEventParser.parse(body.getBytes(StandardCharsets.UTF_8));
     }
 
     // ── F3: report insert failure rollback ────────────────────────────────

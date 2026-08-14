@@ -135,7 +135,7 @@ public class PlanningCompletedEventParser {
                     throw invalid("activity locked must be boolean or null");
                 }
                 validateActivityMetadataTypes(activity);
-                if (activity.has("activityId")
+                if (activity.has("activityId") && !activity.path("activityId").isNull()
                         && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9)
                         || !activity.path("activityId").isTextual())) {
                     throw invalid("activityId is only supported as a UUID string in schema v6/v8/v9");
@@ -304,7 +304,7 @@ public class PlanningCompletedEventParser {
                     || !leg.path("polyline").isArray()) {
                 throw invalid("transit leg field types do not match the JSON Schema");
             }
-            if (leg.has("transitId")
+            if (leg.has("transitId") && !leg.path("transitId").isNull()
                     && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9)
                     || !leg.path("transitId").isTextual())) {
                 throw invalid("transitId is only supported as a UUID string in schema v6/v8/v9");

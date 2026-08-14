@@ -141,7 +141,8 @@ public class PlanningReviewRequiredEventParser {
                     throw invalid("activity timeFixed must be a boolean");
                 }
                 validateActivityMetadataTypes(activity);
-                if (activity.has("activityId") && !activity.path("activityId").isTextual()) {
+                if (activity.has("activityId") && !activity.path("activityId").isNull()
+                        && !activity.path("activityId").isTextual()) {
                     throw invalid("activityId must be a UUID string");
                 }
             }

@@ -199,7 +199,7 @@ class DemoPlanningProvider:
         return ItineraryDay(
             date=trip_date,
             day_type=day_type,
-            activities=tuple(activities),
+            activities=tuple(sorted(activities, key=lambda activity: activity.start_time)),
             transit_legs=(),
         )
 

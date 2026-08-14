@@ -1,7 +1,7 @@
 # 文档中心
 
 - 文档状态：生效中
-- 最后更新：2026-08-09
+- 最后更新：2026-08-14
 - 项目口径：个人学习、小型系统、本地优先、`DEMO_ONLY` 默认
 
 ## 第一次了解项目
@@ -30,8 +30,10 @@
 
 ## 开发与测试
 
+- [代码架构导读](development/代码架构导读.md)
 - [本地开发指南](development/本地开发指南.md)
 - [测试策略](development/测试策略.md)
+- [Golden 场景目录](architecture/golden-scenario-catalog.md)
 - [代码规范](development/代码规范.md)
 - [日程重构批次记录](development/日程重构批次记录.md)
 - [评估校准批次记录](development/评估校准批次记录.md)

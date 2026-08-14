@@ -339,6 +339,42 @@ class PlanningReviewRequiredEventParserTest {
                 .hasMessageContaining("itineraryFingerprint does not match");
     }
 
+    @Test
+    void acceptsNullActivityIdFromProviderPlaceholders() throws Exception {
+        // The Python contract declares activityId as UUID | None; provider
+        // placeholders (e.g. Demo activities without a resolved POI id)
+        // legally emit null.  Only a present non-textual value is rejected.
+        ObjectNode event = sharedReviewEvent();
+        ((ObjectNode) event.at("/payload/itinerary/days/0/activities/0"))
+                .putNull("activityId");
+        refreshFingerprint(event);
+
+        PlanningReviewRequiredEvent parsed =
+                parser.parse(objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.payload().itinerary().days().get(0).activities().get(0)
+                .activityId()).isNull();
+    }
+
+    @Test
+    void stillRejectsNonTextualActivityId() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        ((ObjectNode) event.at("/payload/itinerary/days/0/activities/0"))
+                .put("activityId", 12345);
+        refreshFingerprint(event);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("activityId must be a UUID string");
+    }
+
+    private void refreshFingerprint(ObjectNode event) {
+        String fingerprint = io.github.tobehardoo.trippilot.feasibility
+                .ItineraryFingerprintVerifier.compute(event.at("/payload/itinerary"));
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("itineraryFingerprint", fingerprint);
+    }
+
     private ObjectNode sharedReviewEvent() throws Exception {
         return (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.sharedReviewV1Fixture(

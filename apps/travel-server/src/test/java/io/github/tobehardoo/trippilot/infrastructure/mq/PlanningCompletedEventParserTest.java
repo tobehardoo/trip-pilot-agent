@@ -77,6 +77,50 @@ class PlanningCompletedEventParserTest {
     private final PlanningCompletedEventParser parser = new PlanningCompletedEventParser(objectMapper);
 
     @Test
+    void acceptsNullActivityIdAndTransitIdInV9Placeholders() throws Exception {
+        // The Python contract declares activityId/transitId as UUID | None;
+        // provider placeholders legally emit null for unresolved nodes.
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        ((ObjectNode) event.at("/payload/itinerary/days/0/activities/0"))
+                .putNull("activityId");
+        ((ObjectNode) event.at("/payload/itinerary/days/0/transitLegs/0"))
+                .putNull("transitId");
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("itineraryFingerprint",
+                        io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                                .compute(event.at("/payload/itinerary")));
+
+        PlanningCompletedEvent parsed =
+                parser.parse(objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.payload().itinerary().days().get(0).activities().get(0)
+                .activityId()).isNull();
+        assertThat(parsed.payload().itinerary().days().get(0).transitLegs().get(0)
+                .transitId()).isNull();
+    }
+
+    @Test
+    void stillRejectsNonTextualV9ActivityId() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV9(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        ((ObjectNode) event.at("/payload/itinerary/days/0/activities/0"))
+                .put("activityId", 12345);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("activityId is only supported as a UUID string");
+    }
+
+    @Test
     void runtimeAcceptsOnlySchemaVersionNine() throws Exception {
         ObjectNode v2 = (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.completedAmapEventV2(

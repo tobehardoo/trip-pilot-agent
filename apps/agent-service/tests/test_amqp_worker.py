@@ -162,6 +162,7 @@ def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
         "planning.progress",
         "planning.progress",
         "planning.progress",
+        "planning.progress",
     ]
     progress_events = [
         json.loads(published.body)
@@ -172,16 +173,18 @@ def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
         "TASK_ACCEPTED",
         "CONTEXT_VALIDATING",
         "CITY_FACTS_LOADING",
+        "CANDIDATES_RANKING",
         "CONSTRAINTS_SOLVING",
         "KNOWLEDGE_RETRIEVING",
         "RESULT_EXPLAINING",
         "RESULT_PUBLISHING",
     ]
-    assert [event["payload"]["sequence"] for event in progress_events] == list(range(1, 8))
+    assert [event["payload"]["sequence"] for event in progress_events] == list(range(1, 9))
     assert [event["payload"]["progress"] for event in progress_events] == [
         5,
         15,
         25,
+        45,
         65,
         75,
         85,
@@ -439,6 +442,8 @@ def test_non_object_command_is_rejected_without_requeue() -> None:
 
 
 def test_mixed_timezone_schedule_is_rejected_without_stalling_delivery() -> None:
+    # B13_FIX R2: an invalid command with an identifiable task now reaches a
+    # safe terminal PLANNING_FAILED instead of being dead-lettered silently.
     amqp = import_module("trip_agent.worker.amqp")
     handle = getattr(amqp, "handle_delivery", None)
     assert handle is not None
@@ -455,10 +460,14 @@ def test_mixed_timezone_schedule_is_rejected_without_stalling_delivery() -> None
 
     asyncio.run(handle(message, exchange))
 
-    assert message.acked is False
-    assert message.rejected_with is False
+    assert message.acked is True
+    assert message.rejected_with is None
     assert message.nacked_with is None
-    assert exchange.published == []
+    failed = [item for item in exchange.published if item[1] == "planning.failed"]
+    assert failed
+    body = json.loads(failed[-1][0].body)
+    assert body["payload"]["errorCode"] == "COMMAND_VALIDATION_FAILED"
+    assert body["payload"]["errorCategory"] == "INVALID_REQUEST"
 
 
 def test_event_publication_failure_requeues_the_command() -> None:

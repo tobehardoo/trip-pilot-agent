@@ -2,6 +2,7 @@ package io.github.tobehardoo.trippilot.trip;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 import org.apache.ibatis.annotations.AutomapConstructor;
@@ -18,7 +19,9 @@ public record TripRecord(
         Instant createdAt,
         Instant updatedAt,
         Instant archivedAt,
-        String regionRefJson
+        String regionRefJson,
+        OffsetDateTime arrivalAt,
+        OffsetDateTime departureAt
 ) {
     @AutomapConstructor
     public TripRecord {
@@ -30,6 +33,6 @@ public record TripRecord(
             Instant createdAt, Instant updatedAt, Instant archivedAt
     ) {
         this(id, ownerId, title, destination, startDate, endDate, status, version,
-                createdAt, updatedAt, archivedAt, null);
+                createdAt, updatedAt, archivedAt, null, null, null);
     }
 }

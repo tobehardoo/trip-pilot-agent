@@ -51,14 +51,23 @@ def _result(
 
 
 def assess_meal_window(ctx: ValidationContext) -> RuleAssessment:
-    """Every explicit meal window must contain its placement each day."""
-    windows = tuple(ctx.command.payload.trip.constraints.meal_windows)
+    """Every explicit USER meal window must contain its placement each day.
+
+    B13-F: only USER windows are hard constraints.  DEFAULT windows are soft
+    suggestions (the scheduler still places them) and DISABLED windows are
+    not projected — neither can FAIL this rule.
+    """
+    windows = tuple(
+        window
+        for window in ctx.command.payload.trip.constraints.meal_windows
+        if getattr(window, "source", "USER") == "USER"
+    )
     if not windows:
         return RuleAssessment(
             result=_result(
                 RuleOutcome.NOT_APPLICABLE,
                 "NO_MEAL_WINDOWS",
-                "no explicit meal windows requested",
+                "no user-configured meal windows constrain validation",
             )
         )
     inputs = ctx.validation_inputs
@@ -76,6 +85,9 @@ def assess_meal_window(ctx: ValidationContext) -> RuleAssessment:
         bindings_by_day.setdefault(binding.activity.day_index, {})[binding.meal_type.value] = (
             binding
         )
+    # B13_FIX R3 (P0-3): days with untyped MEAL activities (Java-sourced
+    # snapshots) cannot be verified by identity — never guess by position.
+    unverified_days = set(inputs.unverified_meal_days)
 
     findings: list[RuleFinding] = []
     fail_count = 0
@@ -89,6 +101,20 @@ def assess_meal_window(ctx: ValidationContext) -> RuleAssessment:
         for meal_type, window in day_windows.items():
             binding = day_bindings.get(meal_type)
             if binding is None:
+                if day_index in unverified_days:
+                    unknown_count += 1
+                    affected_dates.add(day.date)
+                    findings.append(
+                        RuleFinding(
+                            reason_code="MEAL_WINDOW_UNVERIFIED",
+                            message=(
+                                f"day {day.date} {meal_type} placement cannot be verified "
+                                "because the meal activity carries no meal type"
+                            ),
+                            affected_date=day.date,
+                        )
+                    )
+                    continue
                 fail_count += 1
                 affected_dates.add(day.date)
                 findings.append(

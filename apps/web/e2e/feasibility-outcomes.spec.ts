@@ -387,8 +387,12 @@ test('shows the NEEDS_REPAIR review panel without replacing the formal itinerary
   await page.getByTestId('start-planning').click()
 
   await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
-  await expect(page.getByText('待修复').first()).toBeVisible()
+  // B13_FIX R7 (P1-4): the FAIL surfaces as a main risk up front; the full
+  // report panel (修复历史/尝试) is collapsed behind the details toggle.
+  await expect(page.getByText('主要风险')).toBeVisible()
   await expect(page.getByText('场地在该时段关闭')).toBeVisible()
+  await expect(page.getByText('修复历史')).toHaveCount(0)
+  await page.getByTestId('validation-details-toggle').click()
   await expect(page.getByText('修复历史')).toBeVisible()
   await expect(page.getByText(/尝试 1/)).toBeVisible()
   await expect(page.getByText('Candidate itinerary')).toBeVisible()
@@ -411,8 +415,11 @@ test('shows an UNVERIFIED review without any verified wording', async ({ page })
   await page.getByTestId('start-planning').click()
 
   await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
-  await expect(page.getByText('未验证')).toBeVisible()
-  await expect(page.getByText('证据未知')).toBeVisible()
+  // B13_FIX R7 (P1-4): the UNKNOWN rule shows as a main risk; the report
+  // badge is inside the collapsed validation details.
+  await expect(page.getByText('主要风险')).toBeVisible()
+  await expect(page.getByText('营业时间未知').first()).toBeVisible()
+  await expect(page.getByText('未验证')).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('已验证')
 })
 
@@ -530,7 +537,9 @@ test('recovers a review-required task through the latest endpoint after a refres
   // The review is discovered via the latest endpoint, not the version chain.
   await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
   await expect(page.getByText('Candidate itinerary')).toBeVisible()
-  await expect(page.getByText('待修复').first()).toBeVisible()
+  // B13_FIX R7 (P1-4): the FAIL shows as a main risk; the report badge is
+  // inside the collapsed validation details.
+  await expect(page.getByText('主要风险')).toBeVisible()
   // The formal itinerary and its old version badge stay untouched.
   await expect(page.getByRole('heading', { name: 'Formal itinerary' })).toBeVisible()
   await expect(page.getByText('已验证').first()).toBeVisible()

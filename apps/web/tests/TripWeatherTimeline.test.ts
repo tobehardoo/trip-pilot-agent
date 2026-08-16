@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 
 import TripWeatherTimeline from '../src/components/TripWeatherTimeline.vue'
 
@@ -106,7 +106,9 @@ test('uses the structured effective date before statement text or observation ti
     .toContain('小雨')
 })
 
-test('exposes horizontal weather navigation when the timeline has more days than fit on screen', () => {
+test('exposes horizontal weather navigation when the timeline has more days than fit on screen', async () => {
+  const scrollBy = vi.fn()
+  Element.prototype.scrollBy = scrollBy
   render(TripWeatherTimeline, {
     props: {
       weatherFacts,
@@ -115,6 +117,104 @@ test('exposes horizontal weather navigation when the timeline has more days than
     },
   })
 
-  expect(screen.getByRole('button', { name: '向左滚动天气' })).toBeTruthy()
-  expect(screen.getByRole('button', { name: '向右滚动天气' })).toBeTruthy()
+  // B13_FIX R8 (P1-8): the scroller controls must actually scroll.
+  await fireEvent.click(screen.getByRole('button', { name: '向右滚动天气' }))
+  expect(scrollBy).toHaveBeenCalledWith({ left: 360, behavior: 'smooth' })
+  scrollBy.mockClear()
+  await fireEvent.click(screen.getByRole('button', { name: '向左滚动天气' }))
+  expect(scrollBy).toHaveBeenCalledWith({ left: -360, behavior: 'smooth' })
+})
+
+// ── B13-I: public weather window ────────────────────────────────────────────
+
+test('shows QWeather attribution with a safe link and never any key', () => {
+  render(TripWeatherTimeline, {
+    props: {
+      weatherFacts,
+      startDate: '2026-08-01',
+      endDate: '2026-08-03',
+      referenceDate: '2026-07-30',
+      sourceTitle: '和风天气城市情报',
+      sourceUrl: 'https://www.qweather.com/weather/gz-101280101.html',
+    },
+  })
+
+  expect(screen.getByText('天气来源：和风天气城市情报')).toBeTruthy()
+  const link = screen.getByRole('link', { name: '查看原始天气' })
+  expect(link.getAttribute('href')).toBe('https://www.qweather.com/weather/gz-101280101.html')
+  expect(link.getAttribute('rel')).toContain('noopener')
+  expect(screen.queryByText(/key|密钥|api/i)).toBeNull()
+})
+
+test('shows AMap fallback attribution', () => {
+  render(TripWeatherTimeline, {
+    props: {
+      weatherFacts,
+      startDate: '2026-08-01',
+      endDate: '2026-08-03',
+      referenceDate: '2026-07-30',
+      sourceTitle: '高德城市情报',
+      sourceUrl: 'https://lbs.amap.com/api/webservice/guide/api/weatherinfo',
+    },
+  })
+
+  expect(screen.getByText('天气来源：高德城市情报')).toBeTruthy()
+})
+
+test('offers the sync action when no weather facts exist and emits sync', async () => {
+  const result = render(TripWeatherTimeline, {
+    props: {
+      weatherFacts: [],
+      startDate: '2026-08-01',
+      endDate: '2026-08-03',
+      referenceDate: '2026-07-30',
+    },
+  })
+
+  const syncButton = screen.getByRole('button', { name: '同步天气' })
+  await fireEvent.click(syncButton)
+  expect(result.emitted().sync).toEqual([[]])
+})
+
+test('shows syncing state and hides the sync action while running', () => {
+  render(TripWeatherTimeline, {
+    props: {
+      weatherFacts: [],
+      startDate: '2026-08-01',
+      endDate: '2026-08-03',
+      referenceDate: '2026-07-30',
+      syncing: true,
+    },
+  })
+
+  expect(screen.getByText('同步中…')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '同步天气' })).toBeNull()
+})
+
+test('pending days offer the sync action even when some facts exist', () => {
+  render(TripWeatherTimeline, {
+    props: {
+      weatherFacts: [weatherFacts[0]],
+      startDate: '2026-08-01',
+      endDate: '2026-08-03',
+      referenceDate: '2026-07-30',
+    },
+  })
+
+  expect(screen.getByRole('button', { name: '同步天气' })).toBeTruthy()
+  expect(screen.getAllByText('待同步').length).toBeGreaterThan(0)
+})
+
+test('renders without a selected date and with no schedule without errors', () => {
+  render(TripWeatherTimeline, {
+    props: {
+      weatherFacts: [],
+      startDate: '2026-08-01',
+      endDate: '2026-08-03',
+      referenceDate: '2026-07-30',
+    },
+  })
+
+  expect(screen.getByRole('region', { name: '行程天气' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: '选择 2026-08-01 天气' }).getAttribute('aria-pressed')).toBe('false')
 })

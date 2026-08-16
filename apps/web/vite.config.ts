@@ -41,6 +41,8 @@ export default defineConfig(({ mode }) => {
       coverage: {
         provider: 'v8',
         include: [
+          // B13_FIX R8 (P1-8): coverage covers every B13 production file —
+          // no manual whitelist gaps.  High-risk UI/API modules included.
           'src/components/TripMap.vue',
           'src/lib/amap.ts',
           'src/lib/map.ts',
@@ -48,8 +50,23 @@ export default defineConfig(({ mode }) => {
           'src/lib/planning-stream.ts',
           'src/components/FeasibilityReportPanel.vue',
           'src/components/PlanningReviewPanel.vue',
+          'src/components/TripWeatherTimeline.vue',
+          'src/components/PlaceAutocomplete.vue',
+          'src/components/TravelStyleEditor.vue',
+          'src/lib/place-selection.ts',
+          'src/lib/constraint-editor.ts',
+          'src/lib/constraint-draft.ts',
+          'src/lib/trip-title.ts',
+          'src/components/TripDashboard.vue',
+          'src/components/TripDetail.vue',
+          'src/components/TripBoundaryEditor.vue',
+          'src/components/CityCascadePicker.vue',
+          'src/components/ConstraintEditor.vue',
+          'src/lib/api.ts',
+          'src/lib/china-divisions.ts',
+          'src/pages/TripWorkspace.vue',
         ],
-        reporter: ['text'],
+        reporter: ['text', 'json'],
         thresholds: {
           branches: 80,
           functions: 80,

@@ -1,0 +1,963 @@
+{
+ "sourceType": "CITY_INTELLIGENCE",
+ "sourceUrl": "https://www.qweather.com/weather/yuexiu-101280107.html",
+ "finalUrl": "https://www.qweather.com/weather/yuexiu-101280107.html",
+ "sourceHost": "和风天气（天气）+ 高德（城市地点）",
+ "title": "越秀城市实时情报",
+ "excerpt": "越秀当前天气：阴，26℃，湿度91%，西北风1级；和风发布时间 2026-08-16T00:48:00+08:00。\n钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。\n钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。\n钟落潭文化广场(临时站)今日营业信息：24小时营业。\n钟落潭文化广场(临时站)常规营业信息：周一至周日 00:00-24:00。\n广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。\n广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。\n广州基督教十甫堂今日营业信息：08:00-21:15。\n广州基督教十甫堂常规营业信息：周一至周日 08:00-21:15。\n戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。\n戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。\n何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。\n何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。\n潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。\n潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。\n赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。\n赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。\n赏心亭旅游驿站今日营业信息：24小时营业。\n赏心亭旅游驿站常规营业信息：周一至周日 00:0",
+ "contentHash": "b21b6027f48d8fdd0869d662c22c46a328f811a1301d3a20ed716be481f8c4d0",
+ "fetchedAt": "2026-08-15T17:17:14.588491Z",
+ "facts": [
+  {
+   "category": "WEATHER",
+   "statement": "越秀当前天气：阴，26℃，湿度91%，西北风1级；和风发布时间 2026-08-16T00:48:00+08:00。",
+   "evidence": "越秀当前天气：阴，26℃，湿度91%，西北风1级；和风发布时间 2026-08-16T00:48:00+08:00。",
+   "confidence": 0.92,
+   "effectiveDate": "2026-08-16",
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-15T23:17:14.588491Z"
+  },
+  {
+   "category": "ATTRACTION",
+   "statement": "钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。",
+   "evidence": "钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。",
+   "confidence": 0.86,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-09-14T17:17:14.588491Z"
+  },
+  {
+   "category": "LOCATION",
+   "statement": "钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。",
+   "evidence": "钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。",
+   "confidence": 0.94,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z"
+  },
+  {
+   "category": "TIMING",
+   "statement": "钟落潭文化广场(临时站)今日营业信息：24小时营业。",
+   "evidence": "钟落潭文化广场(临时站)今日营业信息：24小时营业。",
+   "confidence": 0.8,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-16T17:17:14.588491Z"
+  },
+  {
+   "category": "TIMING",
+   "statement": "钟落潭文化广场(临时站)常规营业信息：周一至周日 00:00-24:00。",
+   "evidence": "钟落潭文化广场(临时站)常规营业信息：周一至周日 00:00-24:00。",
+   "confidence": 0.8,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-16T17:17:14.588491Z"
+  },
+  {
+   "category": "ATTRACTION",
+   "statement": "广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。",
+   "evidence": "广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。",
+   "confidence": 0.86,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-09-14T17:17:14.588491Z"
+  },
+  {
+   "category": "LOCATION",
+   "statement": "广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。",
+   "evidence": "广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。",
+   "confidence": 0.94,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z"
+  },
+  {
+   "category": "TIMING",
+   "statement": "广州基督教十甫堂今日营业信息：08:00-21:15。",
+   "evidence": "广州基督教十甫堂今日营业信息：08:00-21:15。",
+   "confidence": 0.8,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-16T17:17:14.588491Z"
+  },
+  {
+   "category": "TIMING",
+   "statement": "广州基督教十甫堂常规营业信息：周一至周日 08:00-21:15。",
+   "evidence": "广州基督教十甫堂常规营业信息：周一至周日 08:00-21:15。",
+   "confidence": 0.8,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-16T17:17:14.588491Z"
+  },
+  {
+   "category": "ATTRACTION",
+   "statement": "戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。",
+   "evidence": "戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。",
+   "confidence": 0.86,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-09-14T17:17:14.588491Z"
+  },
+  {
+   "category": "LOCATION",
+   "statement": "戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。",
+   "evidence": "戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。",
+   "confidence": 0.94,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z"
+  },
+  {
+   "category": "ATTRACTION",
+   "statement": "何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。",
+   "evidence": "何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。",
+   "confidence": 0.86,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-09-14T17:17:14.588491Z"
+  },
+  {
+   "category": "LOCATION",
+   "statement": "何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。",
+   "evidence": "何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。",
+   "confidence": 0.94,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z"
+  },
+  {
+   "category": "ATTRACTION",
+   "statement": "潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。",
+   "evidence": "潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。",
+   "confidence": 0.86,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-09-14T17:17:14.588491Z"
+  },
+  {
+   "category": "LOCATION",
+   "statement": "潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。",
+   "evidence": "潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。",
+   "confidence": 0.94,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z"
+  },
+  {
+   "category": "ATTRACTION",
+   "statement": "赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。",
+   "evidence": "赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。",
+   "confidence": 0.86,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-09-14T17:17:14.588491Z"
+  },
+  {
+   "category": "LOCATION",
+   "statement": "赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。",
+   "evidence": "赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。",
+   "confidence": 0.94,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z"
+  },
+  {
+   "category": "TIMING",
+   "statement": "赏心亭旅游驿站今日营业信息：24小时营业。",
+   "evidence": "赏心亭旅游驿站今日营业信息：24小时营业。",
+   "confidence": 0.8,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-16T17:17:14.588491Z"
+  },
+  {
+   "category": "TIMING",
+   "statement": "赏心亭旅游驿站常规营业信息：周一至周日 00:00-24:00。",
+   "evidence": "赏心亭旅游驿站常规营业信息：周一至周日 00:00-24:00。",
+   "confidence": 0.8,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-16T17:17:14.588491Z"
+  },
+  {
+   "category": "ATTRACTION",
+   "statement": "周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。",
+   "evidence": "周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。",
+   "confidence": 0.86,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-09-14T17:17:14.588491Z"
+  },
+  {
+   "category": "LOCATION",
+   "statement": "周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。",
+   "evidence": "周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。",
+   "confidence": 0.94,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z"
+  },
+  {
+   "category": "ATTRACTION",
+   "statement": "沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。",
+   "evidence": "沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。",
+   "confidence": 0.86,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-09-14T17:17:14.588491Z"
+  },
+  {
+   "category": "LOCATION",
+   "statement": "沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。",
+   "evidence": "沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。",
+   "confidence": 0.94,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z"
+  },
+  {
+   "category": "TIMING",
+   "statement": "沙头庙边公园今日营业信息：24小时营业。",
+   "evidence": "沙头庙边公园今日营业信息：24小时营业。",
+   "confidence": 0.8,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-16T17:17:14.588491Z"
+  },
+  {
+   "category": "TIMING",
+   "statement": "沙头庙边公园常规营业信息：周一至周日 00:00-24:00。",
+   "evidence": "沙头庙边公园常规营业信息：周一至周日 00:00-24:00。",
+   "confidence": 0.8,
+   "effectiveDate": null,
+   "observedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-16T17:17:14.588491Z"
+  }
+ ],
+ "normalizedDocument": {
+  "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+  "sourceType": "CITY_INTELLIGENCE",
+  "sourceName": "和风天气（天气）+ 高德（城市地点）",
+  "sourceUrl": "https://www.qweather.com/weather/yuexiu-101280107.html",
+  "city": "广州",
+  "title": "越秀城市实时情报",
+  "content": "越秀当前天气：阴，26℃，湿度91%，西北风1级；和风发布时间 2026-08-16T00:48:00+08:00。\n钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。\n钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。\n钟落潭文化广场(临时站)今日营业信息：24小时营业。\n钟落潭文化广场(临时站)常规营业信息：周一至周日 00:00-24:00。\n广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。\n广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。\n广州基督教十甫堂今日营业信息：08:00-21:15。\n广州基督教十甫堂常规营业信息：周一至周日 08:00-21:15。\n戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。\n戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。\n何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。\n何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。\n潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。\n潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。\n赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。\n赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。\n赏心亭旅游驿站今日营业信息：24小时营业。\n赏心亭旅游驿站常规营业信息：周一至周日 00:00-24:00。\n周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。\n周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。\n沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。\n沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。\n沙头庙边公园今日营业信息：24小时营业。\n沙头庙边公园常规营业信息：周一至周日 00:00-24:00。",
+  "fetchedAt": "2026-08-15T17:17:14.588491Z",
+  "contentHash": "b21b6027f48d8fdd0869d662c22c46a328f811a1301d3a20ed716be481f8c4d0",
+  "encoding": "structured-json",
+  "language": "zh-CN",
+  "metadata": {
+   "weatherProvider": "QWEATHER",
+   "weatherFallbackReason": null,
+   "locationFallbackReason": null,
+   "poiProvider": "AMAP",
+   "poiUnavailableReason": null,
+   "providerSources": {
+    "WEATHER": "QWEATHER",
+    "NON_WEATHER": "AMAP"
+   },
+   "providerSourceUrls": {
+    "QWEATHER": "https://www.qweather.com/weather/yuexiu-101280107.html",
+    "AMAP": "https://lbs.amap.com/api/webservice/guide/api/search"
+   },
+   "startDate": "2026-11-20",
+   "endDate": "2026-11-21"
+  },
+  "reliabilityLevel": "WEATHER_PROVIDER",
+  "sourceReviewed": true
+ },
+ "trustedFacts": [
+  {
+   "factId": "fact_030b3db820c3fb39fface7828da3dbfd",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "COORDINATES",
+   "statement": "周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。",
+   "normalizedValue": {
+    "longitude": 113.239835,
+    "latitude": 23.167343,
+    "poiName": "周氏宗祠"
+   },
+   "evidence": "周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。",
+   "evidenceStart": 809,
+   "evidenceEnd": 850,
+   "confidence": 0.95,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_09382a29da815805573ff5f4490800eb",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "OPENING_HOURS",
+   "statement": "赏心亭旅游驿站常规营业信息：周一至周日 00:00-24:00。",
+   "normalizedValue": {
+    "raw": "赏心亭旅游驿站常规营业信息：周一至周日 00:00-24:00。",
+    "unparsed": true,
+    "poiName": "赏心亭旅游驿站"
+   },
+   "evidence": "赏心亭旅游驿站常规营业信息：周一至周日 00:00-24:00。",
+   "evidenceStart": 776,
+   "evidenceEnd": 808,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-29T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_100a2ff22f561e0fbe9b02a9396c907c",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "COORDINATES",
+   "statement": "广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。",
+   "normalizedValue": {
+    "longitude": 113.236904,
+    "latitude": 23.118351,
+    "poiName": "广州基督教十甫堂"
+   },
+   "evidence": "广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。",
+   "evidenceStart": 222,
+   "evidenceEnd": 267,
+   "confidence": 0.95,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_153d9c299339682f8bf3d8f6cf5c6b04",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "COORDINATES",
+   "statement": "钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。",
+   "normalizedValue": {
+    "longitude": 113.40623,
+    "latitude": 23.384682,
+    "poiName": "钟落潭文化广场(临时站)"
+   },
+   "evidence": "钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。",
+   "evidenceStart": 59,
+   "evidenceEnd": 107,
+   "confidence": 0.95,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_23b19e7d7de7900ace3e51716df01691",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "ADDRESS",
+   "statement": "何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。",
+   "normalizedValue": {
+    "address": "白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000",
+    "poiName": "何氏宗祠"
+   },
+   "evidence": "何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。",
+   "evidenceStart": 480,
+   "evidenceEnd": 525,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_291fd8943da29d9d842c0b220c6eae39",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "COORDINATES",
+   "statement": "潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。",
+   "normalizedValue": {
+    "longitude": 113.395992,
+    "latitude": 22.779731,
+    "poiName": "潭洲仙庙"
+   },
+   "evidence": "潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。",
+   "evidenceStart": 572,
+   "evidenceEnd": 609,
+   "confidence": 0.95,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_33081c0e238a3bb977488ec5ce4e22d3",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "ADDRESS",
+   "statement": "赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。",
+   "normalizedValue": {
+    "address": "增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737",
+    "poiName": "赏心亭旅游驿站"
+   },
+   "evidence": "赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。",
+   "evidenceStart": 648,
+   "evidenceEnd": 700,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_342a9d2ffe96139923da966c0fa03529",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "OPENING_HOURS",
+   "statement": "广州基督教十甫堂今日营业信息：08:00-21:15。",
+   "normalizedValue": {
+    "scope": "DAILY",
+    "raw": "广州基督教十甫堂今日营业信息：08:00-21:15。",
+    "openingWindows": [
+     {
+      "open": "08:00",
+      "close": "21:15",
+      "closeDayOffset": 0
+     }
+    ],
+    "openTime": "08:00",
+    "closeTime": "21:15",
+    "poiName": "广州基督教十甫堂"
+   },
+   "evidence": "广州基督教十甫堂今日营业信息：08:00-21:15。",
+   "evidenceStart": 314,
+   "evidenceEnd": 341,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-29T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_47213deeb2d73322096d812a4c5ff089",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "COORDINATES",
+   "statement": "戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。",
+   "normalizedValue": {
+    "longitude": 113.547083,
+    "latitude": 23.598286,
+    "poiName": "戚氏宗祠"
+   },
+   "evidence": "戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。",
+   "evidenceStart": 376,
+   "evidenceEnd": 427,
+   "confidence": 0.95,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_4a17bfbe662a1a79c1a63fdcd511f742",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "OPENING_HOURS",
+   "statement": "钟落潭文化广场(临时站)常规营业信息：周一至周日 00:00-24:00。",
+   "normalizedValue": {
+    "raw": "钟落潭文化广场(临时站)常规营业信息：周一至周日 00:00-24:00。",
+    "unparsed": true,
+    "poiName": "钟落潭文化广场(临时站)"
+   },
+   "evidence": "钟落潭文化广场(临时站)常规营业信息：周一至周日 00:00-24:00。",
+   "evidenceStart": 184,
+   "evidenceEnd": 221,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-29T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_6668fb9f9693b6ca96bce4b18558b243",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "ADDRESS",
+   "statement": "广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。",
+   "normalizedValue": {
+    "address": "荔湾区逢源正街54号；坐标113.236904,23.118351",
+    "poiName": "广州基督教十甫堂"
+   },
+   "evidence": "广州基督教十甫堂：地址荔湾区逢源正街54号；坐标113.236904,23.118351。",
+   "evidenceStart": 222,
+   "evidenceEnd": 267,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_743868ddd40b767e7cd544997ddd826a",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "ADDRESS",
+   "statement": "戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。",
+   "normalizedValue": {
+    "address": "从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286",
+    "poiName": "戚氏宗祠"
+   },
+   "evidence": "戚氏宗祠：地址从化区城郊白岗街与恒院街交叉口西220米；坐标113.547083,23.598286。",
+   "evidenceStart": 376,
+   "evidenceEnd": 427,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_872350b4adcf42aade6e43ce416f2d7a",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "ADDRESS",
+   "statement": "周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。",
+   "normalizedValue": {
+    "address": "白云区上步大道30号；坐标113.239835,23.167343",
+    "poiName": "周氏宗祠"
+   },
+   "evidence": "周氏宗祠：地址白云区上步大道30号；坐标113.239835,23.167343。",
+   "evidenceStart": 809,
+   "evidenceEnd": 850,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_998586e82947073b9e4f37f12b828d7d",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "OPENING_HOURS",
+   "statement": "沙头庙边公园常规营业信息：周一至周日 00:00-24:00。",
+   "normalizedValue": {
+    "raw": "沙头庙边公园常规营业信息：周一至周日 00:00-24:00。",
+    "unparsed": true,
+    "poiName": "沙头庙边公园"
+   },
+   "evidence": "沙头庙边公园常规营业信息：周一至周日 00:00-24:00。",
+   "evidenceStart": 1018,
+   "evidenceEnd": 1049,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-29T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_a416060fb16cf1432abe47929d6abf3e",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "ADDRESS",
+   "statement": "沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。",
+   "normalizedValue": {
+    "address": "增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915",
+    "poiName": "沙头庙边公园"
+   },
+   "evidence": "沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。",
+   "evidenceStart": 893,
+   "evidenceEnd": 944,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_b0d85579a3ae822f468c1fb47c6a596c",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "ADDRESS",
+   "statement": "钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。",
+   "normalizedValue": {
+    "address": "白云区福龙路70号；坐标113.406230,23.384682",
+    "poiName": "钟落潭文化广场(临时站)"
+   },
+   "evidence": "钟落潭文化广场(临时站)：地址白云区福龙路70号；坐标113.406230,23.384682。",
+   "evidenceStart": 59,
+   "evidenceEnd": 107,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_d848db499ce3594f8d1cc42e9675de00",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "COORDINATES",
+   "statement": "赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。",
+   "normalizedValue": {
+    "longitude": 113.935275,
+    "latitude": 23.453737,
+    "poiName": "赏心亭旅游驿站"
+   },
+   "evidence": "赏心亭旅游驿站：地址增城区赏心亭旅游驿站(261县道东)；坐标113.935275,23.453737。",
+   "evidenceStart": 648,
+   "evidenceEnd": 700,
+   "confidence": 0.95,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_de2567946f6c137fc643d54edb520902",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "ADDRESS",
+   "statement": "潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。",
+   "normalizedValue": {
+    "address": "南沙区大岗镇；坐标113.395992,22.779731",
+    "poiName": "潭洲仙庙"
+   },
+   "evidence": "潭洲仙庙：地址南沙区大岗镇；坐标113.395992,22.779731。",
+   "evidenceStart": 572,
+   "evidenceEnd": 609,
+   "confidence": 0.9,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_e3bba96dce7f5b34c3379c23a48dcf0d",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "COORDINATES",
+   "statement": "何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。",
+   "normalizedValue": {
+    "longitude": 113.387379,
+    "latitude": 23.351,
+    "poiName": "何氏宗祠"
+   },
+   "evidence": "何氏宗祠：地址白云区钟落潭镇良田村仁和广场；坐标113.387379,23.351000。",
+   "evidenceStart": 480,
+   "evidenceEnd": 525,
+   "confidence": 0.95,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_f1ca7f412d1f2502615e6bdadf9fae57",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "COORDINATES",
+   "statement": "沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。",
+   "normalizedValue": {
+    "longitude": 113.708633,
+    "latitude": 23.169915,
+    "poiName": "沙头庙边公园"
+   },
+   "evidence": "沙头庙边公园：地址增城区庙边东街与庙边街交叉口东40米；坐标113.708633,23.169915。",
+   "evidenceStart": 893,
+   "evidenceEnd": 944,
+   "confidence": 0.95,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-11-13T17:17:14.588491Z",
+   "effectiveDate": null,
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "高德城市情报",
+   "sourceUrl": "https://lbs.amap.com/api/webservice/guide/api/search",
+   "reliabilityLevel": "MAP_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  },
+  {
+   "factId": "fact_ffb1b0d64cca731058f4b96d57e1f60f",
+   "documentId": "doc_2979bd3ac8cd28cda4e6e5c9ceedd737",
+   "category": "WEATHER",
+   "statement": "越秀当前天气：阴，26℃，湿度91%，西北风1级；和风发布时间 2026-08-16T00:48:00+08:00。",
+   "normalizedValue": {
+    "condition": "UNKNOWN"
+   },
+   "evidence": "越秀当前天气：阴，26℃，湿度91%，西北风1级；和风发布时间 2026-08-16T00:48:00+08:00。",
+   "evidenceStart": 0,
+   "evidenceEnd": 58,
+   "confidence": 0.86,
+   "checkedAt": "2026-08-15T17:17:14.588491Z",
+   "expiresAt": "2026-08-15T23:17:14.588491Z",
+   "effectiveDate": "2026-08-16",
+   "sourceType": "CITY_INTELLIGENCE",
+   "sourceName": "和风天气城市情报",
+   "sourceUrl": "https://www.qweather.com/weather/yuexiu-101280107.html",
+   "reliabilityLevel": "WEATHER_PROVIDER",
+   "sourceReviewed": true,
+   "hardConstraintEligible": false
+  }
+ ],
+ "rejectedFacts": [],
+ "factMergeDecisions": [
+  {
+   "selectedFactId": "fact_030b3db820c3fb39fface7828da3dbfd",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_030b3db820c3fb39fface7828da3dbfd"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_09382a29da815805573ff5f4490800eb",
+   "conflictFactIds": [],
+   "downgradedFactIds": [],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_100a2ff22f561e0fbe9b02a9396c907c",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_100a2ff22f561e0fbe9b02a9396c907c"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_153d9c299339682f8bf3d8f6cf5c6b04",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_153d9c299339682f8bf3d8f6cf5c6b04"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_23b19e7d7de7900ace3e51716df01691",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_23b19e7d7de7900ace3e51716df01691"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_291fd8943da29d9d842c0b220c6eae39",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_291fd8943da29d9d842c0b220c6eae39"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_33081c0e238a3bb977488ec5ce4e22d3",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_33081c0e238a3bb977488ec5ce4e22d3"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_342a9d2ffe96139923da966c0fa03529",
+   "conflictFactIds": [],
+   "downgradedFactIds": [],
+   "reason": "selected map_provider source; conflict resolved by reliability, freshness, and evidence",
+   "needsManualReview": true
+  },
+  {
+   "selectedFactId": "fact_47213deeb2d73322096d812a4c5ff089",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_47213deeb2d73322096d812a4c5ff089"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_4a17bfbe662a1a79c1a63fdcd511f742",
+   "conflictFactIds": [],
+   "downgradedFactIds": [],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_6668fb9f9693b6ca96bce4b18558b243",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_6668fb9f9693b6ca96bce4b18558b243"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_743868ddd40b767e7cd544997ddd826a",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_743868ddd40b767e7cd544997ddd826a"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_872350b4adcf42aade6e43ce416f2d7a",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_872350b4adcf42aade6e43ce416f2d7a"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_998586e82947073b9e4f37f12b828d7d",
+   "conflictFactIds": [],
+   "downgradedFactIds": [],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_a416060fb16cf1432abe47929d6abf3e",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_a416060fb16cf1432abe47929d6abf3e"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_b0d85579a3ae822f468c1fb47c6a596c",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_b0d85579a3ae822f468c1fb47c6a596c"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_d848db499ce3594f8d1cc42e9675de00",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_d848db499ce3594f8d1cc42e9675de00"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_de2567946f6c137fc643d54edb520902",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_de2567946f6c137fc643d54edb520902"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_e3bba96dce7f5b34c3379c23a48dcf0d",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_e3bba96dce7f5b34c3379c23a48dcf0d"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_f1ca7f412d1f2502615e6bdadf9fae57",
+   "conflictFactIds": [],
+   "downgradedFactIds": [
+    "fact_f1ca7f412d1f2502615e6bdadf9fae57"
+   ],
+   "reason": "selected map_provider source",
+   "needsManualReview": false
+  },
+  {
+   "selectedFactId": "fact_ffb1b0d64cca731058f4b96d57e1f60f",
+   "conflictFactIds": [],
+   "downgradedFactIds": [],
+   "reason": "selected weather_provider source",
+   "needsManualReview": false
+  }
+ ],
+ "modelExtraction": {
+  "status": "SKIPPED",
+  "attempts": 0,
+  "failureCode": "MODEL_NOT_CONFIGURED",
+  "failureReason": "structured model provider is not configured"
+ },
+ "quality": null
+}

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { AlertTriangle, CalendarDays, Coins, GitCompareArrows, Route, X } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { AlertTriangle, CalendarDays, ChevronDown, Coins, GitCompareArrows, Route, X } from 'lucide-vue-next'
 
 import {
   formatValidatedAt,
@@ -20,6 +20,7 @@ const props = withDefaults(defineProps<{
   malformedReport?: boolean
   candidate: unknown
   abandonBusy?: boolean
+  highlightDate?: string | null
   currentItinerary: {
     title: string
     estimatedTotalCost: number
@@ -39,12 +40,26 @@ const props = withDefaults(defineProps<{
 }>(), {
   malformedReport: false,
   abandonBusy: false,
+  highlightDate: null,
 })
 
 const emit = defineEmits<{ abandon: [] }>()
 
 const reportRead = computed(() => readFeasibilityReport(props.report))
 const candidateRead = computed(() => readCandidateItinerary(props.candidate))
+
+// B13_FIX R7 (P1-4): validation details are secondary information and stay
+// collapsed by default; the candidate and its main risks lead the panel.
+const showValidationDetails = ref(false)
+
+// B13_FIX R7 (P1-4): only FAIL/UNKNOWN rules are "main risks" shown up
+// front; PASS/NA and technical fields live behind the details toggle.
+const mainRisks = computed(() => {
+  if (!reportRead.value.ok) return []
+  return reportRead.value.value.ruleResults.filter(
+    (rule) => rule.outcome === 'FAIL' || rule.outcome === 'UNKNOWN',
+  )
+})
 
 function formatTime(dateTime: string) {
   const value = new Date(dateTime)
@@ -120,7 +135,7 @@ function candidateDays(candidate: CandidateItinerary) {
 </script>
 
 <template>
-  <Card class="review-panel" aria-label="规划需要确认">
+  <Card padding="sm" class="review-panel" aria-label="规划需要确认">
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-xs font-semibold uppercase tracking-widest text-amber-600">Review</p>
@@ -137,35 +152,9 @@ function candidateDays(candidate: CandidateItinerary) {
       你可以调整约束后重新规划；此界面不会把候选行程写入正式版本。
     </p>
 
-    <!-- Abandon action: the only user action on a review candidate. -->
-    <div class="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-surface-200/70 p-3">
-      <Button
-        variant="outline"
-        size="sm"
-        data-testid="abandon-candidate"
-        :disabled="abandonBusy"
-        @click="emit('abandon')"
-      >
-        <X v-if="!abandonBusy" :size="14" aria-hidden="true" />
-        {{ abandonBusy ? '正在放弃…' : '放弃候选' }}
-      </Button>
-      <p class="m-0 text-xs text-surface-500">
-        放弃候选不会删除当前正式版本，之后可以调整约束重新规划。
-      </p>
-    </div>
-
-    <!-- Feasibility report -->
-    <div class="mt-4">
-      <FeasibilityReportPanel
-        v-if="malformedReport"
-        :report="null"
-        :malformed="true"
-      />
-      <FeasibilityReportPanel v-else :report="reportRead.ok ? reportRead.value : null" />
-    </div>
-
-    <!-- Candidate -->
-    <h3 class="mt-5 text-sm font-semibold text-surface-700">候选行程</h3>
+    <!-- Candidate first (B13_FIX R7 / P1-4): the candidate summary, date
+         navigation and main risks lead the panel. -->
+    <h3 class="mt-3 text-sm font-semibold text-surface-700">候选行程</h3>
     <div v-if="candidateRead.ok" class="mt-2">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <strong class="text-base text-surface-800">{{ candidateRead.value.title }}</strong>
@@ -175,7 +164,15 @@ function candidateDays(candidate: CandidateItinerary) {
         </span>
       </div>
       <ul class="mt-3 space-y-3">
-        <li v-for="day in candidateDays(candidateRead.value)" :key="day.date" class="rounded-xl border border-surface-200/70 p-3">
+        <li
+          v-for="day in candidateDays(candidateRead.value)"
+          :key="day.date"
+          :id="`candidate-day-${day.date}`"
+          class="rounded-xl border p-3"
+          :class="day.date === props.highlightDate
+            ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-300'
+            : 'border-surface-200/70'"
+        >
           <div class="flex items-center gap-2 text-sm">
             <CalendarDays :size="14" class="text-surface-400" aria-hidden="true" />
             <span class="font-semibold text-surface-700">{{ formatDay(day.date) }}</span>
@@ -202,6 +199,71 @@ function candidateDays(candidate: CandidateItinerary) {
     <div v-else class="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800" role="alert">
       <AlertTriangle :size="16" class="inline" aria-hidden="true" />
       候选行程暂时无法读取，请稍后重试。
+    </div>
+
+    <!-- Main risks (B13_FIX R7 / P1-4): only FAIL/UNKNOWN aggregations are
+         user-facing; PASS/NA and technical fields stay collapsed. -->
+    <h3 class="mt-5 text-sm font-semibold text-surface-700">主要风险</h3>
+    <ul v-if="mainRisks.length" class="mt-2 space-y-2">
+      <li
+        v-for="rule in mainRisks"
+        :key="rule.ruleId"
+        class="rounded-xl border p-3"
+        :class="rule.outcome === 'FAIL' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'"
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge :variant="rule.outcome === 'FAIL' ? 'danger' : 'warning'">
+            {{ rule.outcome === 'FAIL' ? '失败' : '未知' }}
+          </Badge>
+          <span class="text-sm font-semibold text-surface-800">{{ rule.message }}</span>
+        </div>
+        <p v-if="rule.affectedDates.length" class="mt-1 text-xs text-surface-500">
+          受影响日期：{{ rule.affectedDates.join('、') }}
+        </p>
+      </li>
+    </ul>
+    <p v-else class="mt-2 text-sm text-surface-500">
+      {{ reportRead.ok ? '未发现主要风险' : '暂无验证结果' }}
+    </p>
+
+    <!-- Abandon action: the only user action on a review candidate. -->
+    <div class="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-surface-200/70 p-3">
+      <Button
+        variant="outline"
+        size="sm"
+        data-testid="abandon-candidate"
+        :disabled="abandonBusy"
+        @click="emit('abandon')"
+      >
+        <X v-if="!abandonBusy" :size="14" aria-hidden="true" />
+        {{ abandonBusy ? '正在放弃…' : '放弃候选' }}
+      </Button>
+      <p class="m-0 text-xs text-surface-500">
+        放弃候选不会删除当前正式版本，之后可以调整约束重新规划。
+      </p>
+    </div>
+
+    <!-- Validation details (B13_FIX R7 / P1-4): collapsed by default;
+         reasonCode/validatorVersion/UUIDs live behind the toggle. -->
+    <div class="mt-4">
+      <button
+        type="button"
+        class="flex w-full items-center justify-between rounded-xl border border-surface-200/70 bg-surface-50/60 px-4 py-3 text-sm font-semibold text-surface-700 hover:bg-surface-100"
+        :aria-expanded="showValidationDetails"
+        data-testid="validation-details-toggle"
+        @click="showValidationDetails = !showValidationDetails"
+      >
+        <span>查看验证详情</span>
+        <ChevronDown :size="16" class="transition-transform" :class="{ 'rotate-180': showValidationDetails }" aria-hidden="true" />
+      </button>
+      <div v-if="showValidationDetails" class="mt-3">
+        <FeasibilityReportPanel
+          v-if="malformedReport"
+          :report="null"
+          :malformed="true"
+        />
+        <FeasibilityReportPanel v-else :report="reportRead.ok ? reportRead.value : null" />
+      </div>
     </div>
 
     <!-- Comparison with formal itinerary -->

@@ -43,7 +43,7 @@ test('renders the current planning stage from an SSE progress event', () => {
   expect(view.getByTestId('planning-stage-CONSTRAINTS_SOLVING').textContent)
     .toContain('进行中')
   expect(view.getByTestId('planning-stage-POI_RECALLING').textContent)
-    .toContain('未执行')
+    .toContain('未触发')
 })
 
 test('renders a terminal success instead of stale publishing progress', () => {

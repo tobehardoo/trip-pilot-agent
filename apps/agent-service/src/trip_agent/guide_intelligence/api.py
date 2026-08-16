@@ -1,7 +1,5 @@
 """Internal HTTP contract for guide intelligence extraction."""
 
-import hmac
-import os
 from datetime import date, datetime
 from typing import Literal
 
@@ -11,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 from trip_agent.acquisition.fetch_models import AcquisitionFetchError
 from trip_agent.acquisition.security import SourceSecurityError
 from trip_agent.guide_intelligence.service import GuideImportService
+from trip_agent.internal_security import require_internal_token
 
 router = APIRouter(prefix="/internal/v1", tags=["guide-intelligence"])
 
@@ -67,13 +66,7 @@ class GuideImportRequest(BaseModel):
             ):
                 raise ValueError("city intelligence requires a valid city and date range")
             return self
-        if (
-            not has_content
-            or has_url
-            or has_city
-            or self.title is None
-            or not self.title.strip()
-        ):
+        if not has_content or has_url or has_city or self.title is None or not self.title.strip():
             raise ValueError("text imports require sourceType and title")
         return self
 
@@ -213,14 +206,8 @@ async def import_guide(
                 end_date=request.endDate,
             )
         elif request.sourceType in {"OFFICIAL_TOURISM", "OFFICIAL_ATTRACTION"}:
-            if (
-                request.sourceUrl is None
-                or request.sourceName is None
-                or request.city is None
-            ):
-                raise ValueError(
-                    "registered official sources require URL, name, and city"
-                )
+            if request.sourceUrl is None or request.sourceName is None or request.city is None:
+                raise ValueError("registered official sources require URL, name, and city")
             result = await service.import_registered_source(
                 source_url=request.sourceUrl,
                 source_name=request.sourceName,
@@ -250,6 +237,20 @@ async def import_guide(
         raise HTTPException(response_status, f"{error.code}: {error}") from error
     except RuntimeError as error:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+    return _to_guide_response(result)
+
+
+def _require_internal_token(provided: str | None) -> None:
+    require_internal_token(provided)
+
+
+def _to_guide_response(result) -> GuideImportResponse:
+    """Serialize a GuideImportResult to the wire response.
+
+    Merge decisions only reference facts that are present in the trusted fact
+    set; the Java consumer rejects any decision reference outside that set
+    (B14_FIX R1 / D01).
+    """
     return GuideImportResponse(
         sourceType=result.source_type,
         sourceUrl=result.source_url,
@@ -325,20 +326,7 @@ async def import_guide(
             )
             for rejected in result.rejected_facts
         ],
-        factMergeDecisions=[
-            MergeDecisionResponse(
-                selectedFactId=decision.selected_fact.fact_id,
-                conflictFactIds=[
-                    fact.fact_id for fact in decision.conflict_facts
-                ],
-                downgradedFactIds=[
-                    fact.fact_id for fact in decision.downgraded_facts
-                ],
-                reason=decision.reason,
-                needsManualReview=decision.needs_manual_review,
-            )
-            for decision in result.merge_decisions
-        ],
+        factMergeDecisions=_merge_decision_responses(result),
         modelExtraction=ModelExtractionResponse(
             status=result.model_extraction.status,
             attempts=result.model_extraction.attempts,
@@ -363,7 +351,19 @@ async def import_guide(
     )
 
 
-def _require_internal_token(provided: str | None) -> None:
-    expected = os.getenv("AGENT_INTERNAL_TOKEN", "")
-    if not expected or provided is None or not hmac.compare_digest(provided, expected):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid internal service token")
+def _merge_decision_responses(result) -> list[MergeDecisionResponse]:
+    trusted_ids = {fact.fact_id for fact in result.trusted_facts}
+    return [
+        MergeDecisionResponse(
+            selectedFactId=decision.selected_fact.fact_id,
+            conflictFactIds=[
+                fact.fact_id for fact in decision.conflict_facts if fact.fact_id in trusted_ids
+            ],
+            downgradedFactIds=[
+                fact.fact_id for fact in decision.downgraded_facts if fact.fact_id in trusted_ids
+            ],
+            reason=decision.reason,
+            needsManualReview=decision.needs_manual_review,
+        )
+        for decision in result.merge_decisions
+    ]

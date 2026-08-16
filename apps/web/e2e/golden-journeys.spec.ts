@@ -1,4 +1,4 @@
-﻿import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 // B10 golden journeys — net-new rollback candidate and repair-exhausted
 // scenarios that the existing 13 specs do not cover.  Every mock uses a
@@ -331,7 +331,11 @@ test('G27 rollback UNVERIFIED isolates the candidate and never shows verified wo
 
   const reviewPanel = page.getByRole('region', { name: '规划需要确认' }).or(page.locator('.review-panel'))
   await expect(reviewPanel.first()).toBeVisible()
-  await expect(page.getByText('未验证')).toBeVisible()
+  // B13_FIX R7 (P1-4): the UNKNOWN rule surfaces as a main risk up front;
+  // the report status badge lives inside the collapsed validation details.
+  await expect(page.getByText('主要风险')).toBeVisible()
+  await expect(page.getByText('Opening hours unknown').first()).toBeVisible()
+  await expect(page.getByText('未验证')).toHaveCount(0)
   // The rollback candidate is isolated: the review panel must never claim the
   // candidate was verified (the current formal version keeps its own badge).
   await expect(reviewPanel.first()).not.toContainText('已验证')
@@ -353,6 +357,11 @@ test('G20 repair exhausted shows all three attempts in order with the remaining 
   await page.getByRole('button', { name: '确认回滚到版本 1' }).click()
 
   await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
+  // B13_FIX R7 (P1-4): technical details (repair history, raw codes) are
+  // collapsed behind the details toggle; the candidate and main risks lead.
+  await expect(page.getByText('修复历史')).toHaveCount(0)
+  await expect(page.getByText('DUPLICATE_POI', { exact: true })).toHaveCount(0)
+  await page.getByTestId('validation-details-toggle').click()
   await expect(page.getByText('修复历史')).toBeVisible()
   await expect(page.getByText(/尝试 1/)).toBeVisible()
   await expect(page.getByText(/尝试 2/)).toBeVisible()

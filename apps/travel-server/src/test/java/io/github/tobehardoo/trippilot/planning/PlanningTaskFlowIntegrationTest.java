@@ -366,7 +366,9 @@ class PlanningTaskFlowIntegrationTest extends PostgresIntegrationTest {
                 FROM business.outbox_event
                 WHERE event_type = 'PLANNING_CREATE_REQUESTED'
                 """);
-        assertThat(snapshot.get("schema_version")).isEqualTo("3");
+        // B13_FIX R1/R2: the outbox create command is v4 (schemaVersion 4);
+        // the embedded planning-context snapshot keeps its own v3 schema.
+        assertThat(snapshot.get("schema_version")).isEqualTo("4");
         assertThat(snapshot.get("context_schema_version")).isEqualTo("3");
         assertThat(snapshot.get("statement")).isEqualTo("新鲜事实");
         assertThat(snapshot.get("context_statement")).isEqualTo("新鲜事实");

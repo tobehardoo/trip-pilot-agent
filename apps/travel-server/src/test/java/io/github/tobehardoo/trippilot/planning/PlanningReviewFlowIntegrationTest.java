@@ -9,6 +9,7 @@ import java.util.UUID;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEventParser;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningProgressEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningProgressEventParser;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningReviewRequiredEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningReviewRequiredEventParser;
@@ -59,6 +60,7 @@ class PlanningReviewFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private PlanningReviewService reviewService;
+
 
     @Autowired
     private PlanningCompletionService completionService;
@@ -183,6 +185,53 @@ class PlanningReviewFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     // ── R6: task_event insert failure rolls back the whole review ─────────
+
+    // B14_FIX R5 (D05): RESULT_PUBLISHING survives the review broker race
+
+    @Test
+    void persistsResultPublishingProgressArrivingAfterTheReviewEvent() throws Exception {
+        PlanningContext context = createPlanningContext("late-result-publishing@example.com");
+        reviewService.handle(reviewEvent(context, "review-v1-needs-repair-demo.json"));
+        assertThat(taskStatus(context.taskId())).isEqualTo("WAITING_USER");
+
+        // B14_FIX R5: the worker publishes RESULT_PUBLISHING on the progress
+        // route immediately before the review event; the review listener can
+        // win the broker race (both queues are consumed concurrently).  The
+        // final "publishing the result" milestone must still be persisted --
+        // it is the legitimate predecessor of the review, not stale noise.
+        progressService.handle(progressEvent(
+                UUID.randomUUID(), context, "RESULT_PUBLISHING", 10));
+
+        // Baseline is PLANNING_QUEUED (task creation) + PLANNING_REVIEW_REQUIRED.
+        assertThat(count("business.planning_task_event")).isEqualTo(3L);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_PROGRESS'
+                """, Integer.class, context.taskId())).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT payload ->> 'stage' FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_PROGRESS'
+                """, String.class, context.taskId())).isEqualTo("RESULT_PUBLISHING");
+    }
+
+    @Test
+    void stillIgnoresOtherLateProgressStagesAfterTheReviewEvent() throws Exception {
+        PlanningContext context = createPlanningContext("late-stale-progress@example.com");
+        reviewService.handle(reviewEvent(context, "review-v1-needs-repair-demo.json"));
+        assertThat(taskStatus(context.taskId())).isEqualTo("WAITING_USER");
+
+        // A stale non-final stage must remain ignored after WAITING_USER.
+        progressService.handle(progressEvent(
+                UUID.randomUUID(), context, "CONTEXT_VALIDATING", 2));
+
+        // Baseline is PLANNING_QUEUED + PLANNING_REVIEW_REQUIRED; the stale
+        // stage must add nothing.
+        assertThat(count("business.planning_task_event")).isEqualTo(2L);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_PROGRESS'
+                """, Integer.class, context.taskId())).isZero();
+    }
 
     @Test
     void taskEventInsertFailureRollsBackTheWholeReviewTransaction() throws Exception {
@@ -894,10 +943,14 @@ class PlanningReviewFlowIntegrationTest extends PostgresIntegrationTest {
         assertThat(taskStatus(context.taskId())).isEqualTo("WAITING_USER");
 
         // The review outcome reached the server first; the worker's progress
-        // route arrives afterwards.  It must be a silent no-op: no exception,
-        // no state change, no extra event rows, no DLQ-inducing rejection.
+        // route arrives afterwards.  A stale ordinary stage must be a silent
+        // no-op: no exception, no state change, no extra event rows, no
+        // DLQ-inducing rejection.  (B14_FIX R5: RESULT_PUBLISHING is the one
+        // deliberate exception — it is the legitimate final milestone of the
+        // same run and is persisted — covered by
+        // persistsResultPublishingProgressArrivingAfterTheReviewEvent.)
         progressService.handle(progressEvent(
-                UUID.randomUUID(), context, "RESULT_PUBLISHING", 10
+                UUID.randomUUID(), context, "CONTEXT_VALIDATING", 2
         ));
 
         assertThat(taskStatus(context.taskId())).isEqualTo("WAITING_USER");

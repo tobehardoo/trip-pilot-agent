@@ -3,6 +3,7 @@ package io.github.tobehardoo.trippilot.trip;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 import org.apache.ibatis.annotations.AutomapConstructor;
@@ -30,10 +31,14 @@ public record TripSnapshotRecord(
         String accommodationJson,
         String mustVisitPlacesJson,
         String avoidPlacesJson,
+        String mustVisitPlaceRefsJson,
+        String avoidPlaceRefsJson,
         String mealWindowsJson,
         String mobilityLevel,
         int schemaVersion,
-        String regionRefJson
+        String regionRefJson,
+        OffsetDateTime arrivalAt,
+        OffsetDateTime departureAt
 ) {
     @AutomapConstructor
     public TripSnapshotRecord {
@@ -52,7 +57,7 @@ public record TripSnapshotRecord(
         this(id, ownerId, title, destination, startDate, endDate, status, version,
                 createdAt, updatedAt, archivedAt, budgetAmount, travelers, travelerType,
                 pace, preferencesJson, fixedSchedulesJson, arrivalJson, departureJson,
-                accommodationJson, mustVisitPlacesJson, avoidPlacesJson, mealWindowsJson,
-                mobilityLevel, schemaVersion, null);
+                accommodationJson, mustVisitPlacesJson, avoidPlacesJson, null, null,
+                mealWindowsJson, mobilityLevel, schemaVersion, null, null, null);
     }
 }

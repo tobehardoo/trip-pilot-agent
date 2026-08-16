@@ -48,7 +48,7 @@ test('emits search, archive, and restore actions from the trip list', async () =
   expect(view.emitted('restoreTrip')?.[0]).toEqual(['trip-archived'])
 })
 
-test('prefills the selected template before opening the create dialog', async () => {
+test('B13 offers exactly one create entry and opens an empty form', async () => {
   const view = render(TripDashboard, {
     props: {
       user: { id: 'user-1', email: 'traveler@example.com', displayName: 'Traveler' },
@@ -59,9 +59,12 @@ test('prefills the selected template before opening the create dialog', async ()
     },
   })
 
-  const templateButtons = view.container.querySelectorAll('section button')
-  await fireEvent.click(templateButtons[1]!)
+  expect(view.getAllByRole('button', { name: '创建旅行' })).toHaveLength(1)
+  await fireEvent.click(view.getByRole('button', { name: '创建旅行' }))
 
-  expect(view.container.querySelector<HTMLInputElement>('#trip-title')?.value).not.toBe('')
-  expect(view.container.querySelector<HTMLInputElement>('#destination')?.value).not.toBe('广州')
+  expect(view.container.querySelector<HTMLInputElement>('#trip-title')?.value).toBe('')
+  expect((view.getByLabelText('省 / 直辖市') as HTMLSelectElement).value).toBe('')
+  expect(view.queryByLabelText('城市')).toBeNull()
+  expect(view.queryByText('快速开始')).toBeNull()
+  expect(view.queryByText('用一句话描述旅行计划')).toBeNull()
 })

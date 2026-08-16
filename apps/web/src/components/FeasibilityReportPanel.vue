@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { AlertTriangle, BadgeCheck, CheckCircle2, CircleHelp, ShieldCheck } from 'lucide-vue-next'
+import { computed, ref } from 'vue'
+import { AlertTriangle, BadgeCheck, CheckCircle2, ChevronDown, CircleHelp, ShieldCheck } from 'lucide-vue-next'
 
 import {
   EVIDENCE_STATE_LABEL,
@@ -20,9 +20,16 @@ import Card from './ui/Card.vue'
 const props = withDefaults(defineProps<{
   report: FeasibilityReport | null
   malformed?: boolean
+  defaultCollapsed?: boolean
 }>(), {
   malformed: false,
+  defaultCollapsed: false,
 })
+
+// B13_FIX R7 (P1-4): technical details (reasonCode, validatorVersion,
+// repair ids, evidence refs) are collapsed by default — PASS/NA and raw
+// codes are not primary user information.
+const showTechnical = ref(!props.defaultCollapsed)
 
 const statusVariant = computed(() => {
   if (!props.report) return 'default'
@@ -40,6 +47,15 @@ const statusClass = computed(() => {
     NEEDS_REPAIR: 'status-needs-repair',
     UNVERIFIED: 'status-unverified',
   }[props.report.status]
+})
+
+// B13_FIX R7 (P1-4): only FAIL/UNKNOWN rules surface as user-facing
+// findings; PASS/NA rows are details.
+const findings = computed(() => {
+  if (!props.report) return []
+  return props.report.ruleResults.filter(
+    (rule) => rule.outcome === 'FAIL' || rule.outcome === 'UNKNOWN',
+  )
 })
 
 function outcomeVariant(outcome: FeasibilityRuleResult['outcome']) {
@@ -112,7 +128,8 @@ function hasEvidence(rule: FeasibilityRuleResult) {
         </Badge>
       </div>
 
-      <!-- Summary -->
+      <!-- B13_FIX R7 (P1-4): summary + FAIL/UNKNOWN findings are the primary
+           user view; PASS/NA counts stay compact. -->
       <dl class="feasibility-summary mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
         <div class="summary-cell"><dt>规则总数</dt><dd>{{ report.summary.totalCount }}</dd></div>
         <div class="summary-cell"><dt>通过</dt><dd class="text-emerald-600">{{ report.summary.passCount }}</dd></div>
@@ -122,69 +139,100 @@ function hasEvidence(rule: FeasibilityRuleResult) {
         <div class="summary-cell"><dt>缺失规则</dt><dd>{{ report.summary.missingRequiredCount }}</dd></div>
       </dl>
 
-      <!-- Rule results -->
-      <h4 class="mt-5 text-sm font-semibold text-surface-700">规则明细</h4>
-      <ul v-if="report.ruleResults.length" class="feasibility-rules mt-2 space-y-3">
-        <li v-for="rule in report.ruleResults" :key="rule.ruleId" class="feasibility-rule rounded-xl border border-surface-200/70 bg-surface-50/60 p-3">
+      <!-- Findings: only FAIL/UNKNOWN, in plain Chinese with affected dates. -->
+      <h4 class="mt-5 text-sm font-semibold text-surface-700">主要问题</h4>
+      <ul v-if="findings.length" class="mt-2 space-y-3">
+        <li v-for="rule in findings" :key="rule.ruleId" class="rounded-xl border border-surface-200/70 bg-surface-50/60 p-3">
           <div class="flex flex-wrap items-center gap-2">
             <Badge :variant="outcomeVariant(rule.outcome)">{{ RULE_OUTCOME_LABEL[rule.outcome] }}</Badge>
             <span class="text-sm font-semibold text-surface-800">{{ ruleIdLabel(rule.ruleId) }}</span>
-            <span v-if="rule.repairable" class="text-xs text-amber-600">可修复</span>
           </div>
           <p class="mt-1.5 text-sm text-surface-600">{{ rule.message }}</p>
-          <p class="mt-0.5 text-xs text-surface-400">{{ rule.reasonCode }}</p>
-
-          <div v-if="rule.affectedDates.length || rule.affectedEntityRefs.length" class="mt-2 flex flex-wrap gap-2 text-xs">
+          <div v-if="rule.affectedDates.length" class="mt-2 flex flex-wrap gap-2 text-xs">
             <span v-for="date in rule.affectedDates" :key="`${rule.ruleId}-d-${date}`" class="rounded-md bg-surface-100 px-1.5 py-0.5 text-surface-600">
               {{ date }}
             </span>
-            <span v-for="ref in rule.affectedEntityRefs" :key="`${rule.ruleId}-e-${ref}`" class="rounded-md bg-surface-100 px-1.5 py-0.5 text-surface-600" :title="ref">
-              {{ entityShortLabel(ref) }}
-            </span>
           </div>
-          <p v-else class="mt-2 text-xs text-surface-400">无影响日期或实体</p>
+        </li>
+      </ul>
+      <p v-else class="mt-2 text-sm text-surface-400">未发现 FAIL 或 UNKNOWN 规则</p>
 
-          <div v-if="hasEvidence(rule)" class="mt-2 space-y-1">
-            <div v-for="evidence in rule.evidenceRefs" :key="evidence.evidenceId" class="flex flex-wrap items-center gap-1.5 text-xs">
-              <Badge :variant="evidenceVariant(evidence.state)">{{ evidenceLabel(evidence) }}</Badge>
-              <span class="text-surface-600">{{ evidence.evidenceType }}</span>
-              <span v-if="evidence.hardConstraintEligible" class="text-surface-600">具备硬约束资格</span>
-              <span v-else class="text-surface-400">不具备硬约束资格</span>
+      <!-- Technical details (B13_FIX R7 / P1-4): collapsed by default. -->
+      <button
+        type="button"
+        class="mt-4 flex w-full items-center justify-between rounded-xl border border-surface-200/70 bg-surface-50/60 px-4 py-3 text-sm font-semibold text-surface-700 hover:bg-surface-100"
+        :aria-expanded="showTechnical"
+        data-testid="feasibility-technical-toggle"
+        @click="showTechnical = !showTechnical"
+      >
+        <span>查看技术详情</span>
+        <ChevronDown :size="16" class="transition-transform" :class="{ 'rotate-180': showTechnical }" aria-hidden="true" />
+      </button>
+      <div v-if="showTechnical" class="mt-3">
+        <!-- Rule results -->
+        <h4 class="text-sm font-semibold text-surface-700">规则明细</h4>
+        <ul v-if="report.ruleResults.length" class="feasibility-rules mt-2 space-y-3">
+          <li v-for="rule in report.ruleResults" :key="rule.ruleId" class="feasibility-rule rounded-xl border border-surface-200/70 bg-surface-50/60 p-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <Badge :variant="outcomeVariant(rule.outcome)">{{ RULE_OUTCOME_LABEL[rule.outcome] }}</Badge>
+              <span class="text-sm font-semibold text-surface-800">{{ ruleIdLabel(rule.ruleId) }}</span>
+              <span v-if="rule.repairable" class="text-xs text-amber-600">可修复</span>
             </div>
-          </div>
-        </li>
-      </ul>
-      <p v-else class="mt-2 text-sm text-surface-400">无规则明细</p>
+            <p class="mt-1.5 text-sm text-surface-600">{{ rule.message }}</p>
+            <p class="mt-0.5 text-xs text-surface-400">{{ rule.reasonCode }}</p>
 
-      <!-- Repair attempts -->
-      <h4 class="mt-5 text-sm font-semibold text-surface-700">修复历史</h4>
-      <ul v-if="hasRepairAttempts()" class="mt-2 space-y-2">
-        <li v-for="attempt in report.repairAttempts" :key="attempt.attemptIndex" class="rounded-xl border border-surface-200/70 p-3 text-sm">
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">尝试 {{ attempt.attemptIndex }}</Badge>
-            <span class="text-surface-600">{{ attempt.actionCodes.join('、') || '未记录动作' }}</span>
-            <Badge :variant="attempt.resultingStatus === 'VERIFIED' ? 'success' : 'warning'">
-              {{ attemptStatusLabel(attempt.resultingStatus) }}
-            </Badge>
-          </div>
-          <p class="mt-1 text-xs text-surface-500">
-            触发规则：{{ attempt.triggeringRuleIds.join('、') || '无' }}
-            <span v-if="attempt.affectedDates.length"> · 日期：{{ attempt.affectedDates.join('、') }}</span>
-          </p>
-          <p v-if="attempt.affectedEntityRefs.length" class="mt-1 text-xs text-surface-500">
-            影响实体：
-            <span v-for="ref in attempt.affectedEntityRefs" :key="`${attempt.attemptIndex}-${ref}`" class="mr-1.5 inline-block rounded-md bg-surface-100 px-1.5 py-0.5 text-surface-600" :title="ref">
-              {{ entityShortLabel(ref) }}
-            </span>
-          </p>
-        </li>
-      </ul>
-      <p v-else class="mt-2 text-sm text-surface-400">无修复尝试</p>
+            <div v-if="rule.affectedDates.length || rule.affectedEntityRefs.length" class="mt-2 flex flex-wrap gap-2 text-xs">
+              <span v-for="date in rule.affectedDates" :key="`${rule.ruleId}-d-${date}`" class="rounded-md bg-surface-100 px-1.5 py-0.5 text-surface-600">
+                {{ date }}
+              </span>
+              <span v-for="ref in rule.affectedEntityRefs" :key="`${rule.ruleId}-e-${ref}`" class="rounded-md bg-surface-100 px-1.5 py-0.5 text-surface-600" :title="ref">
+                {{ entityShortLabel(ref) }}
+              </span>
+            </div>
+            <p v-else class="mt-2 text-xs text-surface-400">无影响日期或实体</p>
 
-      <!-- Metadata -->
-      <div class="mt-4 border-t border-surface-200/70 pt-3 text-xs text-surface-400">
-        <span>{{ report.validatorVersion }}</span>
-        <span v-if="report.validatedAt" class="ml-3">验证时间 {{ formatValidatedAt(report.validatedAt) }}</span>
+            <div v-if="hasEvidence(rule)" class="mt-2 space-y-1">
+              <div v-for="evidence in rule.evidenceRefs" :key="evidence.evidenceId" class="flex flex-wrap items-center gap-1.5 text-xs">
+                <Badge :variant="evidenceVariant(evidence.state)">{{ evidenceLabel(evidence) }}</Badge>
+                <span class="text-surface-600">{{ evidence.evidenceType }}</span>
+                <span v-if="evidence.hardConstraintEligible" class="text-surface-600">具备硬约束资格</span>
+                <span v-else class="text-surface-400">不具备硬约束资格</span>
+              </div>
+            </div>
+          </li>
+        </ul>
+        <p v-else class="mt-2 text-sm text-surface-400">无规则明细</p>
+
+        <!-- Repair attempts -->
+        <h4 class="mt-5 text-sm font-semibold text-surface-700">修复历史</h4>
+        <ul v-if="hasRepairAttempts()" class="mt-2 space-y-2">
+          <li v-for="attempt in report.repairAttempts" :key="attempt.attemptIndex" class="rounded-xl border border-surface-200/70 p-3 text-sm">
+            <div class="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">尝试 {{ attempt.attemptIndex }}</Badge>
+              <span class="text-surface-600">{{ attempt.actionCodes.join('、') || '未记录动作' }}</span>
+              <Badge :variant="attempt.resultingStatus === 'VERIFIED' ? 'success' : 'warning'">
+                {{ attemptStatusLabel(attempt.resultingStatus) }}
+              </Badge>
+            </div>
+            <p class="mt-1 text-xs text-surface-500">
+              触发规则：{{ attempt.triggeringRuleIds.join('、') || '无' }}
+              <span v-if="attempt.affectedDates.length"> · 日期：{{ attempt.affectedDates.join('、') }}</span>
+            </p>
+            <p v-if="attempt.affectedEntityRefs.length" class="mt-1 text-xs text-surface-500">
+              影响实体：
+              <span v-for="ref in attempt.affectedEntityRefs" :key="`${attempt.attemptIndex}-${ref}`" class="mr-1.5 inline-block rounded-md bg-surface-100 px-1.5 py-0.5 text-surface-600" :title="ref">
+                {{ entityShortLabel(ref) }}
+              </span>
+            </p>
+          </li>
+        </ul>
+        <p v-else class="mt-2 text-sm text-surface-400">无修复尝试</p>
+
+        <!-- Metadata -->
+        <div class="mt-4 border-t border-surface-200/70 pt-3 text-xs text-surface-400">
+          <span>{{ report.validatorVersion }}</span>
+          <span v-if="report.validatedAt" class="ml-3">验证时间 {{ formatValidatedAt(report.validatedAt) }}</span>
+        </div>
       </div>
     </template>
   </Card>

@@ -558,7 +558,15 @@ async def handle_delivery(
     except (ValidationError, TypeError, ValueError) as exception:
         error_count = exception.error_count() if isinstance(exception, ValidationError) else 1
         logger.warning("rejecting invalid planning command: %s", error_count)
-        await message.reject(requeue=False)
+        # B13_FIX R2 (P0-2): a malformed command with an identifiable task
+        # must reach a safe terminal FAILED state, never stay QUEUED.
+        await _publish_command_validation_failure(
+            message,
+            event_exchange,
+            raw_command,
+            cancellation_registry,
+            cancellation_oracle,
+        )
         return
 
     planning_logger(
@@ -702,6 +710,124 @@ async def handle_delivery(
     await message.ack()
     if cancellation_registry is not None:
         cancellation_registry.finish(command.task_id)
+
+
+def _extract_command_identity(raw_command: dict) -> dict | None:
+    """Best-effort envelope identity from an invalid raw command.
+
+    Returns None when the task cannot be identified; the message is then
+    dead-lettered because no failure event could ever reach its task.
+    """
+    try:
+        identity = {
+            key: UUID(str(raw_command[key]))
+            for key in ("eventId", "traceId", "taskId", "tripId")
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    return identity
+
+
+async def _publish_command_validation_failure(
+    message: IncomingDelivery,
+    event_exchange: EventExchange,
+    raw_command: dict,
+    cancellation_registry: CancellationRegistry | None,
+    cancellation_oracle: CancellationOracle | None,
+) -> None:
+    """Publish a safe PLANNING_FAILED for an unparseable command.
+
+    The failure is terminal and idempotent: the event id derives
+    deterministically from the raw eventId, the payload carries a stable
+    error category/code and never the raw body, and Java applies it
+    atomically (QUEUED/RUNNING → FAILED, duplicate eventIds ignored).
+    """
+    from datetime import UTC, datetime
+
+    from trip_agent.worker.contracts import PlanningFailedEvent, PlanningFailedPayload
+    from trip_agent.worker.processor import _failed_event_id, _run_id
+
+    identity = _extract_command_identity(raw_command)
+    if identity is None:
+        # No task can be identified: dead-letter without a failure event.
+        await message.reject(requeue=False)
+        return
+    cancelled = await _is_cancelled(
+        identity["taskId"],
+        cancellation_registry,
+        cancellation_oracle,
+    )
+    if cancelled:
+        if cancellation_registry is not None:
+            cancellation_registry.finish(identity["taskId"])
+        await message.ack()
+        return
+    failed = PlanningFailedEvent(
+        event_type="PLANNING_FAILED",
+        schema_version=2,
+        event_id=_failed_event_id(identity["eventId"]),
+        trace_id=identity["traceId"],
+        task_id=identity["taskId"],
+        trip_id=identity["tripId"],
+        run_id=_run_id(identity["taskId"]),
+        occurred_at=datetime.now(UTC),
+        payload=PlanningFailedPayload(
+            status="FAILED",
+            error_code="COMMAND_VALIDATION_FAILED",
+            error_category="INVALID_REQUEST",
+            provider="PLANNER",
+            operation="PLANNING",
+            retryable=False,
+            retry_count=0,
+            fallback_attempted=False,
+            fallback_succeeded=False,
+            safe_message="规划命令无法解析，请调整行程条件后重新规划",
+            safe_provider_code=None,
+            cause_type=None,
+            conflicts=(),
+            relaxation_suggestions=(),
+        ),
+    )
+    planning_logger(
+        "trip_agent.worker",
+        trace_id=str(failed.trace_id),
+        event_id=str(failed.event_id),
+        task_id=str(failed.task_id),
+        trip_id=str(failed.trip_id),
+    ).warning(
+        "outcome emitted: PLANNING_FAILED",
+        extra={"outcome_status": "FAILED", "reason_code": "COMMAND_VALIDATION_FAILED"},
+    )
+    outgoing = aio_pika.Message(
+        body=failed.model_dump_json(by_alias=True, exclude_none=True).encode(),
+        content_type="application/json",
+        content_encoding="utf-8",
+        delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+        message_id=str(failed.event_id),
+        correlation_id=str(failed.trace_id),
+        type=failed.event_type,
+        headers={
+            "traceId": str(failed.trace_id),
+            "taskId": str(failed.task_id),
+            "tripId": str(failed.trip_id),
+            "runId": str(failed.run_id),
+        },
+    )
+    try:
+        await event_exchange.publish(
+            outgoing,
+            routing_key=FAILED_ROUTING_KEY,
+            mandatory=True,
+        )
+    except Exception:
+        logger.exception("planning failure event was not confirmed")
+        if cancellation_registry is not None:
+            cancellation_registry.finish(identity["taskId"])
+        await message.nack(requeue=True)
+        return
+    await message.ack()
+    if cancellation_registry is not None:
+        cancellation_registry.finish(identity["taskId"])
 
 
 async def _publish_terminal_failure(

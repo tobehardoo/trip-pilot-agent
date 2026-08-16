@@ -183,8 +183,10 @@ test('renders hardConstraintEligible true and false distinctly', () => {
 })
 
 test('renders affected dates and entities when present, and empty-state text when absent', () => {
+  // B13_FIX R7 (P1-4): FAIL/UNKNOWN findings surface up front; the same rule
+  // appears once more inside the (default-collapsed) technical details.
   const { unmount } = render(FeasibilityReportPanel, { props: { report: makeReport('NEEDS_REPAIR') } })
-  expect(screen.getByText('2026-08-01')).toBeTruthy()
+  expect(screen.getAllByText('2026-08-01').length).toBeGreaterThan(0)
   unmount()
 
   const emptyReport = makeReport('VERIFIED')
@@ -200,7 +202,8 @@ test('renders affected dates and entities when present, and empty-state text whe
     repairable: false,
   }]
   render(FeasibilityReportPanel, { props: { report: emptyReport } })
-  expect(screen.getAllByText(/无/).length).toBeGreaterThan(0)
+  // No FAIL/UNKNOWN findings → the "主要问题" section shows its empty state.
+  expect(screen.getByText('未发现 FAIL 或 UNKNOWN 规则')).toBeTruthy()
 })
 
 test('renders repairAttempts when present and empty-state when absent', () => {

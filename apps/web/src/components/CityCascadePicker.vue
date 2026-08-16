@@ -121,8 +121,9 @@ syncFromProps()
   <div class="flex flex-col gap-3">
     <!-- 省 -->
     <div>
-      <label class="mb-1 block text-[11px] font-semibold text-surface-500">省 / 直辖市</label>
+      <label for="destination-province" class="mb-1 block text-[11px] font-semibold text-surface-500">省 / 直辖市</label>
       <select
+        id="destination-province"
         class="w-full rounded-xl border border-surface-200 bg-surface-50 px-3 py-2.5 text-sm text-surface-800 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
         :value="selectedProvince"
         @change="selectProvince(($event.target as HTMLSelectElement).value)"
@@ -134,8 +135,9 @@ syncFromProps()
 
     <!-- 市 -->
     <div v-if="currentProvince">
-      <label class="mb-1 block text-[11px] font-semibold text-surface-500">城市</label>
+      <label for="destination-city" class="mb-1 block text-[11px] font-semibold text-surface-500">城市</label>
       <select
+        id="destination-city"
         class="w-full rounded-xl border border-surface-200 bg-surface-50 px-3 py-2.5 text-sm text-surface-800 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
         :value="selectedCity"
         @change="selectCity(($event.target as HTMLSelectElement).value)"

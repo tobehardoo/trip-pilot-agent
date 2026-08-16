@@ -68,6 +68,12 @@ public class TripController {
         return tripService.updateConstraints(userId(jwt), tripId, request);
     }
 
+    @PutMapping("/{tripId}/metadata")
+    TripService.TripResponse updateMetadata(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId,
+                                            @Valid @RequestBody TripRequests.UpdateTripMetadataRequest request) {
+        return tripService.updateMetadata(userId(jwt), tripId, request);
+    }
+
     @PostMapping("/{tripId}/archive")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     void archive(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {

@@ -101,8 +101,36 @@ class FixedSchedule(InboundMessageModel):
         return self
 
 
+class PlaceRef(InboundMessageModel):
+    """B13-D — structured place reference from a real search candidate.
+
+    Candidates are never verification evidence: this type carries only
+    provider provenance, coordinates and display fields.
+    """
+
+    provider: Literal["AMAP", "DEMO"]
+    provider_poi_id: ProviderPoiId
+    name: NameText
+    address: Annotated[
+        str, StringConstraints(strip_whitespace=True, max_length=200)
+    ] = ""
+    province: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
+    city: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
+    district: Annotated[str, StringConstraints(strip_whitespace=True, max_length=80)] = ""
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+
+    @field_validator("longitude", "latitude", mode="before")
+    @classmethod
+    def reject_string_coordinates(cls, value: object) -> object:
+        if isinstance(value, str):
+            raise ValueError("place coordinates must use JSON numbers")
+        return value
+
+
 class PlaceAnchor(InboundMessageModel):
     place_name: NameText
+    place_ref: PlaceRef | None = None
 
 
 class TravelAnchor(PlaceAnchor):
@@ -120,6 +148,10 @@ class MealWindow(InboundMessageModel):
     meal_type: Literal["BREAKFAST", "LUNCH", "DINNER"]
     start_time: time
     end_time: time
+    # B13-F: DEFAULT is a soft suggestion (never a hard MEAL_WINDOW FAIL),
+    # USER is a hard constraint, DISABLED is not projected.  Historical
+    # payloads without a source keep USER semantics (never downgraded).
+    source: Literal["DEFAULT", "USER", "DISABLED"] = "USER"
 
     @model_validator(mode="after")
     def validate_time_range(self) -> Self:
@@ -144,7 +176,11 @@ class TripConstraints(InboundMessageModel):
     avoid_places: tuple[NameText, ...] = Field(default=(), max_length=30)
     meal_windows: tuple[MealWindow, ...] = Field(default=(), max_length=3)
     mobility_level: Literal["STANDARD", "REDUCED", "STEP_FREE"] = "STANDARD"
-    schema_version: Literal[1, 2]
+    # B13-D: structured place references, parallel and index-aligned with
+    # must_visit_places / avoid_places.  Schema v3 only.
+    must_visit_place_refs: tuple[PlaceRef, ...] = Field(default=(), max_length=30)
+    avoid_place_refs: tuple[PlaceRef, ...] = Field(default=(), max_length=30)
+    schema_version: Literal[1, 2, 3]
 
     @field_validator("budget_amount", mode="before")
     @classmethod
@@ -172,6 +208,34 @@ class TripConstraints(InboundMessageModel):
             for previous, current in zip(ordered_windows, ordered_windows[1:], strict=False)
         ):
             raise ValueError("mealWindows must not overlap")
+        return self
+
+    @model_validator(mode="after")
+    def validate_place_refs(self) -> Self:
+        """Place refs (B13-D) are schema-v3-only and parallel to their names.
+
+        B13_FIX R2 (P0-2): legacy names with an EMPTY refs list are legal —
+        they represent historical free text that was never structured.
+        Once any ref is present, refs must be exactly parallel to names.
+        """
+        if self.schema_version < 3:
+            if self.must_visit_place_refs or self.avoid_place_refs:
+                raise ValueError("place refs require constraint schemaVersion 3")
+            if any(
+                anchor is not None and anchor.place_ref is not None
+                for anchor in (self.arrival, self.departure, self.accommodation)
+            ):
+                raise ValueError("anchor place refs require constraint schemaVersion 3")
+            return self
+        for names, refs, label in (
+            (self.must_visit_places, self.must_visit_place_refs, "mustVisit"),
+            (self.avoid_places, self.avoid_place_refs, "avoid"),
+        ):
+            if refs and len(refs) != len(names):
+                raise ValueError(f"{label}PlaceRefs must be parallel to {label}Places")
+            for name, ref in zip(names, refs, strict=False):
+                if normalize_text(ref.name) != normalize_text(name):
+                    raise ValueError(f"{label}PlaceRef name must match its place name")
         return self
 
 
@@ -368,6 +432,18 @@ class TripSnapshot(InboundMessageModel):
     status: Literal["DRAFT"]
     version: int = Field(strict=True, ge=0)
     constraints: TripConstraints
+    # B13_FIX R1 (P0-1): authoritative boundary times.  The Java producer
+    # always serializes these fields (null for legacy date-only trips); the
+    # planner must prefer them over legacy constraint anchors.
+    arrival_at: datetime | None = None
+    departure_at: datetime | None = None
+
+    @field_validator("arrival_at", "departure_at")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
+            raise ValueError("snapshot boundary times must include a timezone")
+        return value
 
     @model_validator(mode="after")
     def validate_dates(self) -> Self:
@@ -391,6 +467,12 @@ class TripSnapshot(InboundMessageModel):
         departure = self.constraints.departure
         if arrival is not None and departure is not None and departure.time <= arrival.time:
             raise ValueError("departure time must be after arrival time")
+        if (
+            self.arrival_at is not None
+            and self.departure_at is not None
+            and self.departure_at <= self.arrival_at
+        ):
+            raise ValueError("departureAt must be after arrivalAt")
         return self
 
 
@@ -411,7 +493,7 @@ class PlanningCreatePayload(InboundMessageModel):
 
 class PlanningCreateCommand(InboundMessageModel):
     event_type: Literal["PLANNING_CREATE_REQUESTED"]
-    schema_version: Literal[1, 2, 3]
+    schema_version: Literal[1, 2, 3, 4]
     event_id: UUID
     trace_id: UUID
     task_id: UUID
@@ -424,7 +506,18 @@ class PlanningCreateCommand(InboundMessageModel):
         if self.occurred_at.utcoffset() is None:
             raise ValueError("occurredAt must include a timezone")
         constraints = self.payload.trip.constraints
-        if constraints.schema_version != min(self.schema_version, 2):
+        if self.schema_version == 4:
+            # B13_FIX R1: v4 always carries the snapshot boundary fields
+            # (values may be null for legacy date-only trips); constraints
+            # may be schema 2 (no place refs) or 3 (mixed/structured).
+            if constraints.schema_version not in {2, 3}:
+                raise ValueError("schemaVersion 4 requires constraint schemaVersion 2 or 3")
+            snapshot = self.payload.trip
+            if "arrival_at" not in snapshot.model_fields_set:
+                raise ValueError("schemaVersion 4 requires snapshot arrivalAt")
+            if "departure_at" not in snapshot.model_fields_set:
+                raise ValueError("schemaVersion 4 requires snapshot departureAt")
+        elif constraints.schema_version != min(self.schema_version, 2):
             raise ValueError("command and constraint schemaVersion are incompatible")
         if self.schema_version == 1 and (
             constraints.arrival is not None
@@ -445,9 +538,9 @@ class PlanningCreateCommand(InboundMessageModel):
         context = self.payload.planning_context
         if self.schema_version < 3 and context is not None:
             raise ValueError("planning context requires schemaVersion 3")
-        if self.schema_version == 3:
+        if self.schema_version >= 3:
             if context is None:
-                raise ValueError("schemaVersion 3 requires a planning context")
+                raise ValueError(f"schemaVersion {self.schema_version} requires a planning context")
             if (
                 context.trip_id != self.trip_id
                 or context.planning_task_id != self.task_id
@@ -534,6 +627,14 @@ class ItineraryActivity(MessageModel):
     type_name: str | None = None
     kind: ActivityKind | None = None
     time_fixed: bool | None = None
+    # B13_FIX R3 (P0-3): the meal type an itinerary MEAL activity stands for.
+    # In-process identity only: the field is excluded from serialization so
+    # the published completion v9 wire body stays byte-identical (the Java
+    # parser rejects unknown properties).  None for Java-sourced snapshots,
+    # which the validation projection then treats as unverifiable.
+    meal_type: Literal["BREAKFAST", "LUNCH", "DINNER"] | None = Field(
+        default=None, exclude=True
+    )
     # Candidate-validation only. Existing create/replan events omit it;
     # explicit edits preserve the persistence lock without changing legacy
     # semantics.
@@ -765,7 +866,7 @@ class PlanningReplanPayload(InboundMessageModel):
 
 class PlanningReplanCommand(InboundMessageModel):
     event_type: Literal["PLANNING_REPLAN_REQUESTED"]
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     event_id: UUID
     trace_id: UUID
     task_id: UUID
@@ -777,6 +878,13 @@ class PlanningReplanCommand(InboundMessageModel):
     def validate_occurred_at(self) -> Self:
         if self.occurred_at.utcoffset() is None:
             raise ValueError("occurredAt must include a timezone")
+        if self.schema_version == 2:
+            # B13_FIX R1: v2 snapshots always carry the boundary fields.
+            snapshot = self.payload.trip
+            if "arrival_at" not in snapshot.model_fields_set:
+                raise ValueError("schemaVersion 2 requires snapshot arrivalAt")
+            if "departure_at" not in snapshot.model_fields_set:
+                raise ValueError("schemaVersion 2 requires snapshot departureAt")
         return self
 
 
@@ -1265,7 +1373,7 @@ class PlanningCandidateValidationPayload(InboundMessageModel):
 
 class PlanningCandidateValidationCommand(InboundMessageModel):
     event_type: Literal["PLANNING_CANDIDATE_VALIDATION_REQUESTED"]
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     event_id: UUID
     trace_id: UUID
     task_id: UUID
@@ -1277,6 +1385,13 @@ class PlanningCandidateValidationCommand(InboundMessageModel):
     def validate_identity(self) -> Self:
         if self.occurred_at.utcoffset() is None:
             raise ValueError("occurredAt must include a timezone")
+        if self.schema_version == 2:
+            # B13_FIX R1: v2 snapshots always carry the boundary fields.
+            snapshot = self.payload.trip
+            if "arrival_at" not in snapshot.model_fields_set:
+                raise ValueError("schemaVersion 2 requires snapshot arrivalAt")
+            if "departure_at" not in snapshot.model_fields_set:
+                raise ValueError("schemaVersion 2 requires snapshot departureAt")
         context = self.payload.planning_context
         if context is not None and (
             context.trip_id != self.trip_id

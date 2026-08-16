@@ -1,5 +1,10 @@
-import { render } from '@testing-library/vue'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, render } from '@testing-library/vue'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// B14_FIX.1 R2: DOM leakage across shuffled runs — unmount every wrapper so
+// getByText('我的要求') never matches a stale TripDetail instance.
+afterEach(() => cleanup())
+
 
 import type { Itinerary, ItineraryFactImpact, Trip } from '../lib/api'
 import TripDetail from './TripDetail.vue'

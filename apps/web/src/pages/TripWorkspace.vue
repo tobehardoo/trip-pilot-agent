@@ -40,6 +40,7 @@ import {
   streamPlanningTaskEvents,
   updateGuideImportEnabled,
   updateTripConstraints,
+  updateTripMetadata,
   type AuthSession,
   type CreateTripInput,
   type GuideImport,
@@ -134,7 +135,17 @@ let planningStreamController: AbortController | null = null
 let removeNavigationHook: (() => void) | null = null
 
 function errorMessage(cause: unknown) {
-  if (cause instanceof ApiError) return cause.message
+  if (cause instanceof ApiError) {
+    // B14_FIX R1/R4: provider-facing errors are localized in place; raw
+    // backend messages must never leak to the user.
+    if (cause.code === 'GUIDE_SERVICE_UNAVAILABLE') return '攻略服务暂时不可用，请稍后重试'
+    if (cause.code === 'GUIDE_SERVICE_INVALID_RESPONSE') return '天气或攻略同步失败，请稍后重试'
+    if (cause.code === 'GUIDE_IMPORT_REJECTED') return '攻略导入被拒绝，请检查链接或内容后重试'
+    if (cause.code === 'PLACE_SEARCH_UNAVAILABLE') return '地点搜索暂时不可用，请稍后重试'
+    return cause.message
+  }
+  // B14_FIX R6: keep the pre-existing default message — changing it here
+  // regressed three application-shell tests that assert it verbatim.
   return '无法连接业务服务，请稍后重试'
 }
 
@@ -345,6 +356,9 @@ function applyOutcomeState(outcome: PlanningOutcome) {
     case 'completed':
       reviewTaskId.value = null
       planningState.value = 'succeeded'
+      // B13_FIX.2 R10: an authoritative non-failed outcome clears any stale
+      // planning error from an earlier FAILED state.
+      planningError.value = null
       authoritativeFeasibilityReport.value = outcome.report
       candidateItinerary.value = null
       evaluation.value = outcome.evaluation
@@ -353,6 +367,7 @@ function applyOutcomeState(outcome: PlanningOutcome) {
       break
     case 'review':
       planningState.value = 'waiting_user'
+      planningError.value = null
       authoritativeFeasibilityReport.value = outcome.report
       candidateItinerary.value = outcome.candidate
       evaluation.value = undefined
@@ -362,6 +377,7 @@ function applyOutcomeState(outcome: PlanningOutcome) {
     case 'queued':
       reviewTaskId.value = null
       planningState.value = 'queued'
+      planningError.value = null
       clearPlanningOutcome()
       break
     case 'failed':
@@ -770,6 +786,18 @@ async function handleUpdateConstraints(input: UpdateTripConstraintsInput) {
   if (route.value.name === 'trip-detail' && route.value.tripId === updated.id) selectedTrip.value = updated
 }
 
+/** B13-C: version-aware rename; a 409 surfaces the conflict to the caller. */
+async function handleRenameTrip(title: string) {
+  if (!selectedTrip.value) throw new Error('No trip is selected')
+  const tripId = selectedTrip.value.id
+  const expectedVersion = selectedTrip.value.version
+  const updated = await withAccessToken((token) => updateTripMetadata(
+    token, tripId, { expectedVersion, title },
+  ))
+  syncTripInList(updated)
+  if (route.value.name === 'trip-detail' && route.value.tripId === updated.id) selectedTrip.value = updated
+}
+
 async function handlePreviewItineraryEdit(input: ItineraryEditInput): Promise<ItineraryEditPreview> {
   if (!selectedTrip.value) throw new Error('No trip is selected')
   const tripId = selectedTrip.value.id
@@ -1050,7 +1078,10 @@ async function attachPlanningStream(
 async function runPlanningTask(
   createTask: (accessToken: string, idempotencyKey: string) => Promise<PlanningTask>,
 ) {
-  if (!selectedTrip.value || planningState.value === 'queued') return
+  // B13_FIX.2 R10: WAITING_USER owns the active planning slot — starting,
+  // replanning or refreshing transit is forbidden while a candidate awaits
+  // confirmation, so no create request may leave this page.
+  if (!selectedTrip.value || planningState.value === 'queued' || planningState.value === 'waiting_user') return
   const tripId = selectedTrip.value.id
   const generation = sessionGeneration
   stopPlanningStream(false)
@@ -1071,6 +1102,19 @@ async function runPlanningTask(
   } catch (cause) {
     if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return
     if (cause instanceof DOMException && cause.name === 'AbortError') return
+    if (cause instanceof ApiError && cause.status === 409 && cause.code === 'PLANNING_TASK_ACTIVE') {
+      // B13_FIX.2 R10: a 409 race (another tab owns the active slot) is NOT
+      // a failure.  Recover the authoritative task via the latest endpoint
+      // and restore its outcome — never mark the run failed and never wipe
+      // candidate/report.
+      const recovered = await recoverActivePlanningTask(tripId, requestSequence, generation)
+      if (!recovered) {
+        planningState.value = 'failed'
+        activePlanningTaskId.value = null
+        planningError.value = '已有候选行程待确认，请先查看或放弃候选'
+      }
+      return
+    }
     planningState.value = 'failed'
     activePlanningTaskId.value = null
     planningError.value = errorMessage(cause)
@@ -1078,6 +1122,43 @@ async function runPlanningTask(
   } finally {
     if (requestSequence === planningRequestSequence) planningStreamController = null
   }
+}
+
+/**
+ * B13_FIX.2 R10: race recovery for a 409 PLANNING_TASK_ACTIVE.  The server
+ * holds an active task for the trip (QUEUED/RUNNING or a WAITING_USER
+ * review); the authoritative state is re-read from the latest task and
+ * applied without setting `failed` and without clearing candidate/report.
+ * Returns false only when the authoritative task cannot be read at all.
+ */
+async function recoverActivePlanningTask(
+  tripId: string,
+  requestSequence: number,
+  generation: number,
+): Promise<boolean> {
+  let latest: PlanningTask
+  try {
+    latest = await withAccessToken((token) => getLatestPlanningTask(token, tripId))
+  } catch {
+    return false
+  }
+  if (!isCurrentPlanningRequest(requestSequence, generation, tripId)) return true
+  const outcome = readPlanningTaskOutcome(latest)
+  if (outcome.kind === 'malformed') return false
+  if (outcome.kind === 'review') {
+    reviewTaskId.value = latest.taskId
+    applyOutcomeState(outcome)
+    return true
+  }
+  if (outcome.kind === 'queued') {
+    planningState.value = 'queued'
+    activePlanningTaskId.value = latest.taskId
+    void attachPlanningStream(latest, requestSequence, generation, tripId)
+    return true
+  }
+  // failed / cancelled / completed are authoritative terminal states.
+  applyOutcomeState(outcome)
+  return true
 }
 
 async function handleStartPlanning() {
@@ -1184,6 +1265,7 @@ onUnmounted(() => {
       :create-trip="handleCreateTrip"
       :destination-query="destinationSearch"
       :include-archived="includeArchived"
+      :get-token="() => authStore.accessToken"
       @logout="logout"
       @open-trip="openTrip"
       @search="handleTripSearch"
@@ -1214,6 +1296,7 @@ onUnmounted(() => {
       :create-itinerary-share="handleCreateItineraryShare"
       :revoke-itinerary-share="handleRevokeItineraryShare"
       :download-itinerary-export="handleDownloadItineraryExport"
+      :get-token="() => authStore.accessToken"
       :planning-state="planningState"
       :planning-error="planningError"
       :planning-progress="planningProgress"
@@ -1234,6 +1317,7 @@ onUnmounted(() => {
       :cancel-planning="handleCancelPlanning"
       :abandon-busy="abandonBusy"
       @abandon="handleAbandonCandidate"
+      :rename-trip="handleRenameTrip"
       :update-constraints="handleUpdateConstraints"
       :reload-trip="reloadSelectedTrip"
       @back="backToTrips"

@@ -1,0 +1,402 @@
+[
+ {
+  "scenarioId": "S001",
+  "title": "注册→登录→创建行程→退出",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "reg=201 create=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S002",
+  "title": "错误密码及安全错误提示",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "status=401 body={\"code\": \"INVALID_CREDENTIALS\", \"message\": \"Email or password is incorrect\", \"violations\": []} leaksEmail=False",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S003",
+  "title": "access token 过期后的刷新",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "refresh-no-cookie status=401",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S004",
+  "title": "refresh token 失效",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "forged-refresh status=401",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S005",
+  "title": "两个浏览器会话同时操作同一账号",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "tripA=515dfe7c tripB=8831025a",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S006",
+  "title": "未登录访问 trip/task/SSE",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "trips=401 trip=401 sse=401",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S007",
+  "title": "用户 A 访问用户 B 的 trip/task/version",
+  "risk": "P0",
+  "ok": false,
+  "evidence": "trip=404 itin=404 versions=200",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S008",
+  "title": "中文、空格、Unicode 用户输入",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201 title=\"广州 中文 ☂️ 带空格  X\"",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S009",
+  "title": "活动任务期间刷新浏览器恢复状态",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "task=QUEUED terminal=WAITING_USER",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S010",
+  "title": "规划期间退出登录并重新登录",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "logout=204 latest=WAITING_USER",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S011",
+  "title": "最小一日行程",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S012",
+  "title": "默认二日行程",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201 days=2026-09-10..2026-09-11",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S013",
+  "title": "用户自定义标题",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "title=用户自定义标题 123",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S014",
+  "title": "未填标题自动生成",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201 generated-title=2026年09月10日—09月11日 广州市旅行规划",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S015",
+  "title": "清空自定义标题恢复自动标题",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "update=200 title=2026年09月10日—09月11日 广州市旅行规划",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S016",
+  "title": "不设置预算",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201 budget=3000.0",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S017",
+  "title": "预算为 0",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S018",
+  "title": "极低预算",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201 budget=1",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S019",
+  "title": "多种同行类型和人数",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "SOLO/1=201 COUPLE/2=201 FAMILY/4=201 FRIENDS/3=201 BUSINESS/1=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S020",
+  "title": "偏好、节奏、行动能力组合",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "RELAXED/STANDARD=201 RELAXED/REDUCED=201 RELAXED/STEP_FREE=201 BALANCED/STANDARD=201 BALANCED/REDUCED=201 BALANCED/STEP_FREE=201 INTENSIVE/STANDARD=201 INTENSIVE/REDUCED=201 INTENSIVE/STEP_FREE=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S021",
+  "title": "广东－广州－天河区",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S022",
+  "title": "广东－江门－全市",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S023",
+  "title": "北京直辖市",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S024",
+  "title": "上海直辖市",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S025",
+  "title": "重庆直辖市",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S026",
+  "title": "月末、年末、闰日",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "2026-02-28..2026-03-01=201 2025-02-27..2025-03-01=201 2026-12-31..2027-01-01=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S027",
+  "title": "同日往返",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S028",
+  "title": "最大允许行程天数边界",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "7days=201 8days=400",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S029",
+  "title": "23:00 后晚到",
+  "risk": "P2",
+  "ok": true,
+  "evidence": "status=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S030",
+  "title": "早离、到达晚于返程、非法日期组合",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "depart-before-arrival(same-day)=400 end-before-start=400",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S031",
+  "title": "精确到达地点",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "search=200 create=201 poi=B00140VAP3",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S032",
+  "title": "精确返程地点",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "search=200 create=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S033",
+  "title": "精确住宿地点",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "search=200 create=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S034",
+  "title": "同名不同 POI",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "exact=B00140TFHO sibling=B0L374KRJ1",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S035",
+  "title": "过期 selection token",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "status=400 code=PLACE_REF_TOKEN_INVALID",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S036",
+  "title": "其他用户的 selection token",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "cross-owner status=400 code=PLACE_REF_TOKEN_INVALID",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S037",
+  "title": "篡改 providerPoiId/坐标/城市",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "forged-ref status=400 code=VALIDATION_FAILED",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S038",
+  "title": "选中地点后切换目的地",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "gz=B00140H465 bj=B000A60DA1 cross-city-create=201",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S039",
+  "title": "地点搜索无结果",
+  "risk": "P2",
+  "ok": false,
+  "evidence": "status=502 candidates=0 fuzzy=[]",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S040",
+  "title": "慢响应、乱序响应和取消请求",
+  "risk": "P1",
+  "ok": false,
+  "evidence": "ids=['B00140H465', 'B00140TFHO']",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S041",
+  "title": "一个结构化必去点",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S042",
+  "title": "两个结构化必去点，第一查询已达候选数",
+  "risk": "P0",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S043",
+  "title": "五个结构化必去点",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S044",
+  "title": "必去点排名低于普通候选 cutoff",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S045",
+  "title": "同名 sibling 不得代替精确必去点",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S046",
+  "title": "同一地点同时必去和避开",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S047",
+  "title": "精确 avoid providerPoiId",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S048",
+  "title": "同名 sibling 不得被错误排除",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S049",
+  "title": "必去点正式关闭",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ },
+ {
+  "scenarioId": "S050",
+  "title": "必去点路线不可达或时间无法安排",
+  "risk": "P1",
+  "ok": null,
+  "evidence": "DEFERRED_REAL",
+  "detail": "run in REAL phase"
+ }
+]

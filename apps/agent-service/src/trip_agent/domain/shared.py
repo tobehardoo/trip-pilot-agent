@@ -116,6 +116,28 @@ def candidate_keywords(
     )[:MAX_POI_QUERIES]
 
 
+def snapshot_boundary_times(trip: object) -> tuple[datetime | None, datetime | None]:
+    """B13_FIX R1 (P0-1): authoritative boundary times from the snapshot.
+
+    Snapshot ``arrival_at``/``departure_at`` are the single authority for
+    when the traveller arrives/leaves.  Legacy commands (v1–v3, or v4 with
+    null fields) fall back to the legacy constraint anchor times so old
+    behaviour is preserved — never both at once, never fabricated.
+    """
+    arrival_at = getattr(trip, "arrival_at", None)
+    departure_at = getattr(trip, "departure_at", None)
+    constraints = getattr(trip, "constraints", None)
+    if arrival_at is None and constraints is not None:
+        anchor = getattr(constraints, "arrival", None)
+        if anchor is not None:
+            arrival_at = getattr(anchor, "time", None)
+    if departure_at is None and constraints is not None:
+        anchor = getattr(constraints, "departure", None)
+        if anchor is not None:
+            departure_at = getattr(anchor, "time", None)
+    return arrival_at, departure_at
+
+
 def matched_guide_fact_ids(
     command: "PlanningCreateCommand",
     pois: tuple["Poi", ...],

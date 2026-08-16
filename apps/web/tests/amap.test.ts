@@ -45,3 +45,30 @@ test('removes a failed script so a later attempt can load a fresh SDK', async ()
   replacementScript?.dispatchEvent(new Event('load'))
   await expect(secondAttempt).resolves.toBe(window.AMap)
 })
+
+test('reuses a script tag that already exists in the document', async () => {
+  // B13_FIX R8 (P1-8): an SDK script injected earlier (e.g. by a previous
+  // attempt or by an embedder) must be reused, not duplicated.
+  const existing = document.createElement('script')
+  existing.dataset.tripPilotAmap = 'true'
+  document.head.appendChild(existing)
+
+  const loading = loadAMap({ key: 'reuse-key', securityJsCode: 'reuse-security-code' })
+  expect(document.querySelectorAll('script[data-trip-pilot-amap]')).toHaveLength(1)
+
+  const namespace = {} as AMapNamespace
+  window.AMap = namespace
+  existing.dispatchEvent(new Event('load'))
+  await expect(loading).resolves.toBe(namespace)
+})
+
+test('rejects when the reused script loads without a namespace', async () => {
+  const existing = document.createElement('script')
+  existing.dataset.tripPilotAmap = 'true'
+  document.head.appendChild(existing)
+
+  const loading = loadAMap({ key: 'reuse-key', securityJsCode: 'reuse-security-code' })
+  existing.dispatchEvent(new Event('load'))
+  await expect(loading).rejects.toThrow('AMap SDK loaded without a namespace')
+  expect(document.querySelector('script[data-trip-pilot-amap]')).toBeNull()
+})

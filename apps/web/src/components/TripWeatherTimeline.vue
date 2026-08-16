@@ -4,17 +4,27 @@ import { computed, ref } from 'vue'
 
 import type { GuideFact } from '../lib/api'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   weatherFacts: GuideFact[]
   startDate: string
   endDate: string
   selectedDate?: string | null
   referenceDate?: string
-}>()
+  sourceTitle?: string
+  sourceUrl?: string
+  syncing?: boolean
+}>(), {
+  selectedDate: null,
+  referenceDate: undefined,
+  sourceTitle: '',
+  sourceUrl: '',
+  syncing: false,
+})
 
 const emit = defineEmits<{
   selectDate: [date: string]
   showAll: []
+  sync: []
 }>()
 
 const timelineElement = ref<HTMLElement | null>(null)
@@ -99,6 +109,12 @@ const referenceDate = computed(() => props.referenceDate ?? new Intl.DateTimeFor
 
 const showScrollerControls = computed(() => weatherDays.value.length > 7)
 
+/** B13-I: offer the existing city-intelligence sync when any day lacks data. */
+const needsSync = computed(() =>
+  props.weatherFacts.length === 0
+  || weatherDays.value.some((day) => day.availability === 'pending' || day.availability === 'historical')
+)
+
 function dayLabel(date: string) {
   const [year, month, day] = date.split('-').map(Number)
   return `${month}月${day}日`
@@ -118,11 +134,11 @@ function scrollTimeline(direction: -1 | 1) {
 
 <template>
   <section
-    class="border-b border-surface-100 bg-white px-3 py-3 sm:px-4"
+    class="border-b border-surface-100 bg-white px-3 py-2 sm:px-4"
     role="region"
     aria-label="行程天气"
   >
-    <div class="mb-2 flex items-center justify-between gap-3">
+    <div class="mb-1.5 flex items-center justify-between gap-3">
       <div class="flex items-center gap-2">
         <span class="grid h-7 w-7 place-items-center rounded-lg bg-sky-50 text-sky-600">
           <CloudSun :size="16" aria-hidden="true" />
@@ -133,6 +149,17 @@ function scrollTimeline(direction: -1 | 1) {
         </div>
       </div>
       <div class="flex items-center gap-1">
+        <button
+          v-if="needsSync && !syncing"
+          type="button"
+          class="rounded-lg border border-surface-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-surface-600 hover:bg-surface-50"
+          @click="emit('sync')"
+        >同步天气</button>
+        <span
+          v-else-if="syncing"
+          class="rounded-lg border border-surface-200 bg-surface-50 px-2.5 py-1.5 text-xs text-surface-400"
+          role="status"
+        >同步中…</span>
         <button
           v-if="selectedDate"
           type="button"
@@ -161,7 +188,7 @@ function scrollTimeline(direction: -1 | 1) {
         v-for="weatherDay in weatherDays"
         :key="weatherDay.date"
         type="button"
-        class="min-w-[98px] shrink-0 rounded-xl border px-3 py-2 text-left transition-colors"
+        class="min-w-[98px] shrink-0 rounded-xl border px-3 py-1.5 text-left transition-colors"
         :class="weatherDay.inTrip
           ? weatherDay.date === selectedDate
             ? 'border-primary-500 bg-primary-100 ring-1 ring-primary-300'
@@ -176,27 +203,38 @@ function scrollTimeline(direction: -1 | 1) {
           <span>{{ dayLabel(weatherDay.date) }}</span>
           <span>{{ weekdayLabel(weatherDay.date) }}</span>
         </span>
-        <strong v-if="weatherDay.summary" class="mt-1 flex items-center gap-1 text-xs text-surface-800">
+        <strong v-if="weatherDay.summary" class="mt-0.5 flex items-center gap-1 text-xs text-surface-800">
           <Sun :size="13" class="text-amber-500" aria-hidden="true" />{{ weatherDay.summary.condition }}
         </strong>
-        <strong v-else class="mt-1 block text-xs text-surface-400">
+        <strong v-else class="mt-0.5 block text-xs text-surface-400">
           {{ weatherDay.availability === 'historical'
             ? '历史天气尚未同步'
             : weatherDay.availability === 'unavailable' ? '预报未开放' : '待同步' }}
         </strong>
-        <span v-if="weatherDay.summary" class="mt-0.5 block text-xs font-semibold text-surface-700">
+        <span v-if="weatherDay.summary" class="mt-0 block text-xs font-semibold text-surface-700">
           {{ weatherDay.summary.temperature }}
         </span>
-        <span v-if="weatherDay.summary?.wind" class="mt-0.5 block truncate text-[10px] text-surface-400">
+        <span v-if="weatherDay.summary?.wind" class="mt-0 block truncate text-[10px] text-surface-400">
           {{ weatherDay.summary.wind }}
         </span>
-        <span v-else-if="weatherDay.availability === 'unavailable'" class="mt-0.5 block text-[10px] text-surface-400">
+        <span v-else-if="weatherDay.availability === 'unavailable'" class="mt-0 block text-[10px] text-surface-400">
           出行前约 4 天可查看
         </span>
-        <span v-else-if="weatherDay.availability === 'historical'" class="mt-0.5 block text-[10px] text-surface-400">
+        <span v-else-if="weatherDay.availability === 'historical'" class="mt-0 block text-[10px] text-surface-400">
           请重新同步城市情报
         </span>
       </button>
     </div>
+
+    <p v-if="sourceTitle" class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-surface-400">
+      <span>天气来源：{{ sourceTitle }}</span>
+      <a
+        v-if="sourceUrl"
+        :href="sourceUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="underline decoration-surface-300 underline-offset-2 hover:text-primary-600"
+      >查看原始天气</a>
+    </p>
   </section>
 </template>

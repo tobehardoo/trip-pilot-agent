@@ -1,0 +1,97 @@
+{
+  "eventType": "PLANNING_CREATE_REQUESTED",
+  "schemaVersion": 4,
+  "eventId": "b6a9c2f2-5565-47bd-b660-cbb20225c158",
+  "traceId": "ca73c2f2-5565-47bd-b660-cbb20225c159",
+  "taskId": "9ee5e831-90f7-4a60-bb8d-fb488aa799ca",
+  "tripId": "9ee5e831-90f7-4a60-bb8d-fb488aa799cb",
+  "occurredAt": "2026-07-26T08:00:00Z",
+  "payload": {
+    "taskType": "CREATE",
+    "baselineTripVersion": 0,
+    "idempotencyKey": "d4b9c2f2-5565-47bd-b660-cbb20225c15a",
+    "trip": {
+      "title": "广州文化一日",
+      "destination": "广州",
+      "startDate": "2026-08-01",
+      "endDate": "2026-08-02",
+      "status": "DRAFT",
+      "version": 0,
+      "arrivalAt": "2026-08-01T11:00:00+08:00",
+      "departureAt": "2026-08-02T17:00:00+08:00",
+      "constraints": {
+        "budgetAmount": 3000,
+        "travelers": 2,
+        "travelerType": "COUPLE",
+        "pace": "BALANCED",
+        "preferences": ["岭南文化"],
+        "fixedSchedules": [],
+        "arrival": {
+          "placeName": "广州南站 (demo)",
+          "time": "2026-08-01T11:00:00+08:00",
+          "placeRef": {
+            "provider": "DEMO",
+            "providerPoiId": "demo-0123456789abcdef",
+            "name": "广州南站 (demo)",
+            "address": "Demo location in 广州",
+            "province": "",
+            "city": "广州",
+            "district": "",
+            "longitude": 113.2644,
+            "latitude": 23.1291
+          }
+        },
+        "departure": {
+          "placeName": "广州白云机场",
+          "time": "2026-08-02T17:00:00+08:00"
+        },
+        "accommodation": null,
+        "mustVisitPlaces": ["陈家祠"],
+        "avoidPlaces": [],
+        "mustVisitPlaceRefs": [
+          {
+            "provider": "AMAP",
+            "providerPoiId": "B001234567",
+            "name": "陈家祠",
+            "address": "广州市荔湾区中山七路恩龙里34号",
+            "province": "广东省",
+            "city": "广州市",
+            "district": "荔湾区",
+            "longitude": 113.2405,
+            "latitude": 23.1256
+          }
+        ],
+        "avoidPlaceRefs": [],
+        "mealWindows": [
+          {
+            "mealType": "LUNCH",
+            "startTime": "12:00",
+            "endTime": "13:00",
+            "source": "DEFAULT"
+          }
+        ],
+        "mobilityLevel": "STANDARD",
+        "schemaVersion": 3
+      }
+    },
+    "guideEvidence": {
+      "facts": []
+    },
+    "planningContext": {
+      "snapshotId": "67396263-bac9-4db8-bc4c-08d57493ba26",
+      "schemaVersion": 3,
+      "tripId": "9ee5e831-90f7-4a60-bb8d-fb488aa799cb",
+      "planningTaskId": "9ee5e831-90f7-4a60-bb8d-fb488aa799ca",
+      "city": "广州",
+      "travelStartDate": "2026-08-01",
+      "travelEndDate": "2026-08-02",
+      "generatedAt": "2026-07-26T08:00:00Z",
+      "stale": false,
+      "sources": [],
+      "facts": [],
+      "conflicts": [],
+      "excludedFacts": [],
+      "diagnostics": []
+    }
+  }
+}

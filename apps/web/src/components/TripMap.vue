@@ -10,6 +10,11 @@ const props = defineProps<{
   itinerary: Pick<Itinerary, 'days'>
   selectedActivityId: string | null
   selectedDate?: string | null
+  // B13_FIX.1 R5: when true, a null selectedActivityId means "nothing is
+  // selected" instead of falling back to the first activity — used while a
+  // WAITING_USER candidate is highlighted so the old formal route is never
+  // selected or highlighted.
+  allowEmptySelection?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -26,7 +31,9 @@ const visibleItinerary = computed<Pick<Itinerary, 'days'>>(() => ({
 }))
 const model = computed<MapModel>(() => buildMapModel(visibleItinerary.value))
 const selectedActivity = computed(() => {
-  if (props.selectedActivityId === null) return model.value.activities[0] ?? null
+  if (props.selectedActivityId === null) {
+    return props.allowEmptySelection ? null : model.value.activities[0] ?? null
+  }
   return model.value.activities.find((activity) => activity.id === props.selectedActivityId) ?? null
 })
 const hasCoordinates = computed(() => model.value.activities.length > 0)

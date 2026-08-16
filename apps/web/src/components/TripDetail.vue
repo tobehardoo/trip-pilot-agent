@@ -23,7 +23,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { computed, nextTick, reactive, ref, watch } from 'vue'
-import { readFeasibilityReport } from '../lib/feasibility'
+import { readCandidateItinerary, readFeasibilityReport } from '../lib/feasibility'
 
 import {
   ApiError,
@@ -115,16 +115,19 @@ const props = withDefaults(defineProps<{
   cancelPlanning: () => Promise<void>
   abandonBusy?: boolean
   updateConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
+  renameTrip?: (title: string) => Promise<void>
   reloadTrip: () => Promise<boolean>
   evaluation?: PlanEvaluation | null
   evaluationBusy?: boolean
   evaluationError?: string | null
   reloadEvaluation?: () => Promise<boolean>
+  getToken?: () => string
 }>(), {
   evaluation: undefined,
   evaluationBusy: false,
   evaluationError: null,
   reloadEvaluation: async () => false,
+  getToken: () => '',
   guideImports: () => [],
   planningProgress: null,
   planningProgressHistory: () => [],
@@ -160,6 +163,7 @@ const props = withDefaults(defineProps<{
   commitItineraryEdits: async () => {},
   startReplanning: async () => {},
   abandonBusy: false,
+  renameTrip: async () => {},
 })
 
 const emit = defineEmits<{
@@ -169,6 +173,39 @@ const emit = defineEmits<{
 }>()
 
 const readFeasibilityReportResult = computed(() => readFeasibilityReport(props.feasibilityReport))
+const candidateRead = computed(() => readCandidateItinerary(props.candidateItinerary))
+
+// ── B13-C: inline trip rename ────────────────────────────────────────────
+const renaming = ref(false)
+const renameBusy = ref(false)
+const renameError = ref<string | null>(null)
+const renameTitle = ref('')
+
+function startRename() {
+  renameTitle.value = props.trip?.title ?? ''
+  renameError.value = null
+  renaming.value = true
+}
+
+function cancelRename() {
+  renaming.value = false
+  renameError.value = null
+}
+
+async function saveRename() {
+  const title = renameTitle.value.trim()
+  if (!title || renameBusy.value) return
+  renameBusy.value = true
+  renameError.value = null
+  try {
+    await props.renameTrip(title)
+    renaming.value = false
+  } catch (cause) {
+    renameError.value = cause instanceof Error ? cause.message : '修改名称失败，请稍后重试'
+  } finally {
+    renameBusy.value = false
+  }
+}
 
 const defaultPreferences = ['岭南文化', '本地美食', '城市漫步', '自然风景', '亲子体验', '夜间活动']
 const chinaTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
@@ -193,6 +230,10 @@ const formError = ref<string | null>(null)
 const versionConflict = ref(false)
 const selectedActivityId = ref<string | null>(null)
 const selectedMapDate = ref<string | null>(null)
+// B13_FIX.1 R5: WAITING_USER candidate highlight is a separate state from
+// the formal itinerary map selection, so a weather click on a candidate day
+// never selects or highlights the old formal route.
+const candidateHighlightDate = ref<string | null>(null)
 const pendingItineraryEdit = ref<ItineraryEditInput | null>(null)
 const itineraryEditPreview = ref<ItineraryEditPreview | null>(null)
 const selectedTransitModes = reactive<Record<string, CommuteMode>>({})
@@ -237,6 +278,9 @@ const datesNeedingTransitRefresh = computed(() => props.itinerary?.days
   .map((day) => day.date) ?? [])
 
 async function startLocalReplanning() {
+  // B13_FIX.2 R10: WAITING_USER owns the active planning slot — refreshing
+  // transit is forbidden until the candidate is confirmed or abandoned.
+  if (props.planningState === 'waiting_user' || props.planningState === 'queued') return
   if (!props.itinerary || !datesNeedingTransitRefresh.value.length) return
   await props.startReplanning({
     baseVersionId: props.itinerary.versionId,
@@ -357,7 +401,7 @@ function openEditor(event?: Event) {
 
 async function saveConstraints() {
   if (!props.trip) return
-  formError.value = validateConstraintEditor(form)
+  formError.value = validateConstraintEditor(form, 'edit')
   if (formError.value) return
   submitting.value = true
   formError.value = null
@@ -453,15 +497,55 @@ function selectActivity(activityId: string) {
 }
 
 function selectWeatherDate(date: string) {
+  // B13_FIX.1 R5: split the candidate highlight from the formal map state.
+  // With a WAITING_USER review candidate the weather date highlights the
+  // CANDIDATE day and never touches the old formal itinerary's markers.
+  const candidateHasDate = candidateRead.value.ok
+    && candidateRead.value.value.days.some((day) => day.date === date)
+  if (props.planningState === 'waiting_user' && candidateHasDate) {
+    candidateHighlightDate.value = date
+    selectedMapDate.value = null
+    selectedActivityId.value = null
+    void nextTick(() => {
+      document.getElementById(`candidate-day-${date}`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+    })
+    return
+  }
+  if (props.itinerary?.days.some((day) => day.date === date)) {
+    // Formal itinerary fallback (no candidate for this date).
+    candidateHighlightDate.value = null
+    selectedMapDate.value = date
+    const activity = props.itinerary?.days.find((day) => day.date === date)?.activities[0]
+    selectedActivityId.value = activity?.id ?? null
+    void nextTick(() => {
+      document.getElementById(`day-${date}`)?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+    })
+    return
+  }
+  if (props.planningState === 'waiting_user') {
+    // Candidate exists but has no entry for this date: highlight the date in
+    // the weather timeline only, never select a formal activity.
+    selectedActivityId.value = null
+    selectedMapDate.value = null
+    candidateHighlightDate.value = date
+    void nextTick(() => {
+      document.getElementById('planning-review-section')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+    })
+    return
+  }
+  // Non-review states (queued / succeeded / failed) with no matching formal
+  // day: select the date in the weather timeline only, never a formal
+  // activity (none matches, or the map selection is not meaningful here).
+  selectedActivityId.value = null
+  candidateHighlightDate.value = null
   selectedMapDate.value = date
-  const activity = props.itinerary?.days.find((day) => day.date === date)?.activities[0]
-  // Date cards filter the map only. Timeline scrolling is reserved for an
-  // explicit itinerary activity selection, not for changing map scope.
-  selectedActivityId.value = activity?.id ?? null
 }
 
 function showAllMapRoutes() {
+  // B13_FIX.1 R5: clear both the formal and the candidate selection state.
   selectedMapDate.value = null
+  selectedActivityId.value = null
+  candidateHighlightDate.value = null
 }
 
 async function openItineraryEdit(input: ItineraryEditInput, event?: Event) {
@@ -595,6 +679,29 @@ const cityWeatherFacts = computed(() => {
   if (!cityImport?.enabled) return []
   return cityImport.facts.filter((fact) => fact.category === 'WEATHER')
 })
+/** B13-I: weather attribution rides on the city-intelligence import metadata. */
+const weatherSourceTitle = computed(() => latestCityIntelligenceImport.value?.sourceHost ?? '')
+const weatherSourceUrl = computed(() => latestCityIntelligenceImport.value?.sourceUrl ?? '')
+const weatherSyncing = ref(false)
+
+/** B13-I: reuse the existing city-intelligence sync chain; never a second weather API. */
+async function syncWeather() {
+  if (!props.trip || weatherSyncing.value) return
+  weatherSyncing.value = true
+  try {
+    await props.importGuide?.({
+      sourceType: 'CITY_INTELLIGENCE',
+      city: props.trip.destination,
+      startDate: props.trip.startDate,
+      endDate: props.trip.endDate,
+    })
+  } catch {
+    // The guide panel surfaces the localized error; the sync button must
+    // recover and no rejected promise may escape (B14_FIX R1).
+  } finally {
+    weatherSyncing.value = false
+  }
+}
 const officialFactCount = computed(() => factImpacts.value.filter(impact =>
   impact.reliabilityLevel.startsWith('OFFICIAL')).length)
 const communityFactCount = computed(() => factImpacts.value.length - officialFactCount.value)
@@ -670,6 +777,15 @@ watch(() => props.itinerary, (nextItinerary) => {
     selectedMapDate.value = null
   }
 }, { immediate: true })
+
+// B13_FIX.1 R5: leaving WAITING_USER (task completed / failed / new run)
+// clears the candidate highlight so a later formal selection is not
+// polluted by a stale candidate date.
+watch(() => props.planningState, (state) => {
+  if (state !== 'waiting_user') {
+    candidateHighlightDate.value = null
+  }
+})
 </script>
 
 <template>
@@ -705,7 +821,7 @@ watch(() => props.itinerary, (nextItinerary) => {
     </header>
 
     <!-- Main Content -->
-    <main class="mx-auto max-w-6xl px-4 sm:px-6 py-6 sm:py-10 pb-24">
+    <main class="mx-auto max-w-6xl px-4 sm:px-6 py-4 sm:py-6 pb-24">
       <!-- Back -->
       <button
         class="mb-6 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-surface-500 transition-colors hover:bg-surface-100 hover:text-surface-700"
@@ -731,8 +847,8 @@ watch(() => props.itinerary, (nextItinerary) => {
 
       <template v-else-if="trip">
         <!-- Trip Hero Card -->
-        <Card class="mb-8 overflow-hidden" padding="none">
-          <div :class="destinationGradientClass" class="relative min-h-[200px] sm:min-h-[260px] px-6 sm:px-8 py-6 sm:py-8 text-white flex flex-col justify-between">
+        <Card class="mb-5 overflow-hidden" padding="none">
+          <div :class="destinationGradientClass" class="relative min-h-[130px] sm:min-h-[160px] px-6 sm:px-8 py-4 sm:py-5 text-white flex flex-col justify-between">
             <!-- Decorative pattern -->
             <div class="absolute inset-0 opacity-10 hero-pattern" />
             <!-- Subtle radial glow -->
@@ -740,10 +856,33 @@ watch(() => props.itinerary, (nextItinerary) => {
 
             <div class="relative z-10 flex items-start justify-between gap-4">
               <div class="min-w-0">
-                <p class="text-xs font-semibold uppercase tracking-widest text-white/60 mb-2">Trip</p>
-                <h1 class="text-2xl sm:text-4xl font-bold tracking-tight text-balance">{{ trip.title }}</h1>
-                <p class="text-sm text-white/70 mt-2">{{ tripThemeLabel }}</p>
-                <div class="flex flex-wrap items-center gap-2 text-sm text-white/60 mt-3">
+                <p class="text-xs font-semibold uppercase tracking-widest text-white/60 mb-1">Trip</p>
+                <template v-if="renaming">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <input
+                      v-model.trim="renameTitle"
+                      maxlength="120"
+                      aria-label="旅行新名称"
+                      class="h-9 min-w-0 flex-1 rounded-lg border border-white/30 bg-white/10 px-3 text-base font-bold text-white placeholder:text-white/50 outline-0 focus:ring-2 focus:ring-white/60"
+                    />
+                    <Button size="sm" :disabled="renameBusy" @click="saveRename">保存</Button>
+                    <Button variant="outline" size="sm" :disabled="renameBusy" @click="cancelRename">取消</Button>
+                  </div>
+                  <p v-if="renameError" class="mt-1 text-xs text-amber-300" role="alert">{{ renameError }}</p>
+                </template>
+                <template v-else>
+                  <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-balance">{{ trip.title }}</h1>
+                  <button
+                    type="button"
+                    class="mt-2 inline-flex items-center gap-1 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-medium text-white/80 hover:bg-white/20"
+                    aria-label="修改旅行名称"
+                    @click="startRename"
+                  >
+                    <Pencil :size="12" aria-hidden="true" /> 修改名称
+                  </button>
+                </template>
+                <p class="text-sm text-white/70 mt-1.5">{{ tripThemeLabel }}</p>
+                <div class="flex flex-wrap items-center gap-2 text-sm text-white/60 mt-2">
                   <span class="inline-flex items-center gap-1.5">
                     <MapPin :size="14" aria-hidden="true" />
                     {{ trip.destination }}
@@ -764,7 +903,7 @@ watch(() => props.itinerary, (nextItinerary) => {
             </div>
 
             <!-- Travel Stats Bar -->
-            <div v-if="itinerary" class="relative z-10 mt-6 flex flex-wrap items-center gap-5 sm:gap-8 text-sm">
+            <div v-if="itinerary" class="relative z-10 mt-3 flex flex-wrap items-center gap-5 sm:gap-8 text-sm">
               <div class="flex items-center gap-2">
                 <span class="flex h-8 w-8 items-center justify-center rounded-xl bg-white/15 text-white"><MapPin :size="15" aria-hidden="true" /></span>
                 <div>
@@ -800,8 +939,8 @@ watch(() => props.itinerary, (nextItinerary) => {
           </div>
         </Card>
 
-        <section class="mb-6" aria-labelledby="constraint-summary-title">
-          <Card>
+        <section class="mb-4" aria-labelledby="constraint-summary-title">
+          <Card padding="sm">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p class="mb-1 text-xs font-semibold uppercase tracking-widest text-surface-400">Constraints</p>
@@ -811,24 +950,56 @@ watch(() => props.itinerary, (nextItinerary) => {
                 <Pencil :size="14" aria-hidden="true" />编辑约束
               </Button>
             </div>
-            <dl class="mt-5 grid gap-4 sm:grid-cols-3">
+            <dl class="mt-3 grid gap-3 sm:grid-cols-3">
+              <!-- B13_FIX R7 (P1-4): unset optional constraints are hidden —
+                   they no longer occupy fixed card height. -->
+              <template v-if="trip.constraints.budgetAmount !== null">
+                <div><dt class="text-xs text-surface-400">预算</dt><dd class="mt-1 text-sm font-semibold text-surface-700">¥{{ trip.constraints.budgetAmount }}</dd></div>
+              </template>
               <div><dt class="text-xs text-surface-400">同行</dt><dd class="mt-1 text-sm font-semibold text-surface-700">{{ trip.constraints.travelers }} 人 · {{ travelerTypeLabel(trip.constraints.travelerType) }}</dd></div>
               <div><dt class="text-xs text-surface-400">节奏</dt><dd class="mt-1 text-sm font-semibold text-surface-700">{{ paceLabel(trip.constraints.pace) }}</dd></div>
-              <div><dt class="text-xs text-surface-400">预算</dt><dd class="mt-1 text-sm font-semibold text-surface-700">{{ trip.constraints.budgetAmount === null ? '未设置' : `¥${trip.constraints.budgetAmount}` }}</dd></div>
-              <div><dt class="text-xs text-surface-400">住宿</dt><dd class="mt-1 text-sm font-semibold text-surface-700">{{ trip.constraints.accommodation?.placeName ?? '住宿地点待确认' }}</dd></div>
-              <div><dt class="text-xs text-surface-400">偏好</dt><dd class="mt-1 text-sm text-surface-600">{{ trip.constraints.preferences.join('、') || '未设置' }}</dd></div>
-              <div><dt class="text-xs text-surface-400">必去</dt><dd class="mt-1 text-sm text-surface-600">{{ (trip.constraints.mustVisitPlaces ?? []).join('、') || '未设置' }}</dd></div>
-              <div><dt class="text-xs text-surface-400">到达 / 返程</dt><dd class="mt-1 text-sm text-surface-600">{{ trip.constraints.arrival?.placeName ?? '未设置' }} / {{ trip.constraints.departure?.placeName ?? '未设置' }}</dd></div>
+              <template v-if="trip.constraints.accommodation?.placeName">
+                <div><dt class="text-xs text-surface-400">住宿</dt><dd class="mt-1 text-sm font-semibold text-surface-700">{{ trip.constraints.accommodation.placeName }}</dd></div>
+              </template>
+              <template v-if="trip.constraints.preferences.length">
+                <div><dt class="text-xs text-surface-400">偏好</dt><dd class="mt-1 text-sm text-surface-600">{{ trip.constraints.preferences.join('、') }}</dd></div>
+              </template>
+              <template v-if="(trip.constraints.mustVisitPlaces ?? []).length">
+                <div><dt class="text-xs text-surface-400">必去</dt><dd class="mt-1 text-sm text-surface-600">{{ (trip.constraints.mustVisitPlaces ?? []).join('、') }}</dd></div>
+              </template>
+              <template v-if="trip.constraints.arrival?.placeName || trip.constraints.departure?.placeName">
+                <div><dt class="text-xs text-surface-400">到达 / 返程</dt><dd class="mt-1 text-sm text-surface-600">{{ trip.constraints.arrival?.placeName ?? '未设置' }} / {{ trip.constraints.departure?.placeName ?? '未设置' }}</dd></div>
+              </template>
             </dl>
           </Card>
         </section>
 
+        <!-- Public Weather Window (B13-I): independent of the itinerary,
+             so planning / review / failed states still see the weather. -->
+        <div class="mb-4">
+          <Card padding="none" class="overflow-hidden">
+            <TripWeatherTimeline
+              :weather-facts="cityWeatherFacts"
+              :start-date="trip.startDate"
+              :end-date="trip.endDate"
+              :selected-date="candidateHighlightDate ?? selectedMapDate"
+              :source-title="weatherSourceTitle"
+              :source-url="weatherSourceUrl"
+              :syncing="weatherSyncing"
+              @select-date="selectWeatherDate"
+              @show-all="showAllMapRoutes"
+              @sync="syncWeather"
+            />
+          </Card>
+        </div>
+
         <!-- Feasibility Review / Authoritative Report -->
-        <section v-if="planningState === 'waiting_user'" class="mb-6" aria-label="规划需要确认">
+        <section v-if="planningState === 'waiting_user'" id="planning-review-section" class="mb-4" aria-label="规划需要确认">
           <PlanningReviewPanel
             :report="readFeasibilityReportResult.ok ? readFeasibilityReportResult.value : null"
             :malformed-report="!readFeasibilityReportResult.ok && !!feasibilityReport"
             :candidate="candidateItinerary"
+            :highlight-date="candidateHighlightDate"
             :abandon-busy="abandonBusy"
             :current-itinerary="itinerary
               ? { title: itinerary.title, estimatedTotalCost: itinerary.estimatedTotalCost, days: itinerary.days }
@@ -876,7 +1047,7 @@ watch(() => props.itinerary, (nextItinerary) => {
               v-if="itinerary && datesNeedingTransitRefresh.length"
               variant="outline"
               size="sm"
-              :disabled="planningState === 'queued'"
+              :disabled="planningState === 'queued' || planningState === 'waiting_user'"
               class="secondary-planning-button"
               @click="startLocalReplanning"
             >
@@ -887,13 +1058,13 @@ watch(() => props.itinerary, (nextItinerary) => {
               :variant="itinerary ? 'outline' : 'primary'"
               size="sm"
               data-testid="start-planning"
-              :disabled="planningState === 'queued'"
+              :disabled="planningState === 'queued' || planningState === 'waiting_user'"
               @click="startPlanning"
             >
               <LoaderCircle v-if="planningState === 'queued'" class="animate-spin" :size="15" aria-hidden="true" />
-              <RefreshCw v-else-if="itinerary" :size="15" aria-hidden="true" />
+              <RefreshCw v-else-if="itinerary && planningState !== 'waiting_user'" :size="15" aria-hidden="true" />
               <Play v-else :size="15" aria-hidden="true" />
-              {{ planningState === 'queued' ? '规划中' : itinerary ? '重新规划' : '开始规划' }}
+              {{ planningState === 'queued' ? '规划中' : planningState === 'waiting_user' ? '候选待确认' : itinerary ? '重新规划' : '开始规划' }}
             </Button>
             <Button
               v-if="planningState === 'queued'"
@@ -945,19 +1116,12 @@ watch(() => props.itinerary, (nextItinerary) => {
           <h2 id="itinerary-title" class="sr-only">行程时间轴</h2>
             <!-- Map Card -->
             <Card class="mb-6 overflow-hidden" padding="none">
-              <TripWeatherTimeline
-                :weather-facts="cityWeatherFacts"
-                :start-date="trip.startDate"
-                :end-date="trip.endDate"
-                :selected-date="selectedMapDate"
-                @select-date="selectWeatherDate"
-                @show-all="showAllMapRoutes"
-              />
               <div class="h-[380px] sm:h-[480px] w-full">
                 <TripMap
                 :itinerary="itinerary"
                 :selected-activity-id="selectedActivityId"
                 :selected-date="selectedMapDate"
+                :allow-empty-selection="planningState === 'waiting_user'"
                 @select-activity="selectActivity"
               />
             </div>
@@ -981,7 +1145,7 @@ watch(() => props.itinerary, (nextItinerary) => {
 
           <!-- Day Timeline -->
           <div class="space-y-10">
-            <section v-for="(day, dayIndex) in itinerary.days" :key="day.date">
+            <section v-for="(day, dayIndex) in itinerary.days" :key="day.date" :id="`day-${day.date}`">
               <!-- Day Header -->
               <div class="mb-5">
                 <div class="flex items-center gap-3">
@@ -1388,6 +1552,8 @@ watch(() => props.itinerary, (nextItinerary) => {
             :model="form"
             mode="edit"
             :preference-options="preferenceOptions"
+            :city="props.trip?.destination ?? ''"
+            :get-token="props.getToken"
           />
 
           <!-- Error -->

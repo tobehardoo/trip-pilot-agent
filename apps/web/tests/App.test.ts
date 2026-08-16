@@ -51,6 +51,32 @@ const tripResponse = {
   updatedAt: '2026-07-13T01:00:00Z',
 }
 
+const mustVisitCandidate = {
+  provider: 'DEMO',
+  providerPoiId: 'demo-chenjiaci',
+  name: '陈家祠',
+  address: 'Demo location in 广州',
+  province: '',
+  city: '广州',
+  district: '',
+  longitude: 113.2405,
+  latitude: 23.1256,
+  estimated: true,
+}
+
+const avoidCandidate = {
+  provider: 'DEMO',
+  providerPoiId: 'demo-guangzhouta',
+  name: '广州塔',
+  address: 'Demo location in 广州',
+  province: '',
+  city: '广州',
+  district: '',
+  longitude: 113.3245,
+  latitude: 23.1066,
+  estimated: true,
+}
+
 const itineraryResponse = {
   versionId: '55555555-5555-5555-5555-555555555555',
   versionNumber: 1,
@@ -268,6 +294,22 @@ async function openPlanningWorkspace(fetchMock: ReturnType<typeof vi.fn>) {
   await screen.findByText('尚未生成行程')
 }
 
+/** B13: select a structured destination through the province/city cascade. */
+async function selectDestinationCity(province: string, city: string, district?: string) {
+  await fireEvent.update(await screen.findByLabelText('省 / 直辖市'), province)
+  const citySelect = await screen.findByLabelText('城市')
+  await fireEvent.update(citySelect, city)
+  if (district) {
+    await fireEvent.click(await screen.findByRole('button', { name: district }))
+  }
+}
+
+/** B13-E: fill the two datetime boundaries of the create form. */
+async function fillBoundaries(arrival: string, departure: string) {
+  await fireEvent.update(screen.getByLabelText('抵达时间'), arrival)
+  await fireEvent.update(screen.getByLabelText('离开时间'), departure)
+}
+
 describe('TripPilot application shell', () => {
   beforeEach(() => {
     window.history.replaceState({}, '', '/trips')
@@ -371,9 +413,8 @@ describe('TripPilot application shell', () => {
     await screen.findByRole('heading', { name: '我的旅行' })
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
     await fireEvent.update(screen.getByLabelText('旅行名称'), '广州周末四日')
-    await fireEvent.update(screen.getByLabelText('目的地'), '广州')
-    await fireEvent.update(screen.getByLabelText('开始日期'), '2026-07-18')
-    await fireEvent.update(screen.getByLabelText('结束日期'), '2026-07-21')
+    await selectDestinationCity('广东省', '广州')
+    await fillBoundaries('2026-07-18T09:00', '2026-07-21T18:00')
     await fireEvent.click(screen.getByRole('button', { name: '保存旅行' }))
 
     expect(await screen.findByRole('heading', { name: '广州周末四日' })).toBeTruthy()
@@ -487,9 +528,8 @@ describe('TripPilot application shell', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
     await fireEvent.update(screen.getByLabelText('旅行名称'), createdTrip.title)
-    await fireEvent.update(screen.getByLabelText('目的地'), createdTrip.destination)
-    await fireEvent.update(screen.getByLabelText('开始日期'), createdTrip.startDate)
-    await fireEvent.update(screen.getByLabelText('结束日期'), createdTrip.endDate)
+    await selectDestinationCity('浙江省', '杭州')
+    await fillBoundaries('2026-08-01T09:00', '2026-08-04T18:00')
     await fireEvent.click(screen.getByRole('button', { name: '保存旅行' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     resolveStaleList(response([tripResponse]))
@@ -512,10 +552,18 @@ describe('TripPilot application shell', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '我的旅行' })
     await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+
+    // B13_FIX R6 (P1-3): the create page owns exactly two datetime inputs
+    // (the authoritative boundaries); the legacy constraint-time inputs are
+    // gone.
+    const boundaryTimes = document.querySelectorAll('input[type="datetime-local"]')
+    expect(boundaryTimes).toHaveLength(2)
+    expect(screen.queryByLabelText('到达时间（北京时间）')).toBeNull()
+    expect(screen.queryByLabelText('返程时间（北京时间）')).toBeNull()
+
     await fireEvent.update(screen.getByLabelText('旅行名称'), '广州周末四日')
-    await fireEvent.update(screen.getByLabelText('目的地'), '广州')
-    await fireEvent.update(screen.getByLabelText('开始日期'), '2026-07-18')
-    await fireEvent.update(screen.getByLabelText('结束日期'), '2026-07-21')
+    await selectDestinationCity('广东省', '广州')
+    await fillBoundaries('2026-07-18T09:00', '2026-07-21T18:00')
     await fireEvent.update(screen.getByLabelText('预算'), '4000')
     await fireEvent.update(screen.getByLabelText('同行人数'), '2')
     await fireEvent.update(screen.getByLabelText('同行类型'), 'FRIENDS')
@@ -527,8 +575,17 @@ describe('TripPilot application shell', () => {
     expect(submittedBody).toEqual({
       title: '广州周末四日',
       destination: '广州',
-      startDate: '2026-07-18',
-      endDate: '2026-07-21',
+      region: {
+        provinceCode: '440000',
+        cityCode: '440100',
+        districtCodes: [],
+        provinceName: '广东省',
+        cityName: '广州',
+        districtNames: ['全市'],
+        datasetVersion: '2023-06-30',
+      },
+      arrivalAt: '2026-07-18T09:00:00+08:00',
+      departureAt: '2026-07-21T18:00:00+08:00',
       constraints: {
         budgetAmount: 4000,
         travelers: 2,
@@ -541,7 +598,11 @@ describe('TripPilot application shell', () => {
         accommodation: null,
         mustVisitPlaces: [],
         avoidPlaces: [],
-        mealWindows: [],
+        mealWindows: [
+          { mealType: 'BREAKFAST', startTime: '08:00', endTime: '09:00', source: 'DEFAULT' },
+          { mealType: 'LUNCH', startTime: '12:00', endTime: '13:00', source: 'DEFAULT' },
+          { mealType: 'DINNER', startTime: '18:00', endTime: '19:00', source: 'DEFAULT' },
+        ],
         mobilityLevel: 'STANDARD',
       },
     })
@@ -609,10 +670,13 @@ describe('TripPilot application shell', () => {
         }
         if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
         if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
-        if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
-        if (url.endsWith('/api/trips')) return response([tripResponse])
-        throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
-      })
+      if (url.endsWith('/api/planning-tasks/33333333-3333-3333-3333-333333333333/events')) {
+        return response('', 200, { 'Content-Type': 'text/event-stream' })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
 
       await signIn(fetchMock)
       await screen.findByRole('heading', { name: tripResponse.title })
@@ -1358,6 +1422,35 @@ describe('TripPilot application shell', () => {
         submittedBody = JSON.parse(String(init.body))
         return response(updatedTrip)
       }
+      if (url.endsWith('/api/trips/places/search')) {
+        const body = JSON.parse(String(init?.body))
+        if (body.keyword === '广州南站') {
+          return response({
+            provider: 'DEMO',
+            estimated: true,
+            candidates: [{ ...mustVisitCandidate, name: '广州南站', providerPoiId: 'demo-gz-south' }],
+          })
+        }
+        if (body.keyword === '广州白云机场') {
+          return response({
+            provider: 'DEMO',
+            estimated: true,
+            candidates: [{ ...mustVisitCandidate, name: '广州白云机场', providerPoiId: 'demo-gz-airport' }],
+          })
+        }
+        if (body.keyword === '北京路附近酒店') {
+          return response({
+            provider: 'DEMO',
+            estimated: true,
+            candidates: [{ ...mustVisitCandidate, name: '北京路附近酒店', providerPoiId: 'demo-gz-hotel' }],
+          })
+        }
+        return response({
+          provider: 'DEMO',
+          estimated: true,
+          candidates: body.keyword === '广州塔' ? [avoidCandidate] : [mustVisitCandidate],
+        })
+      }
       if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(detailTrip)
       if (url.endsWith('/api/trips')) return response([tripResponse])
       throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
@@ -1371,14 +1464,25 @@ describe('TripPilot application shell', () => {
     await fireEvent.update(screen.getByLabelText('预算'), '5200')
     await fireEvent.update(screen.getByLabelText('同行人数'), '3')
     await fireEvent.update(screen.getByLabelText('同行类型'), 'FAMILY')
-    await fireEvent.update(screen.getByLabelText('到达地点'), '广州南站')
+    await fireEvent.update(screen.getByLabelText('到达地点搜索'), '广州南站')
+    await fireEvent.click(await screen.findByRole('button', { name: /广州南站/ }))
     await fireEvent.update(screen.getByLabelText('到达时间（北京时间）'), '2026-07-18T11:00')
-    await fireEvent.update(screen.getByLabelText('返程地点'), '广州白云机场')
+    await fireEvent.update(screen.getByLabelText('返程地点搜索'), '广州白云机场')
+    await fireEvent.click(await screen.findByRole('button', { name: /广州白云机场/ }))
     await fireEvent.update(screen.getByLabelText('返程时间（北京时间）'), '2026-07-21T17:00')
-    await fireEvent.update(screen.getByLabelText('住宿锚点'), '北京路附近酒店')
-    await fireEvent.update(screen.getByLabelText('必去地点（用顿号分隔）'), '陈家祠、沙面')
-    await fireEvent.update(screen.getByLabelText('排除地点（用顿号分隔）'), '广州塔')
+    await fireEvent.update(screen.getByLabelText('住宿锚点搜索'), '北京路附近酒店')
+    await fireEvent.click(await screen.findByRole('button', { name: /北京路附近酒店/ }))
+    // Close the anchor dropdowns so the candidate click below targets the
+    // must-visit list only (anchors are candidate-pickers since B13_FIX R5).
+    await fireEvent.blur(screen.getByLabelText('到达地点搜索'))
+    await fireEvent.blur(screen.getByLabelText('返程地点搜索'))
+    await fireEvent.blur(screen.getByLabelText('住宿锚点搜索'))
+    await fireEvent.update(screen.getByLabelText('必去地点搜索'), '陈家祠')
+    await fireEvent.click(await screen.findByRole('button', { name: /陈家祠/ }))
+    await fireEvent.update(screen.getByLabelText('排除地点搜索'), '广州塔')
+    await fireEvent.click(await screen.findByRole('button', { name: /广州塔/ }))
     await fireEvent.update(screen.getByLabelText('行动能力'), 'REDUCED')
+    await fireEvent.update(screen.getByLabelText('午餐安排方式'), 'USER')
     await fireEvent.update(screen.getByLabelText('午餐开始时间'), '12:00')
     await fireEvent.update(screen.getByLabelText('午餐结束时间'), '13:00')
     await fireEvent.click(screen.getByLabelText('舒缓'))
@@ -1395,12 +1499,79 @@ describe('TripPilot application shell', () => {
       pace: 'RELAXED',
       preferences: ['岭南文化', '本地美食'],
       fixedSchedules,
-      arrival: { placeName: '广州南站', time: '2026-07-18T11:00:00+08:00' },
-      departure: { placeName: '广州白云机场', time: '2026-07-21T17:00:00+08:00' },
-      accommodation: { placeName: '北京路附近酒店' },
-      mustVisitPlaces: ['陈家祠', '沙面'],
+      arrival: {
+        placeName: '广州南站',
+        time: '2026-07-18T11:00:00+08:00',
+        placeRef: {
+          provider: 'DEMO',
+          providerPoiId: 'demo-gz-south',
+          name: '广州南站',
+          address: 'Demo location in 广州',
+          province: '',
+          city: '广州',
+          district: '',
+          longitude: 113.2405,
+          latitude: 23.1256,
+        },
+      },
+      departure: {
+        placeName: '广州白云机场',
+        time: '2026-07-21T17:00:00+08:00',
+        placeRef: {
+          provider: 'DEMO',
+          providerPoiId: 'demo-gz-airport',
+          name: '广州白云机场',
+          address: 'Demo location in 广州',
+          province: '',
+          city: '广州',
+          district: '',
+          longitude: 113.2405,
+          latitude: 23.1256,
+        },
+      },
+      accommodation: {
+        placeName: '北京路附近酒店',
+        placeRef: {
+          provider: 'DEMO',
+          providerPoiId: 'demo-gz-hotel',
+          name: '北京路附近酒店',
+          address: 'Demo location in 广州',
+          province: '',
+          city: '广州',
+          district: '',
+          longitude: 113.2405,
+          latitude: 23.1256,
+        },
+      },
+      mustVisitPlaces: ['陈家祠'],
       avoidPlaces: ['广州塔'],
-      mealWindows: [{ mealType: 'LUNCH', startTime: '12:00', endTime: '13:00' }],
+      mustVisitPlaceRefs: [{
+        provider: 'DEMO',
+        providerPoiId: 'demo-chenjiaci',
+        name: '陈家祠',
+        address: 'Demo location in 广州',
+        province: '',
+        city: '广州',
+        district: '',
+        longitude: 113.2405,
+        latitude: 23.1256,
+      }],
+      avoidPlaceRefs: [{
+        provider: 'DEMO',
+        providerPoiId: 'demo-guangzhouta',
+        name: '广州塔',
+        address: 'Demo location in 广州',
+        province: '',
+        city: '广州',
+        district: '',
+        longitude: 113.3245,
+        latitude: 23.1066,
+      }],
+      mealWindows: [
+        { mealType: 'BREAKFAST', startTime: '08:00', endTime: '09:00', source: 'DEFAULT' },
+        { mealType: 'LUNCH', startTime: '12:00', endTime: '13:00', source: 'USER' },
+        { mealType: 'DINNER', startTime: '18:00', endTime: '19:00', source: 'DEFAULT' },
+      ],
       mobilityLevel: 'REDUCED',
     })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
@@ -1420,12 +1591,13 @@ describe('TripPilot application shell', () => {
     await fireEvent.click(screen.getByRole('button', { name: '打开 广州周末四日' }))
     await screen.findByRole('heading', { name: '结构化约束' })
     await fireEvent.click(screen.getByRole('button', { name: '编辑约束' }))
-    await fireEvent.update(screen.getByLabelText('到达地点'), '广州南站')
+    await fireEvent.update(screen.getByLabelText('到达地点搜索'), '广州南站')
+    await fireEvent.update(screen.getByLabelText('午餐安排方式'), 'USER')
     await fireEvent.update(screen.getByLabelText('午餐开始时间'), '12:00')
     await fireEvent.click(screen.getByRole('button', { name: '保存约束' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain('请同时填写到达地点和到达时间')
-    expect((screen.getByLabelText('到达地点') as HTMLInputElement).value).toBe('广州南站')
+    expect((screen.getByLabelText('到达地点搜索') as HTMLInputElement).value).toBe('广州南站')
     expect((screen.getByLabelText('午餐开始时间') as HTMLInputElement).value).toBe('12:00')
     expect(fetchMock).not.toHaveBeenCalledWith(
       `/api/trips/${tripResponse.id}/constraints`,
@@ -1888,12 +2060,434 @@ describe('itinerary knowledge evidence states', () => {
 
     // Waiting-user review panel appears with the authoritative report.
     expect(await screen.findByText('规划需要确认')).toBeTruthy()
-    expect(screen.getByText('待修复')).toBeTruthy()
+    // B13_FIX R7 (P1-4): the FAIL surfaces as a main risk up front; the
+    // full report panel is collapsed behind the details toggle.
+    expect(screen.getByText('主要风险')).toBeTruthy()
+    expect(screen.getByText('景点在行程时间关闭')).toBeTruthy()
     // Candidate renders as candidate, distinct from the formal itinerary.
     expect(screen.getAllByText('候选行程').length).toBeGreaterThan(0)
     expect(screen.getByText('候选活动')).toBeTruthy()
     // The formal itinerary heading is still the existing one, not replaced.
     expect(screen.getByRole('heading', { name: '行程时间轴' })).toBeTruthy()
+  })
+
+  test('B13-I WAITING_USER without a formal itinerary still shows the weather window', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const reviewCandidate = {
+      title: '候选行程',
+      days: [{
+        date: '2026-07-18',
+        dayType: null,
+        activities: [{
+          activityId: '3d76fb9e-362e-4b28-8a9e-18e8ac7050ae',
+          title: '候选活动',
+          startTime: '2026-07-18T01:00:00Z',
+          endTime: '2026-07-18T02:00:00Z',
+          estimatedCost: 0,
+          source: 'DEMO',
+          providerPoiId: null,
+          coordinates: null,
+          address: null,
+          typeCode: null,
+          typeName: null,
+          kind: null,
+          timeFixed: null,
+        }],
+        transitLegs: [],
+      }],
+      estimatedTotalCost: 100,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: '33333333-3333-3333-3333-333333333333',
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith('/api/planning-tasks/33333333-3333-3333-3333-333333333333/events')) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: '尚未生成行程' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    const scrollSpy = vi.fn()
+    Element.prototype.scrollIntoView = scrollSpy
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    await screen.findByRole('heading', { name: '结构化约束' })
+    // No formal itinerary yet, so the action is "开始规划".
+    await fireEvent.click(screen.getByRole('button', { name: '开始规划' }))
+    streamController.enqueue(encoder.encode(
+      'id: 1\nevent: PLANNING_QUEUED\ndata: {"eventId":1,"taskId":"33333333-3333-3333-3333-333333333333","eventType":"PLANNING_QUEUED","schemaVersion":1,"payload":{"status":"QUEUED"},"createdAt":"2026-07-16T01:00:00Z"}\n\n',
+    ))
+    streamController.enqueue(encoder.encode(
+      `id: 2\nevent: PLANNING_REVIEW_REQUIRED\ndata: ${JSON.stringify({
+        eventId: 2,
+        taskId: '33333333-3333-3333-3333-333333333333',
+        eventType: 'PLANNING_REVIEW_REQUIRED',
+        schemaVersion: 1,
+        payload: {
+          status: 'WAITING_USER',
+          provider: 'DEMO',
+          candidateItinerary: reviewCandidate,
+          feasibilityReport: {
+            schemaVersion: 1,
+            reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
+            validatorVersion: 'hard-validator-v4',
+            itineraryFingerprint: 'b'.repeat(64),
+            status: 'NEEDS_REPAIR',
+            validatedAt: '2026-07-16T01:00:00Z',
+            requiredRuleIds: ['MEAL_WINDOW'],
+            missingRequiredRuleIds: [],
+            summary: { totalCount: 1, passCount: 0, failCount: 1, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
+            ruleResults: [{
+              ruleId: 'MEAL_WINDOW',
+              ruleVersion: 'hard-rule-v1',
+              outcome: 'FAIL',
+              reasonCode: 'MEAL_PLACEMENT_MISSING',
+              message: '午餐窗口缺少安排',
+              affectedDates: ['2026-07-18'],
+              affectedEntityRefs: [],
+              evidenceRefs: [],
+              repairable: true,
+            }],
+            repairAttempts: [],
+          },
+        },
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
+    ))
+    streamController.close()
+
+    // The weather window must be visible in waiting_user WITHOUT any
+    // formal itinerary, above the review panel.
+    expect(await screen.findByText('规划需要确认')).toBeTruthy()
+    const weatherRegion = screen.getByRole('region', { name: '行程天气' })
+    expect(weatherRegion).toBeTruthy()
+    // No formal itinerary → no itinerary heading, and no crash.
+    expect(screen.queryByRole('heading', { name: '行程时间轴' })).toBeNull()
+    expect(screen.getByText('尚未生成行程')).toBeTruthy()
+    // The city-intelligence fetch failed (unmocked route) — a weather
+    // source failure must NOT hide the component; safe empty states and the
+    // sync action are shown instead (B13-I §5: Provider 失败不得隐藏组件).
+    // A weather source failure must NOT hide the component: the bar still
+    // renders one of the safe empty states (待同步 / 历史天气尚未同步 /
+    // 预报未开放 — depending on the dates vs. today) plus the sync action.
+    const safeEmptyStates = screen.getAllByText(/待同步|历史天气尚未同步|预报未开放/)
+    expect(safeEmptyStates.length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: '同步天气' })).toBeTruthy()
+
+    // Clicking a weather date selects it and locates the candidate review.
+    await fireEvent.click(screen.getByRole('button', { name: '选择 2026-07-18 天气' }))
+    expect(scrollSpy).toHaveBeenCalled()
+    // The matching candidate day is highlighted (B13-I §4: 高亮候选日期).
+    const candidateDay = document.getElementById('candidate-day-2026-07-18')
+    expect(candidateDay).toBeTruthy()
+    expect(candidateDay!.className).toContain('border-primary-400')
+    await fireEvent.click(screen.getByRole('button', { name: '查看全部行程' }))
+    expect(screen.getByRole('button', { name: '选择 2026-07-18 天气' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  test('B13_FIX.1 R5 WAITING_USER weather click never selects the old formal activity', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const reviewCandidate = {
+      title: '候选行程',
+      days: [{
+        date: '2026-07-18',
+        dayType: null,
+        activities: [{
+          activityId: '3d76fb9e-362e-4b28-8a9e-18e8ac7050ae',
+          title: '候选活动',
+          startTime: '2026-07-18T01:00:00Z',
+          endTime: '2026-07-18T02:00:00Z',
+          estimatedCost: 0,
+          source: 'DEMO',
+          providerPoiId: null,
+          coordinates: null,
+          address: null,
+          typeCode: null,
+          typeName: null,
+          kind: null,
+          timeFixed: null,
+        }],
+        transitLegs: [],
+      }],
+      estimatedTotalCost: 100,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) return response(itineraryResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/guide-imports`) && init?.method === 'GET') return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks/latest`)) {
+        return response({
+          taskId: '33333333-3333-3333-3333-333333333333',
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'WAITING_USER',
+          baselineTripVersion: 0,
+          eventStreamUrl: '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
+          feasibilityReport: {
+            schemaVersion: 1,
+            reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
+            validatorVersion: 'hard-validator-v4',
+            itineraryFingerprint: 'b'.repeat(64),
+            status: 'NEEDS_REPAIR',
+            validatedAt: '2026-07-18T00:00:00Z',
+            requiredRuleIds: ['MEAL_WINDOW'],
+            missingRequiredRuleIds: [],
+            summary: { totalCount: 1, passCount: 0, failCount: 1, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
+            ruleResults: [{ ruleId: 'MEAL_WINDOW', ruleVersion: 'hard-rule-v1', outcome: 'FAIL', reasonCode: 'MEAL_PLACEMENT_MISSING', message: '午餐窗口缺少安排', affectedDates: ['2026-07-18'], affectedEntityRefs: [], evidenceRefs: [], repairable: true }],
+            repairAttempts: [],
+          },
+          candidateItinerary: reviewCandidate,
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:01:00Z',
+        })
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    const scrollSpy = vi.fn()
+    Element.prototype.scrollIntoView = scrollSpy
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    await screen.findByRole('heading', { name: '规划需要确认' })
+
+    // The formal itinerary is present with a same-day activity.
+    const formalActivity = document.getElementById('activity-66666666-6666-6666-6666-666666666666')
+    expect(formalActivity).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: '选择 2026-07-18 天气' }))
+
+    // The candidate day is highlighted.
+    const candidateDay = document.getElementById('candidate-day-2026-07-18')
+    expect(candidateDay!.className).toContain('border-primary-400')
+    // The formal activity must NOT carry the selected class/z-index.
+    expect(formalActivity!.className).not.toContain('z-10')
+    expect(formalActivity!.className).not.toContain('ring-primary-400')
+    // No overview marker is selected.
+    const selectedMarkers = document.querySelectorAll('.overview-marker.is-selected')
+    expect(selectedMarkers.length).toBe(0)
+
+    // "查看全部行程" clears both the candidate and the formal selection.
+    const showAll = await waitFor(() => screen.getByRole('button', { name: '查看全部行程' }))
+    await fireEvent.click(showAll)
+    expect(candidateDay!.className).not.toContain('border-primary-400')
+  })
+
+  test('B13-I queued planning without an itinerary still shows the weather window', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: '44444444-4444-4444-4444-444444444444',
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: '/api/planning-tasks/44444444-4444-4444-4444-444444444444/events',
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith('/api/planning-tasks/44444444-4444-4444-4444-444444444444/events')) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: '尚未生成行程' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    await screen.findByRole('heading', { name: '结构化约束' })
+    await fireEvent.click(screen.getByRole('button', { name: '开始规划' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
+    })
+    streamController.enqueue(encoder.encode(
+      'id: 1\nevent: PLANNING_QUEUED\ndata: {"eventId":1,"taskId":"44444444-4444-4444-4444-444444444444","eventType":"PLANNING_QUEUED","schemaVersion":1,"payload":{"status":"QUEUED"},"createdAt":"2026-07-16T01:00:00Z"}\n\n',
+    ))
+    streamController.close()
+
+    // While planning (queued), before any itinerary exists, the weather
+    // window is still rendered — it is not bound to the formal itinerary.
+    expect(await screen.findByText('正在生成行程')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '行程天气' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '行程时间轴' })).toBeNull()
+    // A weather date can still be selected without any schedule; no error.
+    await fireEvent.click(screen.getByRole('button', { name: '选择 2026-07-19 天气' }))
+    expect(screen.getByRole('button', { name: '选择 2026-07-19 天气' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  test('B13-I failed planning without an itinerary still shows the weather window', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: '55555555-5555-5555-5555-555555555555',
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: '/api/planning-tasks/55555555-5555-5555-5555-555555555555/events',
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith('/api/planning-tasks/55555555-5555-5555-5555-555555555555/events')) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: '尚未生成行程' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    await screen.findByRole('heading', { name: '结构化约束' })
+    await fireEvent.click(screen.getByRole('button', { name: '开始规划' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
+    })
+    streamController.enqueue(encoder.encode(
+      'id: 1\nevent: PLANNING_QUEUED\ndata: {"eventId":1,"taskId":"55555555-5555-5555-5555-555555555555","eventType":"PLANNING_QUEUED","schemaVersion":1,"payload":{"status":"QUEUED"},"createdAt":"2026-07-16T01:00:00Z"}\n\n',
+    ))
+    streamController.enqueue(encoder.encode(
+      `id: 2\nevent: PLANNING_FAILED\ndata: ${JSON.stringify({
+        eventId: 2,
+        taskId: '55555555-5555-5555-5555-555555555555',
+        eventType: 'PLANNING_FAILED',
+        schemaVersion: 1,
+        payload: { status: 'FAILED', errorCode: 'PLANNING_PROVIDER_FAILED', errorMessage: '规划服务暂不可用' },
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
+    ))
+    streamController.close()
+
+    // Failed state still keeps the weather window; only the plan failed.
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '行程天气' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '行程时间轴' })).toBeNull()
+  })
+
+  test('B13-I cancelled planning without an itinerary still shows the weather window', async () => {
+    const encoder = new TextEncoder()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const eventStream = new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+    })
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks`) && init?.method === 'POST') {
+        return response({
+          taskId: '66666666-6666-6666-6666-666666666666',
+          tripId: tripResponse.id,
+          taskType: 'CREATE',
+          status: 'QUEUED',
+          baselineTripVersion: 0,
+          eventStreamUrl: '/api/planning-tasks/66666666-6666-6666-6666-666666666666/events',
+          createdAt: '2026-07-16T01:00:00Z',
+          updatedAt: '2026-07-16T01:00:00Z',
+        }, 202)
+      }
+      if (url.endsWith('/api/planning-tasks/66666666-6666-6666-6666-666666666666/events')) {
+        return { ok: true, status: 200, body: eventStream } as Response
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/shares`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: '尚未生成行程' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '广州周末四日' })
+    await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
+    await screen.findByRole('heading', { name: '结构化约束' })
+    await fireEvent.click(screen.getByRole('button', { name: '开始规划' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
+    })
+    streamController.enqueue(encoder.encode(
+      'id: 1\nevent: PLANNING_QUEUED\ndata: {"eventId":1,"taskId":"66666666-6666-6666-6666-666666666666","eventType":"PLANNING_QUEUED","schemaVersion":1,"payload":{"status":"QUEUED"},"createdAt":"2026-07-16T01:00:00Z"}\n\n',
+    ))
+    streamController.enqueue(encoder.encode(
+      `id: 2\nevent: PLANNING_CANCELLED\ndata: ${JSON.stringify({
+        eventId: 2,
+        taskId: '66666666-6666-6666-6666-666666666666',
+        eventType: 'PLANNING_CANCELLED',
+        schemaVersion: 1,
+        payload: { status: 'CANCELLED' },
+        createdAt: '2026-07-16T01:00:01Z',
+      })}\n\n`,
+    ))
+    streamController.close()
+
+    // Cancelled state still keeps the weather window.
+    expect(await screen.findByText('规划已取消')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '行程天气' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: '行程时间轴' })).toBeNull()
   })
 
   test('PLANNING_COMPLETED with VERIFIED report renders authoritative feasibility panel', async () => {
@@ -2223,5 +2817,240 @@ describe('itinerary knowledge evidence states', () => {
     expect(await screen.findByText('规划已取消')).toBeTruthy()
     expect(screen.queryByText('已验证')).toBeNull()
     expect(screen.queryByText('91/100')).toBeNull()
+  })
+
+  // ── B13-A: unified create entry ─────────────────────────────────────────
+
+  const emptyListFetch = () => vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = urlOf(input)
+    if (url.endsWith('/api/auth/login')) return response(authResponse)
+    if (url.endsWith('/api/auth/logout')) return response(undefined, 204)
+    if (url.endsWith('/api/trips')) return response([])
+    throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+  })
+
+  test('B13-A shows no quick-start templates and no natural-language entry', async () => {
+    const fetchMock = emptyListFetch()
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await screen.findByText('还没有旅行')
+
+    expect(screen.queryByText('快速开始')).toBeNull()
+    expect(screen.queryByText('广州 City Walk')).toBeNull()
+    expect(screen.queryByText('长沙美食之旅')).toBeNull()
+    expect(screen.queryByText('杭州周末游')).toBeNull()
+    expect(screen.queryByText('用一句话描述旅行计划')).toBeNull()
+    expect(screen.queryByRole('button', { name: /解析/ })).toBeNull()
+  })
+
+  test('B13-A offers a single create entry even on the empty state', async () => {
+    const fetchMock = emptyListFetch()
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await screen.findByText('还没有旅行')
+
+    expect(screen.getAllByRole('button', { name: '创建旅行' })).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: '创建第一条旅行' })).toBeNull()
+  })
+
+  test('B13-A opens the create dialog with an empty destination cascade', async () => {
+    const fetchMock = emptyListFetch()
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+
+    const province = await screen.findByLabelText('省 / 直辖市') as HTMLSelectElement
+    expect(province.value).toBe('')
+    expect(screen.queryByLabelText('城市')).toBeNull()
+  })
+
+  test('B13-A does not keep a stale draft when the dialog is reopened', async () => {
+    const fetchMock = emptyListFetch()
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await fireEvent.update(screen.getByLabelText('旅行名称'), '临时草稿')
+    await fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+
+    expect((screen.getByLabelText('旅行名称') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('省 / 直辖市') as HTMLSelectElement).value).toBe('')
+    expect(screen.queryByLabelText('城市')).toBeNull()
+  })
+
+  // ── B13-B: structured province → city → district destination ────────────
+
+  test('B13-B submits 广东省—广州市—天河区 with structured region codes', async () => {
+    let submittedBody: unknown
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith('/api/trips') && init?.method === 'POST') {
+        submittedBody = JSON.parse(String(init.body))
+        return response(tripResponse, 201)
+      }
+      if (url.endsWith('/api/trips')) return response([])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await selectDestinationCity('广东省', '广州', '天河区')
+    await fillBoundaries('2026-07-18T09:00', '2026-07-21T18:00')
+    await fireEvent.click(screen.getByRole('button', { name: '保存旅行' }))
+
+    await waitFor(() => expect(submittedBody).toBeDefined())
+    expect((submittedBody as { region: unknown }).region).toEqual({
+      provinceCode: '440000',
+      cityCode: '440100',
+      districtCodes: ['440106'],
+      provinceName: '广东省',
+      cityName: '广州',
+      districtNames: ['天河区'],
+      datasetVersion: '2023-06-30',
+    })
+    expect((submittedBody as { destination: string }).destination).toBe('广州')
+  })
+
+  test('B13-B submits 广东省—江门市—全市 without district codes', async () => {
+    let submittedBody: unknown
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith('/api/trips') && init?.method === 'POST') {
+        submittedBody = JSON.parse(String(init.body))
+        return response(tripResponse, 201)
+      }
+      if (url.endsWith('/api/trips')) return response([])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await selectDestinationCity('广东省', '江门')
+    await fillBoundaries('2026-07-18T09:00', '2026-07-21T18:00')
+    await fireEvent.click(screen.getByRole('button', { name: '保存旅行' }))
+
+    await waitFor(() => expect(submittedBody).toBeDefined())
+    expect((submittedBody as { region: unknown }).region).toEqual({
+      provinceCode: '440000',
+      cityCode: '440700',
+      districtCodes: [],
+      provinceName: '广东省',
+      cityName: '江门',
+      districtNames: ['全市'],
+      datasetVersion: '2023-06-30',
+    })
+  })
+
+  test('B13-B clears the district selection when the city changes', async () => {
+    const fetchMock = emptyListFetch()
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await selectDestinationCity('广东省', '广州', '天河区')
+    expect(screen.getByRole('button', { name: '天河区' }).className).toContain('border-primary-300')
+
+    await fireEvent.update(screen.getByLabelText('城市'), '江门')
+    expect(screen.queryByRole('button', { name: '天河区' })).toBeNull()
+    expect(screen.getByText(/目的地：广东省 江门/)).toBeTruthy()
+  })
+
+  // ── B13-C: optional title with deterministic default and rename ──────────
+
+  test('B13-C omits a blank title so the server generates the deterministic default', async () => {
+    let submittedBody: unknown
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith('/api/trips') && init?.method === 'POST') {
+        submittedBody = JSON.parse(String(init.body))
+        return response(tripResponse, 201)
+      }
+      if (url.endsWith('/api/trips')) return response([])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: '我的旅行' })
+    await fireEvent.click(screen.getByRole('button', { name: '创建旅行' }))
+    await selectDestinationCity('广东省', '广州')
+    await fillBoundaries('2026-08-20T09:00', '2026-08-21T18:00')
+
+    expect(screen.getByText(/预览：2026年08月20日—08月21日 广州市旅行规划/)).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: '保存旅行' }))
+    await waitFor(() => expect(submittedBody).toBeDefined())
+    expect(submittedBody).not.toHaveProperty('title')
+    expect((submittedBody as { arrivalAt: string }).arrivalAt).toBe('2026-08-20T09:00:00+08:00')
+  })
+
+  test('B13-C renames a trip through the version-aware metadata endpoint', async () => {
+    let renameBody: unknown
+    const renamedTrip = { ...tripResponse, title: '国庆广州行', version: 1 }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/metadata`) && init?.method === 'PUT') {
+        renameBody = JSON.parse(String(init.body))
+        return response(renamedTrip)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks/latest`)) {
+        return response({ code: 'PLANNING_TASK_NOT_FOUND', message: 'Planning task was not found' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: 'Not planned' }, 404)
+      }
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: tripResponse.title })
+    await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
+    await screen.findByText('尚未生成行程')
+
+    await fireEvent.click(screen.getByRole('button', { name: '修改旅行名称' }))
+    await fireEvent.update(screen.getByLabelText('旅行新名称'), '国庆广州行')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(renameBody).toEqual({ expectedVersion: 0, title: '国庆广州行' }))
+    expect(await screen.findByRole('heading', { name: '国庆广州行' })).toBeTruthy()
+  })
+
+  test('B13-C surfaces a 409 rename conflict without overwriting the title', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/metadata`) && init?.method === 'PUT') {
+        return response({ code: 'TRIP_VERSION_CONFLICT', message: 'Trip was updated by another request; reload it before retrying' }, 409)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks/latest`)) {
+        return response({ code: 'PLANNING_TASK_NOT_FOUND', message: 'Planning task was not found' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: 'Not planned' }, 404)
+      }
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: tripResponse.title })
+    await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
+    await screen.findByText('尚未生成行程')
+
+    await fireEvent.click(screen.getByRole('button', { name: '修改旅行名称' }))
+    await fireEvent.update(screen.getByLabelText('旅行新名称'), '越权改名')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(await screen.findByText('Trip was updated by another request; reload it before retrying')).toBeTruthy()
+    expect((screen.getByLabelText('旅行新名称') as HTMLInputElement).value).toBe('越权改名')
   })
 })

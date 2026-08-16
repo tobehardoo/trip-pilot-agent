@@ -78,7 +78,7 @@ test('shows 规划需要确认 title and candidate not formal', () => {
   expect(screen.getByText(/候选行程尚未成为正式版本/)).toBeTruthy()
 })
 
-test('renders authoritative feasibility report panel for NEEDS_REPAIR', () => {
+test('renders authoritative feasibility report panel for NEEDS_REPAIR', async () => {
   render(PlanningReviewPanel, {
     props: {
       report: makeReport('NEEDS_REPAIR'),
@@ -86,7 +86,13 @@ test('renders authoritative feasibility report panel for NEEDS_REPAIR', () => {
       currentItinerary: null,
     },
   })
-  expect(screen.getByText('待修复')).toBeTruthy()
+  // B13_FIX R7 (P1-4): the report panel is collapsed behind the details
+  // toggle by default; the main-risk section still surfaces the FAIL up
+  // front.
+  expect(screen.getByText('主要风险')).toBeTruthy()
+  expect(screen.getByText('景点在行程时间关闭')).toBeTruthy()
+  expect(screen.queryByText('硬可行性验证')).toBeNull()
+  await screen.getByTestId('validation-details-toggle').click()
   expect(screen.getByText('硬可行性验证')).toBeTruthy()
 })
 
@@ -211,7 +217,7 @@ test('malformed candidate shows stable error panel', () => {
   expect(screen.getByText(/候选行程暂时无法读取/)).toBeTruthy()
 })
 
-test('malformed report shows stable error without guessing status', () => {
+test('malformed report shows stable error without guessing status', async () => {
   render(PlanningReviewPanel, {
     props: {
       report: null,
@@ -220,6 +226,9 @@ test('malformed report shows stable error without guessing status', () => {
       currentItinerary: null,
     },
   })
+  // The malformed-report panel lives inside the collapsed validation
+  // details (B13_FIX R7 / P1-4).
+  await screen.getByTestId('validation-details-toggle').click()
   expect(screen.getByText(/验证结果暂时无法读取/)).toBeTruthy()
 })
 
@@ -344,6 +353,33 @@ test('renders current formal itinerary transit summary in the comparison', () =>
     },
   })
   expect(screen.getByText(/Formal A → Formal B · 公共交通 · 20 分钟 · 2.4 公里/)).toBeTruthy()
+})
+
+test('formats transit durations of one hour or more', () => {
+  // B13_FIX R8 (P1-8): hour-level duration formatting branches.
+  const candidate = makeCandidateWithTransit()
+  candidate.days[0].transitLegs[0].durationSeconds = 5400 // 90 minutes
+  render(PlanningReviewPanel, {
+    props: {
+      report: makeReport('NEEDS_REPAIR'),
+      candidate,
+      currentItinerary: null,
+    },
+  })
+  expect(screen.getByText(/Activity 1 → Activity 2 · 步行（估算） · 1 小时 30 分/)).toBeTruthy()
+})
+
+test('formats whole-hour transit durations without a minute remainder', () => {
+  const candidate = makeCandidateWithTransit()
+  candidate.days[0].transitLegs[0].durationSeconds = 7200 // exactly 2 hours
+  render(PlanningReviewPanel, {
+    props: {
+      report: makeReport('NEEDS_REPAIR'),
+      candidate,
+      currentItinerary: null,
+    },
+  })
+  expect(screen.getByText(/Activity 1 → Activity 2 · 步行（估算） · 2 小时 ·/)).toBeTruthy()
 })
 
 test('candidate props are never mutated into the current itinerary', () => {

@@ -1,5 +1,10 @@
-import { render, screen } from '@testing-library/vue'
-import { describe, expect, it } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/vue'
+import { afterEach, describe, expect, it } from 'vitest'
+
+// B14_FIX.1 R2: DOM leakage across shuffled runs — each test must unmount
+// its wrapper so getByText('体验评分') never sees a stale sibling instance.
+afterEach(() => cleanup())
+
 
 import PlanEvaluationPanel from './PlanEvaluationPanel.vue'
 import type { PlanEvaluation } from '../lib/api'

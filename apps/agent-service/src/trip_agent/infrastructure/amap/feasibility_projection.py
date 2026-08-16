@@ -82,8 +82,9 @@ def project_amap_validation_inputs(
             if activity.kind in {"ATTRACTION", "EXPERIENCE"}:
                 duration_bindings.append(VisitDurationBinding(activity=locator, profile=profile))
 
-    # Meal placements: DayPlan meal demands map 1:1 to itinerary MEAL
-    # activities per day, in order.  A mismatch is input corruption.
+    # Meal placements: DayPlan meal demands carry the authoritative meal
+    # type; itinerary MEAL activities carry the same type in-process
+    # (B13_FIX R3).  Bind by type identity — never by position.
     meal_bindings: list[MealPlacementBinding] = []
     if len(day_plans) != len(itinerary.days):
         raise ValueError("day plans must match itinerary days")
@@ -95,7 +96,19 @@ def project_amap_validation_inputs(
         )
         if len(day_plan.meal_demands) != len(meal_activities):
             raise ValueError("meal demand count must match MEAL activities on every day")
-        for demand, (activity_index, _) in zip(day_plan.meal_demands, meal_activities, strict=True):
+        for demand, (activity_index, activity) in zip(
+            day_plan.meal_demands, meal_activities, strict=True
+        ):
+            if activity.meal_type is None:
+                raise ValueError(
+                    "AMap MEAL activities must carry an explicit meal type "
+                    "for identity binding"
+                )
+            if activity.meal_type != demand.meal_type:
+                raise ValueError(
+                    f"meal demand type {demand.meal_type} does not match "
+                    f"activity type {activity.meal_type}"
+                )
             meal_bindings.append(
                 MealPlacementBinding(
                     activity=ActivityLocator(

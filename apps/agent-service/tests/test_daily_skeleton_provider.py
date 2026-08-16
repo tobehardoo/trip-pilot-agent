@@ -2,7 +2,7 @@
 
 import asyncio
 from copy import deepcopy
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 
@@ -13,6 +13,7 @@ from trip_agent.domain.planning.protocols import (
     PlanningInfeasibleError,
     PlanningResult,
 )
+from trip_agent.domain.shared import CHINA_TIME_ZONE
 from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider
 from trip_agent.planning.trip_skeleton import (
     AccommodationState,
@@ -142,6 +143,8 @@ def _command(
     preferences: list[str] | None = None,
     pace: str = "BALANCED",
     fixed_schedules: list[dict] | None = None,
+    arrival_at: str | None = None,
+    departure_at: str | None = None,
 ) -> PlanningCreateCommand:
     payload = deepcopy(COMMAND)
     payload["schemaVersion"] = 2
@@ -159,6 +162,33 @@ def _command(
     constraints["mealWindows"] = []
     constraints["mobilityLevel"] = "STANDARD"
     constraints["fixedSchedules"] = fixed_schedules or []
+    if arrival_at is not None or departure_at is not None:
+        # B13_FIX R1: authoritative snapshot boundaries (create v4 shape).
+        payload["schemaVersion"] = 4
+        constraints["schemaVersion"] = 3
+        constraints.pop("arrival", None)
+        constraints.pop("departure", None)
+        trip = payload["payload"]["trip"]
+        trip["arrivalAt"] = arrival_at
+        trip["departureAt"] = departure_at
+        trip["arrivalAt"] = arrival_at
+        trip["departureAt"] = departure_at
+        payload["payload"]["planningContext"] = {
+            "snapshotId": "67396263-bac9-4db8-bc4c-08d57493ba26",
+            "schemaVersion": 3,
+            "tripId": payload["tripId"],
+            "planningTaskId": payload["taskId"],
+            "city": trip["destination"],
+            "travelStartDate": trip["startDate"],
+            "travelEndDate": trip["endDate"],
+            "generatedAt": "2026-07-13T08:00:00Z",
+            "stale": False,
+            "sources": [],
+            "facts": [],
+            "conflicts": [],
+            "excludedFacts": [],
+            "diagnostics": [],
+        }
     return PlanningCreateCommand.model_validate(payload)
 
 
@@ -169,22 +199,19 @@ def _provider(
     accommodation_poi: Poi | None = None,
 ) -> AmapPlanningProvider:
     return AmapPlanningProvider(
-        StaticMapProvider(
-            pois, meal_pois=meal_pois, accommodation_poi=accommodation_poi
-        ),
+        StaticMapProvider(pois, meal_pois=meal_pois, accommodation_poi=accommodation_poi),
         SuccessfulRouteProvider(),
     )
 
 
 # ── skeleton behavior --------------------------------------------------------
 
+
 def test_skeleton_emits_arrival_day_type_and_anchor_kind() -> None:
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     result = asyncio.run(
         _provider(pois).plan(
-            _command(
-                arrival={"placeName": "广州站", "time": "2026-08-01T14:00:00+08:00"}
-            )
+            _command(arrival={"placeName": "广州站", "time": "2026-08-01T14:00:00+08:00"})
         )
     )
 
@@ -200,9 +227,7 @@ def test_skeleton_marks_departure_anchor() -> None:
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     result = asyncio.run(
         _provider(pois).plan(
-            _command(
-                departure={"placeName": "广州南站", "time": "2026-08-03T11:00:00+08:00"}
-            )
+            _command(departure={"placeName": "广州南站", "time": "2026-08-03T11:00:00+08:00"})
         )
     )
 
@@ -215,9 +240,7 @@ def test_skeleton_marks_departure_anchor() -> None:
 def test_skeleton_emits_unresolved_meal_without_fake_poi() -> None:
     # meal_pois empty => restaurant resolution fails => MEAL node without POI.
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
-    result = asyncio.run(
-        _provider(pois).plan(_command())
-    )
+    result = asyncio.run(_provider(pois).plan(_command()))
 
     meal_activities = tuple(
         a for day in result.itinerary.days for a in day.activities if a.kind == "MEAL"
@@ -232,9 +255,7 @@ def test_skeleton_emits_unresolved_meal_without_fake_poi() -> None:
 def test_skeleton_resolves_meal_when_restaurant_available() -> None:
     meal = _poi("r1", "老字号粤菜馆", district="越秀区")
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
-    result = asyncio.run(
-        _provider(pois, meal_pois=(meal,)).plan(_command())
-    )
+    result = asyncio.run(_provider(pois, meal_pois=(meal,)).plan(_command()))
 
     meal_activities = tuple(
         a for day in result.itinerary.days for a in day.activities if a.kind == "MEAL"
@@ -246,15 +267,11 @@ def test_skeleton_resolves_meal_when_restaurant_available() -> None:
 def test_skeleton_full_day_experience_becomes_special_day() -> None:
     mountain = _poi("exp-1", "长隆欢乐世界", district="番禺区")
     pois = (mountain, _poi("p1", "越秀公园"), _poi("p2", "陈家祠"))
-    result = asyncio.run(
-        _provider(pois).plan(_command())
-    )
+    result = asyncio.run(_provider(pois).plan(_command()))
 
     special_days = [day for day in result.itinerary.days if day.day_type == "SPECIAL_ACTIVITY_DAY"]
     assert special_days
-    experience = next(
-        a for a in special_days[0].activities if a.kind == "EXPERIENCE"
-    )
+    experience = next(a for a in special_days[0].activities if a.kind == "EXPERIENCE")
     assert experience.title == "长隆欢乐世界"
 
 
@@ -313,17 +330,25 @@ def test_skeleton_activities_carry_kind_and_time_fixed() -> None:
 
     for day in result.itinerary.days:
         assert day.day_type in {
-            "ARRIVAL_DAY", "FULL_DAY", "DEPARTURE_DAY", "SPECIAL_ACTIVITY_DAY",
+            "ARRIVAL_DAY",
+            "FULL_DAY",
+            "DEPARTURE_DAY",
+            "SPECIAL_ACTIVITY_DAY",
         }
         for activity in day.activities:
             assert activity.kind in {
-                "ATTRACTION", "EXPERIENCE", "MEAL",
-                "ACCOMMODATION", "ARRIVAL", "DEPARTURE",
+                "ATTRACTION",
+                "EXPERIENCE",
+                "MEAL",
+                "ACCOMMODATION",
+                "ARRIVAL",
+                "DEPARTURE",
             }
             assert activity.time_fixed in {True, False}
 
 
 # ── flag decoupling ----------------------------------------------------------
+
 
 def test_amap_result_serializes_as_review_required_v1_valid() -> None:
     import json
@@ -347,8 +372,9 @@ def test_amap_result_serializes_as_review_required_v1_valid() -> None:
 
     payload = completed.model_dump_json(by_alias=True, exclude_none=True)
     schema = json.loads(
-        Path("../../contracts/messaging/planning-review-required-event-v1.schema.json")
-        .read_text(encoding="utf-8")
+        Path("../../contracts/messaging/planning-review-required-event-v1.schema.json").read_text(
+            encoding="utf-8"
+        )
     )
     jsonschema.validate(json.loads(payload), schema)
 
@@ -358,9 +384,7 @@ def test_producer_no_longer_writes_v8_completion() -> None:
 
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     command = _command()
-    completed = asyncio.run(
-        process_planning_create(command, _provider(pois))
-    )
+    completed = asyncio.run(process_planning_create(command, _provider(pois)))
     assert completed.schema_version == 1
     assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
 
@@ -371,9 +395,7 @@ def test_demo_skeleton_classifies_days_and_marks_anchors() -> None:
     provider = DemoPlanningProvider()
     result = asyncio.run(
         provider.plan(
-            _command(
-                arrival={"placeName": "广州站", "time": "2026-08-01T16:00:00+08:00"}
-            )
+            _command(arrival={"placeName": "广州站", "time": "2026-08-01T16:00:00+08:00"})
         )
     )
     first = result.itinerary.days[0]
@@ -413,9 +435,7 @@ def test_late_arrival_keeps_arrival_anchor_via_provider() -> None:
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     result = asyncio.run(
         _provider(pois).plan(
-            _command(
-                arrival={"placeName": "广州站", "time": "2026-08-01T20:00:00+08:00"}
-            )
+            _command(arrival={"placeName": "广州站", "time": "2026-08-01T20:00:00+08:00"})
         )
     )
     day1 = result.itinerary.days[0]
@@ -428,9 +448,7 @@ def test_early_departure_keeps_departure_anchor_via_provider() -> None:
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     result = asyncio.run(
         _provider(pois).plan(
-            _command(
-                departure={"placeName": "广州南站", "time": "2026-08-03T08:00:00+08:00"}
-            )
+            _command(departure={"placeName": "广州南站", "time": "2026-08-03T08:00:00+08:00"})
         )
     )
     day3 = result.itinerary.days[-1]
@@ -438,18 +456,90 @@ def test_early_departure_keeps_departure_anchor_via_provider() -> None:
     assert any(a.kind == "DEPARTURE" for a in day3.activities)
 
 
+# ── B13_FIX R1: authoritative snapshot boundary times ────────────────────────
+
+
+def test_late_arrival_first_activity_not_before_snapshot_boundary() -> None:
+    """P0-1: an 18:00 arrival must never place the first activity at 09:00."""
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    result = asyncio.run(
+        _provider(pois).plan(
+            _command(
+                start="2026-08-01",
+                end="2026-08-02",
+                arrival_at="2026-08-01T18:00:00+08:00",
+                departure_at="2026-08-02T17:00:00+08:00",
+            )
+        )
+    )
+    first_day = result.itinerary.days[0]
+    assert first_day.day_type == "ARRIVAL_DAY"
+    first_activity = first_day.activities[0]
+    assert first_activity.start_time.astimezone(CHINA_TIME_ZONE).time() >= time(18, 0)
+    arrival_activity = next(a for a in first_day.activities if a.kind == "ARRIVAL")
+    assert arrival_activity.start_time.astimezone(CHINA_TIME_ZONE).time() == time(18, 0)
+
+
+def test_early_departure_last_activity_not_after_snapshot_boundary() -> None:
+    """P0-1: an 08:00 departure must never leave activities after 08:00."""
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    result = asyncio.run(
+        _provider(pois).plan(
+            _command(
+                start="2026-08-01",
+                end="2026-08-02",
+                arrival_at="2026-08-01T09:00:00+08:00",
+                departure_at="2026-08-02T08:00:00+08:00",
+            )
+        )
+    )
+    last_day = result.itinerary.days[-1]
+    assert last_day.day_type == "DEPARTURE_DAY"
+    for activity in last_day.activities:
+        assert activity.end_time.astimezone(CHINA_TIME_ZONE).time() <= time(8, 0)
+    departure_activity = next(a for a in last_day.activities if a.kind == "DEPARTURE")
+    assert departure_activity.end_time.astimezone(CHINA_TIME_ZONE).time() == time(8, 0)
+
+
+def test_legacy_constraint_anchor_time_still_respected() -> None:
+    """Legacy commands (no snapshot boundaries) keep the old anchor path."""
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    result = asyncio.run(
+        _provider(pois).plan(
+            _command(
+                arrival={"placeName": "广州站", "time": "2026-08-01T14:00:00+08:00"},
+                departure={"placeName": "广州南站", "time": "2026-08-02T17:00:00+08:00"},
+            )
+        )
+    )
+    first_day = result.itinerary.days[0]
+    arrival_activity = next(a for a in first_day.activities if a.kind == "ARRIVAL")
+    assert arrival_activity.start_time.astimezone(CHINA_TIME_ZONE).time() == time(14, 0)
+
+
 def test_must_visit_matches_only_the_named_place_not_sub_pois() -> None:
     """Regression: AMap child facilities (公交站/殿宇/停车场) must not be
     flagged as the must-visit place."""
-    provider = AmapPlanningProvider(
-        StaticMapProvider(()), SuccessfulRouteProvider()
-    )
+    provider = AmapPlanningProvider(StaticMapProvider(()), SuccessfulRouteProvider())
     must_set = {"光孝寺"}
     assert provider._is_must_visit_poi(_poi("g1", "光孝寺"), must_set) is True
     assert provider._is_must_visit_poi(_poi("g2", "光孝寺(公交站)"), must_set) is False
     assert provider._is_must_visit_poi(_poi("g3", "光孝寺-六祖殿"), must_set) is False
     assert provider._is_must_visit_poi(_poi("g4", "光孝寺售票处"), must_set) is False
     assert provider._is_must_visit_poi(_poi("g5", "广州塔"), must_set) is False
+
+
+def test_must_visit_matches_by_structured_provider_poi_id() -> None:
+    """B13-D: a PlaceRef pins the exact provider POI, independent of the
+    display name, so structured selection never degrades to text matching."""
+    provider = AmapPlanningProvider(StaticMapProvider(()), SuccessfulRouteProvider())
+    ref_ids = {"B0G1X002"}
+    # The exact POI matches by id even when its title carries a suffix.
+    assert provider._is_must_visit_poi(_poi("B0G1X002", "光孝寺(正门)"), set(), ref_ids) is True
+    # A different POI with a matching name is NOT the selected place.
+    assert provider._is_must_visit_poi(_poi("OTHER", "光孝寺"), set(), ref_ids) is False
+    # Text matching still works independently when no refs are given.
+    assert provider._is_must_visit_poi(_poi("OTHER", "光孝寺"), {"光孝寺"}) is True
 
 
 # ── B4A: transient trip skeleton on PlanningResult ─────────────────────────
@@ -580,11 +670,7 @@ def test_strict_anchor_failure_when_requested_hotel_not_found() -> None:
     accommodation request; it never returns an UNRESOLVED TripSkeleton."""
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     with pytest.raises(PlanningInfeasibleError) as exc_info:
-        asyncio.run(
-            _provider(pois).plan(
-                _command(accommodation={"placeName": "查无此酒店"})
-            )
-        )
+        asyncio.run(_provider(pois).plan(_command(accommodation={"placeName": "查无此酒店"})))
 
     codes = {conflict.code for conflict in exc_info.value.conflicts}
     assert "TRAVEL_ANCHOR_UNAVAILABLE" in codes
@@ -601,9 +687,7 @@ def test_amap_confirmed_chain_validates_continuity_pass() -> None:
     meal = _poi("r1", "老字号粤菜馆", district="越秀区")
     pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
     command = _command(accommodation={"placeName": "广州花园酒店"})
-    result = asyncio.run(
-        _provider(pois, meal_pois=(meal,), accommodation_poi=hotel).plan(command)
-    )
+    result = asyncio.run(_provider(pois, meal_pois=(meal,), accommodation_poi=hotel).plan(command))
 
     report = validate_itinerary(
         command=command,
@@ -613,12 +697,8 @@ def test_amap_confirmed_chain_validates_continuity_pass() -> None:
         trip_skeleton=result.trip_skeleton,
     )
 
-    route = next(
-        r for r in report.rule_results if r.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
-    )
-    cross = next(
-        r for r in report.rule_results if r.rule_id == "CROSS_DAY_CONTINUITY"
-    )
+    route = next(r for r in report.rule_results if r.rule_id == "ROUTE_ENDPOINT_CONTINUITY")
+    cross = next(r for r in report.rule_results if r.rule_id == "CROSS_DAY_CONTINUITY")
     assert route.outcome is RuleOutcome.PASS
     assert cross.outcome is RuleOutcome.PASS
     # Four required rules remain unimplemented -> never VERIFIED.
@@ -645,12 +725,8 @@ def test_demo_chain_validates_unknown_and_unverified() -> None:
         validation_inputs=result.validation_inputs,
     )
 
-    route = next(
-        r for r in report.rule_results if r.rule_id == "ROUTE_ENDPOINT_CONTINUITY"
-    )
-    cross = next(
-        r for r in report.rule_results if r.rule_id == "CROSS_DAY_CONTINUITY"
-    )
+    route = next(r for r in report.rule_results if r.rule_id == "ROUTE_ENDPOINT_CONTINUITY")
+    cross = next(r for r in report.rule_results if r.rule_id == "CROSS_DAY_CONTINUITY")
     # Demo never resolves real restaurants or real route evidence, so the
     # route rule can never PASS; with the projected skeleton the cross-day
     # rule stays UNKNOWN.  Either way the report must stay UNVERIFIED.
@@ -669,10 +745,7 @@ def test_amap_result_carries_validation_inputs() -> None:
     result = asyncio.run(_provider(pois).plan(_command()))
 
     assert result.validation_inputs is not None
-    assert (
-        result.validation_inputs.meal_projection_state
-        is MealProjectionState.COMPLETE
-    )
+    assert result.validation_inputs.meal_projection_state is MealProjectionState.COMPLETE
     assert len(result.validation_inputs.visit_duration_bindings) > 0
 
 
@@ -732,9 +805,7 @@ def test_amap_explicit_breakfast_window_fails_without_breakfast_placement() -> N
         validation_inputs=result.validation_inputs,
     )
 
-    meal_window = next(
-        r for r in report.rule_results if r.rule_id == "MEAL_WINDOW"
-    )
+    meal_window = next(r for r in report.rule_results if r.rule_id == "MEAL_WINDOW")
     assert meal_window.outcome is RuleOutcome.FAIL
     assert report.status is FeasibilityStatus.NEEDS_REPAIR
 
@@ -753,3 +824,51 @@ def test_review_required_has_no_evaluation() -> None:
         "UNVERIFIED",
         "NEEDS_REPAIR",
     }
+
+
+# ── B14_FIX R5 (D05): real stage boundaries emit progress events ────────────
+
+
+def test_plan_reports_real_stage_boundaries() -> None:
+    """The REAL provider must emit a progress event at every real execution
+    boundary: POI recall, candidate ranking, route calculation and constraint
+    solving.  The UI renders stages without an event as "未触发" — never as
+    "未执行" when the provider actually ran them.
+    """
+    from trip_agent.worker.progress import planning_progress_reporting
+
+    pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
+    provider = _provider(pois)
+    stages: list[str] = []
+
+    async def _reporter(stage, message, statistics=None):
+        stages.append(stage)
+
+    async def _run() -> None:
+        async with planning_progress_reporting(_reporter):
+            await provider.plan(_command())
+
+    asyncio.run(_run())
+
+    assert stages, "provider must report progress"
+    assert "POI_RECALLING" in stages
+    assert "CANDIDATES_RANKING" in stages
+    assert "ROUTES_CALCULATING" in stages
+    assert "CONSTRAINTS_SOLVING" in stages
+    # Monotonic with the published stage order (regressive stages are dropped
+    # by the publisher, so a well-behaved provider never goes backwards).
+    order = (
+        "TASK_ACCEPTED",
+        "CONTEXT_VALIDATING",
+        "CITY_FACTS_LOADING",
+        "POI_RECALLING",
+        "CANDIDATES_RANKING",
+        "ROUTES_CALCULATING",
+        "CONSTRAINTS_SOLVING",
+        "REPAIRING",
+        "KNOWLEDGE_RETRIEVING",
+        "RESULT_EXPLAINING",
+        "RESULT_PUBLISHING",
+    )
+    ranks = [order.index(stage) for stage in stages]
+    assert ranks == sorted(ranks)

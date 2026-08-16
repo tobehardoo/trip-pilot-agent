@@ -157,7 +157,7 @@ test.each([
   expect(view.getByText(label)).toBeTruthy()
 })
 
-test('filters the map from a weather date without scrolling to the itinerary timeline', async () => {
+test('B13-I weather date click filters the map and scrolls to the matching itinerary day', async () => {
   const scrollIntoView = vi.fn()
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     configurable: true,
@@ -182,7 +182,9 @@ test('filters the map from a weather date without scrolling to the itinerary tim
 
   await fireEvent.click(view.getByRole('button', { name: '选择 2026-08-01 天气' }))
 
-  expect(scrollIntoView).not.toHaveBeenCalled()
+  // The formal itinerary exists: the click must locate the matching day.
+  expect(scrollIntoView).toHaveBeenCalledTimes(1)
+  expect(scrollIntoView.mock.instances[0]).toBeTruthy()
 })
 
 test('clears a selected map date when a newer itinerary no longer contains that day', async () => {

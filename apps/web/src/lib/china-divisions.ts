@@ -119,7 +119,12 @@ export const PROVINCES: Province[] = [
     name: '四川省',
     cities: [
       { name: '成都', adcode: '510100', districts: [wholeCity('成都'), { name: '锦江区', adcode: '510104' }, { name: '青羊区', adcode: '510105' }, { name: '金牛区', adcode: '510106' }, { name: '武侯区', adcode: '510107' }, { name: '成华区', adcode: '510108' }, { name: '高新区', adcode: '510109' }] },
-      { name: '重庆', districts: [wholeCity('重庆'), { name: '渝中区', adcode: '500103' }, { name: '江北区', adcode: '500105' }, { name: '南岸区', adcode: '500108' }, { name: '沙坪坝区', adcode: '500106' }, { name: '九龙坡区', adcode: '500107' }, { name: '渝北区', adcode: '500112' }] },
+    ],
+  },
+  {
+    name: '重庆市',
+    cities: [
+      { name: '重庆', adcode: '500000', districts: [wholeCity('重庆'), { name: '渝中区', adcode: '500103' }, { name: '江北区', adcode: '500105' }, { name: '南岸区', adcode: '500108' }, { name: '沙坪坝区', adcode: '500106' }, { name: '九龙坡区', adcode: '500107' }, { name: '渝北区', adcode: '500112' }] },
     ],
   },
   {

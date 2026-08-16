@@ -41,6 +41,12 @@ from trip_agent.worker.contracts import Itinerary
 # window by this projection.
 _OPENING_FACT_CATEGORIES = frozenset({"OPENING_HOURS", "TEMPORARY_CLOSURE"})
 
+# The planner projects LUNCH then DINNER per day and never projects
+# BREAKFAST (planning domain).  Bindings therefore zip against the same
+# canonical order so windows pair with the right meal-type activity no
+# matter which order the client declared them in.
+_MEAL_TYPE_RANK = {"LUNCH": 0, "DINNER": 1}
+
 
 def project_validation_state(
     itinerary: Itinerary,
@@ -133,6 +139,28 @@ def _day_plan(day) -> DayPlan:
     )
 
 
+def _projected_meal_windows(meal_windows: tuple[object, ...]) -> tuple[object, ...]:
+    """The windows the planner actually projects, in canonical meal order.
+
+    DISABLED windows are never projected and BREAKFAST is outside the
+    planning domain; both are excluded so they can never steal a binding
+    from a meal the planner did place.  The remaining LUNCH/DINNER windows
+    are sorted into the planner's emission order so positional zipping
+    pairs each window with the right meal-type activity.
+    """
+    return tuple(
+        sorted(
+            (
+                window
+                for window in meal_windows
+                if getattr(window, "meal_type", None) in {"LUNCH", "DINNER"}
+                and getattr(window, "source", "USER") != "DISABLED"
+            ),
+            key=lambda window: _MEAL_TYPE_RANK.get(getattr(window, "meal_type", ""), 99),
+        )
+    )
+
+
 def _project_validation_inputs(
     itinerary: Itinerary,
     meal_windows: tuple[object, ...],
@@ -142,8 +170,13 @@ def _project_validation_inputs(
     opening_bindings: list[OpeningHoursBinding] = []
     duration_bindings: list[VisitDurationBinding] = []
     meal_bindings: list[MealPlacementBinding] = []
+    # B13_FIX R3 (P0-3): days whose MEAL activities carry no explicit meal
+    # type cannot be bound by identity; the meal rule reports UNKNOWN for
+    # them instead of guessing by position.
+    unverified_meal_days: list[int] = []
     for day_index, day in enumerate(itinerary.days):
-        meal_activities: list[ActivityLocator] = []
+        meal_activities: list[tuple[ActivityLocator, object]] = []
+        day_has_untyped_meal = False
         for activity_index, activity in enumerate(day.activities):
             locator = ActivityLocator(day_index, activity_index)
             if activity.kind in {"ATTRACTION", "EXPERIENCE"}:
@@ -154,7 +187,9 @@ def _project_validation_inputs(
                     )
                 )
             if activity.kind == "MEAL":
-                meal_activities.append(locator)
+                meal_activities.append((locator, activity))
+                if activity.meal_type is None:
+                    day_has_untyped_meal = True
             if activity.provider_poi_id is None:
                 continue
             evidences = tuple(
@@ -177,18 +212,40 @@ def _project_validation_inputs(
                         evidences=evidences,
                     )
                 )
-        for window, locator in zip(meal_windows, meal_activities, strict=False):
-            meal_bindings.append(
-                MealPlacementBinding(
-                    activity=locator,
-                    meal_type=MealWindowType(window.meal_type),
+        projected = _projected_meal_windows(meal_windows)
+        # B13_FIX R3 (P0-3): bind windows to MEAL activities by explicit
+        # meal-type identity — never by position.  A window with no typed
+        # activity stays unbound (the meal rule FAILs it as missing, which
+        # is correct when the planner genuinely did not place it).  A day
+        # with untyped MEAL activities is unverifiable, never positionally
+        # guessed.
+        if day_has_untyped_meal:
+            unverified_meal_days.append(day_index)
+            continue
+        typed_activities: dict[str, ActivityLocator] = {}
+        for locator, activity in meal_activities:
+            if activity.meal_type is not None:
+                existing = typed_activities.get(activity.meal_type)
+                if existing is not None:
+                    raise ValueError(
+                        f"day {day.date} has duplicate {activity.meal_type} meal activities"
+                    )
+                typed_activities[activity.meal_type] = locator
+        for window in projected:
+            locator = typed_activities.get(window.meal_type)
+            if locator is not None:
+                meal_bindings.append(
+                    MealPlacementBinding(
+                        activity=locator,
+                        meal_type=MealWindowType(window.meal_type),
+                    )
                 )
-            )
     return ValidationInputs(
         opening_hours_bindings=tuple(opening_bindings),
         visit_duration_bindings=tuple(duration_bindings),
         meal_placement_bindings=tuple(meal_bindings),
         meal_projection_state=meal_projection_state,
+        unverified_meal_days=tuple(unverified_meal_days),
     )
 
 

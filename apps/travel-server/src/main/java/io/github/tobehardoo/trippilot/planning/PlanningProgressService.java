@@ -51,8 +51,17 @@ public class PlanningProgressService implements PlanningProgressHandler {
             }
             throw rejected("Progress eventId already belongs to another planning task event");
         }
-        if ("SUCCEEDED".equals(task.status()) || "FAILED".equals(task.status())
-                || "CANCELLED".equals(task.status()) || "WAITING_USER".equals(task.status())) {
+        // B14_FIX R5 (D05): RESULT_PUBLISHING is the worker's final progress
+        // milestone, published on the progress route immediately before the
+        // review event.  The two broker routes are consumed concurrently, so
+        // the review listener may win the race and mark the task WAITING_USER
+        // first; the legitimate publishing milestone must still be persisted.
+        // Any other stage arriving after a terminal state remains ignored.
+        boolean resultPublishingAfterWaitingUser = "WAITING_USER".equals(task.status())
+                && "RESULT_PUBLISHING".equals(event.payload().stage());
+        if (!resultPublishingAfterWaitingUser
+                && ("SUCCEEDED".equals(task.status()) || "FAILED".equals(task.status())
+                || "CANCELLED".equals(task.status()) || "WAITING_USER".equals(task.status()))) {
             // Progress and completion use distinct broker routes. A late
             // progress event is expected when any terminal outcome reaches
             // the server first, so it must not be retried.  WAITING_USER is
@@ -61,8 +70,10 @@ public class PlanningProgressService implements PlanningProgressHandler {
             // instead of being rejected into the dead-letter queue.
             return;
         }
-        if (!"QUEUED".equals(task.status()) && !"RUNNING".equals(task.status())) {
-            throw rejected("Planning task cannot accept progress in status " + task.status());
+        if (!resultPublishingAfterWaitingUser) {
+            if (!"QUEUED".equals(task.status()) && !"RUNNING".equals(task.status())) {
+                throw rejected("Planning task cannot accept progress in status " + task.status());
+            }
         }
         var latestProgress = eventMapper.findLatestProgress(task.id());
         int latestSequence = eventMapper.findLatestProgressSequence(task.id());

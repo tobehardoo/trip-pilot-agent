@@ -1,5 +1,11 @@
-import { fireEvent, render } from '@testing-library/vue'
-import { describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { afterEach, describe, expect, it } from 'vitest'
+
+// B14_FIX.1 R2: without cleanup the leg-conflict instance from the second
+// test stays mounted, so getByTestId('transit-option-TAXI') finds two
+// elements under shuffled ordering.
+afterEach(() => cleanup())
+
 
 import TransitLegControl from './TransitLegControl.vue'
 

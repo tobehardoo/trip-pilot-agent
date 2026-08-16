@@ -178,15 +178,20 @@ class CandidateActivity:
 
 @dataclass(frozen=True, slots=True)
 class MealWindowConstraint:
-    """Planning-domain explicit meal window (B9.4).
+    """Planning-domain explicit meal window (B9.4, B13-F).
 
     Independent of worker contracts.  A cross-midnight window stores its
     end minute past 1440 so day-local comparison stays total and correct.
+    ``source`` mirrors the worker contract: USER windows are hard (a meal
+    must fit inside), DEFAULT windows are soft suggestions (a meal that does
+    not fit falls back to the default minute), DISABLED windows suppress the
+    meal entirely.  Historical source-less windows keep USER semantics.
     """
 
     meal_type: MealType
     start_minute: int
     end_minute: int
+    source: Literal["DEFAULT", "USER", "DISABLED"] = "USER"
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,12 +608,14 @@ def plan_day(
         pace=pace,
     )
     warnings = _build_warnings(fixed_items, movable, placed)
-    # B9.4: an explicit meal window that ended up without its meal is a real
-    # conflict — never silently dropped.
+    # B9.4/B13-F: a USER meal window that ended up without its meal is a
+    # real conflict — never silently dropped.  DEFAULT suggestions and
+    # DISABLED meals are intentionally not conflicts.
     placed_meal_types = {meal.meal_type for meal in meal_demands}
     for meal_window in meal_windows:
         if (
-            _meal_allowed(meal_window.meal_type, day_type)
+            meal_window.source == "USER"
+            and _meal_allowed(meal_window.meal_type, day_type)
             and meal_window.meal_type not in placed_meal_types
         ):
             warnings.append(f"MEAL_WINDOW_CONFLICT:{meal_window.meal_type}")
@@ -674,32 +681,36 @@ def _meal_demand(
     if not _meal_allowed(meal_type, day_type):
         return None
     matching = tuple(window for window in explicit_windows if window.meal_type == meal_type)
-    if matching:
-        # Explicit window wins: the meal is placed inside it.  The earliest
-        # window that still has room is used deterministically.
-        for explicit in sorted(matching, key=lambda w: (w.start_minute, w.end_minute)):
-            target = _nearest_free_window(
-                tuple(
-                    (max(low, explicit.start_minute), min(high, explicit.end_minute))
-                    for low, high in free_windows
-                    if high > explicit.start_minute and low < explicit.end_minute
-                ),
-                explicit.start_minute,
-            )
-            if target is not None:
-                low, high = target
-                start = max(low, explicit.start_minute)
-                if start + MEAL_DURATION_MINUTES > min(high, explicit.end_minute):
-                    continue
-                return MealDemand(
-                    meal_type=meal_type,
-                    start_minute=start,
-                    end_minute=start + MEAL_DURATION_MINUTES,
-                    region=primary_region,
-                    budget_per_person=budget_per_person,
-                    preferences=preferences,
-                )
+    if any(window.source == "DISABLED" for window in matching):
+        # B13-F: a disabled meal is intentionally not projected.
         return None
+    hard = tuple(window for window in matching if window.source == "USER")
+    if hard:
+        # A hard window wins: the meal is placed inside it.  The earliest
+        # window that still has room is used deterministically; if none fits,
+        # the meal is dropped and the caller surfaces MEAL_WINDOW_CONFLICT.
+        return _place_inside_windows(
+            meal_type,
+            hard,
+            free_windows,
+            primary_region,
+            preferences,
+            budget_per_person,
+        )
+    soft = tuple(window for window in matching if window.source == "DEFAULT")
+    if soft:
+        placed = _place_inside_windows(
+            meal_type,
+            soft,
+            free_windows,
+            primary_region,
+            preferences,
+            budget_per_person,
+        )
+        if placed is not None:
+            return placed
+        # A DEFAULT suggestion that does not fit is not a conflict: the meal
+        # still happens at the default minute (soft suggestion).
     preferred = DEFAULT_MEAL_MINUTE[meal_type]
     target = _nearest_free_window(free_windows, preferred)
     if target is None:
@@ -718,6 +729,41 @@ def _meal_demand(
         budget_per_person=budget_per_person,
         preferences=preferences,
     )
+
+
+def _place_inside_windows(
+    meal_type: MealType,
+    windows: tuple[MealWindowConstraint, ...],
+    free_windows: tuple[tuple[int, int], ...],
+    primary_region: str | None,
+    preferences: tuple[str, ...],
+    budget_per_person: Decimal | None,
+) -> MealDemand | None:
+    """Place a meal inside the earliest explicit window that has room."""
+    for explicit in sorted(windows, key=lambda w: (w.start_minute, w.end_minute)):
+        target = _nearest_free_window(
+            tuple(
+                (max(low, explicit.start_minute), min(high, explicit.end_minute))
+                for low, high in free_windows
+                if high > explicit.start_minute and low < explicit.end_minute
+            ),
+            explicit.start_minute,
+        )
+        if target is None:
+            continue
+        low, high = target
+        start = max(low, explicit.start_minute)
+        if start + MEAL_DURATION_MINUTES > min(high, explicit.end_minute):
+            continue
+        return MealDemand(
+            meal_type=meal_type,
+            start_minute=start,
+            end_minute=start + MEAL_DURATION_MINUTES,
+            region=primary_region,
+            budget_per_person=budget_per_person,
+            preferences=preferences,
+        )
+    return None
 
 
 def _nearest_free_window(

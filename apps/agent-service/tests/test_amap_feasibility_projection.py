@@ -77,6 +77,7 @@ def _meal_activity(index: int, *, start_hour: int = 12) -> ItineraryActivity:
         coordinates=ActivityCoordinates(longitude=Decimal("113.31"), latitude=Decimal("23.13")),
         address="addr",
         kind="MEAL",
+        meal_type="LUNCH",  # B13_FIX R3: explicit type for identity binding
     )
 
 

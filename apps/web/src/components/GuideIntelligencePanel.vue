@@ -11,7 +11,7 @@ import {
 } from 'lucide-vue-next'
 import { computed, ref } from 'vue'
 
-import type { GuideFact, GuideImport, GuideImportInput, Itinerary } from '../lib/api'
+import { ApiError, type GuideFact, type GuideImport, type GuideImportInput, type Itinerary } from '../lib/api'
 
 type CoverageLevel = 'GOOD' | 'THIN' | 'NONE'
 
@@ -218,6 +218,8 @@ async function submit() {
       textContent.value = ''
       textSourceType.value = 'PASTED_TEXT'
     }
+  } catch (cause) {
+    formError.value = guideImportErrorText(cause)
   } finally {
     submitting.value = false
   }
@@ -234,9 +236,21 @@ async function syncCityIntelligence() {
       startDate: props.startDate,
       endDate: props.endDate,
     })
+  } catch (cause) {
+    formError.value = guideImportErrorText(cause)
   } finally {
     submitting.value = false
   }
+}
+
+function guideImportErrorText(cause: unknown): string {
+  if (cause instanceof ApiError && cause.code === 'GUIDE_SERVICE_UNAVAILABLE') {
+    return '攻略服务暂时不可用，请稍后重试'
+  }
+  if (cause instanceof ApiError && cause.code === 'GUIDE_IMPORT_REJECTED') {
+    return '攻略导入被拒绝，请检查链接或内容后重试'
+  }
+  return '天气或攻略同步失败，请稍后重试'
 }
 
 async function loadTextFile(event: Event) {

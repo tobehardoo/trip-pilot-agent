@@ -14,6 +14,7 @@ from trip_agent.planning.trip_skeleton import (
 from trip_agent.planning.validation_projection import project_validation_state
 from trip_agent.worker.contracts import (
     Itinerary,
+    MealWindow,
     PlanningReplanCommand,
 )
 
@@ -30,6 +31,7 @@ def _activity(
     poi_id: str | None = None,
     lon: float | None = None,
     lat: float | None = None,
+    meal_type: str | None = None,
 ) -> dict[str, object]:
     coordinates = (
         {"longitude": lon, "latitude": lat} if lon is not None and lat is not None else None
@@ -49,6 +51,7 @@ def _activity(
         "locked": False,
         "typeCode": "060000" if source == "AMAP" else None,
         "typeName": "风景名胜" if source == "AMAP" else None,
+        "mealType": meal_type,
     }
 
 
@@ -355,3 +358,97 @@ def test_repair_reprojects_locators_from_repaired_itinerary() -> None:
         for binding in inputs.visit_duration_bindings
     }
     assert locators == {(0, 0), (0, 1), (1, 0)}
+
+
+def _meal_day(activities: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "date": "2026-08-01",
+        "dayType": "FULL_DAY",
+        "activities": activities,
+        "transitLegs": [],
+    }
+
+
+def test_disabled_meal_windows_are_not_zipped_into_bindings() -> None:
+    itinerary = _itinerary(
+        [
+            _meal_day(
+                [
+                    _activity(
+                        title="lunch",
+                        start="2026-08-01T04:00:00Z",
+                        end="2026-08-01T05:00:00Z",
+                        kind="MEAL",
+                        source="DEMO",
+                        meal_type="LUNCH",
+                    ),
+                ]
+            )
+        ]
+    )
+    _, inputs = project_validation_state(
+        itinerary,
+        requested_accommodation_label=None,
+        meal_windows=(
+            MealWindow.model_validate(
+                {
+                    "mealType": "DINNER",
+                    "startTime": "18:00",
+                    "endTime": "19:00",
+                    "source": "DISABLED",
+                }
+            ),
+            MealWindow.model_validate(
+                {"mealType": "LUNCH", "startTime": "12:00", "endTime": "13:00"}
+            ),
+        ),
+    )
+    # The disabled dinner must never steal the only meal activity; the
+    # source-less lunch keeps its USER semantics.
+    assert [binding.meal_type.value for binding in inputs.meal_placement_bindings] == ["LUNCH"]
+
+
+def test_meal_windows_bind_by_meal_type_not_command_order() -> None:
+    itinerary = _itinerary(
+        [
+            _meal_day(
+                [
+                    _activity(
+                        title="lunch",
+                        start="2026-08-01T04:00:00Z",
+                        end="2026-08-01T05:00:00Z",
+                        kind="MEAL",
+                        source="DEMO",
+                        meal_type="LUNCH",
+                    ),
+                    _activity(
+                        title="dinner",
+                        start="2026-08-01T10:00:00Z",
+                        end="2026-08-01T11:00:00Z",
+                        kind="MEAL",
+                        source="DEMO",
+                        meal_type="DINNER",
+                    ),
+                ]
+            )
+        ]
+    )
+    _, inputs = project_validation_state(
+        itinerary,
+        requested_accommodation_label=None,
+        meal_windows=(
+            MealWindow.model_validate(
+                {"mealType": "DINNER", "startTime": "18:00", "endTime": "19:00"}
+            ),
+            MealWindow.model_validate(
+                {"mealType": "LUNCH", "startTime": "12:00", "endTime": "13:00"}
+            ),
+        ),
+    )
+    # Bindings pair each window with the same meal-type activity regardless
+    # of the order the windows were declared in.
+    by_type = {
+        binding.meal_type.value: binding.activity.activity_index
+        for binding in inputs.meal_placement_bindings
+    }
+    assert by_type == {"LUNCH": 0, "DINNER": 1}

@@ -22,18 +22,61 @@ export interface TripConstraints {
     startTime: string
     endTime: string
   }>
-  arrival?: { placeName: string; time: string } | null
-  departure?: { placeName: string; time: string } | null
-  accommodation?: { placeName: string } | null
+  arrival?: { placeName: string; time: string; placeRef?: PlaceRef } | null
+  departure?: { placeName: string; time: string; placeRef?: PlaceRef } | null
+  accommodation?: { placeName: string; placeRef?: PlaceRef } | null
   mustVisitPlaces?: string[]
   avoidPlaces?: string[]
+  mustVisitPlaceRefs?: PlaceRef[]
+  avoidPlaceRefs?: PlaceRef[]
   mealWindows?: Array<{
     mealType: 'BREAKFAST' | 'LUNCH' | 'DINNER'
     startTime: string
     endTime: string
+    source?: 'DEFAULT' | 'USER' | 'DISABLED'
   }>
   mobilityLevel?: 'STANDARD' | 'REDUCED' | 'STEP_FREE'
   schemaVersion?: number
+}
+
+/**
+ * B13-D: structured place reference from a real search candidate.
+ * Candidates carry provider provenance and an estimated flag — they are
+ * never verification evidence.
+ *
+ * B13_FIX R5: `selectionToken` is the server-issued, owner-scoped opaque
+ * token from the place-search endpoint.  It travels back on save so the
+ * server can canonicalize the ref; it is never displayed and never
+ * persisted server-side.
+ */
+export interface PlaceRef {
+  provider: 'AMAP' | 'DEMO'
+  providerPoiId: string
+  name: string
+  address: string
+  province: string
+  city: string
+  district: string
+  longitude: number
+  latitude: number
+  estimated?: boolean
+  selectionToken?: string
+}
+
+export interface PlaceCandidate extends PlaceRef {
+  estimated: boolean
+}
+
+export interface PlaceSearchResult {
+  provider: string
+  estimated: boolean
+  candidates: PlaceCandidate[]
+}
+
+export interface PlaceSearchInput {
+  city: string
+  keyword: string
+  limit?: number
 }
 
 export interface Trip {
@@ -50,6 +93,8 @@ export interface Trip {
   archivedAt: string | null
   region?: RegionRef | null
   planningCoverage?: 'FULL' | 'PARTIAL' | 'BASIC' | 'UNSUPPORTED'
+  arrivalAt?: string | null
+  departureAt?: string | null
 }
 
 export interface RegionRef {
@@ -81,12 +126,17 @@ export interface TripPage {
 }
 
 export interface CreateTripInput {
-  title: string
+  title?: string
   destination: string
   region?: RegionRef
-  startDate: string
-  endDate: string
+  arrivalAt: string
+  departureAt: string
   constraints: Omit<TripConstraints, 'schemaVersion'>
+}
+
+export interface UpdateTripMetadataInput {
+  expectedVersion: number
+  title?: string
 }
 
 export interface UpdateTripConstraintsInput extends Omit<TripConstraints, 'schemaVersion'> {
@@ -724,6 +774,17 @@ export function createTrip(accessToken: string, input: CreateTripInput): Promise
   }, accessToken)
 }
 
+export function updateTripMetadata(
+  accessToken: string,
+  tripId: string,
+  input: UpdateTripMetadataInput,
+): Promise<Trip> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}/metadata`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  }, accessToken)
+}
+
 export function updateTripConstraints(
   accessToken: string,
   tripId: string,
@@ -732,6 +793,22 @@ export function updateTripConstraints(
   return request(`/api/trips/${encodeURIComponent(tripId)}/constraints`, {
     method: 'PUT',
     body: JSON.stringify(input),
+  }, accessToken)
+}
+
+/**
+ * B13-D: owner-authenticated place search proxy.  The browser never talks
+ * to a map provider; candidates carry explicit demo/estimated flags.
+ */
+export function searchPlaces(
+  accessToken: string,
+  input: PlaceSearchInput,
+  signal?: AbortSignal,
+): Promise<PlaceSearchResult> {
+  return request('/api/trips/places/search', {
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
   }, accessToken)
 }
 

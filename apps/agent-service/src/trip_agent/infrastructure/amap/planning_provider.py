@@ -29,6 +29,7 @@ from trip_agent.domain.shared import (
     candidate_keywords,
     coordinate_decimal,
     minute_datetime,
+    snapshot_boundary_times,
     text_matches,
 )
 from trip_agent.guide_intelligence.travel_entities import (
@@ -68,6 +69,7 @@ from trip_agent.providers.errors import (
     ProviderOperation,
 )
 from trip_agent.providers.map import (
+    Coordinates,
     MapProvider,
     Poi,
     PoiSearchRequest,
@@ -85,6 +87,7 @@ from trip_agent.worker.contracts import (
     PlanningCreateCommand,
     PlanningReplanCommand,
     TransitLeg,
+    TripConstraints,
 )
 from trip_agent.worker.progress import report_planning_progress
 
@@ -245,6 +248,17 @@ def _non_weather_guide_statements(
     )
 
 
+def _avoid_provider_ids(constraints: TripConstraints) -> frozenset[str]:
+    """B13_FIX.1 R6: structured avoid refs exclude by exact provider id.
+
+    When refs are present (schemaVersion 3), only the exact provider ids are
+    excluded; legacy text matching is suppressed by the ranker.
+    """
+    return frozenset(
+        ref.provider_poi_id for ref in constraints.avoid_place_refs if ref.provider_poi_id
+    )
+
+
 def weather_statements_for_date(
     facts: tuple[GuideFactEvidence, ...],
     trip_date: date,
@@ -298,24 +312,49 @@ class AmapPlanningProvider:
             {"requiredPoiCount": day_count * 3},
         )
         raw_pois = await self._collect_pois(command, max(day_count * 3, 2))
-        if not raw_pois:
-            raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
+        # B13_FIX.2 R9: structured must-visit refs are fixed planning
+        # inputs.  A ref whose exact id the search pages never repeated is
+        # still pinned from the server-signed, canonicalized PlaceRef data —
+        # the user's chosen place is never dropped just because page one of
+        # an ordinary keyword search did not repeat the id.
+        structured_refs = tuple(getattr(constraints, "must_visit_place_refs", ()))
+        must_visit_ids = {ref.provider_poi_id for ref in structured_refs if ref.provider_poi_id}
+        recalled_ids = {fetched.poi.provider_id for fetched in raw_pois}
+        pinned_pois = tuple(
+            self._poi_from_ref(ref, trip.destination)
+            for ref in structured_refs
+            if ref.provider_poi_id and ref.provider_poi_id not in recalled_ids
+        )
         # Candidate quality: drop pure infrastructure (bus stops, parking,
         # metro, station gates) before ranking.  Transport hubs that serve as
         # arrival/departure anchors are resolved separately and kept.
         activity_pois = tuple(
             fetched.poi for fetched in raw_pois if activity_candidate_eligible(fetched.poi)
         )
-        if not activity_pois:
+        candidate_pois = (*activity_pois, *pinned_pois)
+        if not candidate_pois:
             raise PlanningProviderError("INSUFFICIENT_AMAP_POIS")
+        # B14_FIX R5 (D05): the ranker is a real execution boundary — the
+        # stage must be reported, otherwise the UI shows it as never run.
+        await report_planning_progress(
+            "CANDIDATES_RANKING",
+            "Ranking candidate attractions for the trip",
+            {"candidateCount": len(candidate_pois)},
+        )
         ranking = self._candidate_ranker.rank(
-            activity_pois,
+            candidate_pois,
             destination=trip.destination,
             preferences=constraints.preferences,
             traveler_type=constraints.traveler_type,
-            limit=len(raw_pois),
+            limit=len(candidate_pois),
             must_visit_places=constraints.must_visit_places,
             avoid_places=constraints.avoid_places,
+            # B13_FIX.1 R6: structured avoid refs exclude by exact provider id.
+            avoid_provider_ids=_avoid_provider_ids(constraints),
+            # B13_FIX.2 R9: exact must-visit ids are pinned — they bypass the
+            # ordinary selection cutoff, so a low-scoring exact id is never
+            # cut from the selected candidates.
+            pinned_provider_ids=must_visit_ids,
             guide_statements=_non_weather_guide_statements(command.payload.guide_evidence.facts),
             entity_facts=_entity_facts_for_pois(raw_pois, command),
         )
@@ -324,8 +363,31 @@ class AmapPlanningProvider:
         score_by_id = {item.poi.provider_id: item.score for item in ranking.selected}
         must_visit_text = set(constraints.must_visit_places)
         candidates = tuple(
-            self._to_candidate(poi, must_visit_text, score_by_id) for poi in ranked_pois
+            self._to_candidate(poi, must_visit_text, score_by_id, must_visit_ids)
+            for poi in ranked_pois
         )
+        # Contradictory structured constraints (a must-visit id that is also
+        # avoided, or that never survived ranking) still fail closed — the
+        # requirement is real and cannot be satisfied by pinning alone.
+        unpinned_structured = must_visit_ids - {
+            candidate.poi_id for candidate in candidates if candidate.must_include
+        }
+        if unpinned_structured:
+            raise PlanningInfeasibleError(
+                conflicts=(
+                    OptimizationConflict(
+                        "MUST_VISIT_UNAVAILABLE",
+                        "必去地点与排除或去重约束冲突，无法同时满足",
+                        tuple(sorted(unpinned_structured)),
+                    ),
+                ),
+                relaxations=(
+                    RelaxationSuggestion(
+                        "CHECK_TRAVEL_CONTEXT",
+                        "移除相互冲突的必去/排除地点后重试",
+                    ),
+                ),
+            )
         # Canonical identity per candidate: used for cross-day dedup so that
         # sub-facilities of the same place (光孝寺 vs 光孝寺-六祖殿) collapse
         # into one, while genuinely distinct attractions stay apart.
@@ -342,6 +404,19 @@ class AmapPlanningProvider:
         context = command.payload.planning_context
         closure_filtered_must: set[str] = set()
         remaining_candidates = candidates
+        # B14_FIX R5 (D05): the day loop really calculates routes (route
+        # provider calls) and solves per-day constraints — report both stage
+        # boundaries so the UI never shows executed work as "未执行".
+        await report_planning_progress(
+            "ROUTES_CALCULATING",
+            "Calculating travel routes between planned places",
+            {"dayCount": day_count},
+        )
+        await report_planning_progress(
+            "CONSTRAINTS_SOLVING",
+            "Solving daily time, budget and preference constraints",
+            {"dayCount": day_count},
+        )
         for offset in range(day_count):
             trip_date = trip.start_date + timedelta(days=offset)
             has_full = trip_date == special_date
@@ -372,15 +447,14 @@ class AmapPlanningProvider:
                     ):
                         closure_filtered_must.add(candidate.poi_id)
             mobility_reduced = constraints.mobility_level == "REDUCED"
+            arrival_boundary, departure_boundary = snapshot_boundary_times(trip)
             for repair_attempt in range(_MAX_MOBILITY_REPAIR_ATTEMPTS + 1):
                 day_plan = plan_day(
                     trip_date=trip_date,
                     start_date=trip.start_date,
                     end_date=trip.end_date,
-                    arrival=(constraints.arrival.time if constraints.arrival is not None else None),
-                    departure=(
-                        constraints.departure.time if constraints.departure is not None else None
-                    ),
+                    arrival=arrival_boundary,
+                    departure=departure_boundary,
                     accommodation_known=anchors.accommodation is not None,
                     fixed_schedules=self._fixed_schedules_on(
                         constraints.fixed_schedules, trip_date
@@ -541,14 +615,30 @@ class AmapPlanningProvider:
         )
 
     @staticmethod
-    def _is_must_visit_poi(poi: Poi, must_visit_text: set[str]) -> bool:
+    def _is_must_visit_poi(
+        poi: Poi,
+        must_visit_text: set[str],
+        must_visit_ids: set[str] | None = None,
+    ) -> bool:
         """Decide whether a recalled POI is the user's must-visit place.
 
         Uses an exact (normalised) name match instead of a substring match so
         that AMap child facilities — e.g. ``光孝寺(公交站)``, ``光孝寺-六祖殿``,
         ``光孝寺售票处`` — are NOT mistaken for the attraction itself.  The
         must-visit intent refers to the named place, not its sub-POIs.
+
+        B13-D: when the user selected a structured candidate, the provider
+        POI id from the PlaceRef pins the exact place — a matching id wins
+        even if the recalled title differs from the display name.
+
+        B13_FIX R5 (P1-2): structured selection is exact-identity only.  When
+        any refs are present, a POI whose id is NOT one of the refs is never
+        the must-visit place — same-name text fallback is disabled so a
+        structured choice can never silently become a different POI.  Legacy
+        (no refs) keeps the name-based matching.
         """
+        if must_visit_ids:
+            return poi.provider_id in must_visit_ids
         normalised = "".join(character for character in poi.name.casefold() if character.isalnum())
         return any(
             "".join(character for character in place.casefold() if character.isalnum())
@@ -556,13 +646,37 @@ class AmapPlanningProvider:
             for place in must_visit_text
         )
 
+    @staticmethod
+    def _poi_from_ref(ref: object, default_city: str) -> Poi:
+        """B13_FIX.2 R9: build a pinned POI identity from a server-signed,
+        canonicalized PlaceRef.
+
+        The ref is a fixed planning input: exact providerPoiId, name,
+        address, city/district and coordinates all come from the canonical
+        record.  Type taxonomy is deliberately left empty — the search pages
+        never supplied it, so no category claims are invented and the
+        duration profile falls back to SYSTEM_DEFAULT (never hard-eligible).
+        """
+        return Poi(
+            provider_id=ref.provider_poi_id,
+            name=ref.name,
+            coordinates=Coordinates(longitude=ref.longitude, latitude=ref.latitude),
+            type_name="",
+            type_code="",
+            province=ref.province,
+            city=ref.city or default_city,
+            district=ref.district,
+            address=ref.address,
+        )
+
     def _to_candidate(
         self,
         poi: Poi,
         must_visit_text: set[str],
         score_by_id: dict[str, int],
+        must_visit_ids: set[str] | None = None,
     ) -> CandidateActivity:
-        must = AmapPlanningProvider._is_must_visit_poi(poi, must_visit_text)
+        must = AmapPlanningProvider._is_must_visit_poi(poi, must_visit_text, must_visit_ids)
         # B5: compute the duration profile exactly once per POI; magnitude is
         # derived from it and the profile travels with the candidate so the
         # scheduler and the duration hard rule see the same numbers.
@@ -600,7 +714,9 @@ class AmapPlanningProvider:
         """Convert worker meal windows into planning-domain constraints.
 
         BREAKFAST is outside the planning domain (LUNCH/DINNER only) and is
-        skipped rather than silently mapped to another meal.
+        skipped rather than silently mapped to another meal.  The source
+        (B13-F) travels with the constraint so the scheduler can distinguish
+        hard USER windows from soft DEFAULT suggestions and DISABLED meals.
         """
         windows = tuple(getattr(constraints, "meal_windows", ()))
         converted: list[MealWindowConstraint] = []
@@ -612,7 +728,8 @@ class AmapPlanningProvider:
             end_minute = window.end_time.hour * 60 + window.end_time.minute
             if end_minute <= start_minute:
                 end_minute += 1440
-            converted.append(MealWindowConstraint(meal_type, start_minute, end_minute))
+            source = getattr(window, "source", "USER")
+            converted.append(MealWindowConstraint(meal_type, start_minute, end_minute, source))
         return tuple(converted)
 
     @staticmethod
@@ -739,15 +856,15 @@ class AmapPlanningProvider:
         if not any(c.magnitude == "FULL_DAY" for c in candidates):
             return None
         trip = command.payload.trip
-        constraints = trip.constraints
+        arrival_boundary, departure_boundary = snapshot_boundary_times(trip)
         for offset in range((trip.end_date - trip.start_date).days + 1):
             trip_date = trip.start_date + timedelta(days=offset)
             day_type = classify_day_type(
                 trip_date,
                 trip.start_date,
                 trip.end_date,
-                constraints.arrival.time if constraints.arrival is not None else None,
-                constraints.departure.time if constraints.departure is not None else None,
+                arrival_boundary,
+                departure_boundary,
             )
             if day_type == "FULL_DAY":
                 return trip_date
@@ -873,6 +990,26 @@ class AmapPlanningProvider:
                     later["end"] = later["end"] + shift
             legs.append((index, index + 1, route))
 
+        # B13_FIX.2 R12: the forward-fit loop only shifts the destination of
+        # each *routed* pair onward.  Pairs that skip routing — unresolved
+        # anchors, meals without a resolved POI, accommodation placeholders —
+        # never re-check their boundary, so a long route can push a later
+        # resolved activity past an intervening placeholder (observed with a
+        # real AMap meal POI overlapping the trailing "返回住宿地点待确认"
+        # node).  The event consumer rejects such review events and the task
+        # stays QUEUED.  A final monotonic sweep restores strict ordering
+        # without changing the forward-fit decisions themselves.
+        carry = timedelta(0)
+        previous_end: datetime | None = None
+        for slot in slots:
+            slot["start"] = slot["start"] + carry
+            slot["end"] = slot["end"] + carry
+            if previous_end is not None and slot["start"] < previous_end:
+                carry = previous_end - slot["start"]
+                slot["start"] = previous_end
+                slot["end"] = slot["end"] + carry
+            previous_end = slot["end"]
+
         activities = tuple(
             self._activity_from_slot(slot, trip_date, command.task_id, index)
             for index, slot in enumerate(slots)
@@ -917,6 +1054,9 @@ class AmapPlanningProvider:
             "time_fixed": item.time_fixed,
             "magnitude": item.magnitude,
             "cost": cost,
+            # B13_FIX R3 (P0-3): MEAL slots carry the explicit meal type so
+            # the validation projection can bind by identity.
+            "meal_type": item.meal.meal_type if item.meal is not None else None,
         }
 
     def _activity_from_slot(
@@ -950,6 +1090,9 @@ class AmapPlanningProvider:
                 type_name=poi.type_name,
                 kind=kind,  # type: ignore[arg-type]
                 time_fixed=time_fixed,
+                # B13_FIX R3 (P0-3): MEAL activities carry their explicit
+                # meal type in-process for identity binding.
+                meal_type=slot.get("meal_type") if kind == "MEAL" else None,
             )
         return ItineraryActivity(
             activity_id=uuid5(
@@ -963,6 +1106,7 @@ class AmapPlanningProvider:
             source="AMAP",
             kind=kind,  # type: ignore[arg-type]
             time_fixed=time_fixed,
+            meal_type=slot.get("meal_type") if kind == "MEAL" else None,
         )
 
     def _leg_from_route(
@@ -1139,6 +1283,20 @@ class AmapPlanningProvider:
                 )
             if search.provider != "AMAP":
                 raise PlanningProviderError("UNEXPECTED_MAP_PROVIDER")
+            # B13_FIX R5 (P1-2): a structured anchor (with a placeRef) is
+            # exact-identity only — the recalled POI must carry the exact
+            # provider id.  Same-name text fallback is forbidden so a
+            # structured choice never silently becomes a different POI.
+            place_ref = getattr(anchor, "place_ref", None)
+            if place_ref is not None:
+                matching = next(
+                    (poi for poi in search.data if poi.provider_id == place_ref.provider_poi_id),
+                    None,
+                )
+                if matching is None:
+                    raise self._anchor_unavailable(anchor.place_name)
+                resolved[anchor.place_name] = matching
+                continue
             matching = next(
                 (poi for poi in search.data if text_matches(anchor.place_name, poi.name)),
                 None,
@@ -1191,6 +1349,16 @@ class AmapPlanningProvider:
             trip.constraints.preferences,
             trip.constraints.must_visit_places,
         )
+        # B13_FIX.2 R9: structured must-visit refs pin exact ids.  Recall may
+        # only stop early when every exact id has already been recalled —
+        # the old early return skipped later must-visit keyword searches as
+        # soon as the ordinary candidate count was reached.
+        structured_ids = {
+            ref.provider_poi_id
+            for ref in getattr(trip.constraints, "must_visit_place_refs", ())
+            if ref.provider_poi_id
+        }
+        recalled_ids: set[str] = set()
         required_preference_queries = max(
             1,
             min(
@@ -1225,7 +1393,14 @@ class AmapPlanningProvider:
             # this search batch; each batch keeps its own time.
             fetched_at = search.fetched_at
             candidates.extend(_FetchedPoi(poi=item, fetched_at=fetched_at) for item in search.data)
+            recalled_ids.update(item.provider_id for item in search.data)
             if query_index < required_preference_queries:
+                continue
+            if structured_ids and not structured_ids <= recalled_ids:
+                # An exact must-visit id is still missing: keep searching.
+                # (The missing ids are pinned from the refs afterwards, but
+                # the keyword search for their own name must still run so a
+                # real recall can enrich type/opening information.)
                 continue
             ranking = self._candidate_ranker.rank(
                 tuple(item.poi for item in candidates),
@@ -1235,6 +1410,7 @@ class AmapPlanningProvider:
                 limit=required_count,
                 must_visit_places=trip.constraints.must_visit_places,
                 avoid_places=trip.constraints.avoid_places,
+                avoid_provider_ids=_avoid_provider_ids(trip.constraints),
                 guide_statements=_non_weather_guide_statements(
                     command.payload.guide_evidence.facts
                 ),

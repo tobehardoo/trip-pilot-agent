@@ -95,6 +95,42 @@ class TripPaceMigrationIntegrationTest {
         }
     }
 
+    @Test
+    void upgradesFromV34AddingNullableDatetimeBoundaries() {
+        try (PostgreSQLContainer<?> postgres = postgres()) {
+            postgres.start();
+            migrateToVersion(postgres, "34");
+            JdbcTemplate jdbcTemplate = jdbcTemplate(postgres);
+            UUID ownerId = insertOwner(jdbcTemplate, "boundary-upgrade@example.com");
+            UUID tripId = UUID.randomUUID();
+            insertTrip(jdbcTemplate, tripId, ownerId, "Boundary upgrade");
+
+            migrateLatest(postgres);
+
+            // Legacy rows keep null boundaries and never fabricate times.
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT arrival_at IS NULL AND departure_at IS NULL FROM business.trip WHERE id = ?",
+                    Boolean.class, tripId)).isTrue();
+            // Both-or-neither and ordering are enforced by the new CHECKs.
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE business.trip SET arrival_at = '2026-08-01T09:00:00+08:00' WHERE id = ?", tripId))
+                    .isInstanceOf(DataAccessException.class);
+            assertThatThrownBy(() -> jdbcTemplate.update("""
+                    UPDATE business.trip
+                    SET arrival_at = '2026-08-02T09:00:00+08:00',
+                        departure_at = '2026-08-01T09:00:00+08:00'
+                    WHERE id = ?
+                    """, tripId))
+                    .isInstanceOf(DataAccessException.class);
+            jdbcTemplate.update("""
+                    UPDATE business.trip
+                    SET arrival_at = '2026-08-01T09:00:00+08:00',
+                        departure_at = '2026-08-01T18:00:00+08:00'
+                    WHERE id = ?
+                    """, tripId);
+        }
+    }
+
     private PostgreSQLContainer<?> postgres() {
         return new PostgreSQLContainer<>("postgres:16-alpine")
                 .withDatabaseName("trip_pilot_migration")

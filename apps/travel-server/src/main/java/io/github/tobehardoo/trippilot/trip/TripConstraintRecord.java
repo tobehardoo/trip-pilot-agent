@@ -17,6 +17,8 @@ public record TripConstraintRecord(
         String accommodationJson,
         String mustVisitPlacesJson,
         String avoidPlacesJson,
+        String mustVisitPlaceRefsJson,
+        String avoidPlaceRefsJson,
         String mealWindowsJson,
         String mobilityLevel,
         int schemaVersion,

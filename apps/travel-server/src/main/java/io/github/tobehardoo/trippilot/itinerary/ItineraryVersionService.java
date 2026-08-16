@@ -15,6 +15,7 @@ import java.util.UUID;
 import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.planning.PlanningFactImpactMapper;
 import io.github.tobehardoo.trippilot.planning.PlanningTaskService;
+import io.github.tobehardoo.trippilot.trip.TripService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,6 +29,7 @@ public class ItineraryVersionService {
     private final ItineraryService itineraryService;
     private final PlanningFactImpactMapper factImpactMapper;
     private final PlanningTaskService planningTaskService;
+    private final TripService tripService;
 
     public ItineraryVersionService(
             ItineraryVersionMapper versionMapper,
@@ -35,7 +37,8 @@ public class ItineraryVersionService {
             ItineraryVersionPersister versionPersister,
             ItineraryService itineraryService,
             PlanningFactImpactMapper factImpactMapper,
-            @org.springframework.context.annotation.Lazy PlanningTaskService planningTaskService
+            @org.springframework.context.annotation.Lazy PlanningTaskService planningTaskService,
+            TripService tripService
     ) {
         this.versionMapper = versionMapper;
         this.itineraryMapper = itineraryMapper;
@@ -43,10 +46,15 @@ public class ItineraryVersionService {
         this.itineraryService = itineraryService;
         this.factImpactMapper = factImpactMapper;
         this.planningTaskService = planningTaskService;
+        this.tripService = tripService;
     }
 
     @Transactional(readOnly = true)
     public List<VersionSummary> list(UUID ownerId, UUID tripId) {
+        // B14_FIX R2 (D02): owner-scoped trip check — a non-owner (or a missing
+        // trip) gets the same 404 as every other itinerary endpoint; the
+        // version count itself must never leak trip existence.
+        tripService.get(ownerId, tripId);
         return versionMapper.findAllOwned(tripId, ownerId).stream()
                 .map(version -> new VersionSummary(
                         version.id(), version.versionNumber(), version.parentVersionId(),
@@ -73,6 +81,7 @@ public class ItineraryVersionService {
 
     @Transactional(readOnly = true)
     public VersionDiff diff(UUID ownerId, UUID tripId, UUID fromId, UUID toId) {
+        tripService.get(ownerId, tripId);
         VersionView from = readOwned(ownerId, tripId, fromId);
         VersionView to = readOwned(ownerId, tripId, toId);
         ActivityListDiff activityDiff = diffActivities(

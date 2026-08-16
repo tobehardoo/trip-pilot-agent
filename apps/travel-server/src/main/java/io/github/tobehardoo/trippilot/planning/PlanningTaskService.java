@@ -2,6 +2,7 @@ package io.github.tobehardoo.trippilot.planning;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -50,6 +51,10 @@ public class PlanningTaskService {
     private static final String CANCEL_COMMAND_TYPE = "PLANNING_CANCEL_REQUESTED";
     private static final String CANCEL_ROUTING_KEY = "planning.cancel";
     private static final long MAX_TRIP_DAYS = 7;
+    /** B13_FIX R1: boundary instants are re-anchored to the trip's home
+     *  offset (+08:00) so outbox bodies match the contract fixtures and the
+     *  constraint anchors they sit next to.  The instant never changes. */
+    private static final java.time.ZoneOffset CHINA_OFFSET = java.time.ZoneOffset.ofHours(8);
 
     private final PlanningTaskMapper planningTaskMapper;
     private final ItineraryMapper itineraryMapper;
@@ -210,15 +215,18 @@ public class PlanningTaskService {
         }
 
         UUID eventId = UUID.randomUUID();
+        // B13_FIX R1: create always publishes v4; the snapshot carries the
+        // authoritative arrivalAt/departureAt (null for legacy trips).
         PlanningCreateCommand command = new PlanningCreateCommand(
-                COMMAND_TYPE, 3, eventId, task.traceId(), task.id(), tripId, now,
+                COMMAND_TYPE, 4, eventId, task.traceId(), task.id(), tripId, now,
                 new PlanningCreatePayload(
                         CREATE_TASK_TYPE,
                         trip.version(),
                         idempotencyKey,
                         new TripSnapshot(
                                 trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
-                                trip.status(), trip.version(), trip.constraints()
+                                trip.status(), trip.version(), trip.constraints(),
+                                chinaOffset(trip.arrivalAt()), chinaOffset(trip.departureAt())
                         ),
                         guideEvidenceSnapshot,
                         planningContext
@@ -300,13 +308,14 @@ public class PlanningTaskService {
         UUID eventId = UUID.randomUUID();
         ReplanItinerarySnapshot snapshot = toReplanSnapshot(itinerary);
         PlanningReplanCommand command = new PlanningReplanCommand(
-                REPLAN_COMMAND_TYPE, 1, eventId, task.traceId(), task.id(), tripId, now,
+                REPLAN_COMMAND_TYPE, 2, eventId, task.traceId(), task.id(), tripId, now,
                 new PlanningReplanPayload(
                         REPLAN_TASK_TYPE, trip.version(), current.versionId(), idempotencyKey,
                         dates,
                         new TripSnapshot(
                                 trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
-                                trip.status(), trip.version(), trip.constraints()
+                                trip.status(), trip.version(), trip.constraints(),
+                                chinaOffset(trip.arrivalAt()), chinaOffset(trip.departureAt())
                         ),
                         snapshot,
                         itinerary.knowledge()
@@ -388,14 +397,15 @@ public class PlanningTaskService {
         }
         UUID eventId = UUID.randomUUID();
         PlanningCandidateValidationCommand command = new PlanningCandidateValidationCommand(
-                CANDIDATE_COMMAND_TYPE, 1, eventId, task.traceId(), task.id(), tripId, now,
+                CANDIDATE_COMMAND_TYPE, 2, eventId, task.traceId(), task.id(), tripId, now,
                 new PlanningCandidateValidationPayload(
                         task.taskType(), candidateType, trip.version(), baselineVersionId,
                         "ROLLBACK".equals(candidateType) ? sourceVersionId : null,
                         idempotencyKey, canonicalChanged, impacted,
                         new TripSnapshot(
                                 trip.title(), trip.destination(), trip.startDate(), trip.endDate(),
-                                trip.status(), trip.version(), trip.constraints()),
+                                trip.status(), trip.version(), trip.constraints(),
+                                chinaOffset(trip.arrivalAt()), chinaOffset(trip.departureAt())),
                         toReplanSnapshot(candidate), candidate.knowledge(), context
                 )
         );
@@ -829,8 +839,20 @@ public class PlanningTaskService {
             LocalDate endDate,
             String status,
             int version,
-            TripService.ConstraintResponse constraints
+            TripService.ConstraintResponse constraints,
+            // B13_FIX R1 (P0-1): authoritative boundary times.  Always
+            // serialized (null for legacy date-only trips).
+            OffsetDateTime arrivalAt,
+            OffsetDateTime departureAt
     ) {
+    }
+
+    /** B13_FIX R1 (P0-1): re-anchor a boundary instant to +08:00.  The JDBC
+     *  driver returns TIMESTAMPTZ in UTC; the contract fixtures and the
+     *  constraint anchors keep the trip's home offset, so the snapshot must
+     *  match.  Null (legacy) stays null. */
+    private static OffsetDateTime chinaOffset(OffsetDateTime value) {
+        return value == null ? null : value.withOffsetSameInstant(CHINA_OFFSET);
     }
 
     private record GuideEvidenceSnapshot(

@@ -14,8 +14,13 @@ import org.apache.ibatis.annotations.Update;
 public interface TripMapper {
 
     @Insert("""
-            INSERT INTO business.trip(id, owner_id, title, destination, start_date, end_date, status, version, region_ref)
-            VALUES (#{id}, #{ownerId}, #{title}, #{destination}, #{startDate}, #{endDate}, #{status}, #{version}, CAST(#{regionRefJson} AS jsonb))
+            INSERT INTO business.trip(
+                id, owner_id, title, destination, start_date, end_date, status, version,
+                region_ref, arrival_at, departure_at
+            ) VALUES (
+                #{id}, #{ownerId}, #{title}, #{destination}, #{startDate}, #{endDate},
+                #{status}, #{version}, CAST(#{regionRefJson} AS jsonb), #{arrivalAt}, #{departureAt}
+            )
             """)
     int insertTrip(TripRecord trip);
 
@@ -23,13 +28,15 @@ public interface TripMapper {
             INSERT INTO business.trip_constraint(
                 trip_id, budget_amount, travelers, traveler_type, pace,
                 preferences, fixed_schedules, arrival, departure, accommodation,
-                must_visit_places, avoid_places, meal_windows, mobility_level, schema_version
+                must_visit_places, avoid_places, must_visit_place_refs, avoid_place_refs,
+                meal_windows, mobility_level, schema_version
             ) VALUES (
                 #{tripId}, #{budgetAmount}, #{travelers}, #{travelerType}, #{pace},
                 CAST(#{preferencesJson} AS jsonb), CAST(#{fixedSchedulesJson} AS jsonb),
                 CAST(#{arrivalJson} AS jsonb), CAST(#{departureJson} AS jsonb),
                 CAST(#{accommodationJson} AS jsonb), CAST(#{mustVisitPlacesJson} AS jsonb),
-                CAST(#{avoidPlacesJson} AS jsonb), CAST(#{mealWindowsJson} AS jsonb),
+                CAST(#{avoidPlacesJson} AS jsonb), CAST(#{mustVisitPlaceRefsJson} AS jsonb),
+                CAST(#{avoidPlaceRefsJson} AS jsonb), CAST(#{mealWindowsJson} AS jsonb),
                 #{mobilityLevel}, #{schemaVersion}
             )
             """)
@@ -37,7 +44,8 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json
+                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json,
+                   arrival_at, departure_at
             FROM business.trip
             WHERE id = #{id} AND owner_id = #{ownerId}
             """)
@@ -45,7 +53,8 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json
+                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json,
+                   arrival_at, departure_at
             FROM business.trip
             WHERE id = #{id}
             """)
@@ -56,6 +65,7 @@ public interface TripMapper {
                    trip.start_date, trip.end_date, trip.status, trip.version,
                    trip.created_at, trip.updated_at, trip.archived_at,
                    trip.region_ref::text AS region_ref_json,
+                   trip.arrival_at, trip.departure_at,
                    trip_constraint.budget_amount, trip_constraint.travelers,
                    trip_constraint.traveler_type, trip_constraint.pace,
                    trip_constraint.preferences::text AS preferences_json,
@@ -65,6 +75,8 @@ public interface TripMapper {
                    trip_constraint.accommodation::text AS accommodation_json,
                    trip_constraint.must_visit_places::text AS must_visit_places_json,
                    trip_constraint.avoid_places::text AS avoid_places_json,
+                   trip_constraint.must_visit_place_refs::text AS must_visit_place_refs_json,
+                   trip_constraint.avoid_place_refs::text AS avoid_place_refs_json,
                    trip_constraint.meal_windows::text AS meal_windows_json,
                    trip_constraint.mobility_level,
                    trip_constraint.schema_version
@@ -78,7 +90,8 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json
+                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json,
+                   arrival_at, departure_at
             FROM business.trip
             WHERE owner_id = #{ownerId} AND archived_at IS NULL
             ORDER BY updated_at DESC, id
@@ -87,7 +100,8 @@ public interface TripMapper {
 
     @Select("""
             SELECT id, owner_id, title, destination, start_date, end_date, status, version,
-                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json
+                   created_at, updated_at, archived_at, region_ref::text AS region_ref_json,
+                   arrival_at, departure_at
             FROM business.trip
             WHERE owner_id = #{ownerId}
               AND (CAST(#{includeArchived} AS BOOLEAN) OR archived_at IS NULL)
@@ -139,6 +153,8 @@ public interface TripMapper {
                    accommodation::text AS accommodation_json,
                    must_visit_places::text AS must_visit_places_json,
                    avoid_places::text AS avoid_places_json,
+                   must_visit_place_refs::text AS must_visit_place_refs_json,
+                   avoid_place_refs::text AS avoid_place_refs_json,
                    meal_windows::text AS meal_windows_json,
                    mobility_level,
                    schema_version, updated_at
@@ -166,6 +182,8 @@ public interface TripMapper {
                 accommodation = CAST(#{accommodationJson} AS jsonb),
                 must_visit_places = CAST(#{mustVisitPlacesJson} AS jsonb),
                 avoid_places = CAST(#{avoidPlacesJson} AS jsonb),
+                must_visit_place_refs = CAST(#{mustVisitPlaceRefsJson} AS jsonb),
+                avoid_place_refs = CAST(#{avoidPlaceRefsJson} AS jsonb),
                 meal_windows = CAST(#{mealWindowsJson} AS jsonb),
                 mobility_level = #{mobilityLevel},
                 schema_version = #{schemaVersion}, updated_at = CURRENT_TIMESTAMP
@@ -186,4 +204,18 @@ public interface TripMapper {
             WHERE id = #{id} AND owner_id = #{ownerId} AND archived_at IS NOT NULL
             """)
     int restoreOwned(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
+
+    /**
+     * B13-C: version-aware title update.  Optimistic: only the expected
+     * version is accepted, so concurrent metadata edits fail closed with a
+     * 409 instead of silently overwriting each other.
+     */
+    @Update("""
+            UPDATE business.trip
+            SET title = #{title}, version = version + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND owner_id = #{ownerId} AND version = #{expectedVersion}
+            """)
+    int updateTitleOwned(@Param("id") UUID id, @Param("ownerId") UUID ownerId,
+                         @Param("expectedVersion") int expectedVersion,
+                         @Param("title") String title);
 }

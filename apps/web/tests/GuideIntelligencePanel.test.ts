@@ -352,3 +352,28 @@ test('adds every itinerary place to the city intelligence drawer', async () => {
   expect(within(card).getByText('行程中')).toBeTruthy()
   expect(within(card).getByText('越秀区应元路11号')).toBeTruthy()
 })
+
+test('shows a localized in-place error and recovers the sync button on failure (B14_FIX R1)', async () => {
+  const importGuide = vi.fn(async () => {
+    throw new Error('Guide intelligence service returned an invalid response')
+  })
+  render(GuideIntelligencePanel, {
+    props: {
+      guideImports: [],
+      destination: '广州',
+      startDate: '2026-08-01',
+      endDate: '2026-08-02',
+      busy: false,
+      error: null,
+      importGuide,
+    },
+  })
+
+  await fireEvent.click(screen.getByRole('button', { name: '同步城市情报' }))
+
+  // In-place localized error, not the raw English backend message.
+  expect((await screen.findByRole('alert')).textContent).toContain('天气或攻略同步失败，请稍后重试')
+  // The sync button must be usable again (no stuck submitting state).
+  const syncButton = screen.getByRole('button', { name: '同步城市情报' })
+  expect(syncButton.hasAttribute('disabled')).toBe(false)
+})

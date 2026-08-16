@@ -13,34 +13,28 @@ import {
   Users,
   Wallet,
   X,
-  Sparkles,
 } from 'lucide-vue-next'
-import { computed, reactive, ref } from 'vue'
+import { reactive, ref, computed } from 'vue'
 
 import type { CreateTripInput, Trip, User } from '../lib/api'
 import { useModalFocus } from '../lib/modal'
+import { defaultTripTitle } from '../lib/trip-title'
 import Button from './ui/Button.vue'
 import Card from './ui/Card.vue'
 import Badge from './ui/Badge.vue'
-import TripTemplates from './TripTemplates.vue'
 
-import ConstraintCard from './ConstraintCard.vue'
 import ConstraintEditor from './ConstraintEditor.vue'
-import NaturalLanguageInput from './NaturalLanguageInput.vue'
+import CityCascadePicker from './CityCascadePicker.vue'
+import TripBoundaryEditor from './TripBoundaryEditor.vue'
 import {
   createConstraintEditorModel,
   toTripConstraints,
   validateConstraintEditor,
 } from '../lib/constraint-editor'
 import {
-  createDefaultDraft,
   destinationToRegionRef,
-  destinationToString,
-  type ConstraintDraft,
   type StructuredDestination,
 } from '../lib/constraint-draft'
-import { parseConstraint } from '../lib/constraint-parser'
-import type { ParseWarning } from '../lib/constraint-parser'
 
 const props = withDefaults(defineProps<{
   user: User
@@ -50,86 +44,12 @@ const props = withDefaults(defineProps<{
   createTrip: (input: CreateTripInput) => Promise<void>
   destinationQuery?: string
   includeArchived?: boolean
+  getToken?: () => string
 }>(), {
   destinationQuery: '',
   includeArchived: false,
+  getToken: () => '',
 })
-
-// ── 自然语言约束输入 ──────────────────────────────────────
-const useNaturalLanguage = ref(true)
-const draft = ref<ConstraintDraft>(createDefaultDraft())
-const parseWarnings = ref<ParseWarning[]>([])
-const parseUnrecognized = ref<string[]>([])
-
-function handleParse(text: string) {
-  const result = parseConstraint(text)
-  parseWarnings.value = result.warnings
-  parseUnrecognized.value = result.unrecognized
-  applyOperations(result.operations)
-}
-
-function applyOperations(ops: ReturnType<typeof parseConstraint>['operations']) {
-  for (const op of ops) {
-    const field = draft.value[op.field as keyof ConstraintDraft] as { value: unknown; source: string } | undefined
-    if (!field) continue
-    switch (op.type) {
-      case 'set':
-        field.value = op.value
-        field.source = 'explicit'
-        break
-      case 'append':
-        if (Array.isArray(field.value) && !field.value.includes(op.value)) {
-          field.value = [...field.value, op.value]
-          field.source = 'explicit'
-        }
-        break
-      case 'remove':
-        if (Array.isArray(field.value)) {
-          field.value = field.value.filter((v: unknown) => v !== op.value)
-        }
-        break
-      case 'clear':
-        if (Array.isArray(field.value)) field.value = []
-        else field.value = null
-        field.source = 'unset'
-        break
-    }
-  }
-  // 同步到表单
-  syncDraftToForm()
-}
-
-function syncDraftToForm() {
-  const destination = destinationToString(draft.value.destination.value)
-  form.title = form.title || (destination ? `${destination}之旅` : '')
-  form.destination = destination || form.destination
-  form.startDate = draft.value.startDate.value || form.startDate
-  form.endDate = draft.value.endDate.value || form.endDate
-  form.budgetAmount = draft.value.budgetAmount.value?.toString() ?? ''
-  form.travelers = draft.value.travelers.value
-  form.preferences = [...draft.value.preferences.value]
-}
-
-function handleCardEdit(field: string) {
-  // 切换到表单模式编辑
-  useNaturalLanguage.value = false
-}
-
-function handleCardRemove(field: string, value?: string) {
-  if (value) {
-    applyOperations([{ type: 'remove', field, value }])
-  }
-}
-
-function handleCardAppend(field: string) {
-  useNaturalLanguage.value = false
-}
-
-function handleDestinationChange(sel: StructuredDestination) {
-  draft.value.destination.value = sel
-  draft.value.destination.source = 'explicit'
-  form.destination = sel.city
-}
 
 const emit = defineEmits<{
   logout: []
@@ -146,11 +66,12 @@ const destinationQuery = ref(props.destinationQuery)
 const dialogElement = ref<HTMLElement | null>(null)
 const submitting = ref(false)
 const editorError = ref<string | null>(null)
+const destination = ref<StructuredDestination | null>(null)
 const form = reactive({
   title: '',
-  destination: '广州',
-  startDate: '',
-  endDate: '',
+  destination: '',
+  arrivalAt: '',
+  departureAt: '',
   ...createConstraintEditorModel(),
 })
 
@@ -197,18 +118,55 @@ function statusLabel(status: string) {
   return { DRAFT: '草稿', PLANNING: '规划中', READY: '可使用', FAILED: '规划失败' }[status] ?? status
 }
 
-function statusVariant(status: string): 'default' | 'secondary' | 'accent' | 'warning' | 'danger' | 'success' | 'outline' {
-  return { DRAFT: 'secondary', PLANNING: 'warning', READY: 'success', FAILED: 'danger' }[status] as any ?? 'secondary'
+type StatusVariant = 'default' | 'secondary' | 'accent' | 'warning' | 'danger' | 'success' | 'outline'
+
+const STATUS_VARIANTS: Record<string, StatusVariant> = {
+  DRAFT: 'secondary',
+  PLANNING: 'warning',
+  READY: 'success',
+  FAILED: 'danger',
+}
+
+function statusVariant(status: string): StatusVariant {
+  return STATUS_VARIANTS[status] ?? 'secondary'
 }
 
 function resetForm() {
   form.title = ''
-  form.destination = '广州'
-  form.startDate = ''
-  form.endDate = ''
+  form.destination = ''
+  form.arrivalAt = ''
+  form.departureAt = ''
+  destination.value = null
   Object.assign(form, createConstraintEditorModel())
   editorError.value = null
 }
+
+/** B13-B: structured province → city → district selection. */
+function handleDestinationChange(sel: StructuredDestination) {
+  // B13_FIX R5 (P1-6): switching cities invalidates place chips and anchor
+  // picks chosen for the previous city — stale old-city selections must
+  // never leak into a different destination's trip.
+  if (destination.value?.city && sel.city !== destination.value.city) {
+    form.mustVisitEntries = []
+    form.avoidEntries = []
+    form.arrivalRef = undefined
+    form.departureRef = undefined
+    form.accommodationRef = undefined
+  }
+  destination.value = sel
+  form.destination = sel.city
+}
+
+/** B13-C: live preview of the deterministic server fallback title. */
+const autoTitlePreview = computed(() => {
+  if (form.title.trim()) return null
+  if (!destination.value?.city || !form.arrivalAt || !form.departureAt) return null
+  return defaultTripTitle(
+    destination.value.city,
+    form.arrivalAt.slice(0, 10),
+    form.departureAt.slice(0, 10),
+  )
+})
 
 const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
   dialogOpen,
@@ -216,34 +174,47 @@ const { handleKeydown: handleDialogKeydown, rememberTrigger } = useModalFocus(
   () => { dialogOpen.value = false },
 )
 
-function openDialog(event?: Event, initial?: Pick<typeof form, 'title' | 'destination'>) {
+/** B13: the single create-trip flow.  Every entry point opens this dialog. */
+function openCreateTrip(event?: Event) {
   rememberTrigger(event?.currentTarget)
   resetForm()
-  draft.value = createDefaultDraft()
-  parseWarnings.value = []
-  parseUnrecognized.value = []
-  useNaturalLanguage.value = true
-  if (initial) {
-    form.title = initial.title
-    form.destination = initial.destination
-    draft.value.destination.value = initial.destination
-    draft.value.destination.source = 'explicit'
-  }
   dialogOpen.value = true
 }
 
 async function saveTrip() {
-  editorError.value = validateConstraintEditor(form)
+  // B13_FIX R6 (P1-3): the create page owns exactly two datetime inputs
+  // (TripBoundaryEditor).  Anchor times are derived from the authoritative
+  // boundaries so the legacy constraint times never appear as inputs.
+  if (form.arrivalPlace && form.arrivalAt && !form.arrivalTime) {
+    form.arrivalTime = form.arrivalAt.slice(0, 16)
+  }
+  if (form.departurePlace && form.departureAt && !form.departureTime) {
+    form.departureTime = form.departureAt.slice(0, 16)
+  }
+  editorError.value = validateConstraintEditor(form, 'create')
   if (editorError.value) return
+  const selection = destination.value
+  if (!selection?.city) {
+    editorError.value = '请先选择目的地（省—市—区）'
+    return
+  }
+  if (!form.arrivalAt || !form.departureAt) {
+    editorError.value = '请填写抵达和离开时间'
+    return
+  }
+  if (form.arrivalAt >= form.departureAt) {
+    editorError.value = '抵达时间必须早于离开时间'
+    return
+  }
   submitting.value = true
   try {
-    const title = form.title || `${form.destination || draft.value.destination.value}之旅`
+    const customTitle = form.title.trim()
     await props.createTrip({
-      title,
-      destination: form.destination,
-      region: destinationToRegionRef(draft.value.destination.value),
-      startDate: form.startDate,
-      endDate: form.endDate,
+      title: customTitle || undefined,
+      destination: selection.city,
+      region: destinationToRegionRef(selection),
+      arrivalAt: `${form.arrivalAt}:00+08:00`,
+      departureAt: `${form.departureAt}:00+08:00`,
       constraints: toTripConstraints(form, []),
     })
     dialogOpen.value = false
@@ -294,7 +265,7 @@ async function saveTrip() {
             <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">Trips</p>
             <h1 class="text-2xl sm:text-3xl font-bold text-surface-900 tracking-tight text-balance">我的旅行</h1>
           </div>
-          <Button variant="primary" size="md" @click="openDialog">
+          <Button variant="primary" size="md" @click="openCreateTrip">
             <Plus :size="17" aria-hidden="true" />
             创建旅行
           </Button>
@@ -343,14 +314,6 @@ async function saveTrip() {
 
         <!-- Content when loaded -->
         <template v-else>
-          <!-- Trip Templates (always show when not busy) -->
-          <TripTemplates
-            v-if="trips.length <= 2"
-            @select="(tmpl) => {
-              openDialog(undefined, tmpl)
-            }"
-          />
-
           <!-- Empty State -->
           <div
             v-if="trips.length === 0 && !busy"
@@ -358,10 +321,7 @@ async function saveTrip() {
           >
             <MapPin :size="36" stroke-width="1.5" aria-hidden="true" />
             <h2 class="text-lg font-semibold text-surface-500">还没有旅行</h2>
-            <p class="text-sm text-surface-400 -mt-2">选择上方模板快速开始，或点击创建旅行</p>
-            <Button variant="outline" @click="openDialog">
-              <Plus :size="16" /> 创建第一条旅行
-            </Button>
+            <p class="text-sm text-surface-400 -mt-2">点击右上角“创建旅行”开始规划第一段行程</p>
           </div>
 
           <!-- Trip Grid -->
@@ -498,53 +458,29 @@ async function saveTrip() {
             </button>
           </div>
 
-          <!-- 自然语言输入 -->
-          <div class="px-6 pt-5">
-            <NaturalLanguageInput
-              :warnings="parseWarnings"
-              :unrecognized="parseUnrecognized"
-              @parse="handleParse"
-            />
-          </div>
-
-          <!-- 约束卡片 -->
-          <div class="px-6 pt-4" v-if="draft.destination.source !== 'unset'">
-            <ConstraintCard
-              :draft="draft"
-              @edit="handleCardEdit"
-              @remove="handleCardRemove"
-              @append="handleCardAppend"
-              @destination-change="handleDestinationChange"
-            />
-          </div>
-
-          <!-- 传统表单（折叠） -->
-          <details class="px-6 pt-4" open>
-            <summary class="cursor-pointer text-xs font-semibold text-surface-500 hover:text-surface-700">
-              {{ useNaturalLanguage ? '展开完整表单编辑' : '收起完整表单' }}
-            </summary>
-
-          <form class="py-5" @submit.prevent="saveTrip">
+          <form class="px-6 py-5" @submit.prevent="saveTrip">
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div class="sm:col-span-2">
                 <label for="trip-title" class="block text-xs font-semibold text-surface-600 mb-1.5">旅行名称</label>
-                <input id="trip-title" v-model.trim="form.title" maxlength="120" required data-modal-initial-focus
+                <input id="trip-title" v-model.trim="form.title" maxlength="120" data-modal-initial-focus
                   class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+                <p class="mt-1 text-xs text-surface-400">
+                  可选，留空将自动命名{{ autoTitlePreview ? `，预览：${autoTitlePreview}` : '' }}
+                </p>
               </div>
               <div class="sm:col-span-2">
-                <label for="destination" class="block text-xs font-semibold text-surface-600 mb-1.5">目的地</label>
-                <input id="destination" v-model.trim="form.destination" maxlength="120" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+                <CityCascadePicker
+                  :province="destination?.province"
+                  :city="destination?.city"
+                  :districts="destination?.districts ?? []"
+                  @change="handleDestinationChange"
+                />
               </div>
-              <div>
-                <label for="start-date" class="block text-xs font-semibold text-surface-600 mb-1.5">开始日期</label>
-                <input id="start-date" v-model="form.startDate" type="date" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
-              </div>
-              <div>
-                <label for="end-date" class="block text-xs font-semibold text-surface-600 mb-1.5">结束日期</label>
-                <input id="end-date" v-model="form.endDate" type="date" :min="form.startDate" required
-                  class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400 transition-shadow" />
+              <div class="sm:col-span-2">
+                <TripBoundaryEditor
+                  v-model:arrival-at="form.arrivalAt"
+                  v-model:departure-at="form.departureAt"
+                />
               </div>
             </div>
 
@@ -553,6 +489,8 @@ async function saveTrip() {
               :model="form"
               mode="create"
               :preference-options="preferenceOptions"
+              :city="form.destination"
+              :get-token="props.getToken"
             />
 
             <p v-if="editorError" class="mt-5 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 border-l-4 border-red-400" role="alert">{{ editorError }}</p>
@@ -563,7 +501,6 @@ async function saveTrip() {
               <Button variant="primary" size="sm" type="submit" :disabled="submitting">保存旅行</Button>
             </div>
           </form>
-          </details>
         </div>
       </div>
     </div>

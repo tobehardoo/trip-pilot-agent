@@ -82,6 +82,17 @@ class CandidateRanker:
         limit: int,
         must_visit_places: tuple[str, ...] = (),
         avoid_places: tuple[str, ...] = (),
+        # B13_FIX.1 R6: structured avoid refs exclude by exact provider id.
+        # When non-empty, only these ids are excluded — legacy text matching
+        # is suppressed so a same-name sibling is never over-excluded.
+        avoid_provider_ids: frozenset[str] = frozenset(),
+        # B13_FIX.2 R9: structured must-visit refs pin exact provider ids.
+        # Pinned items are fixed planning inputs (server-signed refs): they
+        # skip the provider-noise hard filters (empty address / city
+        # mismatch / same-place dedup) that exist to filter *search noise*,
+        # always outrank the ordinary selection cutoff, and the ordinary
+        # quota can never delete them.  Exact-id avoidance still applies.
+        pinned_provider_ids: frozenset[str] = frozenset(),
         guide_statements: tuple[str, ...] = (),
         weather_statements: tuple[str, ...] = (),
         entity_facts: tuple[Attraction, ...] = (),
@@ -96,17 +107,18 @@ class CandidateRanker:
         entities_by_provider_id = {entity.provider_poi_id: entity for entity in entity_facts}
 
         for poi in pois:
+            pinned = poi.provider_id in pinned_provider_ids
             if poi.provider_id in provider_ids:
                 rejected.append(RejectedCandidate(poi, "DUPLICATE_PROVIDER_ID"))
                 continue
             provider_ids.add(poi.provider_id)
-            if not poi.address.strip():
+            if not pinned and not poi.address.strip():
                 rejected.append(RejectedCandidate(poi, "EMPTY_ADDRESS"))
                 continue
-            if _city_key(poi.city) != destination_key:
+            if not pinned and _city_key(poi.city) != destination_key:
                 rejected.append(RejectedCandidate(poi, "CITY_MISMATCH"))
                 continue
-            if _matches_any(poi, avoid_places):
+            if _is_avoided(poi, avoid_provider_ids, avoid_places):
                 rejected.append(RejectedCandidate(poi, "AVOID_PLACE"))
                 continue
             place_key = (
@@ -114,7 +126,7 @@ class CandidateRanker:
                 round(poi.coordinates.longitude * 1_000),
                 round(poi.coordinates.latitude * 1_000),
             )
-            if place_key in place_keys:
+            if not pinned and place_key in place_keys:
                 rejected.append(RejectedCandidate(poi, "DUPLICATE_PLACE"))
                 continue
             place_keys.add(place_key)
@@ -138,9 +150,19 @@ class CandidateRanker:
                 item.poi.provider_id,
             )
         )
-        selected = accepted[:limit]
+        if pinned_provider_ids:
+            # Pinned items always select, sorted first; the ordinary quota
+            # applies to the remaining accepted candidates only.
+            pinned_items = [
+                item for item in accepted if item.poi.provider_id in pinned_provider_ids
+            ]
+            rest = [item for item in accepted if item.poi.provider_id not in pinned_provider_ids]
+            selected = (*pinned_items, *rest[: max(limit - len(pinned_items), 0)])
+        else:
+            selected = accepted[:limit]
         rejected.extend(
-            RejectedCandidate(item.poi, "BELOW_SELECTION_CUTOFF") for item in accepted[limit:]
+            RejectedCandidate(item.poi, "BELOW_SELECTION_CUTOFF")
+            for item in accepted[len(selected) :]
         )
         return CandidateRanking(tuple(selected), tuple(rejected))
 
@@ -206,18 +228,26 @@ def _text_key(value: str) -> str:
 
 def _matches_any(poi: Poi, values: tuple[str, ...]) -> bool:
     searchable = _text_key(f"{poi.name} {poi.type_name} {poi.address}")
-    return any(
-        normalized in searchable
-        for value in values
-        if (normalized := _text_key(value))
-    )
+    return any(normalized in searchable for value in values if (normalized := _text_key(value)))
+
+
+def _is_avoided(
+    poi: Poi,
+    avoid_provider_ids: frozenset[str],
+    avoid_places: tuple[str, ...],
+) -> bool:
+    """Structured avoid ids take precedence: when present, only exact provider
+    ids are excluded.  Legacy text matching is the fallback only when no
+    structured ids were provided (historical free-text trips)."""
+    if avoid_provider_ids:
+        return poi.provider_id in avoid_provider_ids
+    return _matches_any(poi, avoid_places)
 
 
 def is_positive_guide_statement(value: str) -> bool:
     normalized = _text_key(value)
-    return (
-        any(_text_key(term) in normalized for term in _POSITIVE_GUIDE_TERMS)
-        and not any(_text_key(term) in normalized for term in _NEGATIVE_GUIDE_TERMS)
+    return any(_text_key(term) in normalized for term in _POSITIVE_GUIDE_TERMS) and not any(
+        _text_key(term) in normalized for term in _NEGATIVE_GUIDE_TERMS
     )
 
 

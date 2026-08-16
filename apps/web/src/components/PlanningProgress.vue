@@ -36,10 +36,14 @@ const stageMessages: Record<PlanningProgressStage, string> = Object.fromEntries(
   steps.map((step) => [step.stage, `正在${step.label}`]),
 ) as Record<PlanningProgressStage, string>
 
+// B14_FIX R5 (D05): a stage without an observed event is "未触发" (not yet
+// reached), never "未执行" — the provider may legitimately skip a stage
+// (e.g. Demo emits no real route calculation), and claiming it was "not
+// executed" misrepresents a provider that actually ran it.
 const statusLabels = {
   done: '已完成',
   active: '进行中',
-  skipped: '未执行',
+  skipped: '未触发',
   pending: '等待中',
 } as const
 
@@ -54,7 +58,7 @@ const currentStepIndex = computed(() => {
 
 const currentMessage = computed(() => {
   if (props.planningState === 'succeeded') return '行程规划已完成'
-  if (props.planningState === 'waiting_user') return '行程规划待确认'
+  if (props.planningState === 'waiting_user') return '候选行程已生成，等待处理'
   if (props.planningState === 'failed') return '行程规划未能完成'
   if (props.planningState === 'cancelled') return '行程规划已取消'
   if (props.progress) return stageMessages[props.progress.stage]
@@ -84,7 +88,7 @@ function stepStatus(index: number): 'done' | 'active' | 'skipped' | 'pending' {
           <Cpu :size="16" aria-hidden="true" />
         </span>
         <span class="min-w-0">
-          <span class="block text-sm font-semibold text-surface-800">Planning progress</span>
+          <span class="block text-sm font-semibold text-surface-800">规划进度</span>
           <span data-testid="planning-current-stage" class="mt-0.5 block truncate text-xs text-surface-500">
             {{ currentMessage }}
           </span>

@@ -77,6 +77,8 @@ public class TripConstraintValidator {
         if (!mustVisit.isEmpty()) {
             throw failure("Must-visit and avoided places must not overlap");
         }
+        validatePlaceRefs(input.mustVisitPlaces(), input.mustVisitPlaceRefs(), "Must-visit");
+        validatePlaceRefs(input.avoidPlaces(), input.avoidPlaceRefs(), "Avoid");
         Set<String> mealTypes = new HashSet<>();
         List<MealWindow> orderedMeals = new ArrayList<>(input.mealWindows());
         orderedMeals.sort(Comparator.comparing(MealWindow::startTime));
@@ -97,6 +99,29 @@ public class TripConstraintValidator {
     }
 
     // --- internal helpers ---------------------------------------------------
+
+    /**
+     * B13-D: structured place refs are parallel and index-aligned with their
+     * name lists, and each ref must name the same place it annotates.
+     */
+    private void validatePlaceRefs(
+            List<String> places,
+            List<TripRequests.PlaceRefInput> refs,
+            String label
+    ) {
+        if (refs.isEmpty()) {
+            return;
+        }
+        if (refs.size() != places.size()) {
+            throw failure(label + " place refs must be parallel to their place names");
+        }
+        for (int index = 0; index < refs.size(); index++) {
+            String name = places.get(index).trim();
+            if (!name.equals(refs.get(index).name().trim())) {
+                throw failure(label + " place ref name must match its place name");
+            }
+        }
+    }
 
     private void validateAnchor(
             TravelAnchor anchor,

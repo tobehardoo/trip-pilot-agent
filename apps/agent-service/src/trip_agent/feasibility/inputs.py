@@ -101,13 +101,24 @@ class ValidationInputs:
     visit_duration_bindings: tuple[VisitDurationBinding, ...] = ()
     meal_placement_bindings: tuple[MealPlacementBinding, ...] = ()
     meal_projection_state: MealProjectionState = MealProjectionState.UNAVAILABLE
+    # B13_FIX R3 (P0-3): days whose MEAL activities carry no explicit meal
+    # type (Java-sourced replan/candidate snapshots).  Bindings for those
+    # days can never be produced by identity, so the meal rule must report
+    # UNKNOWN instead of a hard FAIL/PASS conclusion.
+    unverified_meal_days: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "opening_hours_bindings", tuple(self.opening_hours_bindings))
         object.__setattr__(self, "visit_duration_bindings", tuple(self.visit_duration_bindings))
         object.__setattr__(self, "meal_placement_bindings", tuple(self.meal_placement_bindings))
+        object.__setattr__(self, "unverified_meal_days", tuple(self.unverified_meal_days))
         if not isinstance(self.meal_projection_state, MealProjectionState):
             raise TypeError("meal_projection_state must be a MealProjectionState instance")
+        for value in self.unverified_meal_days:
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError("unverified_meal_days entries must be integers, not booleans")
+            if value < 0:
+                raise ValueError("unverified_meal_days entries must be non-negative")
         for label, bindings in (
             ("opening_hours_bindings", self.opening_hours_bindings),
             ("visit_duration_bindings", self.visit_duration_bindings),

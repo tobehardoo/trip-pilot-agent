@@ -52,12 +52,15 @@ ACTIVE_SCHEMA_FILES = (
     "planning-completed-event-v6.schema.json",
     "planning-create-command-v2.schema.json",
     "planning-create-command-v3.schema.json",
+    "planning-create-command-v4.schema.json",
     "planning-failed-event-v1.schema.json",
     "planning-failed-event-v2.schema.json",
     "planning-progress-event-v1.schema.json",
     "planning-progress-event-v2.schema.json",
     "planning-replan-command-v1.schema.json",
+    "planning-replan-command-v2.schema.json",
     "planning-candidate-validation-command-v1.schema.json",
+    "planning-candidate-validation-command-v2.schema.json",
     "planning-completed-event-v9.schema.json",
     "planning-review-required-event-v1.schema.json",
 )
@@ -385,6 +388,7 @@ def test_v9_schema_rejects_fixture_without_evaluation() -> None:
     import json
 
     schema = _load_schema("planning-completed-event-v9.schema.json")
+    registry = _local_schema_registry()
     fixture = json.loads(
         (COMPLETION_V9_FIXTURE_DIRECTORY / "completion-v9-verified-amap.json").read_text(
             encoding="utf-8"
@@ -393,7 +397,7 @@ def test_v9_schema_rejects_fixture_without_evaluation() -> None:
     broken = copy.deepcopy(fixture)
     del broken["payload"]["evaluation"]
     with pytest.raises(JsonSchemaValidationError):
-        Draft202012Validator(schema).validate(broken)
+        Draft202012Validator(schema, registry=registry).validate(broken)
 
 
 def test_v9_schema_rejects_unverified_and_needs_repair_status() -> None:
@@ -401,6 +405,7 @@ def test_v9_schema_rejects_unverified_and_needs_repair_status() -> None:
     import json
 
     schema = _load_schema("planning-completed-event-v9.schema.json")
+    registry = _local_schema_registry()
     fixture = json.loads(
         (COMPLETION_V9_FIXTURE_DIRECTORY / "completion-v9-verified-amap.json").read_text(
             encoding="utf-8"
@@ -410,19 +415,20 @@ def test_v9_schema_rejects_unverified_and_needs_repair_status() -> None:
         broken = copy.deepcopy(fixture)
         broken["payload"]["feasibilityReport"]["status"] = status
         with pytest.raises(JsonSchemaValidationError):
-            Draft202012Validator(schema).validate(broken)
+            Draft202012Validator(schema, registry=registry).validate(broken)
 
 
 def test_v9_schema_accepts_verified_fixture() -> None:
     import json
 
     schema = _load_schema("planning-completed-event-v9.schema.json")
+    registry = _local_schema_registry()
     fixture = json.loads(
         (COMPLETION_V9_FIXTURE_DIRECTORY / "completion-v9-verified-amap.json").read_text(
             encoding="utf-8"
         )
     )
-    Draft202012Validator(schema).validate(fixture)
+    Draft202012Validator(schema, registry=registry).validate(fixture)
 
 
 # ── B6.1: active schema coverage for v9/review ──────────────────────────────
@@ -465,6 +471,7 @@ def test_schema_and_model_agree_on_v9_required_fields() -> None:
     import json
 
     schema = _load_schema("planning-completed-event-v9.schema.json")
+    registry = _local_schema_registry()
     fixture = json.loads(
         (COMPLETION_V9_FIXTURE_DIRECTORY / "completion-v9-verified-amap.json").read_text(
             encoding="utf-8"
@@ -478,7 +485,7 @@ def test_schema_and_model_agree_on_v9_required_fields() -> None:
         broken = copy.deepcopy(fixture)
         del broken["payload"][field]
         with pytest.raises(JsonSchemaValidationError):
-            Draft202012Validator(schema).validate(broken)
+            Draft202012Validator(schema, registry=registry).validate(broken)
         raw_payload = broken["payload"]
         raw_payload["provider"] = "AMAP"
         from trip_agent.worker.contracts import PlanningCompletedEventV9
@@ -486,3 +493,238 @@ def test_schema_and_model_agree_on_v9_required_fields() -> None:
         with pytest.raises(Exception) as exc:
             PlanningCompletedEventV9.model_validate(broken)
         assert exc.value
+
+
+# ── B13-D: planning-create-command v4 with PlaceRef ─────────────────────────
+
+CREATE_V4_FIXTURE_DIRECTORY = (
+    Path(__file__).resolve().parents[3] / "contracts" / "fixtures" / "planning-create-command-v4"
+)
+
+
+def test_v4_schema_accepts_the_place_ref_fixture() -> None:
+    import json
+
+    schema = _load_schema("planning-create-command-v4.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads((CREATE_V4_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8"))
+    Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+def test_v4_schema_rejects_unknown_place_provider() -> None:
+    import copy
+    import json
+
+    schema = _load_schema("planning-create-command-v4.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads((CREATE_V4_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8"))
+    broken = copy.deepcopy(fixture)
+    broken["payload"]["trip"]["constraints"]["mustVisitPlaceRefs"][0]["provider"] = "GOOGLE"
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(broken)
+
+
+def test_v4_schema_accepts_constraints_schema_version_2() -> None:
+    # B13_FIX R1: v4 carries the authoritative boundaries regardless of
+    # whether constraints carry place refs (schema 2 = no refs is fine).
+    import copy
+    import json
+
+    schema = _load_schema("planning-create-command-v4.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads((CREATE_V4_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8"))
+    broken = copy.deepcopy(fixture)
+    constraints = broken["payload"]["trip"]["constraints"]
+    constraints["schemaVersion"] = 2
+    constraints.pop("mustVisitPlaceRefs", None)
+    constraints.pop("avoidPlaceRefs", None)
+    for anchor in ("arrival", "departure", "accommodation"):
+        if constraints.get(anchor):
+            constraints[anchor].pop("placeRef", None)
+    Draft202012Validator(schema, registry=registry).validate(broken)
+
+
+def test_v4_schema_rejects_constraints_schema_version_2_with_refs() -> None:
+    # B13_FIX R2 (P0-2): schema 2 is legacy-only — any refs (list or anchor)
+    # must be rejected by the JSON Schema, matching Java and Python.
+    import copy
+    import json
+
+    schema = _load_schema("planning-create-command-v4.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads((CREATE_V4_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8"))
+    for refs_field in ("mustVisitPlaceRefs", "avoidPlaceRefs"):
+        broken = copy.deepcopy(fixture)
+        broken["payload"]["trip"]["constraints"]["schemaVersion"] = 2
+        broken["payload"]["trip"]["constraints"][refs_field] = [copy.deepcopy(
+            fixture["payload"]["trip"]["constraints"]["mustVisitPlaceRefs"][0]
+        )]
+        with pytest.raises(JsonSchemaValidationError):
+            Draft202012Validator(schema, registry=registry).validate(broken)
+    broken = copy.deepcopy(fixture)
+    broken["payload"]["trip"]["constraints"]["schemaVersion"] = 2
+    broken["payload"]["trip"]["constraints"]["arrival"]["placeRef"] = copy.deepcopy(
+        fixture["payload"]["trip"]["constraints"]["mustVisitPlaceRefs"][0]
+    )
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(broken)
+
+
+def test_v4_schema_rejects_refs_count_mismatch() -> None:
+    # B13_FIX R2 (P0-2): once any ref is present, the ref count must equal
+    # the name count — the mixed legacy/structured rule in the JSON Schema.
+    import copy
+    import json
+
+    schema = _load_schema("planning-create-command-v4.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads((CREATE_V4_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8"))
+    broken = copy.deepcopy(fixture)
+    constraints = broken["payload"]["trip"]["constraints"]
+    constraints["mustVisitPlaces"] = ["陈家祠", "光孝寺"]
+    constraints["mustVisitPlaceRefs"] = [copy.deepcopy(
+        fixture["payload"]["trip"]["constraints"]["mustVisitPlaceRefs"][0]
+    )]
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(broken)
+
+
+def test_v4_schema_accepts_legacy_names_with_empty_refs() -> None:
+    # B13_FIX R2 (P0-2): legacy free-text names with NO structured refs stay
+    # legal under schema 3 (historical text was never structured).
+    import copy
+    import json
+
+    schema = _load_schema("planning-create-command-v4.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads((CREATE_V4_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8"))
+    broken = copy.deepcopy(fixture)
+    constraints = broken["payload"]["trip"]["constraints"]
+    constraints["mustVisitPlaces"] = ["陈家祠", "光孝寺"]
+    constraints["mustVisitPlaceRefs"] = []
+    constraints["avoidPlaces"] = []
+    constraints["avoidPlaceRefs"] = []
+    Draft202012Validator(schema, registry=registry).validate(broken)
+
+
+def test_v4_schema_requires_snapshot_boundary_fields() -> None:
+    import copy
+    import json
+
+    schema = _load_schema("planning-create-command-v4.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads((CREATE_V4_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8"))
+    broken = copy.deepcopy(fixture)
+    del broken["payload"]["trip"]["arrivalAt"]
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(broken)
+
+
+def test_v4_schema_rejects_command_schema_version_3() -> None:
+    import copy
+    import json
+
+    schema = _load_schema("planning-create-command-v4.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads((CREATE_V4_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8"))
+    broken = copy.deepcopy(fixture)
+    broken["schemaVersion"] = 3
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(broken)
+
+
+# ── B13_FIX R1: replan v2 / candidate-validation v2 fixtures ────────────────
+
+REPLAN_V2_FIXTURE_DIRECTORY = (
+    Path(__file__).resolve().parents[3] / "contracts" / "fixtures" / "planning-replan-command-v2"
+)
+CANDIDATE_V2_FIXTURE_DIRECTORY = (
+    Path(__file__).resolve().parents[3]
+    / "contracts"
+    / "fixtures"
+    / "planning-candidate-validation-command-v2"
+)
+
+
+def test_replan_v2_schema_accepts_its_fixture() -> None:
+    import json
+
+    schema = _load_schema("planning-replan-command-v2.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads(
+        (REPLAN_V2_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+def test_replan_v2_fixture_parses_with_the_python_model() -> None:
+    import json
+
+    from trip_agent.worker.contracts import PlanningReplanCommand
+
+    fixture = json.loads(
+        (REPLAN_V2_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8")
+    )
+    command = PlanningReplanCommand.model_validate(fixture)
+    assert command.schema_version == 2
+    assert command.payload.trip.arrival_at is not None
+    assert command.payload.trip.departure_at is not None
+    assert command.payload.trip.constraints.schema_version == 3
+
+
+def test_replan_v2_schema_rejects_v1_body() -> None:
+    import json
+
+    schema = _load_schema("planning-replan-command-v2.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads(
+        (REPLAN_V2_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8")
+    )
+    fixture["schemaVersion"] = 1
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+def test_candidate_v2_schema_accepts_edit_and_rollback_fixtures() -> None:
+    import json
+
+    schema = _load_schema("planning-candidate-validation-command-v2.schema.json")
+    registry = _local_schema_registry()
+    for name in ("valid-edit.json", "valid-rollback.json"):
+        fixture = json.loads(
+            (CANDIDATE_V2_FIXTURE_DIRECTORY / name).read_text(encoding="utf-8")
+        )
+        Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+def test_candidate_v2_fixtures_parse_with_the_python_model() -> None:
+    import json
+
+    from trip_agent.worker.contracts import PlanningCandidateValidationCommand
+
+    for name in ("valid-edit.json", "valid-rollback.json"):
+        fixture = json.loads(
+            (CANDIDATE_V2_FIXTURE_DIRECTORY / name).read_text(encoding="utf-8")
+        )
+        command = PlanningCandidateValidationCommand.model_validate(fixture)
+        assert command.schema_version == 2
+        assert command.payload.trip.arrival_at is not None
+        assert command.payload.trip.departure_at is not None
+
+
+def test_v1_legacy_fixtures_keep_their_published_meaning() -> None:
+    import json
+
+    schema = _load_schema("planning-candidate-validation-command-v1.schema.json")
+    registry = _local_schema_registry()
+    for name in ("valid-edit.json", "valid-rollback.json"):
+        fixture = json.loads(
+            (
+                Path(__file__).resolve().parents[3]
+                / "contracts"
+                / "fixtures"
+                / "planning-candidate-validation-command-v1"
+                / name
+            ).read_text(encoding="utf-8")
+        )
+        Draft202012Validator(schema, registry=registry).validate(fixture)

@@ -71,7 +71,7 @@ def _binding(day: int, activity: int, meal_type: MealWindowType) -> MealPlacemen
 
 def _ctx(
     *days: tuple[tuple[ItineraryActivity, ...], tuple[MealPlacementBinding, ...]],
-    meal_windows: tuple[tuple[str, int, int], ...] = (),
+    meal_windows: tuple[tuple[str, int, int, str | None], ...] = (),
     projection_state: MealProjectionState = MealProjectionState.UNAVAILABLE,
 ) -> ValidationContext:
     if not days:
@@ -82,8 +82,10 @@ def _ctx(
                 "mealType": meal_type,
                 "startTime": f"{start:02d}:00",
                 "endTime": f"{end:02d}:00",
+                **({"source": source} if source is not None else {}),
             }
-            for meal_type, start, end in meal_windows
+            for meal_type, start, end, *rest in meal_windows
+            for source in (rest[0] if rest else None,)
         )
     )
     itinerary = Itinerary(
@@ -346,6 +348,99 @@ def test_meal_microsecond_after_window_fails() -> None:
                     duration_microseconds=1,
                 ),
             ),
+            (_binding(0, 0, MealWindowType.LUNCH),),
+        ),
+        meal_windows=(("LUNCH", 12, 13),),
+        projection_state=MealProjectionState.COMPLETE,
+    )
+
+    assessment = assess_meal_window(ctx)
+
+    assert assessment.result.outcome is RuleOutcome.FAIL
+    assert assessment.result.reason_code == "MEAL_OUTSIDE_WINDOW"
+
+
+# ── B13-F: meal window source truth table ───────────────────────────────────
+
+
+def test_default_only_windows_are_not_hard_constraints() -> None:
+    ctx = _ctx(
+        meal_windows=(("LUNCH", 12, 13, "DEFAULT"),),
+        projection_state=MealProjectionState.COMPLETE,
+    )
+
+    assessment = assess_meal_window(ctx)
+
+    assert assessment.result.outcome is RuleOutcome.NOT_APPLICABLE
+
+
+def test_default_placement_outside_suggestion_is_not_a_fail() -> None:
+    ctx = _ctx(
+        (
+            (_meal_activity(0, start_hour=14),),
+            (_binding(0, 0, MealWindowType.LUNCH),),
+        ),
+        meal_windows=(("LUNCH", 12, 13, "DEFAULT"),),
+        projection_state=MealProjectionState.COMPLETE,
+    )
+
+    assessment = assess_meal_window(ctx)
+
+    assert assessment.result.outcome is RuleOutcome.NOT_APPLICABLE
+
+
+def test_disabled_windows_are_never_constrained() -> None:
+    ctx = _ctx(
+        meal_windows=(("DINNER", 18, 19, "DISABLED"),),
+        projection_state=MealProjectionState.COMPLETE,
+    )
+
+    assessment = assess_meal_window(ctx)
+
+    assert assessment.result.outcome is RuleOutcome.NOT_APPLICABLE
+
+
+def test_mixed_windows_only_user_missing_fails() -> None:
+    ctx = _ctx(
+        meal_windows=(("LUNCH", 12, 13, "USER"), ("DINNER", 18, 19, "DEFAULT")),
+        projection_state=MealProjectionState.COMPLETE,
+    )
+
+    assessment = assess_meal_window(ctx)
+
+    assert assessment.result.outcome is RuleOutcome.FAIL
+    assert assessment.result.reason_code == "MEAL_PLACEMENT_MISSING"
+    assert assessment.result.affected_dates == (date(2026, 8, 1),)
+
+
+def test_mixed_windows_default_outside_does_not_fail_user_inside() -> None:
+    ctx = _ctx(
+        (
+            (
+                _meal_activity(0, start_hour=12),
+                _meal_activity(1, start_hour=15),
+            ),
+            (
+                _binding(0, 0, MealWindowType.LUNCH),
+                _binding(0, 1, MealWindowType.DINNER),
+            ),
+        ),
+        meal_windows=(("LUNCH", 12, 13, "USER"), ("DINNER", 18, 19, "DEFAULT")),
+        projection_state=MealProjectionState.COMPLETE,
+    )
+
+    assessment = assess_meal_window(ctx)
+
+    assert assessment.result.outcome is RuleOutcome.PASS
+    assert assessment.result.reason_code == "MEAL_WINDOWS_VERIFIED"
+
+
+def test_source_less_window_is_treated_as_user() -> None:
+    # Historical trips carry meal windows without a source; they must keep
+    # their hard-constraint semantics (never downgraded to a suggestion).
+    ctx = _ctx(
+        (
+            (_meal_activity(0, start_hour=14),),
             (_binding(0, 0, MealWindowType.LUNCH),),
         ),
         meal_windows=(("LUNCH", 12, 13),),

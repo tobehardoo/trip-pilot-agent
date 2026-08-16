@@ -17,6 +17,7 @@ from trip_agent.domain.shared import (
     CHINA_TIME_ZONE,
     available_minutes,
     minute_datetime,
+    snapshot_boundary_times,
 )
 from trip_agent.feasibility.inputs import MealProjectionState
 from trip_agent.planning.daily_schedule import classify_day_type
@@ -60,6 +61,14 @@ class DemoPlanningProvider:
                 ),
             )
         day_count = (trip.end_date - trip.start_date).days + 1
+        # B14_FIX R5 (D05): report every real execution boundary.  Demo does
+        # rank and select its skeleton candidates before solving constraints,
+        # so CANDIDATES_RANKING is a true milestone here — not fabricated.
+        await report_planning_progress(
+            "CANDIDATES_RANKING",
+            "Ranking demo candidates for the trip skeleton",
+            {"tripDays": day_count},
+        )
         await report_planning_progress(
             "CONSTRAINTS_SOLVING",
             "Solving the requested schedule constraints",
@@ -119,9 +128,9 @@ class DemoPlanningProvider:
     def _day_skeleton(self, command: PlanningCreateCommand, offset: int) -> ItineraryDay:
         trip = command.payload.trip
         trip_date = trip.start_date + timedelta(days=offset)
-        constraints = trip.constraints
-        arrival = constraints.arrival.time if constraints.arrival is not None else None
-        departure = constraints.departure.time if constraints.departure is not None else None
+        # B13_FIX R1 (P0-1): authoritative snapshot boundaries first, legacy
+        # constraint anchors as fallback.
+        arrival, departure = snapshot_boundary_times(trip)
         day_type = classify_day_type(trip_date, trip.start_date, trip.end_date, arrival, departure)
         available_start, available_end = available_minutes(
             trip_date,
@@ -212,7 +221,10 @@ class DemoPlanningProvider:
     ) -> list[ItineraryActivity]:
         """Place LUNCH/DINNER placeholders inside the available day window."""
         placeholders: list[ItineraryActivity] = []
-        for label, anchor in (("午餐时段（演示）", 12 * 60), ("晚餐时段（演示）", 18 * 60)):
+        for label, anchor, meal_type in (
+            ("午餐时段（演示）", 12 * 60, "LUNCH"),
+            ("晚餐时段（演示）", 18 * 60, "DINNER"),
+        ):
             if day_type == "ARRIVAL_DAY" and anchor == 12 * 60:
                 continue
             if day_type == "DEPARTURE_DAY" and anchor == 18 * 60:
@@ -228,6 +240,9 @@ class DemoPlanningProvider:
                     estimated_cost=Decimal("0"),
                     source="DEMO",
                     kind="MEAL",
+                    # B13_FIX R3 (P0-3): explicit meal type for identity
+                    # binding in the validation projection.
+                    meal_type=meal_type,  # type: ignore[arg-type]
                 )
             )
         return placeholders

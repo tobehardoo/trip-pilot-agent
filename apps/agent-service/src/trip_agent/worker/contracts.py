@@ -15,8 +15,10 @@ from pydantic import (
     Field,
     JsonValue,
     PlainSerializer,
+    SerializerFunctionWrapHandler,
     StringConstraints,
     field_validator,
+    model_serializer,
     model_validator,
 )
 from pydantic.alias_generators import to_camel
@@ -719,10 +721,27 @@ class ItineraryDay(MessageModel):
         return self
 
 
+class AccommodationStatus(MessageModel):
+    """End-to-end accommodation resolution status carried on the itinerary.
+
+    CONFIRMED — a provider POI with coordinates was projected as the hotel
+    node.  AREA_ESTIMATED — a structured region estimate (AMap transient
+    projection; not currently produced by any itinerary entry point).  The
+    rest stays UNRESOLVED — the user's accommodation label could not be
+    located, and the system never fabricates a confirmation.
+    """
+
+    status: Literal["CONFIRMED", "AREA_ESTIMATED", "UNRESOLVED"]
+    place_name: str | None = None
+
+
 class Itinerary(MessageModel):
     title: ItineraryText
     days: tuple[ItineraryDay, ...] = Field(min_length=1)
     estimated_total_cost: JsonDecimal
+    # Optional so older producers keep emitting compatible events; Java and
+    # the Web use it to show whether the hotel is confirmed or unresolved.
+    accommodation: AccommodationStatus | None = None
 
 
 class KnowledgeCitationSnapshot(MessageModel):
@@ -832,6 +851,66 @@ class ReplanItinerarySnapshot(InboundMessageModel):
         return self
 
 
+def _forbid_taxi_on_v2_wire(itinerary: Itinerary | ReplanItinerarySnapshot) -> None:
+    """Keep TAXI as a Java persistence intent, never a Python provider mode."""
+    if any(
+        leg.mode == "TAXI"
+        for day in itinerary.days
+        for leg in day.transit_legs
+    ):
+        raise ValueError("schemaVersion 2/11 wire itineraries forbid TAXI mode")
+
+
+def _forbid_raw_taxi_on_wire(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    payload = value.get("payload")
+    itinerary = payload.get("itinerary") if isinstance(payload, dict) else None
+    days = itinerary.get("days", ()) if isinstance(itinerary, dict) else ()
+    if any(
+        isinstance(leg, dict) and leg.get("mode") == "TAXI"
+        for day in days
+        if isinstance(day, dict)
+        for leg in day.get("transitLegs", day.get("transit_legs", ()))
+    ):
+        raise ValueError("schemaVersion 2/11 wire itineraries forbid TAXI mode")
+    return value
+
+
+def _inject_v11_transit_costs(
+    wire: dict[str, object],
+    itinerary: Itinerary,
+) -> dict[str, object]:
+    payload = wire.get("payload")
+    wire_itinerary = payload.get("itinerary") if isinstance(payload, dict) else None
+    wire_days = wire_itinerary.get("days", ()) if isinstance(wire_itinerary, dict) else ()
+    for wire_day, day in zip(wire_days, itinerary.days, strict=False):
+        if not isinstance(wire_day, dict):
+            continue
+        wire_legs = wire_day.get("transitLegs", wire_day.get("transit_legs", ()))
+        for wire_leg, leg in zip(wire_legs, day.transit_legs, strict=False):
+            if not isinstance(wire_leg, dict):
+                continue
+            if leg.estimated_cost is not None:
+                wire_leg["estimatedCost"] = float(leg.estimated_cost)
+            wire_leg["costSource"] = leg.cost_source
+    wire_report = payload.get("feasibilityReport", payload.get("feasibility_report"))
+    if isinstance(wire_itinerary, dict) and isinstance(wire_report, dict):
+        from trip_agent.feasibility.fingerprint import (
+            compute_serialized_itinerary_fingerprint,
+        )
+
+        fingerprint_key = (
+            "itineraryFingerprint"
+            if "feasibilityReport" in payload
+            else "itinerary_fingerprint"
+        )
+        wire_report[fingerprint_key] = compute_serialized_itinerary_fingerprint(
+            wire_itinerary
+        )
+    return wire
+
+
 class PlanningReplanPayload(InboundMessageModel):
     task_type: Literal["REPLAN"]
     baseline_trip_version: int = Field(strict=True, ge=0)
@@ -874,6 +953,11 @@ class PlanningReplanCommand(InboundMessageModel):
     occurred_at: datetime
     payload: PlanningReplanPayload
 
+    @model_validator(mode="before")
+    @classmethod
+    def require_raw_technical_route_modes(cls, value: object) -> object:
+        return _forbid_raw_taxi_on_wire(value)
+
     @model_validator(mode="after")
     def validate_occurred_at(self) -> Self:
         if self.occurred_at.utcoffset() is None:
@@ -885,6 +969,7 @@ class PlanningReplanCommand(InboundMessageModel):
                 raise ValueError("schemaVersion 2 requires snapshot arrivalAt")
             if "departure_at" not in snapshot.model_fields_set:
                 raise ValueError("schemaVersion 2 requires snapshot departureAt")
+            _forbid_taxi_on_v2_wire(self.payload.itinerary)
         return self
 
 
@@ -907,6 +992,34 @@ class PlanningFactImpact(MessageModel):
     stale: bool
     conflicted: bool
     refresh_failed: bool
+
+    @model_serializer(mode="wrap")
+    def _omit_none_optional_fields(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        """Omit every optional-not-nullable field instead of emitting null.
+
+        The v10 schema (and Java ``PlanningCompletedEventParser`` /
+        ``PlanningReviewRequiredEventParser``) require ``date``/``targetPoiId``/
+        ``targetName``/``sourceUrl`` to be non-null strings whenever the
+        property is present; an absent value (e.g. a city-wide weather impact
+        or a stale-fact warning without a target) must be expressed by omitting
+        the field, never by ``null``.  This mirrors the schema contract: these
+        fields are optional, not nullable.
+        """
+        data = handler(self)
+        if self.date is None:
+            data.pop("date", None)
+        if self.target_poi_id is None:
+            data.pop("targetPoiId", None)
+            data.pop("target_poi_id", None)
+        if self.target_name is None:
+            data.pop("targetName", None)
+            data.pop("target_name", None)
+        if self.source_url is None:
+            data.pop("sourceUrl", None)
+            data.pop("source_url", None)
+        return data
 
     @model_validator(mode="after")
     def validate_checked_at(self) -> Self:
@@ -1111,6 +1224,74 @@ class PlanningCompletedEventV9(MessageModel):
         return self
 
 
+class PlanningCompletedPayloadV10(PlanningCompletedPayloadV9):
+    """v10 completion payload: adds explicit blocker semantics.
+
+    ``has_blocker`` mirrors the report's derived blocker state so the Java
+    side never guesses from ``warnings.length``.  A v10 completion may carry
+    an UNVERIFIED report as long as no blocker exists (Information Missing
+    != Planning Failed); VERIFIED reports keep has_blocker=False.
+    """
+
+    has_blocker: bool
+
+    @model_validator(mode="after")
+    def blocker_consistent(self) -> Self:
+        if self.has_blocker != self.feasibility_report.has_blocker:
+            raise ValueError("has_blocker must match the feasibility report blocker state")
+        if self.has_blocker:
+            raise ValueError("v10 completion must not carry a blocker report")
+        return self
+
+
+class PlanningCompletedEventV10(MessageModel):
+    event_type: Literal["PLANNING_COMPLETED"]
+    schema_version: Literal[10]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    run_id: UUID
+    occurred_at: datetime
+    payload: PlanningCompletedPayloadV10
+
+    @model_validator(mode="after")
+    def require_savable_report(self) -> Self:
+        if self.payload.feasibility_report.has_blocker:
+            raise ValueError("v10 completion requires a savable (no-blocker) feasibility report")
+        return self
+
+
+class PlanningCompletedEventV11(MessageModel):
+    event_type: Literal["PLANNING_COMPLETED"]
+    schema_version: Literal[11]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    run_id: UUID
+    occurred_at: datetime
+    payload: PlanningCompletedPayloadV10
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_raw_technical_route_modes(cls, value: object) -> object:
+        return _forbid_raw_taxi_on_wire(value)
+
+    @model_validator(mode="after")
+    def require_savable_report(self) -> Self:
+        if self.payload.feasibility_report.has_blocker:
+            raise ValueError("v11 completion requires a savable (no-blocker) feasibility report")
+        _forbid_taxi_on_v2_wire(self.payload.itinerary)
+        return self
+
+    @model_serializer(mode="wrap")
+    def include_transit_costs(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        return _inject_v11_transit_costs(handler(self), self.payload.itinerary)
+
+
 class PlanningReviewRequiredPayload(MessageModel):
     status: Literal["WAITING_USER"]
     provider: Literal["AMAP", "DEMO"]
@@ -1156,6 +1337,34 @@ class PlanningReviewRequiredEvent(MessageModel):
     run_id: UUID
     occurred_at: datetime
     payload: PlanningReviewRequiredPayload
+
+
+class PlanningReviewRequiredEventV2(MessageModel):
+    event_type: Literal["PLANNING_REVIEW_REQUIRED"]
+    schema_version: Literal[2]
+    event_id: UUID
+    trace_id: UUID
+    task_id: UUID
+    trip_id: UUID
+    run_id: UUID
+    occurred_at: datetime
+    payload: PlanningReviewRequiredPayload
+
+    @model_validator(mode="before")
+    @classmethod
+    def require_raw_technical_route_modes(cls, value: object) -> object:
+        return _forbid_raw_taxi_on_wire(value)
+
+    @model_validator(mode="after")
+    def require_technical_route_modes(self) -> Self:
+        _forbid_taxi_on_v2_wire(self.payload.itinerary)
+        return self
+
+    @model_serializer(mode="wrap")
+    def include_transit_costs(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        return _inject_v11_transit_costs(handler(self), self.payload.itinerary)
 
 
 class PlanningConflict(MessageModel):
@@ -1318,6 +1527,23 @@ class CandidateItinerarySnapshot(ReplanItinerarySnapshot):
         return self
 
 
+def wire_provider_for_snapshot(
+    snapshot: CandidateItinerarySnapshot | ReplanItinerarySnapshot,
+) -> str:
+    """Map a persisted snapshot provider to the wire completion provider.
+
+    'MIXED' is a Java persistence aggregate (AMAP + DEMO activities in one
+    version) and is NOT a legal wire completion provider — the completion
+    payload only accepts AMAP/DEMO (F5).  When the snapshot is MIXED the wire
+    provider follows the activity sources (AMAP if any AMAP activity exists,
+    otherwise DEMO).
+    """
+    if snapshot.provider != "MIXED":
+        return snapshot.provider
+    sources = {activity.source for day in snapshot.days for activity in day.activities}
+    return "AMAP" if "AMAP" in sources else "DEMO"
+
+
 class PlanningCandidateValidationPayload(InboundMessageModel):
     task_type: Literal["EDIT_VALIDATE", "ROLLBACK_VALIDATE"]
     candidate_type: Literal["EDIT", "ROLLBACK"]
@@ -1381,6 +1607,11 @@ class PlanningCandidateValidationCommand(InboundMessageModel):
     occurred_at: datetime
     payload: PlanningCandidateValidationPayload
 
+    @model_validator(mode="before")
+    @classmethod
+    def require_raw_technical_route_modes(cls, value: object) -> object:
+        return _forbid_raw_taxi_on_wire(value)
+
     @model_validator(mode="after")
     def validate_identity(self) -> Self:
         if self.occurred_at.utcoffset() is None:
@@ -1392,6 +1623,7 @@ class PlanningCandidateValidationCommand(InboundMessageModel):
                 raise ValueError("schemaVersion 2 requires snapshot arrivalAt")
             if "departure_at" not in snapshot.model_fields_set:
                 raise ValueError("schemaVersion 2 requires snapshot departureAt")
+            _forbid_taxi_on_v2_wire(self.payload.itinerary)
         context = self.payload.planning_context
         if context is not None and (
             context.trip_id != self.trip_id

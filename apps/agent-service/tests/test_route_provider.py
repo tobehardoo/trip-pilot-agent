@@ -554,3 +554,122 @@ def test_amap_route_provider_rejects_invalid_configuration(
             http_client=object(),
             cache_ttl_seconds=cache_ttl_seconds,
         )
+
+
+def test_route_request_accepts_a_transit_mode_with_city_and_defaults() -> None:
+    provider = load_route_provider_module()
+
+    request = route_request(provider, mode="TRANSIT", city="广州")
+
+    assert request.mode == "TRANSIT"
+    assert request.city == "广州"
+    assert request.strategy == 0
+    assert request.nightflag == 0
+
+
+def test_route_request_requires_a_city_for_transit_mode() -> None:
+    provider = load_route_provider_module()
+
+    with pytest.raises(ValidationError, match="city"):
+        route_request(provider, mode="TRANSIT")
+
+
+@pytest.mark.parametrize(
+    ("overrides",),
+    [
+        ({"strategy": -1},),
+        ({"nightflag": 2},),
+    ],
+)
+def test_route_request_rejects_invalid_transit_parameters(
+    overrides: dict[str, object],
+) -> None:
+    provider = load_route_provider_module()
+
+    with pytest.raises(ValidationError):
+        route_request(provider, mode="WALKING", **overrides)
+
+
+def test_route_plan_carries_transit_metadata() -> None:
+    provider = load_route_provider_module()
+    request = route_request(provider)
+    step = provider.RouteStep(
+        instruction="Ride the metro to the next stop",
+        distance_meters=6085,
+        duration_seconds=1250,
+        polyline=(request.origin, request.destination),
+    )
+    route = provider.RoutePlan(
+        mode="TRANSIT",
+        distance_meters=6085,
+        duration_seconds=1250,
+        steps=(step,),
+        polyline=(request.origin, request.destination),
+        walking_distance_meters=654,
+        transfer_count=0,
+    )
+
+    assert route.mode == "TRANSIT"
+    assert route.walking_distance_meters == 654
+    assert route.transfer_count == 0
+
+
+def test_route_plan_rejects_negative_transit_metadata() -> None:
+    provider = load_route_provider_module()
+    request = route_request(provider)
+    step = provider.RouteStep(
+        instruction="Walk to the bus stop",
+        distance_meters=420,
+        duration_seconds=300,
+        polyline=(request.origin, request.destination),
+    )
+
+    with pytest.raises(ValidationError):
+        provider.RoutePlan(
+            mode="WALKING",
+            distance_meters=420,
+            duration_seconds=300,
+            steps=(step,),
+            polyline=(request.origin, request.destination),
+            walking_distance_meters=-1,
+        )
+
+
+def test_demo_route_provider_fails_closed_for_transit_requests() -> None:
+    provider = load_route_provider_module()
+
+    result = asyncio.run(
+        provider.DemoRouteProvider().get_route(
+            route_request(provider, mode="TRANSIT", city="广州")
+        )
+    )
+
+    assert isinstance(result, provider.ProviderFailure)
+    assert result.error_code == "PROVIDER_UNSUPPORTED_MODE"
+    assert result.retryable is False
+
+
+def test_amap_route_provider_fails_closed_for_transit_requests() -> None:
+    provider = load_route_provider_module()
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    async def run_scenario() -> Any:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            amap = provider.AmapRouteProvider(
+                api_key="local-secret-key",
+                http_client=client,
+            )
+            return await amap.get_route(
+                route_request(provider, mode="TRANSIT", city="广州")
+            )
+
+    result = asyncio.run(run_scenario())
+
+    assert isinstance(result, provider.ProviderFailure)
+    assert result.error_code == "PROVIDER_UNSUPPORTED_MODE"
+    assert result.retryable is False
+    assert requests == []

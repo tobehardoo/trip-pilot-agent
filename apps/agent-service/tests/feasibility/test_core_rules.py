@@ -21,7 +21,7 @@ from trip_agent.feasibility.rules.core import (
     assess_fixed_schedule_coverage,
     assess_trip_date_range,
 )
-from trip_agent.worker.contracts import Itinerary, ItineraryDay
+from trip_agent.worker.contracts import ActivityCoordinates, Itinerary, ItineraryDay
 
 
 def _ctx(
@@ -310,6 +310,142 @@ def test_duplicate_poi_fails_with_repeated_attraction_across_days() -> None:
     )
     assert assessment.result.affected_dates == (date(2026, 8, 2),)
     assert assessment.result.affected_entity_refs == (f"poi:{first.provider_poi_id}",)
+
+
+def test_duplicate_poi_fails_for_semantic_name_variants_with_different_ids() -> None:
+    first = make_activity(
+        0,
+        title="广州塔",
+        source="AMAP",
+        type_code="110202",
+    )
+    repeated = make_activity(
+        1,
+        title="广州塔-东广场",
+        source="AMAP",
+        type_code="110202",
+    ).model_copy(
+        update={
+            "provider_poi_id": "POI-TOWER-EAST-PLAZA",
+            "coordinates": first.coordinates,
+        }
+    )
+    itinerary = _two_day_itinerary(
+        date(2026, 8, 1),
+        date(2026, 8, 2),
+        (first,),
+        (repeated,),
+    )
+
+    assessment = assess_duplicate_poi(_ctx(itinerary=itinerary))
+
+    assert assessment.result.outcome.value == "FAIL"
+    assert assessment.result.reason_code == "DUPLICATE_POI"
+    assert assessment.result.affected_dates == (date(2026, 8, 2),)
+    assert assessment.findings[0].affected_entity_refs == ("poi:POI-TOWER-EAST-PLAZA",)
+
+
+@pytest.mark.parametrize(
+    (
+        "first_title",
+        "first_type",
+        "first_coordinates",
+        "second_title",
+        "second_type",
+        "second_coordinates",
+    ),
+    [
+        (
+            "广州塔",
+            "110202",
+            (113.324521, 23.106428),
+            "广州塔-东广场",
+            "110105",
+            (113.325324, 23.106236),
+        ),
+        (
+            "陈家祠",
+            "190700",
+            (113.246930, 23.127050),
+            "陈家祠堂",
+            "110202",
+            (113.245158, 23.126692),
+        ),
+        (
+            "广州塔",
+            "110202",
+            (113.324521, 23.106428),
+            "广州塔广场",
+            "060101",
+            (113.324520, 23.105442),
+        ),
+        (
+            "广州塔",
+            "110202",
+            (113.324521, 23.106428),
+            "广州塔旅游区游客中心",
+            "070000",
+            (113.324212, 23.106001),
+        ),
+        (
+            "广州塔",
+            "110202",
+            (113.324521, 23.106428),
+            "广州塔观光区西登塔",
+            "110000",
+            (113.323890, 23.105933),
+        ),
+        (
+            "陈家祠",
+            "190700",
+            (113.246930, 23.127050),
+            "陈家祠广场",
+            "110105",
+            (113.246887, 23.126938),
+        ),
+    ],
+)
+def test_duplicate_poi_fails_for_real_amap_cross_type_nearby_variants(
+    first_title: str,
+    first_type: str,
+    first_coordinates: tuple[float, float],
+    second_title: str,
+    second_type: str,
+    second_coordinates: tuple[float, float],
+) -> None:
+    first = make_activity(0, title=first_title, source="AMAP", type_code=first_type).model_copy(
+        update={
+            "coordinates": ActivityCoordinates(
+                longitude=Decimal(str(first_coordinates[0])),
+                latitude=Decimal(str(first_coordinates[1])),
+            )
+        }
+    )
+    repeated = make_activity(
+        1,
+        title=second_title,
+        source="AMAP",
+        type_code=second_type,
+    ).model_copy(
+        update={
+            "provider_poi_id": "POI-SEMANTIC-VARIANT",
+            "coordinates": ActivityCoordinates(
+                longitude=Decimal(str(second_coordinates[0])),
+                latitude=Decimal(str(second_coordinates[1])),
+            ),
+        }
+    )
+    itinerary = _two_day_itinerary(
+        date(2026, 8, 1),
+        date(2026, 8, 2),
+        (first,),
+        (repeated,),
+    )
+
+    assessment = assess_duplicate_poi(_ctx(itinerary=itinerary))
+
+    assert assessment.result.outcome.value == "FAIL"
+    assert assessment.result.reason_code == "DUPLICATE_POI"
 
 
 def test_duplicate_poi_ignores_none_provider_poi_ids() -> None:

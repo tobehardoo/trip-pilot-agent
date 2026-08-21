@@ -138,6 +138,19 @@ def test_replan_contract_accepts_an_incomplete_impacted_day_snapshot() -> None:
     assert command.payload.itinerary.days[0].transit_legs == ()
 
 
+def test_replan_v2_contract_rejects_persisted_taxi_at_the_provider_boundary() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_data = deepcopy(REPLAN_COMMAND)
+    command_data["schemaVersion"] = 2
+    command_data["payload"]["trip"]["arrivalAt"] = None
+    command_data["payload"]["trip"]["departureAt"] = None
+    leg = command_data["payload"]["itinerary"]["days"][1]["transitLegs"][0]
+    leg["mode"] = "TAXI"
+
+    with pytest.raises(ValidationError, match="forbid TAXI"):
+        contracts.PlanningReplanCommand.model_validate(command_data)
+
+
 def test_replan_contract_accepts_a_conflicting_estimated_transit_selection() -> None:
     contracts = import_module("trip_agent.worker.contracts")
     command_data = deepcopy(REPLAN_COMMAND)
@@ -264,11 +277,10 @@ def test_local_replanning_only_rebuilds_impacted_transit() -> None:
     assert second_day == command.payload.itinerary.days[1].to_itinerary_day()
     assert completed.payload.knowledge == command.payload.knowledge
     assert completed.payload.provider == "AMAP"
-    # Local replan lacks transient validation inputs -> review-required, no
-    # evaluation, and the old version semantics are preserved by Java.
-    assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
-    assert completed.schema_version == 1
-    assert not hasattr(completed.payload, "evaluation")
+    # B16: local replan (UNVERIFIED, no blocker) -> savable v10 completed.
+    assert completed.event_type == "PLANNING_COMPLETED"
+    assert completed.schema_version == 11
+    assert completed.payload.has_blocker is False
     assert completed.payload.feasibility_report.status.value in {
         "UNVERIFIED",
         "NEEDS_REPAIR",
@@ -281,6 +293,7 @@ def test_local_replanning_preserves_the_existing_transit_mode() -> None:
     route_contracts = import_module("trip_agent.providers.route")
     processor = import_module("trip_agent.worker.processor")
     command_data = deepcopy(REPLAN_COMMAND)
+    command_data["payload"]["itinerary"]["estimatedTotalCost"] = 100
     command_data["payload"]["itinerary"]["days"][0]["transitLegs"] = [{
         "fromActivityIndex": 0,
         "toActivityIndex": 1,
@@ -289,6 +302,7 @@ def test_local_replanning_preserves_the_existing_transit_mode() -> None:
         "durationSeconds": 600,
         "provider": "AMAP",
         "estimated": False,
+        "estimatedCost": 6,
         "polyline": [
             {"longitude": 113.31, "latitude": 23.11},
             {"longitude": 113.32, "latitude": 23.12},
@@ -325,7 +339,7 @@ def test_local_replanning_preserves_the_existing_transit_mode() -> None:
             )
 
     route_provider = RouteProvider()
-    asyncio.run(
+    completed = asyncio.run(
         processor.process_planning_replan(
             command,
             processor.LocalReplanningProvider(route_provider),
@@ -334,6 +348,8 @@ def test_local_replanning_preserves_the_existing_transit_mode() -> None:
     )
 
     assert route_provider.requests[0].mode == "DRIVING"
+    assert completed.payload.itinerary.days[0].transit_legs[0].estimated_cost is None
+    assert completed.payload.itinerary.estimated_total_cost == 94
 
 
 def test_local_replanning_matches_reordered_transit_legs_by_endpoints() -> None:
@@ -421,3 +437,201 @@ def test_local_replanning_matches_reordered_transit_legs_by_endpoints() -> None:
         "WALKING",
         "DRIVING",
     ]
+
+
+def test_local_replanning_provider_accepts_an_optional_transit_route() -> None:
+    processor = import_module("trip_agent.worker.processor")
+
+    provider = processor.LocalReplanningProvider(
+        route_provider=object(),
+        transit_route=object(),
+    )
+
+    assert provider is not None
+
+
+def test_replan_routes_a_transit_leg_through_the_transit_provider() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    route_contracts = import_module("trip_agent.providers.route")
+    processor = import_module("trip_agent.worker.processor")
+    command_data = deepcopy(REPLAN_COMMAND)
+    command_data["payload"]["itinerary"]["estimatedTotalCost"] = 100
+    impacted_day = command_data["payload"]["itinerary"]["days"][0]
+    impacted_day["transitLegs"] = [
+        {
+            "fromActivityIndex": 0,
+            "toActivityIndex": 1,
+            "mode": "TRANSIT",
+            "distanceMeters": 6085,
+            "durationSeconds": 1250,
+            "provider": "AMAP",
+            "estimated": False,
+            "estimatedCost": 6,
+            "polyline": [
+                {"longitude": 113.31, "latitude": 23.11},
+                {"longitude": 113.32, "latitude": 23.12},
+            ],
+        }
+    ]
+    command = contracts.PlanningReplanCommand.model_validate(command_data)
+
+    class RouteProvider:
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        async def get_route(self, request: object):
+            self.requests.append(request)
+            return map_contracts.ProviderSuccess(
+                data=route_contracts.RoutePlan(
+                    mode=request.mode,
+                    distance_meters=777,
+                    duration_seconds=480,
+                    steps=(
+                        route_contracts.RouteStep(
+                            instruction="Route to the next activity",
+                            distance_meters=777,
+                            duration_seconds=480,
+                            polyline=(request.origin, request.destination),
+                        ),
+                    ),
+                    polyline=(request.origin, request.destination),
+                ),
+                provider="AMAP",
+                latency_ms=2,
+                cached=False,
+                fetched_at=datetime(2026, 7, 24, 4, 1, tzinfo=UTC),
+                estimated=False,
+            )
+
+    class TransitProvider:
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        async def get_route(self, request: object):
+            self.requests.append(request)
+            return map_contracts.ProviderSuccess(
+                data=route_contracts.RoutePlan(
+                    mode="TRANSIT",
+                    distance_meters=6085,
+                    duration_seconds=1250,
+                    steps=(
+                        route_contracts.RouteStep(
+                            instruction="Take the metro to the next stop",
+                            distance_meters=6085,
+                            duration_seconds=1250,
+                            polyline=(request.origin, request.destination),
+                        ),
+                    ),
+                    polyline=(request.origin, request.destination),
+                    estimated_cost=3,
+                ),
+                provider="AMAP",
+                latency_ms=2,
+                cached=False,
+                fetched_at=datetime(2026, 7, 24, 4, 1, tzinfo=UTC),
+                estimated=False,
+            )
+
+    route_provider = RouteProvider()
+    transit_provider = TransitProvider()
+    completed = asyncio.run(
+        processor.process_planning_replan(
+            command,
+            processor.LocalReplanningProvider(
+                route_provider,
+                transit_route=transit_provider,
+            ),
+            occurred_at=datetime(2026, 7, 24, 4, 2, tzinfo=UTC),
+        )
+    )
+
+    assert route_provider.requests == []
+    assert len(transit_provider.requests) == 1
+    assert transit_provider.requests[0].mode == "TRANSIT"
+    assert transit_provider.requests[0].city == "Guangzhou"
+    leg = completed.payload.itinerary.days[0].transit_legs[0]
+    assert leg.mode == "TRANSIT"
+    assert leg.provider == "AMAP"
+    assert leg.estimated is False
+    assert leg.distance_meters == 6085
+    assert leg.duration_seconds == 1250
+    assert leg.estimated_cost == 3
+    assert completed.payload.itinerary.estimated_total_cost == 97
+    wire_leg = completed.model_dump(mode="json", by_alias=True)["payload"]["itinerary"][
+        "days"
+    ][0]["transitLegs"][0]
+    assert wire_leg["estimatedCost"] == 3.0
+    assert wire_leg["costSource"] == "PROVIDER"
+    assert completed.payload.itinerary.days[1].transit_legs[0].mode == "WALKING"
+
+
+def test_amap_planning_provider_keeps_the_transit_provider_for_replan() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    route_contracts = import_module("trip_agent.providers.route")
+    planning_provider = import_module(
+        "trip_agent.infrastructure.amap.planning_provider"
+    )
+    command_data = deepcopy(REPLAN_COMMAND)
+    command_data["payload"]["itinerary"]["days"][0]["transitLegs"] = [
+        {
+            "fromActivityIndex": 0,
+            "toActivityIndex": 1,
+            "mode": "TRANSIT",
+            "distanceMeters": 6085,
+            "durationSeconds": 1250,
+            "provider": "AMAP",
+            "estimated": False,
+            "polyline": [
+                {"longitude": 113.31, "latitude": 23.11},
+                {"longitude": 113.32, "latitude": 23.12},
+            ],
+        }
+    ]
+    command = contracts.PlanningReplanCommand.model_validate(command_data)
+
+    class UnexpectedRoadProvider:
+        async def get_route(self, _request: object):
+            raise AssertionError("TRANSIT replan must not use the road provider")
+
+    class TransitProvider:
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        async def get_route(self, request: object):
+            self.requests.append(request)
+            return map_contracts.ProviderSuccess(
+                data=route_contracts.RoutePlan(
+                    mode="TRANSIT",
+                    distance_meters=6085,
+                    duration_seconds=1250,
+                    steps=(
+                        route_contracts.RouteStep(
+                            instruction="Take the metro",
+                            distance_meters=6085,
+                            duration_seconds=1250,
+                            polyline=(request.origin, request.destination),
+                        ),
+                    ),
+                    polyline=(request.origin, request.destination),
+                ),
+                provider="AMAP",
+                latency_ms=2,
+                cached=False,
+                fetched_at=datetime(2026, 7, 24, 4, 1, tzinfo=UTC),
+                estimated=False,
+            )
+
+    transit_provider = TransitProvider()
+    provider = planning_provider.AmapPlanningProvider(
+        object(),
+        UnexpectedRoadProvider(),
+        transit_route=transit_provider,
+    )
+
+    result = asyncio.run(provider.replan(command))
+
+    assert len(transit_provider.requests) == 1
+    assert result.itinerary.days[0].transit_legs[0].mode == "TRANSIT"
+

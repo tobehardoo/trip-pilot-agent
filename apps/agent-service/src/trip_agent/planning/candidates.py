@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from trip_agent.guide_intelligence.travel_entities import Attraction
+from trip_agent.planning.poi_quality import same_mapped_place
 from trip_agent.providers.map import Poi
 
 type TravelerType = Literal["SOLO", "COUPLE", "FAMILY", "FRIENDS", "BUSINESS"]
@@ -93,6 +94,12 @@ class CandidateRanker:
         # always outrank the ordinary selection cutoff, and the ordinary
         # quota can never delete them.  Exact-id avoidance still applies.
         pinned_provider_ids: frozenset[str] = frozenset(),
+        # B18-A: structured must-visit refs boost by exact provider id only
+        # (the same identity rule the scheduler uses for must_include).  When
+        # non-empty, name matching is disabled for the must-visit boost so a
+        # same-name sibling never inherits it; legacy free text (empty set)
+        # keeps normalized exact-name matching.
+        must_visit_provider_ids: frozenset[str] = frozenset(),
         guide_statements: tuple[str, ...] = (),
         weather_statements: tuple[str, ...] = (),
         entity_facts: tuple[Attraction, ...] = (),
@@ -102,7 +109,8 @@ class CandidateRanker:
         accepted: list[RankedCandidate] = []
         rejected: list[RejectedCandidate] = []
         provider_ids: set[str] = set()
-        place_keys: set[tuple[str, int, int]] = set()
+        accepted_places: list[Poi] = []
+        pinned_places = tuple(poi for poi in pois if poi.provider_id in pinned_provider_ids)
         destination_key = _city_key(destination)
         entities_by_provider_id = {entity.provider_poi_id: entity for entity in entity_facts}
 
@@ -121,15 +129,14 @@ class CandidateRanker:
             if _is_avoided(poi, avoid_provider_ids, avoid_places):
                 rejected.append(RejectedCandidate(poi, "AVOID_PLACE"))
                 continue
-            place_key = (
-                _text_key(poi.name),
-                round(poi.coordinates.longitude * 1_000),
-                round(poi.coordinates.latitude * 1_000),
-            )
-            if not pinned and place_key in place_keys:
+            duplicate_places = (*accepted_places, *pinned_places)
+            if not pinned and any(
+                existing.provider_id != poi.provider_id and same_mapped_place(poi, existing)
+                for existing in duplicate_places
+            ):
                 rejected.append(RejectedCandidate(poi, "DUPLICATE_PLACE"))
                 continue
-            place_keys.add(place_key)
+            accepted_places.append(poi)
             accepted.append(
                 self._score(
                     poi,
@@ -139,6 +146,7 @@ class CandidateRanker:
                     guide_statements,
                     weather_statements,
                     entities_by_provider_id.get(poi.provider_id),
+                    must_visit_provider_ids,
                 )
             )
 
@@ -175,6 +183,7 @@ class CandidateRanker:
         guide_statements: tuple[str, ...],
         weather_statements: tuple[str, ...],
         entity: Attraction | None,
+        must_visit_provider_ids: frozenset[str] = frozenset(),
     ) -> RankedCandidate:
         score = 20
         reasons = ["VALID_CITY_AND_METADATA"]
@@ -183,10 +192,24 @@ class CandidateRanker:
             if _text_key(preference) in searchable:
                 score += 40
                 reasons.append(f"PREFERENCE_MATCH:{preference}")
-        for place in dict.fromkeys(item.strip() for item in must_visit_places if item.strip()):
-            if _text_key(place) in searchable:
+        # B18-A: must-visit boost is exact-identity only (shared with the
+        # scheduler's must_include rule).  The old substring match gave every
+        # POI whose name/address merely contained the must-visit text the
+        # same +100, e.g. 小林蓝鳄正佳广场 outranking ordinary city candidates.
+        must_visit_ids = frozenset(must_visit_provider_ids)
+        matched_places = [item.strip() for item in must_visit_places if item.strip()]
+        if must_visit_ids:
+            if is_must_visit_poi(poi, matched_places, must_visit_ids):
                 score += 100
-                reasons.append(f"MUST_VISIT_MATCH:{place}")
+                reasons.append(
+                    f"MUST_VISIT_MATCH:{matched_places[0] if matched_places else poi.name}"
+                )
+        elif matched_places:
+            for place in dict.fromkeys(matched_places):
+                if is_must_visit_poi(poi, (place,), None):
+                    score += 100
+                    reasons.append(f"MUST_VISIT_MATCH:{place}")
+                    break
         poi_name = _text_key(poi.name)
         if poi_name and any(
             poi_name in _text_key(statement) and is_positive_guide_statement(statement)
@@ -229,6 +252,33 @@ def _text_key(value: str) -> str:
 def _matches_any(poi: Poi, values: tuple[str, ...]) -> bool:
     searchable = _text_key(f"{poi.name} {poi.type_name} {poi.address}")
     return any(normalized in searchable for value in values if (normalized := _text_key(value)))
+
+
+def is_must_visit_poi(
+    poi: Poi,
+    must_visit_places: tuple[str, ...] | set[str],
+    must_visit_provider_ids: frozenset[str] | set[str] | None = None,
+) -> bool:
+    """B18-A: single, shared must-visit identity predicate.
+
+    Structured refs (server-signed PlaceRefs with a providerPoiId) decide by
+    EXACT provider identity only — a same-name sibling with a different id is
+    never the must-visit place, and name/substring/similar-name matching is
+    disabled entirely so the structured choice cannot silently become a
+    different POI (B13_FIX R5 semantics).
+
+    Legacy free text (no refs at all) falls back to NORMALIZED EXACT NAME
+    equality: case-folded, alphanumeric-only.  Substring containment
+    (``contains``/``startswith``/``endswith``) is forbidden — e.g.
+    ``小林蓝鳄正佳广场`` must never match a ``正佳广场`` must-visit.
+    """
+    if must_visit_provider_ids:
+        return poi.provider_id in must_visit_provider_ids
+    normalised = "".join(character for character in poi.name.casefold() if character.isalnum())
+    return any(
+        "".join(character for character in place.casefold() if character.isalnum()) == normalised
+        for place in must_visit_places
+    )
 
 
 def _is_avoided(

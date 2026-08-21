@@ -56,6 +56,20 @@ def test_candidate_command_preserves_edit_lock_state() -> None:
     assert command.payload.itinerary.days[0].activities[0].locked is True
 
 
+def test_candidate_v2_rejects_persisted_taxi_at_the_provider_boundary() -> None:
+    from trip_agent.worker.contracts import PlanningCandidateValidationCommand
+
+    raw = _candidate_command()
+    raw["schemaVersion"] = 2
+    raw["payload"]["trip"]["arrivalAt"] = None
+    raw["payload"]["trip"]["departureAt"] = None
+    leg = raw["payload"]["itinerary"]["days"][1]["transitLegs"][0]
+    leg["mode"] = "TAXI"
+
+    with pytest.raises(ValidationError, match="forbid TAXI"):
+        PlanningCandidateValidationCommand.model_validate(raw)
+
+
 def test_candidate_command_preserves_rollback_and_transit_lock_state() -> None:
     from trip_agent.worker.contracts import PlanningCandidateValidationCommand
 
@@ -159,7 +173,7 @@ def test_candidate_validation_emits_existing_review_outcome() -> None:
     from trip_agent.application.candidate_validation import CandidateValidationProvider
     from trip_agent.worker.contracts import (
         PlanningCandidateValidationCommand,
-        PlanningReviewRequiredEvent,
+        PlanningReviewRequiredEventV2,
     )
     from trip_agent.worker.processor import process_candidate_validation
 
@@ -172,7 +186,7 @@ def test_candidate_validation_emits_existing_review_outcome() -> None:
         )
     )
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
+    assert isinstance(event, PlanningReviewRequiredEventV2)
     assert event.payload.status == "WAITING_USER"
     assert event.payload.itinerary.days[0].activities[0].locked is False
 
@@ -249,3 +263,34 @@ def test_shared_invalid_candidate_command_fixture_is_rejected() -> None:
         Draft202012Validator(schema, registry=registry).validate(fixture)
     with pytest.raises(ValidationError):
         PlanningCandidateValidationCommand.model_validate(fixture)
+
+
+def test_candidate_validation_mixed_snapshot_emits_wire_legal_provider() -> None:
+    """F5: a MIXED snapshot provider (Java persistence aggregate from DEMO
+    fallback legs; activities stay AMAP per the v11 wire contract) must not
+    flow through to the wire completion provider (AMAP/DEMO only) — it used
+    to raise ValidationError -> INTERNAL_ERROR with no terminal outcome."""
+    from trip_agent.application.candidate_validation import CandidateValidationProvider
+    from trip_agent.worker.contracts import PlanningCandidateValidationCommand
+    from trip_agent.worker.processor import process_candidate_validation
+
+    raw = _candidate_command()
+    payload = raw["payload"]
+    assert isinstance(payload, dict)
+    payload["itinerary"]["provider"] = "MIXED"
+    # activities stay AMAP (v11 wire const); the DEMO fallback lives on the
+    # transit legs — the actual shape Java persists for a MIXED version.
+
+    command = PlanningCandidateValidationCommand.model_validate(raw)
+    event = asyncio.run(
+        process_candidate_validation(
+            command,
+            CandidateValidationProvider(),
+            occurred_at=datetime(2026, 8, 13, 4, 0, tzinfo=UTC),
+        )
+    )
+
+    assert event.payload.provider in {"AMAP", "DEMO"}
+    assert event.payload.provider != "MIXED"
+    assert event.payload.provider != "MIXED"
+

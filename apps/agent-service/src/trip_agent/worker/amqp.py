@@ -44,7 +44,11 @@ from trip_agent.providers.retry import (
     RetryingMapProvider,
     RetryingRouteProvider,
 )
-from trip_agent.providers.route import AmapRouteProvider, DemoRouteProvider
+from trip_agent.providers.route import (
+    AmapRouteProvider,
+    AmapTransitProvider,
+    DemoRouteProvider,
+)
 from trip_agent.retrieval.embeddings import (
     DashScopeEmbeddingProvider,
     EmbeddingProvider,
@@ -441,10 +445,20 @@ def build_planning_provider(
         ),
         retry_policy,
     )
+    amap_transit = RetryingRouteProvider(
+        AmapTransitProvider(
+            api_key=key.get_secret_value(),
+            http_client=http_client,
+            cache=cache,
+            cache_ttl_seconds=settings.route_cache_ttl_seconds,
+        ),
+        retry_policy,
+    )
     policy = settings.provider_fallback_policy()
     primary = AmapPlanningProvider(
         amap_map,
         amap_route,
+        transit_route=amap_transit,
         route_fallback=(
             DemoRouteProvider()
             if mode == ProviderExecutionMode.REAL_WITH_EXPLICIT_FALLBACK

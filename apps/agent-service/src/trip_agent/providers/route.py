@@ -1,6 +1,7 @@
 """Public route provider API."""
 
 from trip_agent.providers._amap_route import AmapRouteProvider
+from trip_agent.providers._amap_transit import AmapTransitProvider
 from trip_agent.providers._demo_route import DemoRouteProvider
 from trip_agent.providers._route_contracts import (
     RouteMode,
@@ -14,6 +15,7 @@ from trip_agent.providers.map import Coordinates, ProviderFailure, ProviderSucce
 
 __all__ = [
     "AmapRouteProvider",
+    "AmapTransitProvider",
     "Coordinates",
     "DemoRouteProvider",
     "ProviderFailure",

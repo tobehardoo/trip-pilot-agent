@@ -4,6 +4,7 @@ Extracted from ``worker/processor.py``.
 """
 
 import logging
+from datetime import date
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID, uuid5
@@ -35,6 +36,7 @@ from trip_agent.worker.contracts import (
     PlanningReplanCommand,
     ReplanItineraryDay,
     TransitLeg,
+    wire_provider_for_snapshot,
 )
 from trip_agent.worker.progress import report_planning_progress
 
@@ -55,12 +57,14 @@ class LocalReplanningProvider:
         self,
         route_provider: RouteProvider,
         route_fallback: RouteProvider | None = None,
+        transit_route: RouteProvider | None = None,
         *,
         provider_mode: ProviderExecutionMode = ProviderExecutionMode.REAL_ONLY,
         fallback_policy: ProviderFallbackPolicy | None = None,
     ) -> None:
         self._route_provider = route_provider
         self._route_fallback = route_fallback
+        self._transit_route = transit_route
         self._provider_mode = provider_mode
         self._fallback_policy = fallback_policy or ProviderFallbackPolicy()
 
@@ -77,7 +81,7 @@ class LocalReplanningProvider:
         days: list[ItineraryDay] = []
         for day in snapshot.days:
             replanned = (
-                await self._replan_day(day, command.task_id)
+                await self._replan_day(day, command.task_id, command.payload.trip.destination)
                 if day.date in impacted_dates
                 else day.to_itinerary_day()
             )
@@ -101,7 +105,12 @@ class LocalReplanningProvider:
         itinerary = Itinerary(
             title=snapshot.title,
             days=tuple(days),
-            estimated_total_cost=snapshot.estimated_total_cost,
+            estimated_total_cost=self._updated_total(
+                snapshot.estimated_total_cost,
+                snapshot.days,
+                days,
+                impacted_dates,
+            ),
         )
         # B9.1: rebuild the transient projection from the final candidate so
         # locators/bindings never point at stale positions.  Replan commands
@@ -116,13 +125,13 @@ class LocalReplanningProvider:
                 command.task_id,
             )
             return PlanningResult(
-                provider=snapshot.provider,
+                provider=wire_provider_for_snapshot(snapshot),
                 itinerary=itinerary,
                 trip_skeleton=skeleton,
                 validation_inputs=inputs,
             )
         return PlanningResult(
-            provider=snapshot.provider,
+            provider=wire_provider_for_snapshot(snapshot),
             itinerary=itinerary,
             requested_provider_mode=self._provider_mode.value,
             primary_provider=primary_provider,
@@ -149,12 +158,24 @@ class LocalReplanningProvider:
         days: list[ItineraryDay] = []
         for day in request.candidate.itinerary.days:
             replanned = (
-                await self._replan_day(day, request.command.task_id)
+                await self._replan_day(
+                    day, request.command.task_id, request.command.payload.trip.destination
+                )
                 if day.date in impacted_dates
                 else day
             )
             days.append(replanned)
-        itinerary = request.candidate.itinerary.model_copy(update={"days": tuple(days)})
+        itinerary = request.candidate.itinerary.model_copy(
+            update={
+                "days": tuple(days),
+                "estimated_total_cost": self._updated_total(
+                    request.candidate.itinerary.estimated_total_cost,
+                    request.candidate.itinerary.days,
+                    days,
+                    impacted_dates,
+                ),
+            }
+        )
         actual_providers = tuple(
             sorted(
                 {activity.source for day in days for activity in day.activities}
@@ -223,7 +244,10 @@ class LocalReplanningProvider:
         return actual_providers == ("AMAP",)
 
     async def _replan_day(
-        self, day: ReplanItineraryDay | ItineraryDay, task_id: UUID
+        self,
+        day: ReplanItineraryDay | ItineraryDay,
+        task_id: UUID,
+        city: str | None = None,
     ) -> ItineraryDay:
         activities = tuple(
             activity
@@ -240,25 +264,51 @@ class LocalReplanningProvider:
             for index, activity in enumerate(day.activities)
         )
         legs: list[TransitLeg] = []
-        for index, (origin, destination) in enumerate(
-            zip(activities, activities[1:], strict=False)
-        ):
+        pairs = list(zip(activities, activities[1:], strict=False))
+        routable = [
+            (index, origin, destination)
+            for index, (origin, destination) in enumerate(pairs)
+            if origin.coordinates is not None and destination.coordinates is not None
+        ]
+        if not routable:
+            # No pair can be refreshed — keep the historical fail-closed
+            # behaviour (a fully placeholder day cannot be re-routed).
+            index, origin, destination = next(
+                (i, o, d) for i, (o, d) in enumerate(pairs)
+                if o.coordinates is None or d.coordinates is None
+            )
+            raise PlanningInfeasibleError(
+                conflicts=(
+                    OptimizationConflict(
+                        "REPLAN_ACTIVITY_COORDINATES_MISSING",
+                        "Local replanning requires coordinates for adjacent activities",
+                        (origin.title, destination.title),
+                    ),
+                ),
+                relaxations=(
+                    RelaxationSuggestion(
+                        "RUN_FULL_REPLAN",
+                        "Run a full plan to resolve activities without map coordinates",
+                    ),
+                ),
+            )
+        for index, (origin, destination) in enumerate(pairs):
             if origin.coordinates is None or destination.coordinates is None:
-                raise PlanningInfeasibleError(
-                    conflicts=(
-                        OptimizationConflict(
-                            "REPLAN_ACTIVITY_COORDINATES_MISSING",
-                            "Local replanning requires coordinates for adjacent activities",
-                            (origin.title, destination.title),
-                        ),
-                    ),
-                    relaxations=(
-                        RelaxationSuggestion(
-                            "RUN_FULL_REPLAN",
-                            "Run a full plan to resolve activities without map coordinates",
-                        ),
-                    ),
-                )
+                # Q5: a partially coordinate-less day (travel anchors /
+                # accommodation placeholders have no map coordinates) must not
+                # fail the whole edit refresh — keep the existing leg for the
+                # unrefreshable pair and refresh the routable ones.
+                existing = self._transit_leg_for_endpoints(day, index, index + 1)
+                if existing is not None:
+                    legs.append(
+                        existing.model_copy(
+                            update={
+                                "from_activity_index": index,
+                                "to_activity_index": index + 1,
+                            }
+                        )
+                    )
+                continue
             existing_leg = self._transit_leg_for_endpoints(day, index, index + 1)
             route = await self._route(
                 RouteRequest(
@@ -274,10 +324,32 @@ class LocalReplanningProvider:
                     departure_at=origin.end_time,
                     origin_poi_id=origin.provider_poi_id,
                     destination_poi_id=destination.provider_poi_id,
+                    city=city,
                 )
             )
             leg_cost = self._transit_cost(route.data)
             cost_source = self._transit_cost_source(route)
+            # Q5: a refreshed leg whose real duration no longer fits between
+            # the two activities must fail gracefully (→ WAITING_USER review),
+            # never as an internal ValidationError stuck at INTERNAL_ERROR.
+            gap_seconds = (destination.start_time - origin.end_time).total_seconds()
+            if route.data.duration_seconds > gap_seconds:
+                raise PlanningInfeasibleError(
+                    conflicts=(
+                        OptimizationConflict(
+                            "EDIT_TRANSIT_DURATION_OVERFLOW",
+                            "The selected transit mode takes longer than the "
+                            "available gap between the two activities",
+                            (origin.title, destination.title),
+                        ),
+                    ),
+                    relaxations=(
+                        RelaxationSuggestion(
+                            "ADJUST_SCHEDULE",
+                            "Move the activities apart or choose a faster mode",
+                        ),
+                    ),
+                )
             transit_id = (
                 existing_leg.transit_id
                 if existing_leg is not None and existing_leg.transit_id is not None
@@ -335,14 +407,48 @@ class LocalReplanningProvider:
     def _transit_cost(plan: RoutePlan) -> Decimal | None:
         if plan.mode == "WALKING":
             return Decimal("0.00")
+        # DRIVING is a technical road route. Without persisted road intent it
+        # is presented as taxi, so an AMap toll must never become a taxi fare
+        # or leak into the user-visible itinerary total.
+        if plan.mode == "DRIVING":
+            return None
         if plan.estimated_cost is not None:
             return Decimal(str(round(plan.estimated_cost, 2)))
         return None
 
     @staticmethod
+    def _updated_total(
+        current_total: Decimal,
+        source_days: tuple[ReplanItineraryDay | ItineraryDay, ...],
+        result_days: list[ItineraryDay],
+        impacted_dates: set[date],
+    ) -> Decimal:
+        source_cost = sum(
+            (
+                leg.estimated_cost or Decimal("0")
+                for day in source_days
+                if day.date in impacted_dates
+                for leg in day.transit_legs
+            ),
+            Decimal("0"),
+        )
+        result_cost = sum(
+            (
+                leg.estimated_cost or Decimal("0")
+                for day in result_days
+                if day.date in impacted_dates
+                for leg in day.transit_legs
+            ),
+            Decimal("0"),
+        )
+        return max(Decimal("0"), current_total - source_cost + result_cost)
+
+    @staticmethod
     def _transit_cost_source(
         route: ProviderSuccess[RoutePlan],
     ) -> Literal["PROVIDER", "RULE_ESTIMATE", "DEMO", "UNKNOWN"]:
+        if route.data.mode == "DRIVING":
+            return "UNKNOWN"
         if route.provider == "DEMO":
             return "DEMO"
         if route.data.mode == "WALKING":
@@ -368,7 +474,13 @@ class LocalReplanningProvider:
         return matches[0] if matches else None
 
     async def _route(self, request: RouteRequest) -> ProviderSuccess[RoutePlan]:
-        result = await self._route_provider.get_route(request)
+        if request.mode == "TRANSIT":
+            if self._transit_route is None:
+                raise PlanningProviderError("PROVIDER_UNSUPPORTED_MODE")
+            route_provider = self._transit_route
+        else:
+            route_provider = self._route_provider
+        result = await route_provider.get_route(request)
         fallback_error = None
         if isinstance(result, ProviderFailure):
             primary_error = PlanningProviderError.from_failure(

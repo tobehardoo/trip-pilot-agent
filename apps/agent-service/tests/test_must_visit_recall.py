@@ -375,7 +375,7 @@ def test_duplicate_structured_ids_are_deduplicated_stably() -> None:
 # ── MUST_VISIT_UNAVAILABLE stays reserved for genuine failures ──────────────
 
 
-def test_must_visit_unavailable_still_raised_when_place_cannot_be_scheduled() -> None:
+def test_tight_fixed_departure_still_fails_closed_when_must_visit_cannot_fit() -> None:
     """A must visit that genuinely cannot be placed within the day (here: a
     60-minute window after 18:00 arrival — no ordinary visit fits) must
     still fail closed.  Recall misses are pinned; real time-constraint
@@ -401,4 +401,40 @@ def test_must_visit_unavailable_still_raised_when_place_cannot_be_scheduled() ->
             )
         )
     codes = {conflict.code for conflict in exc_info.value.conflicts}
-    assert "MUST_VISIT_UNAVAILABLE" in codes
+    # The authoritative departure boundary now catches the impossible route
+    # before the later must-visit recall audit.
+    assert "INSUFFICIENT_DAY_CAPACITY" in codes
+
+
+def test_filtered_structured_must_visit_explains_that_user_should_reselect() -> None:
+    """A signed ref can still describe infrastructure such as a metro stop.
+
+    That is not a must/avoid contradiction.  The failure shown to the user
+    must identify the unusable selection and tell them to choose the actual
+    attraction instead of suggesting unrelated constraint relaxation.
+    """
+    station_ref = {
+        **TIANHE_PARK_REF,
+        "providerPoiId": "B-METRO",
+        "name": "陈家祠(地铁站)",
+        "address": "陈家祠地铁站",
+        "district": "荔湾区",
+    }
+    station = _poi("B-METRO", "陈家祠(地铁站)", district="荔湾区").model_copy(
+        update={
+            "type_name": "交通设施服务;地铁站;地铁站",
+            "type_code": "150500",
+        }
+    )
+    map_provider = KeywordMapProvider({"陈家祠(地铁站)": (station, *_ordinary_pois(3))})
+
+    with pytest.raises(PlanningInfeasibleError) as exc_info:
+        asyncio.run(_provider(map_provider).plan(_command(["陈家祠(地铁站)"], [station_ref])))
+
+    conflict = exc_info.value.conflicts[0]
+    assert conflict.code == "MUST_VISIT_UNAVAILABLE"
+    assert conflict.message == "所选必去地点不是可安排的景点，或当前地图资料无法确认"
+    assert (
+        exc_info.value.relaxations[0].message
+        == "请重新搜索并选择景点本身，不要选择地铁站、出入口或停车场"
+    )

@@ -21,7 +21,9 @@ from trip_agent.worker.contracts import (
     KnowledgeEvidence,
     KnowledgeFreshness,
     PlanningCompletedEventV9,
+    PlanningCompletedEventV10,
     PlanningCompletedPayloadV9,
+    PlanningCompletedPayloadV10,
     PlanningReviewRequiredEvent,
     PlanningReviewRequiredPayload,
 )
@@ -418,4 +420,171 @@ def test_review_payload_rejects_fingerprint_mismatch() -> None:
             fact_impacts=(),
             provider_provenance=None,
             feasibility_report=report,
+        )
+
+
+# ── B16: v10 completion — Information Missing != Planning Failed ───────────
+
+
+def _verified_report():
+    from trip_agent.feasibility.catalog import IMPLEMENTED_RULE_IDS
+    from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
+    from trip_agent.feasibility.models import (
+        RuleOutcome,
+        RuleResult,
+        build_feasibility_report,
+    )
+
+    itinerary = make_result().itinerary
+    results = tuple(
+        RuleResult(
+            rule_id=rule_id,
+            rule_version="hard-rule-v1",
+            outcome=RuleOutcome.NOT_APPLICABLE,
+            reason_code="N/A",
+            message="na",
+        )
+        for rule_id in IMPLEMENTED_RULE_IDS
+    )
+    return build_feasibility_report(
+        report_id=REPORT_ID,
+        validator_version="hard-validator-v5",
+        itinerary_fingerprint=compute_itinerary_fingerprint(itinerary),
+        validated_at=_TS,
+        required_rule_ids=IMPLEMENTED_RULE_IDS,
+        rule_results=results,
+    )
+
+
+def test_v10_accepts_verified_report() -> None:
+    report = _verified_report()
+    assert report.status is FeasibilityStatus.VERIFIED
+    assert report.has_blocker is False
+
+    event = PlanningCompletedEventV10(
+        event_type="PLANNING_COMPLETED",
+        schema_version=10,
+        **_identity(),
+        payload=PlanningCompletedPayloadV10(
+            provider="DEMO",
+            itinerary=make_result().itinerary,
+            knowledge=_knowledge(),
+            fact_impacts=(),
+            provider_provenance=None,
+            evaluation=_evaluation(),
+            feasibility_report=report,
+            has_blocker=False,
+        ),
+    )
+    assert event.schema_version == 10
+    assert event.payload.feasibility_report.status is FeasibilityStatus.VERIFIED
+    assert event.payload.has_blocker is False
+
+
+def test_v10_accepts_unverified_no_blocker_report() -> None:
+    """3 opening-hours unknowns + 4 duration unknowns -> savable v10."""
+    report = _report()  # fixture demo itinerary has no evidence -> UNVERIFIED
+    assert report.status is FeasibilityStatus.UNVERIFIED
+    assert report.has_blocker is False
+    assert report.can_save is True
+
+    event = PlanningCompletedEventV10(
+        event_type="PLANNING_COMPLETED",
+        schema_version=10,
+        **_identity(),
+        payload=PlanningCompletedPayloadV10(
+            provider="DEMO",
+            itinerary=make_result().itinerary,
+            knowledge=_knowledge(),
+            fact_impacts=(),
+            provider_provenance=None,
+            evaluation=_evaluation(),
+            feasibility_report=report,
+            has_blocker=False,
+        ),
+    )
+    assert event.payload.feasibility_report.status is FeasibilityStatus.UNVERIFIED
+    assert event.payload.has_blocker is False
+
+
+def test_v10_rejects_blocker_report() -> None:
+    """A FAIL (venue closed) must never be emitted as v10 completion."""
+    from trip_agent.feasibility.catalog import IMPLEMENTED_RULE_IDS
+    from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
+    from trip_agent.feasibility.models import (
+        EvidenceReference,
+        EvidenceState,
+        RuleOutcome,
+        RuleResult,
+        build_feasibility_report,
+    )
+
+    itinerary = make_result().itinerary
+    results = tuple(
+        RuleResult(
+            rule_id=rule_id,
+            rule_version="hard-rule-v1",
+            outcome=RuleOutcome.NOT_APPLICABLE,
+            reason_code="N/A",
+            message="na",
+        )
+        for rule_id in IMPLEMENTED_RULE_IDS
+        if rule_id != "OPENING_HOURS"
+    ) + (
+        RuleResult(
+            rule_id="OPENING_HOURS",
+            rule_version="hard-rule-v1",
+            outcome=RuleOutcome.FAIL,
+            reason_code="VENUE_CLOSED",
+            message="closed",
+            evidence_refs=(
+                EvidenceReference(
+                    evidence_id="ev:opening",
+                    evidence_type="OPENING_HOURS",
+                    state=EvidenceState.VERIFIED,
+                    hard_constraint_eligible=True,
+                ),
+            ),
+        ),
+    )
+    report = build_feasibility_report(
+        report_id=REPORT_ID,
+        validator_version="hard-validator-v5",
+        itinerary_fingerprint=compute_itinerary_fingerprint(itinerary),
+        validated_at=_TS,
+        required_rule_ids=IMPLEMENTED_RULE_IDS,
+        rule_results=results,
+    )
+    assert report.has_blocker is True
+
+    with pytest.raises(ValidationError):
+        PlanningCompletedEventV10(
+            event_type="PLANNING_COMPLETED",
+            schema_version=10,
+            **_identity(),
+            payload=PlanningCompletedPayloadV10(
+                provider="DEMO",
+                itinerary=itinerary,
+                knowledge=_knowledge(),
+                fact_impacts=(),
+                provider_provenance=None,
+                evaluation=_evaluation(),
+                feasibility_report=report,
+                has_blocker=True,
+            ),
+        )
+
+
+def test_v10_payload_rejects_has_blocker_mismatch() -> None:
+    report = _verified_report()
+    with pytest.raises(ValidationError):
+        PlanningCompletedPayloadV10(
+            provider="DEMO",
+            itinerary=make_result().itinerary,
+            knowledge=_knowledge(),
+            fact_impacts=(),
+            provider_provenance=None,
+            evaluation=_evaluation(),
+            feasibility_report=report,
+            has_blocker=True,  # mismatch: report says no blocker
         )

@@ -5,9 +5,12 @@ and planning/optimization.py.  Consolidating them here eliminates drift and allo
 provider implementations to be extracted without circular imports.
 """
 
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from math import cos, radians, sqrt
 from typing import TYPE_CHECKING, Literal
+from unicodedata import normalize
 from uuid import UUID
 
 if TYPE_CHECKING:
@@ -19,9 +22,7 @@ CHINA_TIME_ZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 # Shared schedule-model literal types (single source for contracts and the
 # pure daily-schedule module).
-type DayType = Literal[
-    "ARRIVAL_DAY", "FULL_DAY", "DEPARTURE_DAY", "SPECIAL_ACTIVITY_DAY"
-]
+type DayType = Literal["ARRIVAL_DAY", "FULL_DAY", "DEPARTURE_DAY", "SPECIAL_ACTIVITY_DAY"]
 type ActivityKind = Literal[
     "ATTRACTION", "EXPERIENCE", "MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"
 ]
@@ -39,6 +40,28 @@ AMAP_ACTIVITY_ESTIMATED_COST = Decimal("100.00")
 # Derived planning budget constants — upper bounds on computational effort.
 MAX_ROUTE_CALLS_PER_PLAN = 96
 
+_PLACE_DETAIL_SEPARATOR = re.compile(r"[\(\uff08\-\u2013\u2014_/]")
+_PLACE_DETAIL_SUFFIXES = (
+    "旅游区游客中心",
+    "游客中心",
+    "售票处",
+    "停车场",
+    "东广场",
+    "西广场",
+    "南广场",
+    "北广场",
+    "广场",
+    "正门",
+    "南门",
+    "北门",
+    "东门",
+    "西门",
+    "入口",
+    "出口",
+)
+_PLACE_ZONE_SUFFIX = re.compile(r"(?:[a-z0-9]+|[一二三四五六七八九十]+)区$")
+_SAME_PLACE_MAX_DISTANCE_KM = 0.5
+
 
 def text_matches(expected: str, actual: str) -> bool:
     """Case‑folded, alphanumeric‑only substring match (bidirectional).
@@ -46,15 +69,9 @@ def text_matches(expected: str, actual: str) -> bool:
     Used by candidate ranking to compare place names and by the planning
     pipeline to match guide‑fact statements against candidate POIs.
     """
-    expected_key = "".join(
-        character for character in expected.casefold() if character.isalnum()
-    )
-    actual_key = "".join(
-        character for character in actual.casefold() if character.isalnum()
-    )
-    return bool(expected_key) and (
-        expected_key in actual_key or actual_key in expected_key
-    )
+    expected_key = "".join(character for character in expected.casefold() if character.isalnum())
+    actual_key = "".join(character for character in actual.casefold() if character.isalnum())
+    return bool(expected_key) and (expected_key in actual_key or actual_key in expected_key)
 
 
 def normalize_text(value: str) -> str:
@@ -62,9 +79,105 @@ def normalize_text(value: str) -> str:
 
     Used by Pydantic validators in message contracts for fuzzy comparison.
     """
-    return "".join(
-        character for character in value.casefold() if character.isalnum()
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def canonical_place_name(name: str) -> str:
+    """Return the stable parent-place name used for semantic comparison."""
+    nfkc_name = normalize("NFKC", name).strip()
+    base_name = _PLACE_DETAIL_SEPARATOR.split(nfkc_name, maxsplit=1)[0]
+    base_key = normalize_text(base_name)
+    for suffix in _PLACE_DETAIL_SUFFIXES:
+        suffix_key = normalize_text(suffix)
+        if base_key.endswith(suffix_key) and len(base_key) > len(suffix_key) + 1:
+            base_key = base_key[: -len(suffix_key)]
+            break
+    if _PLACE_ZONE_SUFFIX.search(base_key):
+        base_key = _PLACE_ZONE_SUFFIX.sub("", base_key)
+    if base_key.endswith("祠堂") and len(base_key) > 2:
+        base_key = f"{base_key[:-2]}祠"
+    return base_key
+
+
+def _place_category(type_code: str) -> str:
+    digits = "".join(character for character in type_code if character.isdigit())
+    family = digits[:2]
+    if family == "15":
+        return "transport"
+    if family in {"05", "06"}:
+        return "food"
+    if family == "10":
+        return "accommodation"
+    return "activity"
+
+
+def mapped_places_match(
+    left_name: str,
+    left_type_code: str,
+    left_longitude: Decimal | float,
+    left_latitude: Decimal | float,
+    right_name: str,
+    right_type_code: str,
+    right_longitude: Decimal | float,
+    right_latitude: Decimal | float,
+) -> bool:
+    """Return whether two provider records describe the same mapped place.
+
+    Parent attractions, plazas and named halls can have different provider
+    IDs and category codes.  A canonical name plus a real distance check
+    handles those records while keeping a nearby transport child distinct.
+    Non-transport category codes are not authoritative enough to separate a
+    parent place: AMap can classify the same attraction plaza as a shopping
+    centre.  For attraction records, a nearby longer name beginning with the
+    exact parent name is also a sub-place; canonical name and distance remain
+    the decisive signals.
+    """
+    left_key = canonical_place_name(left_name)
+    right_key = canonical_place_name(right_name)
+    left_category = _place_category(left_type_code)
+    right_category = _place_category(right_type_code)
+    same_name = left_key == right_key
+    attraction_subplace = (
+        left_category == right_category == "activity"
+        and min(len(left_key), len(right_key)) >= 3
+        and (left_key.startswith(right_key) or right_key.startswith(left_key))
     )
+    if not same_name and not attraction_subplace:
+        return False
+    if "transport" in {left_category, right_category} and left_category != right_category:
+        return False
+    left_lon = float(left_longitude)
+    left_lat = float(left_latitude)
+    right_lon = float(right_longitude)
+    right_lat = float(right_latitude)
+    mean_latitude = radians((left_lat + right_lat) / 2)
+    longitude_delta = radians(right_lon - left_lon) * cos(mean_latitude)
+    latitude_delta = radians(right_lat - left_lat)
+    distance_km = 6371.0088 * sqrt(longitude_delta**2 + latitude_delta**2)
+    return distance_km <= _SAME_PLACE_MAX_DISTANCE_KM
+
+
+def canonical_place_identity(
+    name: str,
+    type_code: str,
+    longitude: Decimal | float,
+    latitude: Decimal | float,
+) -> str:
+    """Return a conservative, hashable identity for a mapped place.
+
+    Provider records frequently split one attraction into a parent, gates,
+    plazas and named halls with different provider IDs.  Only explicit detail
+    separators and a small allow-list of facility suffixes are collapsed.  A
+    provider taxonomy family and a roughly one-kilometre coordinate cell stay
+    in the key, so a metro/bus child can never satisfy an attraction visit and
+    similarly named places in different areas remain distinct.
+    """
+    base_key = canonical_place_name(name)
+    taxonomy_family = _place_category(type_code)
+    coordinate_scale = Decimal("0.01")
+    lon = Decimal(str(longitude)).quantize(coordinate_scale)
+    lat = Decimal(str(latitude)).quantize(coordinate_scale)
+    return f"{taxonomy_family}:{base_key}:{lon}:{lat}"
 
 
 def available_minutes(
@@ -83,14 +196,10 @@ def available_minutes(
     end_minute = 18 * 60
     if trip_date == start_date and arrival is not None:
         local_arrival = arrival.astimezone(CHINA_TIME_ZONE)
-        start_minute = max(
-            start_minute, local_arrival.hour * 60 + local_arrival.minute
-        )
+        start_minute = max(start_minute, local_arrival.hour * 60 + local_arrival.minute)
     if trip_date == end_date and departure is not None:
         local_departure = departure.astimezone(CHINA_TIME_ZONE)
-        end_minute = min(
-            end_minute, local_departure.hour * 60 + local_departure.minute
-        )
+        end_minute = min(end_minute, local_departure.hour * 60 + local_departure.minute)
     return start_minute, end_minute
 
 
@@ -111,9 +220,9 @@ def candidate_keywords(
     must_visit_places: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     """Build an ordered, deduplicated keyword list for progressive POI search."""
-    return tuple(
-        dict.fromkeys((*must_visit_places, *preferences, *DEFAULT_POI_KEYWORDS))
-    )[:MAX_POI_QUERIES]
+    return tuple(dict.fromkeys((*must_visit_places, *preferences, *DEFAULT_POI_KEYWORDS)))[
+        :MAX_POI_QUERIES
+    ]
 
 
 def snapshot_boundary_times(trip: object) -> tuple[datetime | None, datetime | None]:
@@ -161,9 +270,6 @@ def matched_guide_fact_ids(
         )
         or (
             is_positive_guide_statement(f"{fact.statement} {fact.evidence}")
-            and any(
-                text_matches(poi.name, f"{fact.statement} {fact.evidence}")
-                for poi in pois
-            )
+            and any(text_matches(poi.name, f"{fact.statement} {fact.evidence}") for poi in pois)
         )
     )

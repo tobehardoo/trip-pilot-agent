@@ -1,4 +1,4 @@
-"""B6 — worker runtime outcome wiring: VERIFIED -> v9, else -> review v1."""
+"""B6 — worker runtime outcome wiring: no blocker -> v10 completed, else -> review v1."""
 
 import asyncio
 from datetime import UTC, date, datetime, timedelta
@@ -28,8 +28,8 @@ from trip_agent.worker.contracts import (
     Itinerary,
     ItineraryActivity,
     ItineraryDay,
-    PlanningCompletedEventV9,
-    PlanningReviewRequiredEvent,
+    PlanningCompletedEventV11,
+    PlanningReviewRequiredEventV2,
     TransitLeg,
 )
 from trip_agent.worker.processor import process_planning_create
@@ -156,31 +156,32 @@ class _DemoProvider:
         return await DemoPlanningProvider().plan(command)
 
 
-def test_verified_create_emits_v9_completion() -> None:
+def test_verified_create_emits_v10_completion() -> None:
     command = make_command(must_visit_places=("陈家祠", "光孝寺"))
 
     event = asyncio.run(process_planning_create(command, _VerifiedProvider(), occurred_at=_TS))
 
-    assert isinstance(event, PlanningCompletedEventV9)
-    assert event.schema_version == 9
+    assert isinstance(event, PlanningCompletedEventV11)
+    assert event.schema_version == 11
     assert event.occurred_at == _TS
     assert event.payload.feasibility_report.status is FeasibilityStatus.VERIFIED
+    assert event.payload.has_blocker is False
     assert event.payload.feasibility_report.validated_at == _TS
     assert event.payload.feasibility_report.repair_attempts == ()
 
 
-def test_unverified_create_emits_review_required() -> None:
+def test_unverified_create_emits_savable_v10_completion() -> None:
     command = make_command()
 
     event = asyncio.run(process_planning_create(command, _DemoProvider(), occurred_at=_TS))
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
-    assert event.schema_version == 1
-    assert event.payload.status == "WAITING_USER"
+    # B16: UNVERIFIED without blocker is a savable completion, not a review.
+    assert isinstance(event, PlanningCompletedEventV11)
+    assert event.schema_version == 11
+    assert event.payload.has_blocker is False
     assert event.payload.feasibility_report.status is FeasibilityStatus.UNVERIFIED
     assert event.occurred_at == _TS
     assert event.payload.feasibility_report.validated_at == _TS
-    assert not hasattr(event.payload, "evaluation")
 
 
 def test_report_id_is_stable_across_retries() -> None:
@@ -189,19 +190,21 @@ def test_report_id_is_stable_across_retries() -> None:
     first = asyncio.run(process_planning_create(command, _VerifiedProvider(), occurred_at=_TS))
     second = asyncio.run(process_planning_create(command, _VerifiedProvider(), occurred_at=_TS))
 
-    assert isinstance(first, PlanningCompletedEventV9)
-    assert isinstance(second, PlanningCompletedEventV9)
+    assert isinstance(first, PlanningCompletedEventV11)
+    assert isinstance(second, PlanningCompletedEventV11)
     assert first.payload.feasibility_report.report_id == (
         second.payload.feasibility_report.report_id
     )
 
 
-def test_demo_create_is_review_not_failure() -> None:
+def test_demo_create_is_completed_not_failure() -> None:
     command = make_command()
 
     event = asyncio.run(process_planning_create(command, _DemoProvider(), occurred_at=_TS))
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
+    # B16: demo (UNVERIFIED, no blocker) -> savable v10 completed, never a failure.
+    assert isinstance(event, PlanningCompletedEventV11)
+    assert event.payload.has_blocker is False
     assert event.payload.feasibility_report.status is not FeasibilityStatus.VERIFIED
 
 
@@ -297,7 +300,7 @@ def test_one_local_repair_revalidates_to_verified_completion() -> None:
         )
     )
 
-    assert isinstance(event, PlanningCompletedEventV9)
+    assert isinstance(event, PlanningCompletedEventV11)
     assert provider.repair_calls == 0
     assert len(event.payload.feasibility_report.repair_attempts) == 1
     assert event.payload.feasibility_report.repair_attempts[0].action_codes == (
@@ -320,7 +323,7 @@ def test_no_progress_stops_after_one_attempt_and_reviews() -> None:
         )
     )
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
+    assert isinstance(event, PlanningReviewRequiredEventV2)
     assert provider.repair_calls == 1
     assert len(event.payload.feasibility_report.repair_attempts) == 1
     attempt = event.payload.feasibility_report.repair_attempts[0]
@@ -335,7 +338,7 @@ def test_repair_runtime_stops_at_three_attempts_and_preserves_history() -> None:
         process_planning_create(make_command(), provider, occurred_at=_TS)
     )
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
+    assert isinstance(event, PlanningReviewRequiredEventV2)
     assert provider.repair_calls == 3
     attempts = event.payload.feasibility_report.repair_attempts
     assert tuple(attempt.attempt_index for attempt in attempts) == (1, 2, 3)
@@ -358,12 +361,12 @@ def test_hard_fail_emits_needs_repair_review() -> None:
 
     event = asyncio.run(process_planning_create(command, _FailingProvider(), occurred_at=_TS))
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
+    assert isinstance(event, PlanningReviewRequiredEventV2)
     assert event.payload.feasibility_report.status.value == "NEEDS_REPAIR"
     assert not hasattr(event.payload, "evaluation")
 
 
-def test_evaluator_called_only_when_verified(monkeypatch) -> None:
+def test_evaluator_called_for_savable_outcomes_only(monkeypatch) -> None:
     import trip_agent.worker.processor as processor_module
 
     calls = []
@@ -383,19 +386,23 @@ def test_evaluator_called_only_when_verified(monkeypatch) -> None:
             occurred_at=_TS,
         )
     )
-    assert isinstance(verified, PlanningCompletedEventV9)
+    assert isinstance(verified, PlanningCompletedEventV11)
     assert len(calls) == 1
 
     calls.clear()
-    review = asyncio.run(process_planning_create(make_command(), _DemoProvider(), occurred_at=_TS))
-    assert isinstance(review, PlanningReviewRequiredEvent)
-    assert len(calls) == 0
+    # B16: UNVERIFIED without blocker is a savable completion -> evaluated.
+    savable = asyncio.run(process_planning_create(make_command(), _DemoProvider(), occurred_at=_TS))
+    assert isinstance(savable, PlanningCompletedEventV11)
+    assert savable.payload.has_blocker is False
+    assert len(calls) == 1
 
     calls.clear()
+    # A blocker report (FAIL present) routes to review and is never evaluated.
     repair = asyncio.run(
         process_planning_create(make_command(), _FailingProvider(), occurred_at=_TS)
     )
-    assert isinstance(repair, PlanningReviewRequiredEvent)
+    assert isinstance(repair, PlanningReviewRequiredEventV2)
+    assert repair.payload.feasibility_report.has_blocker is True
     assert len(calls) == 0
 
 
@@ -409,14 +416,15 @@ def test_worker_report_fingerprint_matches_payload_itinerary() -> None:
             occurred_at=_TS,
         )
     )
-    assert isinstance(verified, PlanningCompletedEventV9)
+    assert isinstance(verified, PlanningCompletedEventV11)
     assert (
         verified.payload.feasibility_report.itinerary_fingerprint
         == compute_itinerary_fingerprint(verified.payload.itinerary)
     )
 
-    review = asyncio.run(process_planning_create(make_command(), _DemoProvider(), occurred_at=_TS))
-    assert isinstance(review, PlanningReviewRequiredEvent)
-    assert review.payload.feasibility_report.itinerary_fingerprint == compute_itinerary_fingerprint(
-        review.payload.itinerary
+    savable = asyncio.run(process_planning_create(make_command(), _DemoProvider(), occurred_at=_TS))
+    assert isinstance(savable, PlanningCompletedEventV11)
+    assert (
+        savable.payload.feasibility_report.itinerary_fingerprint
+        == compute_itinerary_fingerprint(savable.payload.itinerary)
     )

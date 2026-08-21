@@ -9,12 +9,15 @@ Covers the polish goals:
   a FULL_DAY into a short slot.
 """
 
+import pytest
+
 from trip_agent.planning.poi_quality import (
     activity_candidate_eligible,
     canonical_poi_key,
     classify_poi_role,
     duration_profile_for,
     magnitude_for_duration,
+    same_mapped_place,
 )
 from trip_agent.providers.map import Coordinates, Poi
 
@@ -41,6 +44,7 @@ def _poi(
 
 
 # ── Candidate Quality ────────────────────────────────────────────────────
+
 
 def test_bus_stop_is_not_activity_candidate() -> None:
     bus_stop = _poi("光孝寺(公交站)", "150700", "交通设施服务;公交车站;公交车站相关")
@@ -91,33 +95,104 @@ def test_scenic_attraction_never_filtered_by_name() -> None:
 
 # ── Canonical Identity ───────────────────────────────────────────────────
 
+
 def test_same_name_nearby_records_share_canonical_identity() -> None:
     main = _poi("光孝寺", "110204", "风景名胜;风景名胜;寺庙道观", lon=113.250, lat=23.130)
     duplicate = _poi("光孝寺", "110204", "风景名胜;风景名胜;寺庙道观", lon=113.251, lat=23.131)
     assert canonical_poi_key(main) == canonical_poi_key(duplicate)
 
 
-def test_sub_facility_keeps_distinct_identity_conservatively() -> None:
-    # A named sub-facility (光孝寺-六祖殿) stays a separate candidate.  We
-    # deliberately do NOT merge name-variant records — that risks treating the
-    # whole of 光孝寺 as satisfied by one of its halls (must-visit strictness).
+def test_sub_facility_shares_the_parent_attraction_identity() -> None:
+    # Sub-facilities are useful as map details, not independent itinerary
+    # visits. Treating both as activities produces a visibly duplicated day.
     main = _poi("光孝寺", "110204", "风景名胜;风景名胜;寺庙道观", lon=113.25, lat=23.13)
     hall = _poi("光孝寺-六祖殿", "110204", "风景名胜;风景名胜;寺庙道观", lon=113.251, lat=23.131)
-    assert canonical_poi_key(main) != canonical_poi_key(hall)
+    assert canonical_poi_key(main) == canonical_poi_key(hall)
+
+
+@pytest.mark.parametrize(
+    ("canonical_name", "variant_name"),
+    [
+        ("陈家祠", "陈家祠堂"),
+        ("广州塔", "广州塔-东广场"),
+        ("广州塔", "广州塔（南门）"),
+    ],
+)
+def test_common_provider_name_variants_share_canonical_identity(
+    canonical_name: str,
+    variant_name: str,
+) -> None:
+    canonical = _poi(
+        canonical_name,
+        "110202",
+        "风景名胜;风景名胜;景点",
+        lon=113.32,
+        lat=23.11,
+    )
+    variant = _poi(
+        variant_name,
+        "110202",
+        "风景名胜;风景名胜;景点",
+        lon=113.321,
+        lat=23.111,
+    )
+    assert canonical_poi_key(canonical) == canonical_poi_key(variant)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (
+            ("广州塔", "110202", 113.324521, 23.106428),
+            ("广州塔-东广场", "110105", 113.325324, 23.106236),
+        ),
+        (
+            ("广州塔", "110202", 113.324521, 23.106428),
+            ("广州塔A区", "110000|120000", 113.324516, 23.106432),
+        ),
+        (
+            ("广州塔", "110202", 113.324521, 23.106428),
+            ("广州塔广场", "060101", 113.324520, 23.105442),
+        ),
+        (
+            ("广州塔", "110202", 113.324521, 23.106428),
+            ("广州塔旅游区游客中心", "070000", 113.324212, 23.106001),
+        ),
+        (
+            ("广州塔", "110202", 113.324521, 23.106428),
+            ("广州塔观光区西登塔", "110000", 113.323890, 23.105933),
+        ),
+        (
+            ("陈家祠", "190700", 113.246930, 23.127050),
+            ("陈家祠堂", "110202", 113.245158, 23.126692),
+        ),
+        (
+            ("陈家祠", "190700", 113.246930, 23.127050),
+            ("陈家祠广场", "110105", 113.246887, 23.126938),
+        ),
+    ],
+)
+def test_real_amap_same_place_variants_match_across_type_and_grid_boundaries(
+    left: tuple[str, str, float, float],
+    right: tuple[str, str, float, float],
+) -> None:
+    first = _poi(left[0], left[1], "Provider category", lon=left[2], lat=left[3])
+    second = _poi(right[0], right[1], "Provider category", lon=right[2], lat=right[3])
+
+    assert same_mapped_place(first, second) is True
 
 
 def test_transport_child_does_not_merge_with_attraction() -> None:
     main = _poi("光孝寺", "110204", "风景名胜;风景名胜;寺庙道观", lon=113.25, lat=23.13)
-    bus_stop = _poi("光孝寺(公交站)", "150700", "交通设施服务;公交车站;公交车站相关",
-                    lon=113.251, lat=23.131)
+    bus_stop = _poi(
+        "光孝寺(公交站)", "150700", "交通设施服务;公交车站;公交车站相关", lon=113.251, lat=23.131
+    )
     assert canonical_poi_key(main) != canonical_poi_key(bus_stop)
 
 
 def test_distinct_attractions_keep_distinct_identity() -> None:
-    wildlife = _poi("长隆野生动物世界", "110102", "风景名胜;公园广场;动物园",
-                    lon=113.30, lat=22.98)
-    funworld = _poi("长隆欢乐世界", "080501", "体育休闲服务;休闲场所;游乐场",
-                    lon=113.32, lat=22.99)
+    wildlife = _poi("长隆野生动物世界", "110102", "风景名胜;公园广场;动物园", lon=113.30, lat=22.98)
+    funworld = _poi("长隆欢乐世界", "080501", "体育休闲服务;休闲场所;游乐场", lon=113.32, lat=22.99)
     assert canonical_poi_key(wildlife) != canonical_poi_key(funworld)
 
 
@@ -138,6 +213,7 @@ def test_must_visit_strict_match_not_reverted() -> None:
 
 
 # ── Visit Duration Profile ───────────────────────────────────────────────
+
 
 def test_small_attraction_produces_light_magnitude() -> None:
     temple = _poi("光孝寺", "110204", "风景名胜;风景名胜;寺庙道观")

@@ -33,7 +33,7 @@ from trip_agent.planning.trip_skeleton import (
     build_trip_skeleton,
 )
 from trip_agent.providers.map import Coordinates, Poi
-from trip_agent.worker.contracts import Itinerary
+from trip_agent.worker.contracts import AccommodationStatus, Itinerary
 
 # Facts usable for opening bindings.  AMap provider evidence is never
 # hard-constraint eligible (hard_constraint_eligible=False is preserved
@@ -46,6 +46,67 @@ _OPENING_FACT_CATEGORIES = frozenset({"OPENING_HOURS", "TEMPORARY_CLOSURE"})
 # canonical order so windows pair with the right meal-type activity no
 # matter which order the client declared them in.
 _MEAL_TYPE_RANK = {"LUNCH": 0, "DINNER": 1}
+
+
+def project_accommodation_status(
+    itinerary: Itinerary,
+    requested_accommodation_label: str | None,
+    requested_place_ref: object | None = None,
+) -> AccommodationStatus | None:
+    """Derive the itinerary's accommodation resolution status for display.
+
+    CONFIRMED when the user selected a precise provider candidate
+    (``place_ref.providerPoiId``) — that POI identity is authoritative even
+    when the planner did not project a hotel activity (e.g. DEMO), or when an
+    ACCOMMODATION activity carries a provider POI id AND coordinates.
+    Anything else (label only, or no accommodation node at all) is
+    UNRESOLVED — never fabricated.  No label means the trip never asked for
+    accommodation, so the field is omitted entirely.
+    """
+    if not requested_accommodation_label:
+        return None
+    place_ref = getattr(requested_place_ref, "provider_poi_id", None) or getattr(
+        requested_place_ref, "providerPoiId", None
+    )
+    if place_ref:
+        return AccommodationStatus(
+            status="CONFIRMED",
+            place_name=requested_accommodation_label,
+        )
+    for day in itinerary.days:
+        for activity in day.activities:
+            if activity.kind == "ACCOMMODATION":
+                confirmed = (
+                    activity.provider_poi_id is not None
+                    and activity.coordinates is not None
+                )
+                return AccommodationStatus(
+                    status="CONFIRMED" if confirmed else "UNRESOLVED",
+                    place_name=requested_accommodation_label,
+                )
+    return AccommodationStatus(
+        status="UNRESOLVED",
+        place_name=requested_accommodation_label,
+    )
+
+
+def attach_accommodation_status(
+    itinerary: Itinerary,
+    requested_accommodation_label: str | None,
+    requested_place_ref: object | None = None,
+) -> Itinerary:
+    """Return a wire copy of the itinerary carrying the accommodation status.
+
+    The validation skeleton keeps deriving accommodation internally; this only
+    decorates the emitted itinerary so Java/Web can render the hotel state.
+    Returns the same object when there is nothing to attach.
+    """
+    status = project_accommodation_status(
+        itinerary, requested_accommodation_label, requested_place_ref
+    )
+    if status is None:
+        return itinerary
+    return itinerary.model_copy(update={"accommodation": status})
 
 
 def project_validation_state(

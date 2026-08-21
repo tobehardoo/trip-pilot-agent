@@ -7,6 +7,7 @@ and workflow composition in ``workflow/``.
 """
 
 from dataclasses import asdict
+from dataclasses import replace as dataclasses_replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -48,6 +49,7 @@ from trip_agent.infrastructure.demo.knowledge_provider import (
 )
 from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider  # noqa: F811
 from trip_agent.planning.trusted_context import planning_fact_impacts
+from trip_agent.planning.validation_projection import attach_accommodation_status
 from trip_agent.providers.errors import (
     ProviderErrorCategory,
     ProviderFailureDetails,
@@ -58,8 +60,9 @@ from trip_agent.worker.contracts import (
     KnowledgeEvidence,
     KnowledgeFreshness,
     PlanningCandidateValidationCommand,
-    PlanningCompletedEventV9,
-    PlanningCompletedPayloadV9,
+    PlanningCompletedEventV10,
+    PlanningCompletedEventV11,
+    PlanningCompletedPayloadV10,
     PlanningConflict,
     PlanningCreateCommand,
     PlanningFactImpact,
@@ -68,6 +71,7 @@ from trip_agent.worker.contracts import (
     PlanningRelaxation,
     PlanningReplanCommand,
     PlanningReviewRequiredEvent,
+    PlanningReviewRequiredEventV2,
     PlanningReviewRequiredPayload,
 )
 from trip_agent.worker.progress import report_planning_progress
@@ -105,7 +109,12 @@ async def process_planning_create(
     *,
     knowledge_provider: KnowledgeEvidenceProvider | None = None,
     occurred_at: datetime | None = None,
-) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
+) -> (
+    PlanningCompletedEventV10
+    | PlanningCompletedEventV11
+    | PlanningReviewRequiredEvent
+    | PlanningReviewRequiredEventV2
+):
     completed_at = occurred_at or datetime.now(UTC)
     log = planning_logger(
         "trip_agent.worker.processor",
@@ -129,6 +138,7 @@ async def process_planning_create(
     log.info("provider started", extra={"provider": "PLANNING"})
     result = await provider.plan(effective_command)
     log.info("provider completed", extra={"provider": result.provider})
+    result = _attach_result_accommodation(result, effective_command.payload)
     # B6: authoritative feasibility gate.  The report is derived from the
     # same itinerary that will be emitted; validated_at is the caller-owned
     # timestamp and the report id is a deterministic uuid5 of the command.
@@ -170,19 +180,26 @@ async def process_planning_create(
         checked_at=completed_at,
     )
     report = validation.report
-    if report.status.value == "VERIFIED":
+    # B16: Information Missing != Planning Failed.  A savable report (no
+    # FAIL and no missing required rule) is emitted as a v10 completion even
+    # when it is UNVERIFIED (opening hours / visit duration unknown).  Only a
+    # blocker report routes to REVIEW_REQUIRED (WAITING_USER).
+    if not report.has_blocker:
         evaluation = get_plan_evaluator().evaluate(effective_command, result)
-        log.info("outcome emitted: PLANNING_COMPLETED", extra={"outcome_status": "VERIFIED"})
-        return PlanningCompletedEventV9(
+        log.info(
+            "outcome emitted: PLANNING_COMPLETED",
+            extra={"outcome_status": report.status.value, "has_blocker": False},
+        )
+        return PlanningCompletedEventV11(
             event_type="PLANNING_COMPLETED",
-            schema_version=9,
+            schema_version=11,
             event_id=_completed_event_id(command.event_id),
             trace_id=command.trace_id,
             task_id=command.task_id,
             trip_id=command.trip_id,
             run_id=_run_id(command.task_id),
             occurred_at=completed_at,
-            payload=PlanningCompletedPayloadV9(
+            payload=PlanningCompletedPayloadV10(
                 provider=result.provider,
                 itinerary=result.itinerary,
                 knowledge=knowledge,
@@ -190,12 +207,13 @@ async def process_planning_create(
                 provider_provenance=result.provider_provenance(),
                 evaluation=evaluation,
                 feasibility_report=report,
+                has_blocker=False,
             ),
         )
     log.info("outcome emitted: PLANNING_REVIEW_REQUIRED", extra={"outcome_status": "WAITING_USER"})
-    return PlanningReviewRequiredEvent(
+    return PlanningReviewRequiredEventV2(
         event_type="PLANNING_REVIEW_REQUIRED",
-        schema_version=1,
+        schema_version=2,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -219,7 +237,12 @@ async def process_planning_replan(
     provider: PlanningProvider,
     *,
     occurred_at: datetime | None = None,
-) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
+) -> (
+    PlanningCompletedEventV10
+    | PlanningCompletedEventV11
+    | PlanningReviewRequiredEvent
+    | PlanningReviewRequiredEventV2
+):
     completed_at = occurred_at or datetime.now(UTC)
     log = planning_logger(
         "trip_agent.worker.processor",
@@ -238,6 +261,7 @@ async def process_planning_replan(
     log.info("provider started", extra={"provider": "REPLAN"})
     result = await provider.replan(command)
     log.info("provider completed", extra={"provider": result.provider})
+    result = _attach_result_accommodation(result, command.payload)
     validation = run_validation(
         command=command,
         itinerary=result.itinerary,
@@ -263,19 +287,22 @@ async def process_planning_replan(
         "Preparing the updated local itinerary",
     )
     report = validation.report
-    if report.status.value == "VERIFIED":
+    if not report.has_blocker:
         evaluation = get_plan_evaluator().evaluate(command, result)
-        log.info("outcome emitted: PLANNING_COMPLETED", extra={"outcome_status": "VERIFIED"})
-        return PlanningCompletedEventV9(
+        log.info(
+            "outcome emitted: PLANNING_COMPLETED",
+            extra={"outcome_status": report.status.value, "has_blocker": False},
+        )
+        return PlanningCompletedEventV11(
             event_type="PLANNING_COMPLETED",
-            schema_version=9,
+            schema_version=11,
             event_id=_completed_event_id(command.event_id),
             trace_id=command.trace_id,
             task_id=command.task_id,
             trip_id=command.trip_id,
             run_id=_run_id(command.task_id),
             occurred_at=completed_at,
-            payload=PlanningCompletedPayloadV9(
+            payload=PlanningCompletedPayloadV10(
                 provider=result.provider,
                 itinerary=result.itinerary,
                 knowledge=command.payload.knowledge,
@@ -283,12 +310,13 @@ async def process_planning_replan(
                 provider_provenance=result.provider_provenance(),
                 evaluation=evaluation,
                 feasibility_report=report,
+                has_blocker=False,
             ),
         )
     log.info("outcome emitted: PLANNING_REVIEW_REQUIRED", extra={"outcome_status": "WAITING_USER"})
-    return PlanningReviewRequiredEvent(
+    return PlanningReviewRequiredEventV2(
         event_type="PLANNING_REVIEW_REQUIRED",
-        schema_version=1,
+        schema_version=2,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -312,7 +340,12 @@ async def process_candidate_validation(
     provider: CandidateValidationProvider,
     *,
     occurred_at: datetime | None = None,
-) -> PlanningCompletedEventV9 | PlanningReviewRequiredEvent:
+) -> (
+    PlanningCompletedEventV10
+    | PlanningCompletedEventV11
+    | PlanningReviewRequiredEvent
+    | PlanningReviewRequiredEventV2
+):
     completed_at = occurred_at or datetime.now(UTC)
     log = planning_logger(
         "trip_agent.worker.processor",
@@ -332,6 +365,7 @@ async def process_candidate_validation(
     log.info("provider started", extra={"provider": "CANDIDATE_VALIDATION"})
     result = await provider.validate(command)
     log.info("provider completed", extra={"provider": result.provider})
+    result = _attach_result_accommodation(result, command.payload)
     validation = run_validation(
         command=command,
         itinerary=result.itinerary,
@@ -355,26 +389,30 @@ async def process_candidate_validation(
         "provider_provenance": result.provider_provenance(),
         "feasibility_report": report,
     }
-    if report.status.value == "VERIFIED":
-        log.info("outcome emitted: PLANNING_COMPLETED", extra={"outcome_status": "VERIFIED"})
-        return PlanningCompletedEventV9(
+    if not report.has_blocker:
+        log.info(
+            "outcome emitted: PLANNING_COMPLETED",
+            extra={"outcome_status": report.status.value, "has_blocker": False},
+        )
+        return PlanningCompletedEventV11(
             event_type="PLANNING_COMPLETED",
-            schema_version=9,
+            schema_version=11,
             event_id=_completed_event_id(command.event_id),
             trace_id=command.trace_id,
             task_id=command.task_id,
             trip_id=command.trip_id,
             run_id=_run_id(command.task_id),
             occurred_at=completed_at,
-            payload=PlanningCompletedPayloadV9(
+            payload=PlanningCompletedPayloadV10(
                 **common,
+                has_blocker=False,
                 evaluation=get_plan_evaluator().evaluate(command, result),
             ),
         )
     log.info("outcome emitted: PLANNING_REVIEW_REQUIRED", extra={"outcome_status": "WAITING_USER"})
-    return PlanningReviewRequiredEvent(
+    return PlanningReviewRequiredEventV2(
         event_type="PLANNING_REVIEW_REQUIRED",
-        schema_version=1,
+        schema_version=2,
         event_id=_completed_event_id(command.event_id),
         trace_id=command.trace_id,
         task_id=command.task_id,
@@ -458,6 +496,37 @@ def _planning_result_with_candidate(result, candidate) -> PlanningResult:
         trip_skeleton=candidate.trip_skeleton,
         validation_inputs=candidate.validation_inputs,
     )
+
+
+
+
+def _requested_accommodation(payload: object) -> tuple[str | None, object | None]:
+    """Best-effort (label, placeRef) of the user's requested accommodation
+    from any planning payload shape (plan / replan / candidate-validation)."""
+    trip = getattr(payload, "trip", None)
+    constraints = getattr(trip, "constraints", None) if trip is not None else None
+    accommodation = getattr(constraints, "accommodation", None) if constraints is not None else None
+    if accommodation is None:
+        return None, None
+    place_ref = getattr(accommodation, "place_ref", None)
+    return getattr(accommodation, "place_name", None), place_ref
+
+
+def _attach_result_accommodation(
+    result: PlanningResult,
+    payload: object,
+) -> PlanningResult:
+    """Decorate the itinerary with the accommodation resolution status BEFORE
+    validation and emission, so the feasibility fingerprint and the wire
+    payload always see the same itinerary.  The validation skeleton keeps
+    deriving accommodation internally; this only adds the display field."""
+    label, place_ref = _requested_accommodation(payload)
+    if not label:
+        return result
+    itinerary = attach_accommodation_status(result.itinerary, label, place_ref)
+    if itinerary is result.itinerary:
+        return result
+    return dataclasses_replace(result, itinerary=itinerary)
 
 
 def _command_with_fresh_guide_evidence(

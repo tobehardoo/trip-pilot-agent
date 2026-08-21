@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,8 +28,15 @@ def compute_itinerary_fingerprint(itinerary: Itinerary) -> str:
         by_alias=True,
         exclude_none=False,
     )
+    return compute_serialized_itinerary_fingerprint(payload)
+
+
+def compute_serialized_itinerary_fingerprint(
+    itinerary: Mapping[str, object],
+) -> str:
+    """Hash the exact itinerary mapping that will cross the message boundary."""
     canonical = json.dumps(
-        payload,
+        itinerary,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,

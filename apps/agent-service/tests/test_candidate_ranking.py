@@ -21,13 +21,14 @@ def poi(
     longitude: float = 113.2644,
     latitude: float = 23.1291,
     type_name: str = "风景名胜",
+    type_code: str = "110000",
 ) -> Poi:
     return Poi(
         provider_id=provider_id,
         name=name,
         coordinates=Coordinates(longitude=longitude, latitude=latitude),
         type_name=type_name,
-        type_code="110000",
+        type_code=type_code,
         province="广东省",
         city=city,
         district="越秀区",
@@ -77,6 +78,94 @@ def test_ranker_rejects_invalid_city_empty_address_and_duplicate_places() -> Non
         "EMPTY_ADDRESS",
         "CITY_MISMATCH",
         "DUPLICATE_PROVIDER_ID",
+    }
+
+
+def test_ranker_rejects_real_amap_sub_facilities_of_pinned_attractions() -> None:
+    result = CandidateRanker().rank(
+        (
+            poi(
+                "tower-main",
+                "广州塔",
+                longitude=113.324521,
+                latitude=23.106428,
+                type_code="110202",
+            ),
+            poi(
+                "tower-east",
+                "广州塔-东广场",
+                longitude=113.325324,
+                latitude=23.106236,
+                type_code="110105",
+            ),
+            poi(
+                "tower-a",
+                "广州塔A区",
+                longitude=113.324516,
+                latitude=23.106432,
+                type_code="110000|120000",
+            ),
+            poi(
+                "tower-plaza",
+                "广州塔广场",
+                longitude=113.324520,
+                latitude=23.105442,
+                type_code="060101",
+            ),
+            poi(
+                "tower-visitor-centre",
+                "广州塔旅游区游客中心",
+                longitude=113.324212,
+                latitude=23.106001,
+                type_code="070000",
+            ),
+            poi(
+                "tower-west-observation",
+                "广州塔观光区西登塔",
+                longitude=113.323890,
+                latitude=23.105933,
+                type_code="110000",
+            ),
+            poi(
+                "chen-name",
+                "陈家祠",
+                longitude=113.246930,
+                latitude=23.127050,
+                type_code="190700",
+            ),
+            poi(
+                "chen-hall",
+                "陈家祠堂",
+                longitude=113.245158,
+                latitude=23.126692,
+                type_code="110202",
+            ),
+            poi(
+                "chen-plaza",
+                "陈家祠广场",
+                longitude=113.246887,
+                latitude=23.126938,
+                type_code="110105",
+            ),
+        ),
+        destination="广州",
+        preferences=(),
+        traveler_type="SOLO",
+        limit=10,
+        pinned_provider_ids=frozenset({"tower-main", "chen-name"}),
+    )
+
+    assert {item.poi.provider_id for item in result.selected} == {"chen-name", "tower-main"}
+    assert {
+        item.poi.provider_id for item in result.rejected if item.reason == "DUPLICATE_PLACE"
+    } == {
+        "tower-east",
+        "tower-a",
+        "tower-plaza",
+        "tower-visitor-centre",
+        "tower-west-observation",
+        "chen-hall",
+        "chen-plaza",
     }
 
 

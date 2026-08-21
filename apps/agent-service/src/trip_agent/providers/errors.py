@@ -231,6 +231,7 @@ def safe_message_for_error_code(error_code: str) -> str:
         "PROVIDER_TIMEOUT": "Provider request timed out",
         "PROVIDER_NETWORK_ERROR": "Provider network request failed",
         "PROVIDER_UNAVAILABLE": "Provider is temporarily unavailable",
+        "PROVIDER_UNSUPPORTED_MODE": "The requested route mode is not supported",
         "PROVIDER_SCHEMA_CHANGED": "Provider returned a malformed response",
         "INSUFFICIENT_AMAP_POIS": "Not enough real POIs were found",
     }.get(error_code, error_code)

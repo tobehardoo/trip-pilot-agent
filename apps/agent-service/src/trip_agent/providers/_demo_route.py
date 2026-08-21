@@ -10,7 +10,12 @@ from trip_agent.providers._route_contracts import (
     RouteResult,
     RouteStep,
 )
-from trip_agent.providers.map import Coordinates, ProviderSuccess
+from trip_agent.providers.errors import ProviderOperation, category_for_error_code
+from trip_agent.providers.map import (
+    Coordinates,
+    ProviderFailure,
+    ProviderSuccess,
+)
 
 
 class DemoRouteProvider:
@@ -24,6 +29,17 @@ class DemoRouteProvider:
 
     async def get_route(self, request: RouteRequest) -> RouteResult:
         started_at = perf_counter()
+        if request.mode == "TRANSIT":
+            return ProviderFailure(
+                provider="DEMO",
+                error_code="PROVIDER_UNSUPPORTED_MODE",
+                error_message="Demo does not support transit routes",
+                category=category_for_error_code("PROVIDER_UNSUPPORTED_MODE"),
+                operation=ProviderOperation.ROUTE,
+                retryable=False,
+                latency_ms=self._elapsed_ms(started_at),
+                fetched_at=datetime.now(UTC),
+            )
         distance = self._distance_meters(request.origin, request.destination)
         duration = ceil(distance / self._speed_meters_per_second[request.mode])
         polyline = (request.origin, request.destination)

@@ -56,6 +56,13 @@ class AmapRouteProvider:
 
     async def get_route(self, request: RouteRequest) -> RouteResult:
         started_at = perf_counter()
+        if request.mode == "TRANSIT":
+            return AmapRouteFailures.create(
+                "PROVIDER_UNSUPPORTED_MODE",
+                "AMap route provider does not support transit requests",
+                retryable=False,
+                started_at=started_at,
+            )
         cache_key = self._cache_key(request)
         cached = await self._read_cache(cache_key)
         if cached is not None:

@@ -128,6 +128,14 @@ class FeasibilityReport(BaseModel):
     ``status``, ``summary`` and ``missing_required_rule_ids`` are validated
     for consistency with the rule results and required-rule set; callers of
     :func:`build_feasibility_report` never supply them directly.
+
+    ``has_blocker`` / ``can_save`` are derived properties encoding the B16
+    rule "Information Missing != Planning Failed": a report is a blocker
+    only when a FAIL exists (or a required rule is missing).  UNKNOWN-only
+    reports (opening hours / visit duration unverified) are savable.  Being
+    derived (not fields), they never enter the wire feasibilityReport
+    (whose shared v1 schema stays stable); the v10 event payload carries the
+    explicit ``hasBlocker`` decision at payload level instead.
     """
 
     model_config = _config()
@@ -143,6 +151,16 @@ class FeasibilityReport(BaseModel):
     summary: FeasibilitySummary
     rule_results: tuple[RuleResult, ...] = Field(default=(), max_length=64)
     repair_attempts: tuple[RepairAttempt, ...] = Field(default=(), max_length=3)
+
+    @property
+    def has_blocker(self) -> bool:
+        """A blocker is a FAIL or a missing required rule (never UNKNOWN)."""
+        return self.summary.fail_count > 0 or bool(self.missing_required_rule_ids)
+
+    @property
+    def can_save(self) -> bool:
+        """Savable iff no blocker — even when the report is UNVERIFIED."""
+        return not self.has_blocker
 
     @field_validator("validated_at")
     @classmethod

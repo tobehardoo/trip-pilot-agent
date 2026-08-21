@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from trip_agent.domain.shared import canonical_place_identity, mapped_places_match
 from trip_agent.planning.visit_duration import (
     DurationProfileSource,
     VisitDurationProfile,
@@ -79,9 +80,7 @@ _ANCHOR_NAME_MARKERS = (
 )
 
 type PoiRole = Literal["KEEP", "FILTER", "ANCHOR_ONLY"]
-type DurationSource = Literal[
-    "PROVIDER", "CATEGORY_PROFILE", "CATEGORY_FALLBACK", "SYSTEM_DEFAULT"
-]
+type DurationSource = Literal["PROVIDER", "CATEGORY_PROFILE", "CATEGORY_FALLBACK", "SYSTEM_DEFAULT"]
 
 
 def _code_class(type_code: str) -> str:
@@ -143,13 +142,26 @@ def canonical_poi_key(poi: Poi) -> str:
     This is deliberately conservative: two genuinely different attractions
     (``长隆野生动物世界`` vs ``长隆欢乐世界``) keep distinct keys.
     """
-    role = classify_poi_role(poi)
-    base = "".join(character for character in poi.name.casefold() if character.isalnum())
-    # Round to ~1 km so near-identical records of the same place collapse;
-    # distinct attractions at different locations stay apart.
-    lon = round(poi.coordinates.longitude, 2)
-    lat = round(poi.coordinates.latitude, 2)
-    return f"{role}:{base}:{lon}:{lat}"
+    return canonical_place_identity(
+        poi.name,
+        poi.type_code,
+        poi.coordinates.longitude,
+        poi.coordinates.latitude,
+    )
+
+
+def same_mapped_place(left: Poi, right: Poi) -> bool:
+    """Return whether two provider POIs are semantic records of one place."""
+    return mapped_places_match(
+        left.name,
+        left.type_code,
+        left.coordinates.longitude,
+        left.coordinates.latitude,
+        right.name,
+        right.type_code,
+        right.coordinates.longitude,
+        right.coordinates.latitude,
+    )
 
 
 # B5: the canonical duration model lives in planning/visit_duration.py; keep
@@ -163,35 +175,45 @@ DurationProfile = VisitDurationProfile
 # Category/system profiles are never hard-constraint eligible.
 _CATEGORY_VERSION = "category-profile-v1"
 _LIGHT_PROFILE = VisitDurationProfile(
-    45, 90, 120,
+    45,
+    90,
+    120,
     DurationProfileSource.CATEGORY_PROFILE,
     source_ref="category:light",
     confidence=0.5,
     profile_version=_CATEGORY_VERSION,
 )
 _NORMAL_PROFILE = VisitDurationProfile(
-    90, 150, 180,
+    90,
+    150,
+    180,
     DurationProfileSource.CATEGORY_PROFILE,
     source_ref="category:normal",
     confidence=0.5,
     profile_version=_CATEGORY_VERSION,
 )
 _HALF_DAY_PROFILE = VisitDurationProfile(
-    180, 240, 300,
+    180,
+    240,
+    300,
     DurationProfileSource.CATEGORY_PROFILE,
     source_ref="category:half-day",
     confidence=0.5,
     profile_version=_CATEGORY_VERSION,
 )
 _FULL_DAY_PROFILE = VisitDurationProfile(
-    360, 480, 540,
+    360,
+    480,
+    540,
     DurationProfileSource.CATEGORY_PROFILE,
     source_ref="category:full-day",
     confidence=0.5,
     profile_version=_CATEGORY_VERSION,
 )
 _DEFAULT_PROFILE = VisitDurationProfile(
-    90, 150, 180,
+    90,
+    150,
+    180,
     DurationProfileSource.SYSTEM_DEFAULT,
     source_ref="system:default",
     confidence=0.3,

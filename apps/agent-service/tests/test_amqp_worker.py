@@ -78,7 +78,7 @@ def test_valid_command_is_acked_only_after_completed_event_is_published() -> Non
     assert message.nacked_with is None
     assert len(exchange.published) > 1
     published, routing_key, mandatory = exchange.published[-1]
-    assert routing_key == "planning.review-required"
+    assert routing_key == "planning.completed"
 
 
 def test_valid_command_publishes_the_expected_completed_contract() -> None:
@@ -92,18 +92,20 @@ def test_valid_command_publishes_the_expected_completed_contract() -> None:
     assert message.rejected_with is None
     assert len(exchange.published) > 1
     published, routing_key, mandatory = exchange.published[-1]
-    # Demo lacks hard evidence -> review-required route, not completed.
-    assert routing_key == "planning.review-required"
+    # Demo lacks hard evidence -> UNVERIFIED report but no blocker (B16):
+    # the outcome is a savable v10 completion, not a review.
+    assert routing_key == "planning.completed"
     assert mandatory is True
-    assert json.loads(published.body)["eventType"] == "PLANNING_REVIEW_REQUIRED"
+    assert json.loads(published.body)["eventType"] == "PLANNING_COMPLETED"
     assert mandatory is True
     assert published.content_type == "application/json"
     assert published.delivery_mode.name == "PERSISTENT"
     assert published.message_id is not None
     body = json.loads(published.body)
-    assert body["eventType"] == "PLANNING_REVIEW_REQUIRED"
-    assert body["schemaVersion"] == 1
+    assert body["eventType"] == "PLANNING_COMPLETED"
+    assert body["schemaVersion"] == 11
     assert body["payload"]["feasibilityReport"]["status"] == "UNVERIFIED"
+    assert body["payload"]["hasBlocker"] is False
     assert body["taskId"] == COMMAND["taskId"]
     assert body["payload"]["itinerary"]["estimatedTotalCost"] == 0
     assert isinstance(body["payload"]["itinerary"]["estimatedTotalCost"], int | float)
@@ -133,7 +135,7 @@ def test_review_wire_keeps_explicit_nulls_matching_shared_fixture() -> None:
     asyncio.run(amqp.handle_delivery(message, exchange))
 
     published, routing_key, _ = exchange.published[-1]
-    assert routing_key == "planning.review-required"
+    assert routing_key == "planning.completed"
     body = json.loads(published.body)
     # The wire must carry the same explicit-null shape as the shared fixture:
     # Java recomputes the itinerary fingerprint from the raw wire tree, so
@@ -153,7 +155,7 @@ def test_valid_command_publishes_monotonic_progress_before_completion() -> None:
     asyncio.run(amqp.handle_delivery(message, exchange))
 
     routing_keys = [routing_key for _, routing_key, _ in exchange.published]
-    assert routing_keys[-1] == "planning.review-required"
+    assert routing_keys[-1] == "planning.completed"
     assert routing_keys[:-1] == [
         "planning.progress",
         "planning.progress",
@@ -205,11 +207,13 @@ def test_valid_replan_command_uses_the_completed_event_route() -> None:
     assert message.rejected_with is None
     assert len(exchange.published) > 1
     published, routing_key, mandatory = exchange.published[-1]
-    # Local replan has no transient inputs -> review-required route.
-    assert routing_key == "planning.review-required"
+    # Local replan: UNVERIFIED report without blocker -> v10 completed route.
+    assert routing_key == "planning.completed"
     assert mandatory is True
     body = json.loads(published.body)
-    assert body["eventType"] == "PLANNING_REVIEW_REQUIRED"
+    assert body["eventType"] == "PLANNING_COMPLETED"
+    assert body["schemaVersion"] == 11
+    assert body["payload"]["hasBlocker"] is False
     assert body["taskId"] == REPLAN_COMMAND["taskId"]
     assert body["payload"]["itinerary"]["days"][0]["transitLegs"][0]["distanceMeters"] > 0
     assert body["payload"]["providerProvenance"] is None
@@ -694,6 +698,25 @@ def test_legacy_false_worker_provider_factory_builds_strict_amap_v3_with_routes(
                     },
                 },
             )
+        if request.url.path.endswith("/v3/direction/transit/integrated"):
+            # B19-C: the strict AMAP factory now probes TRANSIT for
+            # non-walkable legs.  No transit alternatives -> NO_RESULT is a
+            # recoverable candidate failure -> the leg keeps the DRIVING
+            # road baseline (never fabricated, never fails the plan).
+            return httpx.Response(
+                200,
+                json={
+                    "status": "1",
+                    "info": "OK",
+                    "infocode": "10000",
+                    "count": "0",
+                    "route": {
+                        "origin": "113.31,23.11",
+                        "destination": "113.32,23.12",
+                        "transits": [],
+                    },
+                },
+            )
         return httpx.Response(
             200,
             json={
@@ -731,9 +754,11 @@ def test_legacy_false_worker_provider_factory_builds_strict_amap_v3_with_routes(
 
     completed, cache_ttls = asyncio.run(run_scenario())
 
-    # AMap without confirmed accommodation/evidence -> UNVERIFIED review.
-    assert completed.schema_version == 1
-    assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
+    # AMap without confirmed accommodation/evidence -> UNVERIFIED report, but
+    # no blocker (B16) -> savable v10 completion.
+    assert completed.schema_version == 11
+    assert completed.event_type == "PLANNING_COMPLETED"
+    assert completed.payload.has_blocker is False
     assert completed.payload.provider == "AMAP"
     assert completed.payload.feasibility_report.status.value == "UNVERIFIED"
     first_day = completed.payload.itinerary.days[0]

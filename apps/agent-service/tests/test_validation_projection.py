@@ -452,3 +452,111 @@ def test_meal_windows_bind_by_meal_type_not_command_order() -> None:
         for binding in inputs.meal_placement_bindings
     }
     assert by_type == {"LUNCH": 0, "DINNER": 1}
+
+
+# ---------------------------------------------------------------------------
+# B19-E: accommodation status output projection (P1 — end-to-end display)
+# ---------------------------------------------------------------------------
+
+def _accommodation_itinerary(*, with_poi: bool) -> Itinerary:
+    """Two-day itinerary with an ACCOMMODATION node at the overnight boundary."""
+    days = [
+        {
+            "date": "2026-09-10",
+            "activities": [
+                _activity(title="到达", start="2026-09-10T10:00:00+08:00",
+                          end="2026-09-10T10:30:00+08:00", kind="ARRIVAL",
+                          source="DEMO"),
+                _activity(title="酒店", start="2026-09-10T21:00:00+08:00",
+                          end="2026-09-10T22:00:00+08:00", kind="ACCOMMODATION",
+                          source="AMAP" if with_poi else "DEMO",
+                          poi_id="B0001" if with_poi else None,
+                          lon=113.32 if with_poi else None,
+                          lat=23.12 if with_poi else None),
+            ],
+            "transitLegs": [],
+        },
+        {
+            "date": "2026-09-11",
+            "activities": [
+                _activity(title="越秀公园", start="2026-09-11T09:00:00+08:00",
+                          end="2026-09-11T11:00:00+08:00", kind=None,
+                          source="DEMO"),
+            ],
+            "transitLegs": [],
+        },
+    ]
+    return _itinerary(days)
+
+
+def test_accommodation_status_none_without_requested_label() -> None:
+    from trip_agent.planning.validation_projection import project_accommodation_status
+
+    it = _accommodation_itinerary(with_poi=True)
+    assert project_accommodation_status(it, None) is None
+
+
+def test_accommodation_status_confirmed_with_poi_and_coordinates() -> None:
+    from trip_agent.planning.validation_projection import project_accommodation_status
+
+    it = _accommodation_itinerary(with_poi=True)
+    status = project_accommodation_status(it, "白天鹅宾馆")
+    assert status is not None
+    assert status.status == "CONFIRMED"
+    assert status.place_name == "白天鹅宾馆"
+
+
+def test_accommodation_status_unresolved_without_poi() -> None:
+    from trip_agent.planning.validation_projection import project_accommodation_status
+
+    it = _accommodation_itinerary(with_poi=False)
+    status = project_accommodation_status(it, "白天鹅宾馆")
+    assert status is not None
+    assert status.status == "UNRESOLVED"
+    assert status.place_name == "白天鹅宾馆"
+
+
+def test_accommodation_status_unresolved_without_accommodation_activity() -> None:
+    from trip_agent.planning.validation_projection import project_accommodation_status
+
+    it = _itinerary([
+        {"date": "2026-09-10",
+         "activities": [_activity(title="到达", start="2026-09-10T10:00:00+08:00",
+                                  end="2026-09-10T10:30:00+08:00", kind="ARRIVAL",
+                                  source="DEMO")],
+         "transitLegs": []},
+        {"date": "2026-09-11",
+         "activities": [_activity(title="越秀公园", start="2026-09-11T09:00:00+08:00",
+                                  end="2026-09-11T11:00:00+08:00", kind=None,
+                                  source="DEMO")],
+         "transitLegs": []},
+    ])
+    status = project_accommodation_status(it, "白天鹅宾馆")
+    assert status is not None
+    assert status.status == "UNRESOLVED"
+
+
+def test_accommodation_status_confirmed_via_requested_place_ref() -> None:
+    """B19-E: a precise provider candidate selected by the user is CONFIRMED
+    even when the planner projected no hotel activity (e.g. DEMO provider)."""
+    from trip_agent.planning.validation_projection import project_accommodation_status
+
+    it = _itinerary([
+        {"date": "2026-09-10",
+         "activities": [_activity(title="到达", start="2026-09-10T10:00:00+08:00",
+                                  end="2026-09-10T10:30:00+08:00", kind="ARRIVAL",
+                                  source="DEMO")],
+         "transitLegs": []},
+        {"date": "2026-09-11",
+         "activities": [_activity(title="越秀公园", start="2026-09-11T09:00:00+08:00",
+                                  end="2026-09-11T11:00:00+08:00", kind=None,
+                                  source="DEMO")],
+         "transitLegs": []},
+    ])
+    class _Ref:
+        provider_poi_id = "B0001HOTEL"
+
+    status = project_accommodation_status(it, "白天鹅宾馆", _Ref())
+    assert status is not None
+    assert status.status == "CONFIRMED"
+    assert status.place_name == "白天鹅宾馆"

@@ -79,7 +79,9 @@ def test_process_planning_create_emits_structured_boundary_logs(caplog) -> None:
             )
         )
 
-    assert outcome.event_type == "PLANNING_REVIEW_REQUIRED"  # DEMO result is unverified
+    # B16: unverified-but-savable report -> v10 completed boundary log.
+    assert outcome.event_type == "PLANNING_COMPLETED"
+    assert outcome.payload.has_blocker is False
     messages = [r.getMessage() for r in caplog.records]
     assert any(m.startswith("command received:") for m in messages)
     assert any(m.startswith("provider started") for m in messages)

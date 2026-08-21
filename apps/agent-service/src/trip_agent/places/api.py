@@ -16,6 +16,7 @@ replaced by ``get_place_search_provider`` (FastAPI dependency) so tests use
 import os
 from dataclasses import dataclass
 from typing import Annotated
+from unicodedata import normalize
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -27,6 +28,7 @@ from trip_agent.providers.map import (
     AmapMapProvider,
     DemoMapProvider,
     MapProvider,
+    Poi,
     PoiSearchRequest,
     ProviderFailure,
 )
@@ -117,6 +119,30 @@ def get_place_search_provider(request: Request) -> MapProvider:
     return runtime.provider
 
 
+def _place_name_key(value: str) -> str:
+    """Canonical text key used only for deterministic search presentation."""
+    return "".join(
+        character for character in normalize("NFKC", value).casefold() if character.isalnum()
+    )
+
+
+def _exact_name_first(keyword: str, candidates: tuple[Poi, ...]) -> tuple[Poi, ...]:
+    """Keep provider order except that an exact name match always leads.
+
+    Provider ranking often places a same-name metro station, gate or parking
+    facility before the attraction itself.  Stable sorting by one boolean
+    preserves every other provider decision while preventing that misleading
+    first choice.
+    """
+    keyword_key = _place_name_key(keyword)
+    return tuple(
+        sorted(
+            candidates,
+            key=lambda poi: _place_name_key(poi.name) != keyword_key,
+        )
+    )
+
+
 @router.post("/places/search", response_model=PlaceSearchResponse)
 async def search_places(
     request: PlaceSearchRequest,
@@ -145,6 +171,7 @@ async def search_places(
             status.HTTP_502_BAD_GATEWAY,
             f"{result.error_code} ({result.category})",
         )
+    candidates = _exact_name_first(request.keyword, result.data)
     return PlaceSearchResponse(
         provider=result.provider,
         estimated=result.estimated,
@@ -161,6 +188,6 @@ async def search_places(
                 latitude=float(poi.coordinates.latitude),
                 estimated=result.estimated,
             )
-            for poi in result.data
+            for poi in candidates
         ],
     )

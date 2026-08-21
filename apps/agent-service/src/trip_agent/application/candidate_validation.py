@@ -23,6 +23,7 @@ from trip_agent.planning.validation_projection import project_validation_state
 from trip_agent.worker.contracts import (
     Itinerary,
     PlanningCandidateValidationCommand,
+    wire_provider_for_snapshot,
 )
 
 
@@ -35,7 +36,7 @@ class CandidateValidationProvider:
     async def validate(self, command: PlanningCandidateValidationCommand) -> PlanningResult:
         if self._delegate is None:
             result = PlanningResult(
-                provider=command.payload.itinerary.provider,
+                provider=wire_provider_for_snapshot(command.payload.itinerary),
                 itinerary=_candidate_itinerary(command),
             )
         else:

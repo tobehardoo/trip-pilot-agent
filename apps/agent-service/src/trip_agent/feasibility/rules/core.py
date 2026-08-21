@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from unicodedata import normalize
 
-from trip_agent.domain.shared import CHINA_TIME_ZONE
+from trip_agent.domain.shared import CHINA_TIME_ZONE, mapped_places_match
 from trip_agent.feasibility.context import ValidationContext
 from trip_agent.feasibility.entity_refs import encode_poi_ref
 from trip_agent.feasibility.inputs import ActivityLocator
@@ -235,6 +236,7 @@ def assess_duplicate_poi(ctx: ValidationContext) -> RuleAssessment:
     """A provider POI is a trip-wide identity; non-repeatable kinds may not
     appear more than once."""
     seen_poi_ids: set[str] = set()
+    seen_places: list[tuple[str, str, Decimal, Decimal]] = []
     findings: list[RuleFinding] = []
     affected_dates: set[date] = set()
     for day in ctx.itinerary.days:
@@ -242,7 +244,22 @@ def assess_duplicate_poi(ctx: ValidationContext) -> RuleAssessment:
             poi_id = activity.provider_poi_id
             if poi_id is None or activity.kind in _REPEATABLE_KINDS:
                 continue
-            if poi_id in seen_poi_ids:
+            semantic_duplicate = False
+            if activity.coordinates is not None and activity.type_code:
+                semantic_duplicate = any(
+                    mapped_places_match(
+                        activity.title,
+                        activity.type_code,
+                        activity.coordinates.longitude,
+                        activity.coordinates.latitude,
+                        seen_title,
+                        seen_type_code,
+                        seen_longitude,
+                        seen_latitude,
+                    )
+                    for seen_title, seen_type_code, seen_longitude, seen_latitude in seen_places
+                )
+            if poi_id in seen_poi_ids or semantic_duplicate:
                 affected_dates.add(day.date)
                 findings.append(
                     RuleFinding(
@@ -254,6 +271,15 @@ def assess_duplicate_poi(ctx: ValidationContext) -> RuleAssessment:
                 )
             else:
                 seen_poi_ids.add(poi_id)
+                if activity.coordinates is not None and activity.type_code:
+                    seen_places.append(
+                        (
+                            activity.title,
+                            activity.type_code,
+                            activity.coordinates.longitude,
+                            activity.coordinates.latitude,
+                        )
+                    )
     if not findings:
         return RuleAssessment(
             result=_result(

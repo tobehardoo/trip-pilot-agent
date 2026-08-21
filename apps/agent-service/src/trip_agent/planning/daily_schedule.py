@@ -533,12 +533,19 @@ def plan_day(
     meal_preferences: tuple[str, ...] = (),
     budget_per_person: Decimal | None = None,
     meal_windows: tuple[MealWindowConstraint, ...] = (),
+    window_override: tuple[int, int] | None = None,
 ) -> DayPlan:
     """Build a full daily plan from constraints and candidates.
 
     The returned plan contains fixed anchors, chosen activities, and meal
     *demands*.  Real restaurant resolution and real route timing are left to
     the provider, which may re-space the items using actual transit durations.
+
+    ``window_override`` is the B17 bounded-repair escape hatch: the provider
+    passes an explicitly relaxed window only after its deterministic capacity
+    repair is exhausted, and only for a system-default boundary (never a
+    user-derived arrival/departure anchor).  ``None`` keeps the default
+    ``day_window_minutes`` computation — every existing caller is unchanged.
     """
     day_type = classify_day_type(
         trip_date,
@@ -548,9 +555,12 @@ def plan_day(
         departure,
         has_full_day_experience=has_full_day_experience,
     )
-    window_start, window_end = day_window_minutes(
-        trip_date, start_date, end_date, arrival, departure, pace=pace
-    )
+    if window_override is not None:
+        window_start, window_end = window_override
+    else:
+        window_start, window_end = day_window_minutes(
+            trip_date, start_date, end_date, arrival, departure, pace=pace
+        )
     if window_end <= window_start:
         return DayPlan(
             date=trip_date,

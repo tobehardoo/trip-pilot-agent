@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from uuid import UUID
 import pytest
 from jsonschema import Draft202012Validator
 from jsonschema import ValidationError as JsonSchemaValidationError
+from plan_evaluation_support import make_command, make_result
 from test_planning_context_v3 import _v3_command
 
 from trip_agent.worker.contracts import (
@@ -62,7 +64,10 @@ ACTIVE_SCHEMA_FILES = (
     "planning-candidate-validation-command-v1.schema.json",
     "planning-candidate-validation-command-v2.schema.json",
     "planning-completed-event-v9.schema.json",
+    "planning-completed-event-v10.schema.json",
+    "planning-completed-event-v11.schema.json",
     "planning-review-required-event-v1.schema.json",
+    "planning-review-required-event-v2.schema.json",
 )
 
 
@@ -95,18 +100,151 @@ def test_v3_planning_create_contract_accepts_the_frozen_context_shape() -> None:
     Draft202012Validator(schema).validate(_v3_command())
 
 
-def test_review_required_contract_accepts_worker_output() -> None:
+def test_completed_v11_contract_accepts_worker_output() -> None:
     payload = deepcopy(_v3_command())
     payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []
     command = PlanningCreateCommand.model_validate(payload)
     event = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
-    assert event.schema_version == 1
-    assert event.event_type == "PLANNING_REVIEW_REQUIRED"
-    schema = _load_schema("planning-review-required-event-v1.schema.json")
+    # B19-B: the producer writes completion v11 (B16 UNVERIFIED/no-blocker is
+    # still savable); v11 keeps the v10 structure plus TRANSIT route modes.
+    assert event.schema_version == 11
+    assert event.event_type == "PLANNING_COMPLETED"
+    assert event.payload.has_blocker is False
+    schema = _load_schema("planning-completed-event-v11.schema.json")
 
     Draft202012Validator(schema).validate(
         event.model_dump(mode="json", by_alias=True, exclude_none=True)
     )
+
+
+def test_v11_worker_wire_fingerprint_covers_injected_transit_costs() -> None:
+    class ProviderWithTransitCosts:
+        async def plan(self, _command: object):
+            return make_result()
+
+    event = asyncio.run(
+        process_planning_create(make_command(), ProviderWithTransitCosts())
+    )
+
+    wire = event.model_dump(mode="json", by_alias=True, exclude_none=False)
+    wire_itinerary = wire["payload"]["itinerary"]
+    wire_leg = wire_itinerary["days"][0]["transitLegs"][0]
+    assert "estimatedCost" in wire_leg
+    assert "costSource" in wire_leg
+    canonical = json.dumps(
+        wire_itinerary,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    assert wire["payload"]["feasibilityReport"]["itineraryFingerprint"] == expected
+
+
+def test_fact_impact_omits_none_optional_fields_on_the_wire() -> None:
+    """A fact impact must omit every optional-not-nullable field, never emit null.
+
+    The v10 schema declares date/targetPoiId/targetName/sourceUrl optional
+    (absent means no value, e.g. a city-wide weather impact); a
+    present-but-null value is rejected by both the JSON Schema and the Java
+    parsers (PlanningCompletedEventParser / PlanningReviewRequiredEventParser).
+    """
+    from trip_agent.worker.contracts import PlanningFactImpact
+
+    impact = PlanningFactImpact(
+        fact_id="fact_weather_citywide",
+        category="WEATHER",
+        date=None,
+        effect="OUTDOOR_POI_DOWNRANKED",
+        target_poi_id=None,
+        target_name=None,
+        reason="对应日期预计降雨，露天候选降低优先级",
+        source_name="和风天气城市情报",
+        source_type="CITY_INTELLIGENCE",
+        source_url=None,
+        reliability_level="WEATHER_PROVIDER",
+        checked_at=datetime(2026, 8, 17, 11, 32, 18, tzinfo=UTC),
+        evidence="2026-08-10 越秀历史天气：晴",
+        stale=False,
+        conflicted=True,
+        refresh_failed=False,
+    )
+
+    wire = impact.model_dump(mode="json", by_alias=True, exclude_none=False)
+
+    # All four optional-not-nullable fields must be absent, never null.
+    for key in ("date", "targetPoiId", "targetName", "sourceUrl"):
+        assert key not in wire, f"{key} must be omitted when unset"
+
+    with_values = impact.model_copy(
+        update={
+            "date": datetime(2026, 8, 10, tzinfo=UTC).date(),
+            "target_poi_id": "B00140T14D",
+            "target_name": "陈家祠",
+            "source_url": "https://www.qweather.com/weather/yuexiu-101280107.html",
+        }
+    )
+    wire_with_values = with_values.model_dump(mode="json", by_alias=True, exclude_none=False)
+    assert wire_with_values["targetPoiId"] == "B00140T14D"
+    assert wire_with_values["targetName"] == "陈家祠"
+    assert wire_with_values["sourceUrl"] == "https://www.qweather.com/weather/yuexiu-101280107.html"
+    assert "date" in wire_with_values and "date" not in wire
+
+
+def test_fact_impact_stale_fact_scenario_conforms_to_v10_schema() -> None:
+    """A stale-fact impact (None target/source/date) must serialize schema-valid.
+
+    trusted_context.py produces STALE_FACT_WARNING impacts with
+    target_name=None; the v10 schema must accept the resulting wire JSON
+    with no null value inside factImpacts items.
+    """
+    from trip_agent.worker.contracts import PlanningFactImpact
+
+    impact = PlanningFactImpact(
+        fact_id="fact_opening_stale",
+        category="OPENING_HOURS",
+        date=None,
+        effect="STALE_FACT_WARNING",
+        target_poi_id=None,
+        target_name=None,
+        reason="营业时间事实已超过新鲜度阈值",
+        source_name="高德地图",
+        source_type="MAP_PROVIDER",
+        source_url=None,
+        reliability_level="AMAP_POI",
+        checked_at=datetime(2026, 8, 17, 11, 32, 18, tzinfo=UTC),
+        evidence="POI 营业时间更新于 90 天前",
+        stale=True,
+        conflicted=False,
+        refresh_failed=False,
+    )
+
+    wire = impact.model_dump(mode="json", by_alias=True, exclude_none=False)
+    for key in ("date", "targetPoiId", "targetName", "sourceUrl"):
+        assert key not in wire, f"{key} must be omitted when unset"
+
+    event = json.loads(
+        (Path(__file__).resolve().parents[3]
+         / "contracts/fixtures/planning-completed-event-v10"
+         / "completion-v10-unverified-savable.json").read_text(encoding="utf-8")
+    )
+    event["payload"]["factImpacts"] = [wire]
+    schema = _load_schema("planning-completed-event-v10.schema.json")
+    Draft202012Validator(schema).validate(event)
+
+
+def test_completed_v10_shared_fixture_conforms_to_schema() -> None:
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[3]
+         / "contracts/fixtures/planning-completed-event-v10"
+         / "completion-v10-unverified-savable.json").read_text(encoding="utf-8")
+    )
+    schema = _load_schema("planning-completed-event-v10.schema.json")
+    Draft202012Validator(schema).validate(fixture)
+    assert fixture["schemaVersion"] == 10
+    assert fixture["payload"]["hasBlocker"] is False
+    assert fixture["payload"]["feasibilityReport"]["status"] == "UNVERIFIED"
 
 
 def test_v1_evaluation_schema_rejects_not_applicable_dimensions() -> None:
@@ -657,6 +795,67 @@ def test_replan_v2_schema_accepts_its_fixture() -> None:
     Draft202012Validator(schema, registry=registry).validate(fixture)
 
 
+def test_replan_v2_schema_accepts_the_existing_transit_runtime_mode() -> None:
+    import copy
+    import json
+
+    schema = _load_schema("planning-replan-command-v2.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads(
+        (REPLAN_V2_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8")
+    )
+    day = fixture["payload"]["itinerary"]["days"][0]
+    second = copy.deepcopy(day["activities"][0])
+    second["title"] = "Tower"
+    second["providerPoiId"] = "tower"
+    second["coordinates"] = {"longitude": 113.32, "latitude": 23.12}
+    day["activities"].append(second)
+    day["transitLegs"].append(
+        {
+            "fromActivityIndex": 0,
+            "toActivityIndex": 1,
+            "mode": "TRANSIT",
+            "distanceMeters": 1800,
+            "durationSeconds": 720,
+            "provider": "AMAP",
+            "estimated": False,
+            "locked": False,
+            "estimatedCost": 3,
+            "costSource": "PROVIDER",
+            "polyline": [
+                {"longitude": 113.31, "latitude": 23.11},
+                {"longitude": 113.32, "latitude": 23.12},
+            ],
+        }
+    )
+
+    Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+def test_replan_v2_schema_accepts_the_java_day_and_activity_snapshot_fields() -> None:
+    import json
+
+    schema = _load_schema("planning-replan-command-v2.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads(
+        (REPLAN_V2_FIXTURE_DIRECTORY / "valid.json").read_text(encoding="utf-8")
+    )
+    day = fixture["payload"]["itinerary"]["days"][0]
+    day["dayType"] = "FULL_DAY"
+    activity = day["activities"][0]
+    activity.update(
+        {
+            "kind": "ATTRACTION",
+            "timeFixed": False,
+            "locked": True,
+            "typeCode": "110000",
+            "typeName": "景点",
+        }
+    )
+
+    Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
 def test_replan_v2_fixture_parses_with_the_python_model() -> None:
     import json
 
@@ -697,6 +896,43 @@ def test_candidate_v2_schema_accepts_edit_and_rollback_fixtures() -> None:
         Draft202012Validator(schema, registry=registry).validate(fixture)
 
 
+def test_candidate_v2_schema_accepts_the_existing_transit_runtime_mode() -> None:
+    import copy
+    import json
+
+    schema = _load_schema("planning-candidate-validation-command-v2.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads(
+        (CANDIDATE_V2_FIXTURE_DIRECTORY / "valid-edit.json").read_text(encoding="utf-8")
+    )
+    day = fixture["payload"]["itinerary"]["days"][0]
+    second = copy.deepcopy(day["activities"][0])
+    second["title"] = "Tower"
+    second["providerPoiId"] = "tower"
+    second["coordinates"] = {"longitude": 113.32, "latitude": 23.12}
+    day["activities"].append(second)
+    day["transitLegs"].append(
+        {
+            "fromActivityIndex": 0,
+            "toActivityIndex": 1,
+            "mode": "TRANSIT",
+            "distanceMeters": 1800,
+            "durationSeconds": 720,
+            "provider": "AMAP",
+            "estimated": False,
+            "estimatedCost": 3,
+            "costSource": "PROVIDER",
+            "polyline": [
+                {"longitude": 113.31, "latitude": 23.11},
+                {"longitude": 113.32, "latitude": 23.12},
+            ],
+            "locked": False,
+        }
+    )
+
+    Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
 def test_candidate_v2_fixtures_parse_with_the_python_model() -> None:
     import json
 
@@ -728,3 +964,126 @@ def test_v1_legacy_fixtures_keep_their_published_meaning() -> None:
             ).read_text(encoding="utf-8")
         )
         Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+COMPLETION_V10_FIXTURE_DIRECTORY = (
+    Path(__file__).resolve().parents[3] / "contracts" / "fixtures" / "planning-completed-event-v10"
+)
+
+
+def _v10_completion_fixture() -> dict[str, object]:
+    return json.loads(
+        (
+            COMPLETION_V10_FIXTURE_DIRECTORY / "completion-v10-unverified-savable.json"
+        ).read_text(encoding="utf-8")
+    )
+
+
+def _v11_completion_with_transit_leg(mode: str) -> dict[str, object]:
+    fixture = _v10_completion_fixture()
+    fixture["schemaVersion"] = 11
+    fixture["payload"]["itinerary"]["days"][0]["transitLegs"][0]["mode"] = mode
+    return fixture
+
+
+def test_active_schema_check_includes_v11_and_review_v2() -> None:
+    assert "planning-completed-event-v11.schema.json" in ACTIVE_SCHEMA_FILES
+    assert "planning-review-required-event-v2.schema.json" in ACTIVE_SCHEMA_FILES
+
+
+def test_v11_completed_schema_accepts_a_transit_leg() -> None:
+    schema = _load_schema("planning-completed-event-v11.schema.json")
+    registry = _local_schema_registry()
+    Draft202012Validator(schema, registry=registry).validate(
+        _v11_completion_with_transit_leg(mode="TRANSIT")
+    )
+
+
+def test_v11_completed_schema_rejects_taxi_mode() -> None:
+    schema = _load_schema("planning-completed-event-v11.schema.json")
+    registry = _local_schema_registry()
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(
+            _v11_completion_with_transit_leg(mode="TAXI")
+        )
+
+
+def test_v11_completed_python_model_rejects_taxi_mode() -> None:
+    from pydantic import ValidationError
+
+    from trip_agent.worker.contracts import PlanningCompletedEventV11
+
+    with pytest.raises(ValidationError, match="forbid TAXI"):
+        PlanningCompletedEventV11.model_validate(
+            _v11_completion_with_transit_leg(mode="TAXI")
+        )
+
+
+def test_v10_completed_schema_rejects_a_transit_leg() -> None:
+    schema = _load_schema("planning-completed-event-v10.schema.json")
+    registry = _local_schema_registry()
+    fixture = _v10_completion_fixture()
+    fixture["payload"]["itinerary"]["days"][0]["transitLegs"][0]["mode"] = "TRANSIT"
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+def test_review_v1_schema_rejects_a_transit_leg() -> None:
+    schema = _load_schema("planning-review-required-event-v1.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads(
+        (REVIEW_V1_FIXTURE_DIRECTORY / "review-v1-unverified-demo.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    fixture["payload"]["itinerary"]["days"][0]["transitLegs"][0]["mode"] = "TRANSIT"
+    with pytest.raises(JsonSchemaValidationError):
+        Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+def test_review_v2_schema_accepts_a_transit_leg() -> None:
+    schema = _load_schema("planning-review-required-event-v2.schema.json")
+    registry = _local_schema_registry()
+    fixture = json.loads(
+        (REVIEW_V1_FIXTURE_DIRECTORY / "review-v1-unverified-demo.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    fixture["schemaVersion"] = 2
+    fixture["payload"]["itinerary"]["days"][0]["transitLegs"][0]["mode"] = "TRANSIT"
+    Draft202012Validator(schema, registry=registry).validate(fixture)
+
+
+def test_review_v2_python_model_rejects_taxi_mode() -> None:
+    from pydantic import ValidationError
+
+    from trip_agent.worker.contracts import PlanningReviewRequiredEventV2
+
+    fixture = json.loads(
+        (REVIEW_V1_FIXTURE_DIRECTORY / "review-v1-unverified-demo.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    fixture["schemaVersion"] = 2
+    fixture["payload"]["itinerary"]["days"][0]["transitLegs"][0]["mode"] = "TAXI"
+    with pytest.raises(ValidationError, match="forbid TAXI"):
+        PlanningReviewRequiredEventV2.model_validate(fixture)
+
+
+def test_v11_completed_and_review_v2_models_are_defined() -> None:
+    from trip_agent.worker.contracts import (
+        PlanningCompletedEventV11,
+        PlanningReviewRequiredEventV2,
+    )
+
+    assert PlanningCompletedEventV11.__name__ == "PlanningCompletedEventV11"
+    assert PlanningReviewRequiredEventV2.__name__ == "PlanningReviewRequiredEventV2"
+
+
+def test_worker_emits_the_v11_completion_contract() -> None:
+    payload = deepcopy(_v3_command())
+    payload["payload"]["trip"]["constraints"]["mustVisitPlaces"] = []
+    command = PlanningCreateCommand.model_validate(payload)
+    event = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
+
+    assert event.schema_version == 11

@@ -9,12 +9,19 @@ injected through a typed dependency; tests use ``app.dependency_overrides``
 (no module-level mutable provider state).
 """
 
+from datetime import UTC, datetime
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import trip_agent.places.api as places_api
 from trip_agent.main import app
-from trip_agent.providers.map import DemoMapProvider
+from trip_agent.providers.map import (
+    Coordinates,
+    DemoMapProvider,
+    Poi,
+    ProviderSuccess,
+)
 
 
 def _client(token: str = "test-internal-token"):
@@ -251,3 +258,58 @@ def test_provider_no_result_maps_to_200_empty_candidates(monkeypatch) -> None:
     assert body["provider"] == "AMAP"
     assert body["estimated"] is False
     assert body["candidates"] == []
+
+
+def test_exact_place_name_is_ranked_before_same_name_infrastructure(monkeypatch) -> None:
+    """A fast user must not be led to pick ``陈家祠(地铁站)`` when the
+    exact attraction ``陈家祠`` is present in the same provider response.
+
+    AMap does not guarantee user-intent ordering, so the internal boundary
+    owns this deterministic exact-name preference for every caller.
+    """
+    monkeypatch.setenv("AGENT_INTERNAL_TOKEN", "test-internal-token")
+
+    def poi(provider_id: str, name: str, type_code: str) -> Poi:
+        return Poi(
+            provider_id=provider_id,
+            name=name,
+            coordinates=Coordinates(longitude=113.27, latitude=23.13),
+            type_name="交通设施服务" if type_code.startswith("15") else "风景名胜",
+            type_code=type_code,
+            province="广东省",
+            city="广州市",
+            district="荔湾区",
+            address=f"{name}地址",
+        )
+
+    class _OutOfOrderProvider:
+        async def search_pois(self, request):
+            return ProviderSuccess(
+                data=(
+                    poi("metro", "陈家祠(地铁站)", "150500"),
+                    poi("attraction", "陈家祠", "110202"),
+                    poi("gate", "陈家祠-南门", "150202"),
+                ),
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 8, 17, tzinfo=UTC),
+                estimated=False,
+            )
+
+    app.dependency_overrides[places_api.get_place_search_provider] = lambda: _OutOfOrderProvider()
+    try:
+        response = _client().post(
+            "/internal/v1/places/search",
+            json=_search(keyword="陈家祠"),
+            headers=_headers(),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert [candidate["providerPoiId"] for candidate in response.json()["candidates"]] == [
+        "attraction",
+        "metro",
+        "gate",
+    ]

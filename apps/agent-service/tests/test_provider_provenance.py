@@ -98,8 +98,10 @@ def test_demo_success_emits_recorded_provenance() -> None:
 
     completed = asyncio.run(process_planning_create(command, DemoPlanningProvider()))
 
-    assert completed.schema_version == 1
-    assert completed.event_type == "PLANNING_REVIEW_REQUIRED"
+    # B16: demo (UNVERIFIED, no blocker) -> savable v10 completed.
+    assert completed.schema_version == 11
+    assert completed.event_type == "PLANNING_COMPLETED"
+    assert completed.payload.has_blocker is False
     assert completed.payload.provider_provenance == ProviderProvenance(
         requested_provider_mode="DEMO_ONLY",
         primary_provider="DEMO",

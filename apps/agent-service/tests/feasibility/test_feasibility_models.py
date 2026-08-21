@@ -102,6 +102,73 @@ def test_aggregation_truth_table(outcomes, expected) -> None:
     assert report.status == expected
 
 
+# ── has_blocker / can_save (Information Missing != Planning Failed) ────────
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "expected_has_blocker", "expected_can_save"),
+    [
+        ((RuleOutcome.PASS, RuleOutcome.NOT_APPLICABLE), False, True),
+        ((RuleOutcome.PASS, RuleOutcome.FAIL), True, False),
+        ((RuleOutcome.PASS, RuleOutcome.UNKNOWN), False, True),
+        ((RuleOutcome.FAIL, RuleOutcome.UNKNOWN), True, False),
+        ((RuleOutcome.NOT_APPLICABLE, RuleOutcome.UNKNOWN), False, True),
+        ((RuleOutcome.FAIL,), True, False),
+        ((RuleOutcome.UNKNOWN,), False, True),
+        ((RuleOutcome.NOT_APPLICABLE,), False, True),
+    ],
+)
+def test_has_blocker_and_can_save_truth_table(
+    outcomes, expected_has_blocker, expected_can_save
+) -> None:
+    ids = tuple(f"R{i}" for i in range(len(outcomes)))
+    rules = tuple(_rule(rule_id, outcome) for rule_id, outcome in zip(ids, outcomes, strict=False))
+    report = _build(rules=rules, required=ids)
+    assert report.has_blocker == expected_has_blocker
+    assert report.can_save == expected_can_save
+
+
+def test_unknown_only_report_can_save() -> None:
+    """3 opening-hours unknowns + 4 duration unknowns must still be savable."""
+    rules = (
+        _rule("OPENING_HOURS", RuleOutcome.UNKNOWN),
+        _rule("VISIT_DURATION", RuleOutcome.UNKNOWN),
+    )
+    report = _build(rules=rules, required=("OPENING_HOURS", "VISIT_DURATION"))
+    assert report.status == FeasibilityStatus.UNVERIFIED
+    assert report.has_blocker is False
+    assert report.can_save is True
+
+
+def test_fail_report_cannot_save() -> None:
+    """A confirmed venue-closed conflict must remain a blocker."""
+    verified_evidence = EvidenceReference(
+        evidence_id="ev:opening",
+        evidence_type="OPENING_HOURS",
+        state=EvidenceState.VERIFIED,
+        hard_constraint_eligible=True,
+    )
+    rules = (
+        _rule(
+            "OPENING_HOURS",
+            RuleOutcome.FAIL,
+            evidence_refs=(verified_evidence,),
+        ),
+    )
+    report = _build(rules=rules, required=("OPENING_HOURS",))
+    assert report.status == FeasibilityStatus.NEEDS_REPAIR
+    assert report.has_blocker is True
+    assert report.can_save is False
+
+
+def test_missing_required_rule_keeps_can_save_false_when_unknown() -> None:
+    """Missing required rule yields UNVERIFIED and is NOT savable (unknown blocker)."""
+    report = _build(rules=(_rule("R1", RuleOutcome.PASS),), required=("R1", "R2"))
+    assert report.status == FeasibilityStatus.UNVERIFIED
+    assert report.has_blocker is True
+    assert report.can_save is False
+
+
 def test_fail_wins_over_unknown() -> None:
     report = _build(
         rules=(_rule("R1", RuleOutcome.UNKNOWN), _rule("R2", RuleOutcome.FAIL)),

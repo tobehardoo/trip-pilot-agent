@@ -53,8 +53,7 @@ from trip_agent.worker.contracts import (
     Itinerary,
     ItineraryActivity,
     ItineraryDay,
-    PlanningCompletedEventV9,
-    PlanningReviewRequiredEvent,
+    PlanningCompletedEventV11,
     TransitLeg,
 )
 from trip_agent.worker.processor import process_planning_create
@@ -282,7 +281,7 @@ def test_g04_confirmed_hotel_verifies_cross_day_continuity() -> None:
         )
     )
 
-    assert isinstance(event, PlanningCompletedEventV9)
+    assert isinstance(event, PlanningCompletedEventV11)
     report = event.payload.feasibility_report
     assert report.status is FeasibilityStatus.VERIFIED
     cross = _rule(report, "CROSS_DAY_CONTINUITY")
@@ -302,7 +301,9 @@ def test_g05_area_estimated_hotel_is_unverified_not_verified() -> None:
         )
     )
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
+    # B16: AREA_ESTIMATED -> UNVERIFIED without blocker -> v10 completed.
+    assert isinstance(event, PlanningCompletedEventV11)
+    assert event.payload.has_blocker is False
     report = event.payload.feasibility_report
     assert report.status is FeasibilityStatus.UNVERIFIED
     cross = _rule(report, "CROSS_DAY_CONTINUITY")
@@ -322,7 +323,9 @@ def test_g06_unresolved_hotel_is_unverified() -> None:
         )
     )
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
+    # B16: UNRESOLVED -> UNVERIFIED without blocker -> v10 completed.
+    assert isinstance(event, PlanningCompletedEventV11)
+    assert event.payload.has_blocker is False
     report = event.payload.feasibility_report
     assert report.status is FeasibilityStatus.UNVERIFIED
     cross = _rule(report, "CROSS_DAY_CONTINUITY")
@@ -342,7 +345,7 @@ def test_g09_verified_opening_window_passes() -> None:
         )
     )
 
-    assert isinstance(event, PlanningCompletedEventV9)
+    assert isinstance(event, PlanningCompletedEventV11)
     opening = _rule(event.payload.feasibility_report, "OPENING_HOURS")
     assert opening.outcome is RuleOutcome.PASS
     assert opening.reason_code == "OPENING_HOURS_VERIFIED"
@@ -360,7 +363,9 @@ def test_g11_stale_opening_evidence_is_unverified() -> None:
         )
     )
 
-    assert isinstance(event, PlanningReviewRequiredEvent)
+    # B16: STALE -> UNKNOWN without blocker -> v10 completed.
+    assert isinstance(event, PlanningCompletedEventV11)
+    assert event.payload.has_blocker is False
     report = event.payload.feasibility_report
     assert report.status is FeasibilityStatus.UNVERIFIED
     opening = _rule(report, "OPENING_HOURS")

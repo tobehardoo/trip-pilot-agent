@@ -90,7 +90,7 @@ def test_repair_provider_refreshes_only_requested_days_and_preserves_inputs() ->
     assert repaired.validation_inputs is not candidate.validation_inputs
 
 
-def test_repair_provider_preserves_day_type_and_provider_route_cost() -> None:
+def test_repair_provider_preserves_day_type_but_hides_driving_toll() -> None:
     command, candidate = _candidate()
     first_day = candidate.itinerary.days[0].model_copy(update={"day_type": "ARRIVAL_DAY"})
     candidate = PlanningResult(
@@ -118,8 +118,8 @@ def test_repair_provider_preserves_day_type_and_provider_route_cost() -> None:
 
     leg = repaired.itinerary.days[0].transit_legs[0]
     assert repaired.itinerary.days[0].day_type == "ARRIVAL_DAY"
-    assert leg.estimated_cost == Decimal("12.35")
-    assert leg.cost_source == "PROVIDER"
+    assert leg.estimated_cost is None
+    assert leg.cost_source == "UNKNOWN"
 
 
 class _FailedRoutes:

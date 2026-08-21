@@ -44,8 +44,9 @@ from trip_agent.infrastructure.amap.accommodation_projection import (
 from trip_agent.infrastructure.amap.feasibility_projection import (
     project_amap_validation_inputs,
 )
-from trip_agent.planning.candidates import CandidateRanker
+from trip_agent.planning.candidates import CandidateRanker, is_must_visit_poi
 from trip_agent.planning.daily_schedule import (
+    DEFAULT_DAY_START_MINUTE,
     CandidateActivity,
     DayPlan,
     DayPlanItem,
@@ -55,11 +56,28 @@ from trip_agent.planning.daily_schedule import (
     classify_day_type,
     plan_day,
 )
+from trip_agent.planning.mode_recommendation import (
+    MAX_TRANSFERS,
+    MAX_TRANSIT_DURATION_RATIO,
+    MAX_TRANSIT_WALKING_METERS,
+    ConsideredMode,
+    ModeRecommendation,
+    ModeRecommendationReason,
+    accessible_burdens,
+    can_probe_transit,
+    decide_transit_or_road,
+)
 from trip_agent.planning.poi_quality import (
     activity_candidate_eligible,
     canonical_poi_key,
     duration_profile_for,
     magnitude_for_duration,
+)
+from trip_agent.planning.transit_mode import (
+    RECOVERABLE_ROUTE_CATEGORIES,
+    is_walkable,
+    should_try_walking,
+    straight_line_distance_meters,
 )
 from trip_agent.planning.trusted_context import hard_closed_fact
 from trip_agent.providers.errors import (
@@ -93,8 +111,44 @@ from trip_agent.worker.progress import report_planning_progress
 
 logger = logging.getLogger(__name__)
 
+# B18-B: walking-route failures in these categories are "recoverable" — the leg
+# falls back to the DRIVING road baseline instead of failing the plan.  They
+# mirror the fallback policy's local/explicitly-allowed categories.  Anything
+# else (INTERNAL_ERROR, AUTHENTICATION_ERROR, PERMISSION_DENIED, INVALID_REQUEST,
+# MALFORMED_RESPONSE, QUOTA_EXCEEDED, ...) keeps raising: those are not a
+# walking-unavailability signal and must not be swallowed.
+def _considered_modes(
+    transit_route: ProviderSuccess[RoutePlan] | None,
+    road_route: ProviderSuccess[RoutePlan] | None,
+) -> tuple[ConsideredMode, ...]:
+    """Per-mode facts for the recommendation trace (logging/tests only)."""
+    considered: list[ConsideredMode] = []
+    for route in (transit_route, road_route):
+        if route is None:
+            continue
+        considered.append(
+            ConsideredMode(
+                mode=route.data.mode,
+                available=True,
+                duration_seconds=route.data.duration_seconds,
+                distance_meters=route.data.distance_meters,
+                walking_distance_meters=route.data.walking_distance_meters,
+                transfer_count=route.data.transfer_count,
+                cost=route.data.estimated_cost,
+            )
+        )
+    return tuple(considered)
+
 _REDUCED_MOBILITY_MAX_HOP_METERS = 3_000
 _MAX_MOBILITY_REPAIR_ATTEMPTS = 2
+
+# B17 bounded repair relaxation: after deterministic capacity repair is
+# exhausted, pull a SYSTEM-DEFAULT day start earlier in fixed steps so real
+# transit time can fit before a fixed departure.  The floor keeps the
+# relaxation bounded; user-derived boundaries (arrival/departure anchors,
+# fixed schedules, meal hard windows) are never moved.
+_WINDOW_RELAX_STEP_MINUTES = 30
+_WINDOW_RELAX_FLOOR_MINUTE = 7 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +337,7 @@ class AmapPlanningProvider:
         self,
         map_provider: MapProvider,
         route_provider: RouteProvider,
+        transit_route: RouteProvider | None = None,
         route_fallback: RouteProvider | None = None,
         candidate_ranker: CandidateRanker | None = None,
         provider_mode: ProviderExecutionMode = ProviderExecutionMode.REAL_ONLY,
@@ -290,6 +345,7 @@ class AmapPlanningProvider:
     ) -> None:
         self._map_provider = map_provider
         self._route_provider = route_provider
+        self._transit_route = transit_route
         self._route_fallback = route_fallback
         self._candidate_ranker = candidate_ranker or CandidateRanker()
         self._provider_mode = provider_mode
@@ -355,6 +411,10 @@ class AmapPlanningProvider:
             # ordinary selection cutoff, so a low-scoring exact id is never
             # cut from the selected candidates.
             pinned_provider_ids=must_visit_ids,
+            # B18-A: the must-visit ranking boost uses the same exact-id
+            # identity as must_include — sibling POIs whose name merely
+            # contains the must-visit text get no +100.
+            must_visit_provider_ids=frozenset(must_visit_ids),
             guide_statements=_non_weather_guide_statements(command.payload.guide_evidence.facts),
             entity_facts=_entity_facts_for_pois(raw_pois, command),
         )
@@ -377,14 +437,14 @@ class AmapPlanningProvider:
                 conflicts=(
                     OptimizationConflict(
                         "MUST_VISIT_UNAVAILABLE",
-                        "必去地点与排除或去重约束冲突，无法同时满足",
+                        "所选必去地点不是可安排的景点，或当前地图资料无法确认",
                         tuple(sorted(unpinned_structured)),
                     ),
                 ),
                 relaxations=(
                     RelaxationSuggestion(
                         "CHECK_TRAVEL_CONTEXT",
-                        "移除相互冲突的必去/排除地点后重试",
+                        "请重新搜索并选择景点本身，不要选择地铁站、出入口或停车场",
                     ),
                 ),
             )
@@ -403,6 +463,7 @@ class AmapPlanningProvider:
         total_cost = Decimal("0")
         context = command.payload.planning_context
         closure_filtered_must: set[str] = set()
+        used_meal_poi_ids: set[str] = set()
         remaining_candidates = candidates
         # B14_FIX R5 (D05): the day loop really calculates routes (route
         # provider calls) and solves per-day constraints — report both stage
@@ -448,44 +509,86 @@ class AmapPlanningProvider:
                         closure_filtered_must.add(candidate.poi_id)
             mobility_reduced = constraints.mobility_level == "REDUCED"
             arrival_boundary, departure_boundary = snapshot_boundary_times(trip)
-            for repair_attempt in range(_MAX_MOBILITY_REPAIR_ATTEMPTS + 1):
-                day_plan = plan_day(
-                    trip_date=trip_date,
-                    start_date=trip.start_date,
-                    end_date=trip.end_date,
-                    arrival=arrival_boundary,
-                    departure=departure_boundary,
-                    accommodation_known=anchors.accommodation is not None,
-                    fixed_schedules=self._fixed_schedules_on(
-                        constraints.fixed_schedules, trip_date
-                    ),
-                    candidates=day_candidates,
-                    has_full_day_experience=has_full,
-                    pace=constraints.pace,
-                    mobility_reduced=mobility_reduced,
-                    meal_preferences=constraints.preferences,
-                    meal_windows=self._meal_window_constraints(constraints),
-                )
-                day, day_cost, day_warnings = await self._emit_day(
-                    command,
-                    offset,
-                    day_plan,
-                    anchors,
-                    poi_by_id,
-                    route_cache,
-                    route_calls,
-                )
-                rejected_poi_id = (
-                    self._mobility_repair_candidate(day, day_candidates)
-                    if mobility_reduced
-                    else None
-                )
-                if rejected_poi_id is None or repair_attempt == _MAX_MOBILITY_REPAIR_ATTEMPTS:
-                    break
-                day_candidates = tuple(
-                    candidate for candidate in day_candidates if candidate.poi_id != rejected_poi_id
-                )
+            window_relax_steps = 0
+            window_override: tuple[int, int] | None = None
+            while True:
+                try:
+                    for repair_attempt in range(_MAX_MOBILITY_REPAIR_ATTEMPTS + 1):
+                        day_plan = plan_day(
+                            trip_date=trip_date,
+                            start_date=trip.start_date,
+                            end_date=trip.end_date,
+                            arrival=arrival_boundary,
+                            departure=departure_boundary,
+                            accommodation_known=anchors.accommodation is not None,
+                            fixed_schedules=self._fixed_schedules_on(
+                                constraints.fixed_schedules, trip_date
+                            ),
+                            candidates=day_candidates,
+                            has_full_day_experience=has_full,
+                            pace=constraints.pace,
+                            mobility_reduced=mobility_reduced,
+                            meal_preferences=constraints.preferences,
+                            meal_windows=self._meal_window_constraints(constraints),
+                            window_override=window_override,
+                        )
+                        day, day_cost, day_warnings = await self._emit_day(
+                            command,
+                            offset,
+                            day_plan,
+                            anchors,
+                            poi_by_id,
+                            route_cache,
+                            route_calls,
+                            frozenset(used_meal_poi_ids),
+                        )
+                        rejected_poi_id = (
+                            self._mobility_repair_candidate(day, day_candidates)
+                            if mobility_reduced
+                            else None
+                        )
+                        if (
+                            rejected_poi_id is None
+                            or repair_attempt == _MAX_MOBILITY_REPAIR_ATTEMPTS
+                        ):
+                            break
+                        day_candidates = tuple(
+                            candidate
+                            for candidate in day_candidates
+                            if candidate.poi_id != rejected_poi_id
+                        )
+                except PlanningInfeasibleError as error:
+                    removable_poi_id = self._capacity_repair_candidate(
+                        error, day_plan, day_candidates
+                    )
+                    if removable_poi_id is not None:
+                        day_candidates = tuple(
+                            candidate
+                            for candidate in day_candidates
+                            if candidate.poi_id != removable_poi_id
+                        )
+                        continue
+                    # B17: deterministic capacity repair is exhausted (no
+                    # removable optional left).  Boundedly relax the day's
+                    # start instead of failing immediately — but only when the
+                    # boundary is system-default, never a user anchor.
+                    if self._can_relax_window_start(
+                        day_plan, error, steps_taken=window_relax_steps
+                    ):
+                        window_relax_steps += 1
+                        window_override = (
+                            day_plan.window_start_minute - _WINDOW_RELAX_STEP_MINUTES,
+                            day_plan.window_end_minute,
+                        )
+                        continue
+                    raise
+                break
             itinerary_days.append(day)
+            used_meal_poi_ids.update(
+                activity.provider_poi_id
+                for activity in day.activities
+                if activity.kind == "MEAL" and activity.provider_poi_id is not None
+            )
             # B4A: keep only the mobility-repair-final day plan; intermediate
             # repair attempts are discarded so the skeleton matches the
             # itinerary that was actually emitted.
@@ -622,29 +725,18 @@ class AmapPlanningProvider:
     ) -> bool:
         """Decide whether a recalled POI is the user's must-visit place.
 
-        Uses an exact (normalised) name match instead of a substring match so
-        that AMap child facilities — e.g. ``光孝寺(公交站)``, ``光孝寺-六祖殿``,
-        ``光孝寺售票处`` — are NOT mistaken for the attraction itself.  The
-        must-visit intent refers to the named place, not its sub-POIs.
+        B18-A: delegates to the single shared predicate in
+        ``planning.candidates.is_must_visit_poi`` so the scheduler
+        (``must_include``) and the ranking boost (``MUST_VISIT_MATCH``) can
+        never drift into two different semantics.
 
-        B13-D: when the user selected a structured candidate, the provider
-        POI id from the PlaceRef pins the exact place — a matching id wins
-        even if the recalled title differs from the display name.
-
-        B13_FIX R5 (P1-2): structured selection is exact-identity only.  When
-        any refs are present, a POI whose id is NOT one of the refs is never
-        the must-visit place — same-name text fallback is disabled so a
-        structured choice can never silently become a different POI.  Legacy
-        (no refs) keeps the name-based matching.
+        Structured refs decide by exact providerPoiId only (B13_FIX R5 — a
+        same-name sibling is never the must-visit place).  Legacy free text
+        (no refs) keeps normalized exact-name equality; substring matching is
+        forbidden so AMap sub-facilities (光孝寺(公交站), 小林蓝鳄正佳广场) are
+        never mistaken for the named place.
         """
-        if must_visit_ids:
-            return poi.provider_id in must_visit_ids
-        normalised = "".join(character for character in poi.name.casefold() if character.isalnum())
-        return any(
-            "".join(character for character in place.casefold() if character.isalnum())
-            == normalised
-            for place in must_visit_text
-        )
+        return is_must_visit_poi(poi, tuple(must_visit_text), must_visit_ids)
 
     @staticmethod
     def _poi_from_ref(ref: object, default_city: str) -> Poi:
@@ -849,6 +941,69 @@ class AmapPlanningProvider:
         return None
 
     @staticmethod
+    def _capacity_repair_candidate(
+        error: PlanningInfeasibleError,
+        day_plan: DayPlan,
+        candidates: tuple[CandidateActivity, ...],
+    ) -> str | None:
+        """Choose one scheduled optional activity to drop after real routes
+        consume more time than the deterministic skeleton estimated.
+
+        The candidate tuple is already ranked highest-first, so walking it in
+        reverse removes the lowest-priority scheduled optional item.  Required
+        visits and every fixed boundary remain immutable.  The outer loop is
+        bounded because every retry strictly removes one candidate.
+        """
+        if not any(conflict.code == "INSUFFICIENT_DAY_CAPACITY" for conflict in error.conflicts):
+            return None
+        scheduled_ids = {
+            item.poi_id
+            for item in day_plan.items
+            if item.kind in {"ATTRACTION", "EXPERIENCE"} and item.poi_id is not None
+        }
+        return next(
+            (
+                candidate.poi_id
+                for candidate in reversed(candidates)
+                if candidate.poi_id in scheduled_ids and not candidate.must_include
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _can_relax_window_start(
+        day_plan: DayPlan,
+        error: PlanningInfeasibleError,
+        *,
+        steps_taken: int,
+    ) -> bool:
+        """Whether the bounded B17 start-relaxation may run once more.
+
+        The gate: only a SYSTEM-DEFAULT start boundary may be pulled earlier.
+        The repair site has every input to ``day_window_minutes`` plus the
+        computed plan, so provenance is exact — a start that differs from the
+        default was moved by the user's arrival/departure anchor and is never
+        touched.  The ARRIVAL-item check removes the boundary case where the
+        arrival minute equals the default start (09:00): the anchor is still
+        present, so relaxing would create time before the user actually lands.
+        Fixed schedules and meal hard windows are never moved either:
+        ``compute_free_windows`` splits around them and relaxing only extends
+        the window's leading edge.  Relaxation only fires for the
+        departure-anchored capacity conflict and is bounded by the floor.
+        """
+        if not any(conflict.code == "INSUFFICIENT_DAY_CAPACITY" for conflict in error.conflicts):
+            return False
+        if steps_taken == 0:
+            if day_plan.window_start_minute != DEFAULT_DAY_START_MINUTE:
+                return False
+            if any(item.kind == "ARRIVAL" for item in day_plan.items):
+                return False
+        return (
+            day_plan.window_start_minute - _WINDOW_RELAX_STEP_MINUTES
+            >= _WINDOW_RELAX_FLOOR_MINUTE
+        )
+
+    @staticmethod
     def _special_day_date(
         command: PlanningCreateCommand,
         candidates: tuple[CandidateActivity, ...],
@@ -879,18 +1034,25 @@ class AmapPlanningProvider:
         poi_by_id: dict[str, Poi],
         route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]],
         route_calls: list[int],
+        excluded_meal_poi_ids: frozenset[str],
     ) -> tuple[ItineraryDay, Decimal, tuple[str, ...]]:
         trip_date = command.payload.trip.start_date + timedelta(days=offset)
         slots: list[dict[str, object]] = []
         unresolved: list[str] = []
+        selected_meal_poi_ids = set(excluded_meal_poi_ids)
         for item in day_plan.items:
             if item.kind == "ARRIVAL" and anchors.arrival is not None:
                 slots.append(self._slot_from_item(item, anchors.arrival, trip_date, 0))
             elif item.kind == "DEPARTURE" and anchors.departure is not None:
                 slots.append(self._slot_from_item(item, anchors.departure, trip_date, 0))
             elif item.kind == "MEAL" and item.meal is not None:
-                restaurant = await self._resolve_meal_poi(item.meal, command)
+                restaurant = await self._resolve_meal_poi(
+                    item.meal,
+                    command,
+                    excluded_provider_ids=frozenset(selected_meal_poi_ids),
+                )
                 if restaurant is not None:
+                    selected_meal_poi_ids.add(restaurant.provider_id)
                     slots.append(
                         self._slot_from_item(
                             item,
@@ -961,31 +1123,43 @@ class AmapPlanningProvider:
             )
 
         legs: list[tuple[int, int, ProviderSuccess[RoutePlan]]] = []
-        for index in range(len(slots) - 1):
+        legs_total = len(slots) - 1
+        for index in range(legs_total):
             origin = slots[index]
             destination = slots[index + 1]
             origin_poi = origin.get("poi")
             destination_poi = destination.get("poi")
             if origin_poi is None or destination_poi is None:
                 continue
-            route = await self._route_cached(
-                RouteRequest(
-                    origin=origin_poi.coordinates,
-                    destination=destination_poi.coordinates,
-                    departure_at=origin["end"],
-                    origin_poi_id=origin_poi.provider_id,
-                    destination_poi_id=destination_poi.provider_id,
-                    mode="DRIVING",
-                ),
+            # B19-C: per-leg staged recommendation — a plausible walk still
+            # short-circuits to WALKING (B18-B semantics), everything else is
+            # compared against real TRANSIT and DRIVING facts.  The remaining
+            # leg count feeds the dynamic route-budget reservation so an extra
+            # TRANSIT probe never starves later baseline queries.
+            route = await self._route_for_pair(
+                origin_poi,
+                destination_poi,
+                origin["end"],
                 route_cache,
                 route_calls,
+                city=command.payload.trip.destination or None,
+                remaining_legs=legs_total - index,
+                mobility_reduced=command.payload.trip.constraints.mobility_level == "REDUCED",
             )
             # forward-fit: shift the destination and everything after it so the
             # real transit duration fits between activities.
             gap_seconds = (destination["start"] - origin["end"]).total_seconds()
             if gap_seconds < route.data.duration_seconds:
+                if bool(destination.get("time_fixed")):
+                    raise self._fixed_slot_timing_error(destination)
                 shift = timedelta(seconds=route.data.duration_seconds - gap_seconds)
                 for later in slots[index + 1 :]:
+                    # Flexible work may consume slack before the next fixed
+                    # boundary, but it must never move that boundary or any
+                    # node on its far side.  A later pair then either fits the
+                    # remaining route or fails closed.
+                    if bool(later.get("time_fixed")):
+                        break
                     later["start"] = later["start"] + shift
                     later["end"] = later["end"] + shift
             legs.append((index, index + 1, route))
@@ -1002,9 +1176,13 @@ class AmapPlanningProvider:
         carry = timedelta(0)
         previous_end: datetime | None = None
         for slot in slots:
+            if carry and bool(slot.get("time_fixed")):
+                raise self._fixed_slot_timing_error(slot)
             slot["start"] = slot["start"] + carry
             slot["end"] = slot["end"] + carry
             if previous_end is not None and slot["start"] < previous_end:
+                if bool(slot.get("time_fixed")):
+                    raise self._fixed_slot_timing_error(slot)
                 carry = previous_end - slot["start"]
                 slot["start"] = previous_end
                 slot["end"] = slot["end"] + carry
@@ -1024,7 +1202,12 @@ class AmapPlanningProvider:
             )
             for from_index, to_index, route in legs
         )
-        total_cost = sum((slot.get("cost") or Decimal("0")) for slot in slots)
+        # F3: the itinerary total must include activity costs AND every
+        # transit leg fare (a TRANSIT ticket is a real monetary cost even
+        # though it is never compared against driving tolls across modes).
+        total_cost = sum((slot.get("cost") or Decimal("0")) for slot in slots) + sum(
+            (leg.estimated_cost or Decimal("0")) for leg in transit_legs
+        )
         return (
             ItineraryDay(
                 date=trip_date,
@@ -1034,6 +1217,29 @@ class AmapPlanningProvider:
             ),
             total_cost,
             tuple(unresolved),
+        )
+
+    @staticmethod
+    def _fixed_slot_timing_error(slot: dict[str, object]) -> PlanningInfeasibleError:
+        departure = slot.get("kind") == "DEPARTURE"
+        return PlanningInfeasibleError(
+            conflicts=(
+                OptimizationConflict(
+                    "INSUFFICIENT_DAY_CAPACITY" if departure else "FIXED_SCHEDULE_OVERLAP",
+                    "实际交通时长无法在固定返程时间前完成"
+                    if departure
+                    else "实际交通时长与固定安排时间冲突",
+                    (str(slot.get("title") or ""),),
+                ),
+            ),
+            relaxations=(
+                RelaxationSuggestion(
+                    "EXTEND_AVAILABLE_TIME" if departure else "CHANGE_FIXED_SCHEDULE",
+                    "请提前出发、延后返程时间，或减少前序行程"
+                    if departure
+                    else "请调整固定安排时间或减少前序行程",
+                ),
+            ),
         )
 
     def _slot_from_item(
@@ -1085,7 +1291,7 @@ class AmapPlanningProvider:
                     longitude=coordinate_decimal(poi.coordinates.longitude),
                     latitude=coordinate_decimal(poi.coordinates.latitude),
                 ),
-                address=poi.address,
+                address=poi.address or poi.name,
                 type_code=poi.type_code,
                 type_name=poi.type_name,
                 kind=kind,  # type: ignore[arg-type]
@@ -1192,6 +1398,8 @@ class AmapPlanningProvider:
         self,
         meal: MealDemand,
         command: PlanningCreateCommand,
+        *,
+        excluded_provider_ids: frozenset[str] = frozenset(),
     ) -> Poi | None:
         trip = command.payload.trip
         for keyword in self._meal_keywords(meal):
@@ -1204,7 +1412,9 @@ class AmapPlanningProvider:
             )
             if isinstance(search, ProviderFailure):
                 continue
-            candidates = search.data
+            candidates = tuple(
+                poi for poi in search.data if poi.provider_id not in excluded_provider_ids
+            )
             if not candidates:
                 continue
             if meal.region:
@@ -1238,6 +1448,7 @@ class AmapPlanningProvider:
         return await LocalReplanningProvider(
             self._route_provider,
             self._route_fallback,
+            transit_route=self._transit_route,
             provider_mode=self._provider_mode,
             fallback_policy=self._fallback_policy,
         ).replan(command)
@@ -1250,6 +1461,7 @@ class AmapPlanningProvider:
         return await LocalReplanningProvider(
             self._route_provider,
             self._route_fallback,
+            transit_route=self._transit_route,
             provider_mode=self._provider_mode,
             fallback_policy=self._fallback_policy,
         ).repair(request)
@@ -1349,30 +1561,22 @@ class AmapPlanningProvider:
             trip.constraints.preferences,
             trip.constraints.must_visit_places,
         )
-        # B13_FIX.2 R9: structured must-visit refs pin exact ids.  Recall may
-        # only stop early when every exact id has already been recalled —
-        # the old early return skipped later must-visit keyword searches as
-        # soon as the ordinary candidate count was reached.
+        # B18-A (P18-R2): the recall loop always executes the FULL allowed
+        # keyword set (MAX_POI_QUERIES cap) and never stops early on a count.
+        # The old ``required_preference_queries``/``len(ranking.selected) >=
+        # required_count`` early-stop let the FIRST must-visit keyword end the
+        # whole recall once it returned enough nearby POIs, so 历史/景点/博物馆/
+        # 公园 exploration keywords never ran and the candidate pool became
+        # must-visit-dominated (the 正佳广场 case: 56% of the pool was inside
+        # the mall).  Raw candidates from every source are collected first and
+        # ranked exactly once afterwards by the caller.
         structured_ids = {
             ref.provider_poi_id
             for ref in getattr(trip.constraints, "must_visit_place_refs", ())
             if ref.provider_poi_id
         }
         recalled_ids: set[str] = set()
-        required_preference_queries = max(
-            1,
-            min(
-                len(
-                    tuple(
-                        dict.fromkeys(
-                            item.strip() for item in trip.constraints.preferences if item.strip()
-                        )
-                    )
-                ),
-                len(keywords),
-            ),
-        )
-        for query_index, keyword in enumerate(keywords, start=1):
+        for keyword in keywords:
             search = await self._map_provider.search_pois(
                 PoiSearchRequest(
                     city=trip.destination,
@@ -1394,30 +1598,15 @@ class AmapPlanningProvider:
             fetched_at = search.fetched_at
             candidates.extend(_FetchedPoi(poi=item, fetched_at=fetched_at) for item in search.data)
             recalled_ids.update(item.provider_id for item in search.data)
-            if query_index < required_preference_queries:
-                continue
-            if structured_ids and not structured_ids <= recalled_ids:
-                # An exact must-visit id is still missing: keep searching.
-                # (The missing ids are pinned from the refs afterwards, but
-                # the keyword search for their own name must still run so a
-                # real recall can enrich type/opening information.)
-                continue
-            ranking = self._candidate_ranker.rank(
-                tuple(item.poi for item in candidates),
-                destination=trip.destination,
-                preferences=trip.constraints.preferences,
-                traveler_type=trip.constraints.traveler_type,
-                limit=required_count,
-                must_visit_places=trip.constraints.must_visit_places,
-                avoid_places=trip.constraints.avoid_places,
-                avoid_provider_ids=_avoid_provider_ids(trip.constraints),
-                guide_statements=_non_weather_guide_statements(
-                    command.payload.guide_evidence.facts
-                ),
-                entity_facts=_entity_facts_for_pois(tuple(candidates), command),
-            )
-            if len(ranking.selected) >= required_count:
-                return tuple(candidates)
+        # B18-A: the structured ref integrity check is preserved.  Exact
+        # must-visit ids are guaranteed to enter the candidate set: any id the
+        # keyword loop never recalled is still pinned from the server-signed
+        # ref data by the caller (_plan_with_skeleton), and if that pinned
+        # candidate is not an arrangeable attraction the existing
+        # MUST_VISIT_UNAVAILABLE fail-closed resolution still applies.
+        if structured_ids and not structured_ids <= recalled_ids:
+            missing_ids = sorted(structured_ids - recalled_ids)
+            logger.info("must_visit_ids_missing_from_recall ids=%s", ",".join(missing_ids))
         return tuple(candidates)
 
     @staticmethod
@@ -1447,7 +1636,13 @@ class AmapPlanningProvider:
         return "UNKNOWN"
 
     async def _route(self, request: RouteRequest) -> ProviderSuccess[RoutePlan]:
-        result = await self._route_provider.get_route(request)
+        if request.mode == "TRANSIT":
+            if self._transit_route is None:
+                raise PlanningProviderError("PROVIDER_UNSUPPORTED_MODE")
+            route_provider = self._transit_route
+        else:
+            route_provider = self._route_provider
+        result = await route_provider.get_route(request)
         fallback_error = None
         if isinstance(result, ProviderFailure):
             primary_error = PlanningProviderError.from_failure(
@@ -1487,18 +1682,246 @@ class AmapPlanningProvider:
             return result.model_copy(update={"fallback_error": fallback_error})
         return result
 
+    async def _route_for_pair(
+        self,
+        origin_poi: Poi,
+        destination_poi: Poi,
+        departure_at: datetime,
+        route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]],
+        route_calls: list[int],
+        *,
+        city: str | None = None,
+        remaining_legs: int = 1,
+        mobility_reduced: bool = False,
+    ) -> ProviderSuccess[RoutePlan]:
+        """B19-C: staged per-leg mode recommendation over real route facts.
+
+        Stage 1 — WALKING short-circuit (B18-B, unchanged semantics): a leg
+        whose straight-line distance is within the walking prefilter gets a
+        real WALKING route query; if the actual walking duration is within
+        ``WALKING_THRESHOLD_SECONDS`` the walking route is used unchanged and
+        no other mode is queried for comparison (walkability wins by product
+        rule, even when a car would be faster — this is not min(duration)).
+
+        Stage 2 — TRANSIT vs DRIVING: otherwise the leg queries real TRANSIT
+        (when a city is known and the dynamic budget reservation allows the
+        extra probe) and DRIVING, then the ordered rules pick one.  The
+        returned route is used verbatim for the TransitLeg, so every fact
+        (mode/duration/distance/polyline/cost) comes from one response.
+        """
+        straight = straight_line_distance_meters(
+            origin_poi.coordinates,
+            destination_poi.coordinates,
+        )
+        if should_try_walking(straight):
+            walk_route = await self._try_walking_route(
+                RouteRequest(
+                    origin=origin_poi.coordinates,
+                    destination=destination_poi.coordinates,
+                    departure_at=departure_at,
+                    origin_poi_id=origin_poi.provider_id,
+                    destination_poi_id=destination_poi.provider_id,
+                    mode="WALKING",
+                ),
+                route_cache,
+                route_calls,
+            )
+            if walk_route is not None and is_walkable(walk_route.data.duration_seconds):
+                logger.info(
+                    "mode_recommendation origin=%s destination=%s mode=WALKING "
+                    "reason=%s provider_calls_used=%s budget_degraded=false",
+                    origin_poi.provider_id,
+                    destination_poi.provider_id,
+                    ModeRecommendationReason.WALKABLE.value,
+                    route_calls[0],
+                )
+                return walk_route
+        recommendation = await self._recommend_transit_or_road(
+            origin_poi,
+            destination_poi,
+            departure_at,
+            city,
+            route_cache,
+            route_calls,
+            remaining_legs,
+            mobility_reduced,
+        )
+        logger.info(
+            "mode_recommendation origin=%s destination=%s mode=%s reason=%s "
+            "provider_calls_used=%s budget_degraded=%s",
+            origin_poi.provider_id,
+            destination_poi.provider_id,
+            recommendation.selected_route.data.mode,
+            recommendation.reason.value,
+            route_calls[0],
+            recommendation.reason is ModeRecommendationReason.BUDGET_DEGRADED,
+        )
+        return recommendation.selected_route
+
+    async def _recommend_transit_or_road(
+        self,
+        origin_poi: Poi,
+        destination_poi: Poi,
+        departure_at: datetime,
+        city: str | None,
+        route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]],
+        route_calls: list[int],
+        remaining_legs: int,
+        mobility_reduced: bool,
+    ) -> ModeRecommendation:
+        """Stage 2: compare real TRANSIT and DRIVING facts, pick one.
+
+        Recoverable provider failures (same white-list as B18-B walking)
+        make a candidate mode unavailable; non-recoverable failures keep
+        raising — they are not an unavailability signal and must not be
+        swallowed.  If no candidate survives, the existing provider error
+        policy applies (never fabricate a route).
+        """
+        transit_route: ProviderSuccess[RoutePlan] | None = None
+        transit_error: PlanningProviderError | None = None
+        probe_allowed = city is not None and can_probe_transit(
+            MAX_ROUTE_CALLS_PER_PLAN - route_calls[0],
+            remaining_legs,
+        )
+        if probe_allowed:
+            try:
+                transit_route = await self._route_cached(
+                    RouteRequest(
+                        origin=origin_poi.coordinates,
+                        destination=destination_poi.coordinates,
+                        departure_at=departure_at,
+                        origin_poi_id=origin_poi.provider_id,
+                        destination_poi_id=destination_poi.provider_id,
+                        mode="TRANSIT",
+                        city=city,
+                    ),
+                    route_cache,
+                    route_calls,
+                )
+            except PlanningProviderError as error:
+                if error.details.category not in RECOVERABLE_ROUTE_CATEGORIES:
+                    raise
+                transit_error = error
+
+        road_route: ProviderSuccess[RoutePlan] | None = None
+        road_error: PlanningProviderError | None = None
+        try:
+            road_route = await self._route_cached(
+                RouteRequest(
+                    origin=origin_poi.coordinates,
+                    destination=destination_poi.coordinates,
+                    departure_at=departure_at,
+                    origin_poi_id=origin_poi.provider_id,
+                    destination_poi_id=destination_poi.provider_id,
+                    mode="DRIVING",
+                ),
+                route_cache,
+                route_calls,
+            )
+        except PlanningProviderError as error:
+            if error.details.category not in RECOVERABLE_ROUTE_CATEGORIES:
+                raise
+            road_error = error
+
+        if road_route is None and transit_route is None:
+            # Existing provider error policy: no fabricated route, no fake
+            # duration.  Prefer surfacing the road error (the baseline).
+            if road_error is not None:
+                raise road_error
+            assert transit_error is not None
+            raise transit_error
+
+        if transit_route is None:
+            reason = (
+                ModeRecommendationReason.BUDGET_DEGRADED
+                if city is not None and not probe_allowed
+                else ModeRecommendationReason.TRANSIT_UNAVAILABLE
+            )
+            assert road_route is not None
+            return ModeRecommendation(
+                selected_route=road_route,
+                reason=reason,
+                considered=_considered_modes(transit_route, road_route),
+            )
+        if road_route is None:
+            return ModeRecommendation(
+                selected_route=transit_route,
+                reason=ModeRecommendationReason.ROAD_UNAVAILABLE,
+                considered=_considered_modes(transit_route, road_route),
+            )
+
+        transfer_limit, walking_limit = accessible_burdens(
+            mobility_reduced=mobility_reduced,
+            max_transfers=MAX_TRANSFERS,
+            max_transit_walking_meters=MAX_TRANSIT_WALKING_METERS,
+        )
+        choose_transit, reason = decide_transit_or_road(
+            transit_route.data.duration_seconds,
+            road_route.data.duration_seconds,
+            transfer_count=transit_route.data.transfer_count,
+            walking_distance_meters=transit_route.data.walking_distance_meters,
+            max_transit_duration_ratio=MAX_TRANSIT_DURATION_RATIO,
+            max_transfers=transfer_limit,
+            max_transit_walking_meters=walking_limit,
+        )
+        return ModeRecommendation(
+            selected_route=transit_route if choose_transit else road_route,
+            reason=reason,
+            considered=_considered_modes(transit_route, road_route),
+        )
+
+    async def _try_walking_route(
+        self,
+        request: RouteRequest,
+        route_cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]],
+        route_calls: list[int],
+    ) -> ProviderSuccess[RoutePlan] | None:
+        """Query WALKING; recoverable provider failures degrade to ``None`` so
+        the caller falls back to DRIVING instead of failing the whole plan.
+        Non-recoverable failures (programming errors / invalid contract /
+        corrupt input) keep raising — they are not a walking-unavailability
+        signal and must not be swallowed."""
+        try:
+            return await self._route_cached(request, route_cache, route_calls)
+        except PlanningProviderError as error:
+            if error.details.category not in RECOVERABLE_ROUTE_CATEGORIES:
+                raise
+            logger.warning(
+                "walking_route_unavailable category=%s code=%s — falling back to driving",
+                error.details.category.value,
+                error.details.error_code,
+            )
+            return None
+
     async def _route_cached(
         self,
         request: RouteRequest,
         cache: dict[tuple[str, ...], ProviderSuccess[RoutePlan]],
         calls: list[int],
     ) -> ProviderSuccess[RoutePlan]:
-        key = (
-            request.origin_poi_id or str(request.origin),
-            request.destination_poi_id or str(request.destination),
-            request.mode,
-            request.departure_at.isoformat(),
-        )
+        if request.mode == "TRANSIT":
+            departure_utc = request.departure_at.astimezone(UTC)
+            departure_bucket = departure_utc.replace(
+                minute=(departure_utc.minute // 15) * 15,
+                second=0,
+                microsecond=0,
+            )
+            key = (
+                "TRANSIT",
+                str(request.city),
+                str(request.strategy),
+                str(request.nightflag),
+                request.origin_poi_id or str(request.origin),
+                request.destination_poi_id or str(request.destination),
+                departure_bucket.isoformat(),
+            )
+        else:
+            key = (
+                request.origin_poi_id or str(request.origin),
+                request.destination_poi_id or str(request.destination),
+                request.mode,
+                request.departure_at.isoformat(),
+            )
         cached = cache.get(key)
         if cached is not None:
             return cached

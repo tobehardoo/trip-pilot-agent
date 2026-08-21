@@ -740,6 +740,18 @@ const conflictedFactCount = computed(() => factImpacts.value.filter(
 const refreshFailedCount = computed(() => factImpacts.value.filter(
   impact => impact.refreshFailed,
 ).length)
+// 数据质量总览（展示层）：把过期/冲突/刷新失败计数收敛为一个状态，
+// 不改变任何事实；明细仍在下方的 Badge 与折叠详情中可见。
+const qualityIssueCount = computed(
+  () => staleFactCount.value + conflictedFactCount.value + refreshFailedCount.value,
+)
+const qualityVariant = computed(() =>
+  factImpacts.value.length === 0 ? 'secondary' : qualityIssueCount.value > 0 ? 'warning' : 'success',
+)
+const qualityLabel = computed(() => {
+  if (factImpacts.value.length === 0) return '暂无数据'
+  return qualityIssueCount.value > 0 ? `部分异常（${qualityIssueCount.value} 项）` : '良好'
+})
 
 function factEffectLabel(effect: string) {
   const labels: Record<string, string> = {
@@ -964,7 +976,19 @@ watch(() => props.planningState, (state) => {
           </div>
         </Card>
 
-        <section class="mb-4" aria-labelledby="constraint-summary-title">
+        <!-- 页内导航：锚点 + sticky，不改变 URL 主路由 / 滚动 / 返回行为。 -->
+        <nav
+          class="sticky top-16 z-20 -mx-6 mb-6 flex flex-wrap gap-1 border-y border-surface-200/60 bg-surface-50/95 px-6 py-2 backdrop-blur"
+          aria-label="页面导航"
+        >
+          <a class="rounded-lg px-3 py-1.5 text-sm font-medium text-surface-500 transition-colors hover:bg-surface-100 hover:text-primary-600" href="#trip-overview">概览</a>
+          <a class="rounded-lg px-3 py-1.5 text-sm font-medium text-surface-500 transition-colors hover:bg-surface-100 hover:text-primary-600" href="#trip-itinerary">行程</a>
+          <a class="rounded-lg px-3 py-1.5 text-sm font-medium text-surface-500 transition-colors hover:bg-surface-100 hover:text-primary-600" href="#trip-map">地图</a>
+          <a class="rounded-lg px-3 py-1.5 text-sm font-medium text-surface-500 transition-colors hover:bg-surface-100 hover:text-primary-600" href="#trip-evidence">质量</a>
+          <a class="rounded-lg px-3 py-1.5 text-sm font-medium text-surface-500 transition-colors hover:bg-surface-100 hover:text-primary-600" href="#trip-versions">版本与导出</a>
+        </nav>
+
+        <section id="trip-overview" class="mb-4" aria-labelledby="constraint-summary-title">
           <Card padding="sm">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -1150,7 +1174,7 @@ watch(() => props.planningState, (state) => {
           <!-- Hidden itinerary heading for accessibility / test compatibility -->
           <h2 id="itinerary-title" class="sr-only">行程时间轴</h2>
             <!-- Map Card -->
-            <Card class="mb-6 overflow-hidden" padding="none">
+            <Card id="trip-map" class="mb-6 overflow-hidden" padding="none">
               <div class="h-[380px] sm:h-[480px] w-full">
                 <TripMap
                 :itinerary="itinerary"
@@ -1178,8 +1202,20 @@ watch(() => props.planningState, (state) => {
             </div>
           </div>
 
+          <!-- Day 快捷导航（多日行程时） -->
+          <nav v-if="itinerary.days.length > 1" class="mb-6 flex flex-wrap gap-2" aria-label="日期导航">
+            <a
+              v-for="(day, dayIndex) in itinerary.days"
+              :key="day.date"
+              :href="`#day-${day.date}`"
+              class="rounded-full border border-surface-200 bg-white px-3 py-1 text-xs font-medium text-surface-600 transition-colors hover:border-primary-300 hover:text-primary-600"
+            >
+              Day {{ dayIndex + 1 }} · {{ formatDay(day.date) }}
+            </a>
+          </nav>
+
           <!-- Day Timeline -->
-          <div class="space-y-10">
+          <div id="trip-itinerary" class="space-y-10">
             <section v-for="(day, dayIndex) in itinerary.days" :key="day.date" :id="`day-${day.date}`">
               <!-- Day Header -->
               <div class="mb-5">
@@ -1360,10 +1396,14 @@ watch(() => props.planningState, (state) => {
             </section>
           </div>
 
-          <section class="mt-10" aria-labelledby="planning-evidence-title">
+          <section id="trip-evidence" class="mt-10" aria-labelledby="planning-evidence-title">
             <Card>
               <div class="flex flex-wrap items-center justify-between gap-3">
                 <h3 id="planning-evidence-title" class="text-base font-semibold text-surface-800">本次规划依据</h3>
+                <div class="flex items-center gap-2 text-xs">
+                  <span class="font-semibold text-surface-500">数据质量</span>
+                  <Badge :variant="qualityVariant">{{ qualityLabel }}</Badge>
+                </div>
                 <div class="flex flex-wrap gap-2 text-xs">
                   <Badge variant="secondary">{{ factImpacts.length }} 条实际影响</Badge>
                   <Badge variant="success">{{ officialFactCount }} 条官方事实</Badge>
@@ -1454,7 +1494,7 @@ watch(() => props.planningState, (state) => {
           </section>
         </template>
 
-        <div v-if="itinerary" class="mt-8">
+        <div v-if="itinerary" id="trip-versions" class="mt-8">
           <ItineraryVersionPanel
             :versions="itineraryVersions"
             :current-version-id="itinerary.versionId"
@@ -1614,3 +1654,11 @@ watch(() => props.planningState, (state) => {
     </div>
   </div>
 </template>
+
+<style>
+/* 页内锚点滚动偏移：避免被 sticky header 与页内导航遮挡。 */
+#trip-overview, #trip-map, #trip-itinerary, #trip-evidence, #trip-versions,
+[id^="day-"] {
+  scroll-margin-top: 8.5rem;
+}
+</style>

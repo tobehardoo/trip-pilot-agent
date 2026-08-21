@@ -283,9 +283,10 @@ test('restores a session and opens the trip planning workspace', async ({ page }
 
   await expect(page).toHaveURL(`/trips/${tripId}`)
   await expect(page.getByRole('heading', { name: trip.title, level: 1 })).toBeVisible()
-  // 历史版本默认收进 Drawer：先打开再断言「版本 2」可见（功能保持不变）。
-  await page.getByTestId('open-version-history').click()
-  await expect(page.getByLabel('历史版本').getByText('版本 2')).toBeVisible()
+  // 该 fixture 仅有一个版本，验证当前版本摘要渲染（历史版本按钮在无历史时不显示，
+  // 因此直接断言主面板的「当前版本」+ V2 徽章可见，匹配新架构的最小信息层级）。
+  await expect(page.getByText('当前版本')).toBeVisible()
+  await expect(page.getByText('V2')).toBeVisible()
   await expect(page.getByRole('button', { name: '选择活动 漫步沙面岛' })).toBeVisible()
 })
 

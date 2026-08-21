@@ -1,8 +1,9 @@
 # 文档中心
 
 - 文档状态：生效中
-- 最后更新：2026-08-14
-- 项目口径：个人学习、小型系统、本地优先、`DEMO_ONLY` 默认
+- 最后更新：2026-08-21
+- 项目口径：本地优先、`DEMO_ONLY` 默认；真实 Provider 为可选增强
+- **当前发布判定：PASS_WITH_DEFECT / READY_WITH_MINOR_DEFECTS**（见 [Release Readiness](execution/QA-2026-08-21-closure/release-readiness.md)；已推 `main`，残留均为非阻塞 Minor）
 
 ## 第一次了解项目
 
@@ -15,8 +16,11 @@
 
 - [产品概述](product/产品概述.md)
 - [项目路线图](product/项目路线图.md)
+- [**系统未来方向与验收标准**](product/系统未来方向与验收标准.md)：完整系统目标、release-to-main 门禁与 GA 验收标准
 - [系统完善长期执行与验收总控计划](product/系统完善长期执行与验收总控计划.md)
-- [长期任务执行记录](execution/README.md)
+- [长期任务执行记录](execution/README.md)（批次索引 + 最新 QA 判定）
+- [QA-2026-08-21 闭环审计](execution/QA-2026-08-21-closure/report.md)：QA 审计轨迹（结论经 release-readiness 更新为 PASS_WITH_DEFECT）
+- [Release Readiness](execution/QA-2026-08-21-closure/release-readiness.md)：当前权威发布判定
 
 ## 架构设计
 
@@ -35,8 +39,8 @@
 - [测试策略](development/测试策略.md)
 - [Golden 场景目录](architecture/golden-scenario-catalog.md)
 - [代码规范](development/代码规范.md)
-- [日程重构批次记录](development/日程重构批次记录.md)
-- [评估校准批次记录](development/评估校准批次记录.md)
+- [日程重构批次记录](execution/日程重构批次记录.md)
+- [评估校准批次记录](execution/评估校准批次记录.md)
 
 批次记录用于解释历史设计过程，不应覆盖产品概述、路线图或架构文档中的当前结论。
 

@@ -1,0 +1,93 @@
+[
+ {
+  "id": "FC-01",
+  "title": "广州 2 日标准 SOLO/BALANCED",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=3.3s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-02",
+  "title": "广州 1 日紧凑（10:00-18:00）",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=1 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-03",
+  "title": "广州 3 日多日规模",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=3 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-04",
+  "title": "广州 mustVisit 天河体育中心(候选引用→DEMO 降级 FAILED)",
+  "ok": true,
+  "actual": "terminal=FAILED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_FAILED'] terminal_events=1 versions=0 it_status=404 days=0 legs=0 elapsed=4.3s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-05",
+  "title": "广州 avoid 白云山(候选引用)",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=4.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-06",
+  "title": "广州 午餐窗口 12:00-13:30",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-07",
+  "title": "广州 固定时段 14:00-16:00 博物馆(→WAITING_USER review)",
+  "ok": true,
+  "actual": "terminal=WAITING_USER events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_REVIEW_REQUIRED', 'PLANNING_PROGRESS'] terminal_events=1 versions=0 it_status=404 days=0 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-08",
+  "title": "广州 2 日 RELAXED 节奏",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-09",
+  "title": "广州 2 日 双人出行",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-10",
+  "title": "广州 2 日 极端小预算 ¥100",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-11",
+  "title": "广州 2 日 超大预算 ¥99999",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-12",
+  "title": "幂等重放：同 Idempotency-Key 两次",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=3.2s replay=202",
+  "detail": "sameTask=True"
+ },
+ {
+  "id": "FC-13",
+  "title": "深圳 2 日（跨城）",
+  "ok": true,
+  "actual": "terminal=SUCCEEDED events=['PLANNING_QUEUED', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_PROGRESS', 'PLANNING_COMPLETED'] terminal_events=1 versions=1 it_status=200 days=2 legs=0 elapsed=3.2s replay=None",
+  "detail": "sameTask=True"
+ }
+]

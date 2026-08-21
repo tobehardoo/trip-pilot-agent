@@ -1,0 +1,551 @@
+[
+ {
+  "id": "register-01",
+  "group": "register",
+  "title": "正常注册",
+  "expected": "201",
+  "actual": "201 {'user': {'id': 'd01ca2a9-032b-456c-a74a-d2daa5e38006', 'email': 'qa-if-268d2f64e5@example.com', 'di",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-02",
+  "group": "register",
+  "title": "缺 displayName",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'disp",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-03",
+  "group": "register",
+  "title": "非法 email 格式(无@)",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'emai",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-04",
+  "group": "register",
+  "title": "短密码(7位)",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'pass",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-05",
+  "group": "register",
+  "title": "弱密码(纯字母)",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'pass",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-06",
+  "group": "register",
+  "title": "displayName 超长(300)",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'disp",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-07",
+  "group": "register",
+  "title": "email 超长",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'emai",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-08",
+  "group": "register",
+  "title": "重复 email 注册",
+  "expected": "409",
+  "actual": "409 {'code': 'EMAIL_ALREADY_EXISTS', 'message': 'Email is already registered', 'violations': []}",
+  "ok": true,
+  "note": "与样本1同 email"
+ },
+ {
+  "id": "register-09",
+  "group": "register",
+  "title": "中文/emoji displayName",
+  "expected": "201",
+  "actual": "201 {'user': {'id': '933e9f48-8413-4644-bc95-60b2f079a254', 'email': 'qa-if-d894333361@example.com', 'di",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-10",
+  "group": "register",
+  "title": "空 body",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'disp",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-11",
+  "group": "register",
+  "title": "缺 password",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'pass",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "register-12",
+  "group": "register",
+  "title": "email 前后空格(不 trim)",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'emai",
+  "ok": true,
+  "note": "实测 400：服务端不做 trim（记录行为）"
+ },
+ {
+  "id": "login-13",
+  "group": "login",
+  "title": "正确凭据",
+  "expected": "200",
+  "actual": "200 {'user': {'id': 'c7ae649c-1011-47da-88ff-9e29cf8478cd', 'email': 'qa-if-35733665f6@example.com', 'di",
+  "ok": true,
+  "note": "reg=201"
+ },
+ {
+  "id": "login-14",
+  "group": "login",
+  "title": "错误密码",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_CREDENTIALS', 'message': 'Email or password is incorrect', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "login-15",
+  "group": "login",
+  "title": "不存在用户",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_CREDENTIALS', 'message': 'Email or password is incorrect', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "login-16",
+  "group": "login",
+  "title": "缺 email",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'emai",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "login-17",
+  "group": "login",
+  "title": "缺 password",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'pass",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "login-18",
+  "group": "login",
+  "title": "非法 email 格式",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'emai",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "login-19",
+  "group": "login",
+  "title": "超长 password",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_CREDENTIALS', 'message': 'Email or password is incorrect', 'violations': []}",
+  "ok": true,
+  "note": "401 或 400，记录行为"
+ },
+ {
+  "id": "login-20",
+  "group": "login",
+  "title": "email 大小写变体",
+  "expected": "200",
+  "actual": "200 {'user': {'id': 'c7ae649c-1011-47da-88ff-9e29cf8478cd', 'email': 'qa-if-35733665f6@example.com', 'di",
+  "ok": true,
+  "note": "实测 200：登录不区分 email 大小写（记录行为）"
+ },
+ {
+  "id": "login-21",
+  "group": "login",
+  "title": "正确凭据重复登录",
+  "expected": "200",
+  "actual": "200 {'user': {'id': 'c7ae649c-1011-47da-88ff-9e29cf8478cd', 'email': 'qa-if-35733665f6@example.com', 'di",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "login-22",
+  "group": "login",
+  "title": "空 body",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'pass",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "login-23",
+  "group": "login",
+  "title": "特殊字符密码",
+  "expected": "200",
+  "actual": "200 {'user': {'id': '886c6d9a-8902-459a-bd30-c102f0fa3844', 'email': 'qa-if-d1da24230e@example.com', 'di",
+  "ok": true,
+  "note": "reg=201"
+ },
+ {
+  "id": "login-24",
+  "group": "login",
+  "title": "content-type 非 JSON",
+  "expected": "401",
+  "actual": "401 {'code': 'UNAUTHORIZED', 'message': 'Authentication is required', 'violations': []}",
+  "ok": true,
+  "note": "text body 无凭证 → 401（记录行为）"
+ },
+ {
+  "id": "refresh-25",
+  "group": "refresh",
+  "title": "无 cookie",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "refresh-26",
+  "group": "refresh",
+  "title": "伪造 cookie",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "refresh-27",
+  "group": "refresh",
+  "title": "损坏 JWT cookie",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "refresh-28",
+  "group": "refresh",
+  "title": "无 cookie(再次确认)",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "refresh-29",
+  "group": "refresh",
+  "title": "access token 误作 refresh",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "refresh-30",
+  "group": "refresh",
+  "title": "空 body + 无 cookie",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "refresh-31",
+  "group": "refresh",
+  "title": "过期签名 token",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "refresh-32",
+  "group": "refresh",
+  "title": "token 但无 cookie 名",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "refresh-33",
+  "group": "refresh",
+  "title": "logout 后刷新(旧会话)",
+  "expected": "401",
+  "actual": "401 {'code': 'INVALID_REFRESH_TOKEN', 'message': 'Refresh token is invalid or expired', 'violations': []",
+  "ok": true,
+  "note": "logout=204"
+ },
+ {
+  "id": "trips-34",
+  "group": "trips",
+  "title": "正常创建",
+  "expected": "201",
+  "actual": "201 {'id': '3320b49d-959a-439b-b21c-744bf83b6875', 'title': '接口样本行程', 'destination': '广州', 'startDate': ",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-35",
+  "group": "trips",
+  "title": "缺 constraints 创建",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'cons",
+  "ok": true,
+  "note": "缺 constraints → 400（记录行为）"
+ },
+ {
+  "id": "trips-36",
+  "group": "trips",
+  "title": "缺 title",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'cons",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-37",
+  "group": "trips",
+  "title": "缺 destination",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'cons",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-38",
+  "group": "trips",
+  "title": "日期反序 start>end",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'cons",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-39",
+  "group": "trips",
+  "title": "title 超长",
+  "expected": "400",
+  "actual": "400 {'code': 'VALIDATION_FAILED', 'message': 'Request validation failed', 'violations': [{'field': 'titl",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-40",
+  "group": "trips",
+  "title": "特殊字符 title",
+  "expected": "201",
+  "actual": "201 {'id': '790aa1ce-1932-4450-8d97-1ec38c199d38', 'title': '美食之旅🍜 & 摄影', 'destination': '广州', 'startDat",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-41",
+  "group": "trips",
+  "title": "无 token",
+  "expected": "401",
+  "actual": "401 {'code': 'UNAUTHORIZED', 'message': 'Authentication is required', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-42",
+  "group": "trips",
+  "title": "非 owner GET",
+  "expected": "404",
+  "actual": "404 {'code': 'TRIP_NOT_FOUND', 'message': 'Trip was not found', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-43",
+  "group": "trips",
+  "title": "非 owner DELETE",
+  "expected": "404",
+  "actual": "404 {'code': 'TRIP_NOT_FOUND', 'message': 'Trip was not found', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-44",
+  "group": "trips",
+  "title": "不存在 trip GET",
+  "expected": "404",
+  "actual": "404 {'code': 'TRIP_NOT_FOUND', 'message': 'Trip was not found', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-45",
+  "group": "trips",
+  "title": "owner GET",
+  "expected": "200",
+  "actual": "200 {'id': '176ea3df-b4bc-4939-a988-29013dedf811', 'title': '越权目标', 'destination': '广州', 'startDate': '2",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "trips-46",
+  "group": "trips",
+  "title": "owner DELETE",
+  "expected": "200",
+  "actual": "200 {'id': '176ea3df-b4bc-4939-a988-29013dedf811', 'title': '越权目标', 'destination': '广州', 'startDate': '2",
+  "ok": true,
+  "note": "实测 200 + 被删对象（记录行为，非 204）"
+ },
+ {
+  "id": "planning-47",
+  "group": "planning",
+  "title": "正常创建(202)",
+  "expected": "202",
+  "actual": "202 {'taskId': '6cb6799c-da77-472b-b15e-c2a4c10a6d16', 'tripId': 'deed3143-5c62-49db-81a9-61e66195a30f',",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "planning-48",
+  "group": "planning",
+  "title": "同 key 重放幂等",
+  "expected": "202",
+  "actual": "202 {'taskId': 'b332dff2-923c-44bd-a15d-6a23dc55d092', 'tripId': 'deed3143-5c62-49db-81a9-61e66195a30f',",
+  "ok": true,
+  "note": "first=202 second=202 sameTask=True"
+ },
+ {
+  "id": "planning-49",
+  "group": "planning",
+  "title": "同 trip 再创建(active 语义)",
+  "expected": "202",
+  "actual": "202 {'taskId': '3a5ce130-f7a1-442c-ae56-261cf38c3d2f', 'tripId': 'deed3143-5c62-49db-81a9-61e66195a30f',",
+  "ok": true,
+  "note": "second=202 task2=4ad07cda-1fc4-4c6f-a352-209504754fa5 —— DEMO worker 快，前一任务已终态释放 active slot；409 由 S073(pause worker) 确定性锁定"
+ },
+ {
+  "id": "planning-50",
+  "group": "planning",
+  "title": "无 Idempotency-Key",
+  "expected": "400",
+  "actual": "400 {'timestamp': '2026-08-21T05:31:04.906+00:00', 'status': 400, 'error': 'Bad Request', 'path': '/api/",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "planning-51",
+  "group": "planning",
+  "title": "非 owner 创建",
+  "expected": "404",
+  "actual": "404 {'code': 'TRIP_NOT_FOUND', 'message': 'Trip was not found', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "planning-52",
+  "group": "planning",
+  "title": "不存在 trip 创建",
+  "expected": "404",
+  "actual": "404 {'code': 'TRIP_NOT_FOUND', 'message': 'Trip was not found', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "planning-53",
+  "group": "planning",
+  "title": "latest 状态查询",
+  "expected": "200",
+  "actual": "200 {'taskId': '3a5ce130-f7a1-442c-ae56-261cf38c3d2f', 'tripId': 'deed3143-5c62-49db-81a9-61e66195a30f',",
+  "ok": true,
+  "note": "terminal=SUCCEEDED"
+ },
+ {
+  "id": "planning-sse",
+  "group": "planning",
+  "title": "events 事件流(SSE)",
+  "expected": "200 + event stream + terminal event",
+  "actual": "200",
+  "ok": true,
+  "note": "event_lines=6 terminal_event=True"
+ },
+ {
+  "id": "itinerary-54",
+  "group": "itinerary",
+  "title": "未规划 GET itinerary",
+  "expected": "404",
+  "actual": "404 {'code': 'ITINERARY_NOT_FOUND', 'message': 'Itinerary was not found', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "itinerary-55",
+  "group": "itinerary",
+  "title": "规划后 GET itinerary",
+  "expected": "200",
+  "actual": "200 {'versionId': '82029d18-63ab-4411-b477-4578a4f509ec', 'versionNumber': 1, 'parentVersionId': None, '",
+  "ok": true,
+  "note": "terminal=SUCCEEDED days=2"
+ },
+ {
+  "id": "itinerary-56",
+  "group": "itinerary",
+  "title": "versions 列表",
+  "expected": "200",
+  "actual": "200 [{'versionId': '82029d18-63ab-4411-b477-4578a4f509ec', 'versionNumber': 1, 'parentVersionId': None, ",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "itinerary-57",
+  "group": "itinerary",
+  "title": "commit stale baseline",
+  "expected": "409",
+  "actual": "409 {'code': 'ITINERARY_VERSION_CONFLICT', 'message': 'The itinerary draft does not match the current ve",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "itinerary-58",
+  "group": "itinerary",
+  "title": "非 owner GET itinerary",
+  "expected": "404",
+  "actual": "404 {'code': 'ITINERARY_NOT_FOUND', 'message': 'Itinerary was not found', 'violations': []}",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "itinerary-59",
+  "group": "itinerary",
+  "title": "版本详情",
+  "expected": "200",
+  "actual": "200 {'versionId': '82029d18-63ab-4411-b477-4578a4f509ec', 'versionNumber': 1, 'parentVersionId': None, '",
+  "ok": true,
+  "note": ""
+ },
+ {
+  "id": "itinerary-60",
+  "group": "itinerary",
+  "title": "不存在版本",
+  "expected": "404",
+  "actual": "404 {'code': 'ITINERARY_NOT_FOUND', 'message': 'Itinerary was not found', 'violations': []}",
+  "ok": true,
+  "note": ""
+ }
+]

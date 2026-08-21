@@ -48,3 +48,8 @@ output/pytest-*/
 **/output/pytest-*/
 output/backups/
 .playwright-cli/
+
+# Local AI-agent / tool state (never part of the release)
+.omo/
+.serena/
+.workbuddy/

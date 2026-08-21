@@ -1,0 +1,9 @@
+Q5/Q7 PASS — manual-edit TRANSIT real-provider closed loop (isolated stack, REAL_ONLY)
+- plan create -> SUCCEEDED (real AMAP; legs DRIVING/WALKING all provider=AMAP)
+- commit UPDATE_TRANSIT_LEG mode=TRANSIT on day-1 leg (东濠涌博物馆 -> 麦当劳) -> 202
+- candidate-validation async chain -> AMap TRANSIT -> completion -> new version
+- versionNumber: 2
+- target leg: mode=TRANSIT provider=AMAP estimated=False distance=3020m duration=1548s
+  wait=0 costSource=PROVIDER polyline_len=89 (real AMAP geometry)
+- graceful overflow path (EDIT_TRANSIT_DURATION_OVERFLOW -> NO_FEASIBLE_ITINERARY) also
+  verified: gap-too-small legs fail cleanly instead of INTERNAL_ERROR

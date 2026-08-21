@@ -1,0 +1,56 @@
+{
+ "rows": [
+  {
+   "i": 0,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=3.3s versions=1"
+  },
+  {
+   "i": 1,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=3.2s versions=1"
+  },
+  {
+   "i": 2,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=3.3s versions=1"
+  },
+  {
+   "i": 3,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=4.0s versions=1"
+  },
+  {
+   "i": 4,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=3.3s versions=1"
+  },
+  {
+   "i": 5,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=3.2s versions=1"
+  },
+  {
+   "i": 6,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=3.2s versions=1"
+  },
+  {
+   "i": 7,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=3.2s versions=1"
+  },
+  {
+   "i": 8,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=4.2s versions=1"
+  },
+  {
+   "i": 9,
+   "ok": true,
+   "detail": "status=SUCCEEDED elapsed=3.2s versions=1"
+  }
+ ],
+ "active_tasks": "0",
+ "duplicate_version_tasks": "0"
+}

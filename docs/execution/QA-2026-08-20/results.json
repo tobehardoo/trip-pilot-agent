@@ -1,0 +1,94 @@
+{
+  "report": "QA-2026-08-20",
+  "date": "2026-08-20",
+  "workspace": "C:\\Users\\未\\Desktop\\trippilotage",
+  "verdict": "PASS_WITH_KNOWN_RISK",
+  "git": {
+    "dirty": true,
+    "protected_stacks": ["trip-pilot-prod", "trip-pilot-b13fix1-verify"],
+    "isolation_stack": "trip-pilot-b14-acceptance"
+  },
+  "modules": {
+    "java": {
+      "command": "mvn --batch-mode verify",
+      "tests": 551,
+      "failures": 0,
+      "errors": 0,
+      "coverage_pct": 87.3,
+      "coverage_threshold": 80,
+      "pass": true
+    },
+    "java_cross_terminal": {
+      "tests": 64,
+      "failures": 0,
+      "pass": true
+    },
+    "python": {
+      "command": "pytest --cov=trip_agent.retrieval --cov=trip_agent.acquisition --cov=trip_agent.guide_intelligence --cov-fail-under=80",
+      "tests": 1674,
+      "skipped": 37,
+      "failures": 0,
+      "coverage_pct": 86.0,
+      "coverage_threshold": 80,
+      "pass": true
+    },
+    "web": {
+      "tests": 446,
+      "failures": 0,
+      "coverage_pct": 95.51,
+      "coverage_threshold": 90,
+      "typecheck": true,
+      "build": true,
+      "e2e": true,
+      "pass": true
+    },
+    "compose": {
+      "config_valid": true,
+      "isolated_stack_healthy": true,
+      "smoke_web": 200,
+      "smoke_health": 200,
+      "smoke_prometheus": 200,
+      "pass": true
+    }
+  },
+  "b14_matrices": {
+    "matrix_a": {"total": 50, "non_real_pass": 40, "deferred_real": 10, "fail": 0, "pass": true},
+    "matrix_b": {"total": 30, "pass": 30, "fail": 0, "pass": true},
+    "matrix_param": {"scenarios": 2, "scenario_pass": 2, "samples": 110, "sample_pass": 110, "pass": true},
+    "matrix_fault": {"total": 10, "pass": 10, "fail": 0, "pass": true},
+    "matrix_real": {"deferred": 10, "note": "REAL phase deferred; bounded low-volume real AMap executed separately"}
+  },
+  "stability_repeats": {
+    "S073": {"runs": 3, "pass": 3},
+    "S079": {"runs": 3, "pass": 3, "terminal_events": "exactly 1 each", "versions": "1 each"},
+    "S086": {"runs": 3, "pass": 3}
+  },
+  "real_amap": {
+    "calls": 11,
+    "rate_limited": 0,
+    "coverage": ["WALKING", "DRIVING", "TRANSIT"],
+    "note": "bounded low-volume only; no load/soak"
+  },
+  "nginx_rate_limit": {
+    "config": "10r/m burst=5 nodelay",
+    "observed": "6x401 then 6x503, recovery after cooldown",
+    "classification": "intentional product config (TEST_DEFECT/HARNESS_VS_CONFIG, harness fixed)"
+  },
+  "defects": [
+    {"id": "QA-D01", "severity": "P3", "classification": "PRODUCT_DEFECT", "status": "OPEN", "blocking": false},
+    {"id": "QA-D02", "severity": "P2", "classification": "TEST_DEFECT", "status": "FIXED"},
+    {"id": "QA-D03", "severity": "P2", "classification": "TEST_DEFECT", "status": "FIXED"},
+    {"id": "QA-D04", "severity": "P2", "classification": "TEST_DEFECT", "status": "FIXED"},
+    {"id": "QA-D05", "severity": "P2", "classification": "FLAKY", "status": "FIXED_BY_RERUN"},
+    {"id": "QA-D06", "severity": "P2", "classification": "TEST_DEFECT", "status": "FIXED"},
+    {"id": "QA-D07", "severity": "P1", "classification": "ENVIRONMENT", "status": "FIXED_BY_REBUILD"}
+  ],
+  "known_risks": [
+    "B19-D WIP in workspace (Java TAXI edit chain implemented+tested; manual-edit TRANSIT real-provider remains)",
+    "matrix_real deferred; bounded real AMap only (11 calls)",
+    "D1 polyline defect unfixed by B19-C agreement (fail-closed, non-blocking)",
+    "QA-D01 broken doc link (P3, non-blocking)"
+  ],
+  "source_modified": "no production code modified; harness-only changes (scripts/acceptance/b14/b14lib.py, matrix_b.py, new scripts/tests/test_b14_db_helper.py)",
+  "user_stacks_untouched": true
+}

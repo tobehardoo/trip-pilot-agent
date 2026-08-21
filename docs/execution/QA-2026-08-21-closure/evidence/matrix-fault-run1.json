@@ -1,0 +1,82 @@
+[
+ {
+  "scenarioId": "S081",
+  "title": "创建任务时 RabbitMQ 停止",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "create=202 during-down-latest=200 restored-terminal=SUCCEEDED",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S082",
+  "title": "RabbitMQ 恢复后 outbox 重投",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "outbox-before=PENDING after=SENT terminal=SUCCEEDED",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S083",
+  "title": "Python worker 在 provider 完成前退出",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "create=202 terminal=SUCCEEDED terminalEvents=['PLANNING_COMPLETED'] exactly1=True ready=0 unacked=0 consumers=1 versions=1",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S084",
+  "title": "Python 到 95%/发布事件时退出",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "create=202 terminal=SUCCEEDED terminals=['PLANNING_COMPLETED'] ready=0 unacked=0 consumers=1",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S085",
+  "title": "Java consumer 暂停与恢复",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "create=202 terminal=SUCCEEDED",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S086",
+  "title": "非法 v8/v9/review 消息进入 parser",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "rejected=True newLogsContainReject=True routed=True ready=0 unacked=0 consumers=1 running=True healthy=True queueOk=True",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S087",
+  "title": "terminal event/report insert 失败事务回滚",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "status=SUCCEEDED events=5 versions=1 terminal=SUCCEEDED",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S088",
+  "title": "AMap 429",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "provider_mode=DEMO_ONLY (429 handled in REAL phase)",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S089",
+  "title": "AMap timeout/500/连接重置",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "provider_mode=DEMO_ONLY (timeout/500 handled in REAL phase)",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S090",
+  "title": "AMap 401/403/缺 Key，认证权限永不 fallback",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "mode=DEMO_ONLY failClosed=True err=t_value={'rabbitmq_host': 'localh...gres_host': 'localhost'}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error\n",
+  "detail": ""
+ }
+]

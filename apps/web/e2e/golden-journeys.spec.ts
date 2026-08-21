@@ -297,6 +297,8 @@ test('G26 rollback VERIFIED creates a ROLLBACK version and shows a fresh report,
   await expect(page.getByRole('heading', { name: 'Formal itinerary' })).toBeVisible()
   // Before completion, the formal current version (USER_EDIT) stays put and no
   // ROLLBACK version exists.
+  // 历史版本默认收进 Drawer：先打开再操作（功能保持不变）。
+  await page.getByTestId('open-version-history').click()
   await expect(page.getByText('版本 2').first()).toBeVisible()
   await expect(page.getByText('历史回滚')).toHaveCount(0)
 
@@ -308,7 +310,9 @@ test('G26 rollback VERIFIED creates a ROLLBACK version and shows a fresh report,
   // version (version 3, source=ROLLBACK) becomes current with the fresh
   // VERIFIED report and evaluation.
   await expect(page.getByRole('heading', { name: '行程已验证并保存' })).toBeVisible()
-  await expect(page.getByText('已保存').first()).toBeVisible()
+  // 主页面版本徽章文案从「已保存」收敛为「当前」（避免与 FeasibilityReportPanel
+  // fail-closed 状态文案混淆）。功能（已保存状态展示）保留。
+  await expect(page.getByText('当前').first()).toBeVisible()
   await expect(page.getByRole('heading', { name: '方案需要调整' })).toHaveCount(0)
   await expect(page.getByText('版本 3').first()).toBeVisible()
   await expect(page.getByText('历史回滚')).toBeVisible()
@@ -324,6 +328,8 @@ test('G27 rollback UNVERIFIED isolates the candidate and never shows verified wo
   await page.goto('/trips')
   await page.getByRole('button', { name: '打开 Golden rollback trip' }).click()
   await expect(page.getByRole('heading', { name: 'Formal itinerary' })).toBeVisible()
+  // 历史版本默认收进 Drawer：先打开再操作。
+  await page.getByTestId('open-version-history').click()
 
   await page.getByRole('button', { name: '回滚到版本 1' }).click()
   await page.getByRole('button', { name: '确认回滚到版本 1' }).click()
@@ -352,6 +358,8 @@ test('G20 repair exhausted shows all three attempts in order with the remaining 
   await page.goto('/trips')
   await page.getByRole('button', { name: '打开 Golden rollback trip' }).click()
   await expect(page.getByRole('heading', { name: 'Formal itinerary' })).toBeVisible()
+  // 历史版本默认收进 Drawer：先打开再操作。
+  await page.getByTestId('open-version-history').click()
 
   await page.getByRole('button', { name: '回滚到版本 1' }).click()
   await page.getByRole('button', { name: '确认回滚到版本 1' }).click()

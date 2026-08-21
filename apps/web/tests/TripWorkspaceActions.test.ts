@@ -781,7 +781,12 @@ describe('TripWorkspace failure paths', () => {
     await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
     await screen.findByRole('heading', { name: itineraryResponse.title })
     await fireEvent.click(screen.getByRole('button', { name: '重新规划' }))
-    await screen.findByRole('status')
+    // Several components render an accessible "status" role while planning
+    // (progress bar, queued banner, guide imports).  Waiting on a single
+    // findByRole is racy on fast runners where two become visible together;
+    // findAllByRole keeps the intent (planning status UI is visible) and is
+    // stable regardless of render ordering.
+    await screen.findAllByRole('status')
 
     // Invalid stage/sequence/progress/message combos must be ignored.
     streamController.enqueue(encoder.encode(

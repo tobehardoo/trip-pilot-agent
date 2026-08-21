@@ -159,10 +159,12 @@ describe('TripDetail', () => {
       },
     })
 
-    expect(view.getByText('营业时间证据待验证')).toBeTruthy()
+    // 新架构：effect 语义不再以标签平铺在主页面，用户层只呈现数据状态；
+    // 原始 reason/evidence 保留在「数据说明」高级诊断中，绝不误导为“已核验”。
     expect(view.queryByText('OPENING_HOURS_EVIDENCE_AVAILABLE')).toBeNull()
     expect(view.queryByText(/已核验开放时间/)).toBeNull()
     expect(view.queryByText(/硬约束校验通过/)).toBeNull()
+    expect(view.getByText('真实数据 ✓')).toBeTruthy()
   })
 
   it('maps legacy OPENING_HOURS_APPLIED to a neutral historical label', () => {
@@ -219,8 +221,8 @@ describe('TripDetail', () => {
       },
     })
 
-    expect(view.getByText('营业时间证据（历史标记，未重新验证）')).toBeTruthy()
     expect(view.queryByText('已核验开放时间')).toBeNull()
     expect(view.queryByText('OPENING_HOURS_APPLIED')).toBeNull()
+    expect(view.getByText('真实数据 ✓')).toBeTruthy()
   })
 })

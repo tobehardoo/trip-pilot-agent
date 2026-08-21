@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, expect, test } from 'vitest'
 
 import TripDetail from '../src/components/TripDetail.vue'
@@ -118,7 +118,7 @@ test('hides day navigation for single-day itineraries', () => {
   expect(view.queryByRole('navigation', { name: '日期导航' })).toBeNull()
 })
 
-test('quality overview shows 良好 when all facts are healthy', () => {
+test('data status shows 真实数据 when all facts are healthy', () => {
   const healthy = makeItinerary(['2026-08-01'], [{
     factId: 'f1', category: 'OPENING_HOURS', effect: 'AFFECTS_SCHEDULE',
     applicableDate: '2026-08-01', reason: 'open', reliabilityLevel: 'OFFICIAL',
@@ -127,10 +127,11 @@ test('quality overview shows 良好 when all facts are healthy', () => {
   }])
   const view = render(TripDetail, { props: baseProps({ itinerary: healthy }) })
 
-  expect(view.getByText('良好')).toBeTruthy()
+  expect(view.getByText('真实数据 ✓')).toBeTruthy()
+  expect(view.getByText('核心路线、地点和规划数据已获取。')).toBeTruthy()
 })
 
-test('quality overview flags degraded state without hiding issue counts', () => {
+test('data status flags degraded state with user-facing issues, details stay in diagnostics', async () => {
   const degraded = makeItinerary(['2026-08-01'], [
     { factId: 'f1', category: 'OPENING_HOURS', effect: 'AFFECTS_SCHEDULE',
       applicableDate: '2026-08-01', reason: 'r', reliabilityLevel: 'OFFICIAL',
@@ -143,8 +144,14 @@ test('quality overview flags degraded state without hiding issue counts', () => 
   ])
   const view = render(TripDetail, { props: baseProps({ itinerary: degraded }) })
 
-  // 总览显示「部分异常（2 项）」，同时下方明细 Badge 仍在（1 条已过期 / 1 条刷新失败降级）。
-  expect(view.getByText('部分异常（2 项）')).toBeTruthy()
-  expect(view.getByText('1 条已过期')).toBeTruthy()
-  expect(view.getByText('1 条刷新失败降级')).toBeTruthy()
+  // 用户层：主页面摘要 + 可行动建议（营业时间出发前确认 / 天气未同步）。
+  expect(view.getByText('数据基本完整，2 项待确认')).toBeTruthy()
+  expect(view.getByText('1 个地点营业时间建议出发前确认')).toBeTruthy()
+  expect(view.getByText('部分天气辅助数据未同步')).toBeTruthy()
+
+  // 系统级 flag（已过期 / 刷新失败降级）仍可通过「数据说明」高级诊断核验。
+  await fireEvent.click(view.getByTestId('open-data-explainer'))
+  await fireEvent.click(view.getByTestId('toggle-diagnostics'))
+  expect(view.getByText('已过期')).toBeTruthy()
+  expect(view.getByText('刷新失败降级')).toBeTruthy()
 })

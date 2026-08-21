@@ -566,10 +566,17 @@ test('explains stale conflicted facts with evidence and a safe source link', asy
     },
   })
 
-  expect(view.getByText('1 条天气影响')).toBeTruthy()
-  expect(view.getByText('1 条有冲突')).toBeTruthy()
-  expect(view.getByText('1 条刷新失败降级')).toBeTruthy()
-  await fireEvent.click(view.getByText('查看来源与核验信息'))
+  // 用户层：数据状态卡直接提醒天气辅助数据未同步（不隐藏事实）。
+  expect(view.getByText('数据基本完整，1 项待确认')).toBeTruthy()
+
+  // 明细（evidence / source / fallback flags / 安全来源）进入「数据说明」
+  // Drawer 的高级诊断折叠区：默认收起，用户展开后仍可核验全部事实。
+  await fireEvent.click(view.getByTestId('open-data-explainer'))
+  await fireEvent.click(view.getByTestId('toggle-diagnostics'))
+  expect(view.getByText('高德天气')).toBeTruthy()
+  expect(view.getByText('已过期')).toBeTruthy()
+  expect(view.getByText('来源冲突')).toBeTruthy()
+  expect(view.getByText('刷新失败降级')).toBeTruthy()
   expect(view.getByText('原句证据：8 月 1 日预计有雨')).toBeTruthy()
   expect(view.getByRole('link', { name: '查看安全来源' }).getAttribute('href'))
     .toBe('https://restapi.amap.com/')

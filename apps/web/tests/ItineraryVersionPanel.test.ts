@@ -73,6 +73,11 @@ test('compares an old version with current and confirms an idempotent rollback',
     },
   })
 
+  // 主页面只显示当前版本摘要；历史版本进 Drawer。
+  expect(screen.getByText('当前版本')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '比较版本 1 与当前版本' })).toBeNull()
+
+  await fireEvent.click(screen.getByTestId('open-version-history'))
   await fireEvent.click(screen.getByRole('button', { name: '比较版本 1 与当前版本' }))
 
   await waitFor(() => expect(getDiff).toHaveBeenCalledWith('version-1', 'version-2'))
@@ -90,16 +95,21 @@ test('compares an old version with current and confirms an idempotent rollback',
   )
 })
 
-test('collapses older version records until explicitly expanded', async () => {
+test('main panel shows only the current version; history drawer lists all versions', async () => {
   const view = render(ItineraryVersionPanel, {
     props: {
       versions: fiveVersions, currentVersionId: 'version-5', busy: false, error: null,
       getDiff: async () => diff, rollback: async () => {},
     },
   })
-  expect(view.container.querySelectorAll('ol > li')).toHaveLength(3)
-  await fireEvent.click(screen.getByRole('button', { name: '查看其余 2 个较早版本' }))
-  expect(view.container.querySelectorAll('ol > li')).toHaveLength(5)
+  // 主页面没有版本列表；只有当前版本摘要 + 历史入口。
+  // 历史 Drawer 使用 Teleport 渲染到 body，因此用 document 查询。
+  expect(document.querySelectorAll('ol > li')).toHaveLength(0)
+  expect(view.getByText('当前版本')).toBeTruthy()
+  await fireEvent.click(screen.getByTestId('open-version-history'))
+  expect(document.querySelectorAll('ol > li')).toHaveLength(5)
+  // 主面板与 Drawer 内当前行各有「当前」标识。
+  expect(view.getAllByText('当前').length).toBeGreaterThanOrEqual(2)
 })
 
 const verifiedMetadata = {
@@ -132,7 +142,7 @@ test('shows VERIFIED feasibility metadata on the version record', () => {
   expect(screen.getByText('已验证')).toBeTruthy()
 })
 
-test('shows NEEDS_REPAIR and UNVERIFIED feasibility metadata', () => {
+test('shows NEEDS_REPAIR and UNVERIFIED feasibility metadata', async () => {
   render(ItineraryVersionPanel, {
     props: {
       versions: [
@@ -143,7 +153,11 @@ test('shows NEEDS_REPAIR and UNVERIFIED feasibility metadata', () => {
       getDiff: async () => diff, rollback: async () => {},
     },
   })
+  // 当前版本（NEEDS_REPAIR）的验证状态直接显示在主面板。
   expect(screen.getByText('待修复')).toBeTruthy()
+  // 历史版本（UNVERIFIED）的验证状态在 Drawer 中仍完整保留。
+  expect(screen.queryByText('未验证')).toBeNull()
+  await fireEvent.click(screen.getByTestId('open-version-history'))
   expect(screen.getByText('未验证')).toBeTruthy()
 })
 

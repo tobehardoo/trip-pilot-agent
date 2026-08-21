@@ -521,6 +521,8 @@ describe('TripWorkspace itinerary actions', () => {
     await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
     await screen.findByRole('heading', { name: itineraryResponse.title })
 
+    // 历史版本默认收进 Drawer，先打开再比较/回滚（功能保持不变）。
+    await fireEvent.click(screen.getByTestId('open-version-history'))
     await fireEvent.click(screen.getByRole('button', { name: `比较版本 0 与当前版本` }))
     expect(await screen.findByText('与当前版本的差异')).toBeTruthy()
     expect(screen.getByText(/预算变化 \+¥160/)).toBeTruthy()

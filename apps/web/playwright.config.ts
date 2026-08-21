@@ -4,6 +4,12 @@ const port = Number(process.env.PLAYWRIGHT_WEB_PORT ?? 4173)
 
 export default defineConfig({
   testDir: './e2e',
+  // qa-real-chain is a zero-mock real-chain spec that exercises the full
+  // stack (Web -> Java -> MQ -> Python -> completion). It requires an
+  // isolated backend stack, so it runs in the local QA environment but is
+  // excluded from CI (no backend services there). The remaining specs mock
+  // /api/** and run without a backend.
+  ...(process.env.CI ? { testIgnore: /qa-real-chain\.spec\.ts$/ } : {}),
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,

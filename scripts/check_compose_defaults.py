@@ -4,6 +4,9 @@ Guards the local-first configuration contract so compose files, .env.example
 and the documented defaults cannot silently drift apart:
 
 - compose.prod.yaml resolves PROVIDER_MODE to DEMO_ONLY by default;
+- both Agent processes receive PROVIDER_MODE and AMAP_TIMEOUT_SECONDS so the
+  HTTP route runtime and worker cannot silently use different provider modes
+  or hard-coded timeout defaults;
 - compose.prod.yaml passes OUTBOX_PUBLISHER_ENABLED and EVENT_CONSUMER_ENABLED
   through to travel-server (default true, matching application.yml);
 - .env.example documents the same defaults;
@@ -50,10 +53,20 @@ def service_block(text: str, service: str) -> str:
 def check_static() -> None:
     compose = COMPOSE_PROD.read_text(encoding="utf-8")
     agent_service = service_block(compose, "agent-service")
+    agent_api = service_block(compose, "agent-api")
     travel_server = service_block(compose, "travel-server")
 
     if "PROVIDER_MODE: ${PROVIDER_MODE:-DEMO_ONLY}" not in agent_service:
         fail("compose.prod.yaml agent-service must default PROVIDER_MODE to DEMO_ONLY")
+    for service_name, block in (("agent-service", agent_service), ("agent-api", agent_api)):
+        if "PROVIDER_MODE: ${PROVIDER_MODE:-DEMO_ONLY}" not in block:
+            fail(f"compose.prod.yaml {service_name} must receive PROVIDER_MODE")
+        if "AMAP_TIMEOUT_SECONDS: ${AMAP_TIMEOUT_SECONDS:-5}" not in block:
+            fail(f"compose.prod.yaml {service_name} must receive AMAP_TIMEOUT_SECONDS")
+    if "REDIS_HOST: redis" not in agent_api:
+        fail("compose.prod.yaml agent-api route runtime must use the Redis service")
+    if "REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}" not in agent_api:
+        fail("compose.prod.yaml agent-api route runtime must receive REDIS_PASSWORD")
     if "OUTBOX_PUBLISHER_ENABLED: ${OUTBOX_PUBLISHER_ENABLED:-true}" not in travel_server:
         fail("compose.prod.yaml must pass OUTBOX_PUBLISHER_ENABLED to travel-server")
     if "EVENT_CONSUMER_ENABLED: ${EVENT_CONSUMER_ENABLED:-true}" not in travel_server:
@@ -96,9 +109,18 @@ def check_docker_expansion() -> None:
         fail(f"compose config JSON parse failed: {exc}")
     services = config.get("services", {})
     agent_env = services.get("agent-service", {}).get("environment", {})
+    agent_api_env = services.get("agent-api", {}).get("environment", {})
     server_env = services.get("travel-server", {}).get("environment", {})
     if agent_env.get("PROVIDER_MODE") != "DEMO_ONLY":
         fail(f"expanded PROVIDER_MODE={agent_env.get('PROVIDER_MODE')!r}, expected 'DEMO_ONLY'")
+    for service_name, environment in (
+        ("agent-service", agent_env),
+        ("agent-api", agent_api_env),
+    ):
+        if environment.get("PROVIDER_MODE") != "DEMO_ONLY":
+            fail(f"expanded {service_name} PROVIDER_MODE must be 'DEMO_ONLY'")
+        if str(environment.get("AMAP_TIMEOUT_SECONDS")) != "5":
+            fail(f"expanded {service_name} AMAP_TIMEOUT_SECONDS must be '5'")
     for key in ("OUTBOX_PUBLISHER_ENABLED", "EVENT_CONSUMER_ENABLED"):
         value = server_env.get(key)
         if str(value).lower() != "true":

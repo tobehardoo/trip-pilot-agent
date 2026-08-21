@@ -244,13 +244,30 @@ scenario("S070", "三轮耗尽、NO_PROGRESS、REPEATED_FAILURE", "P1", s070)
 # ── H. Task、MQ、SSE 与并发（S071-S080）───────────────────────────────────
 
 def s071():
+    """Rapid double-click: a second planning start for the same trip while
+    the first task is still active must be rejected with 409
+    (one-active-slot).  Deterministic via paused worker so the first task
+    cannot finish into a new slot before the second request lands."""
     user = L.new_user()
     _, trip = L.create_trip(user["token"])
-    st1, t1, _ = L.start_planning(user["token"], trip["id"])
-    st2, t2, _ = L.start_planning(user["token"], trip["id"])
-    terminal = L.poll_terminal(user["token"], trip["id"], timeout_s=60)
-    ok = terminal is not None and (st2 == 409 or t2.get("taskId") == t1.get("taskId"))
-    return {"ok": ok, "evidence": f"first={st1} second={st2} terminal={terminal.get('status') if terminal else None}"}
+    paused = False
+    evidence = ""
+    ok = False
+    try:
+        L.docker(["docker", "pause", L.AGENT_CONTAINER])
+        paused = True
+        st1, t1, _ = L.start_planning(user["token"], trip["id"])
+        time.sleep(1)
+        st2, body2, _ = L.start_planning(user["token"], trip["id"])  # fresh key = double-click
+        code = body2.get("code") if isinstance(body2, dict) else None
+        ok = st1 == 202 and st2 == 409 and code == "PLANNING_TASK_ACTIVE"
+        evidence = f"first={st1} second={st2}/{code}"
+    finally:
+        if paused:
+            L.docker(["docker", "unpause", L.AGENT_CONTAINER])
+    terminal = L.poll_terminal(user["token"], trip["id"], timeout_s=180)
+    ok = ok and terminal is not None
+    return {"ok": ok, "evidence": evidence + f" terminal={terminal.get('status') if terminal else None}"}
 
 
 def s072():
@@ -264,13 +281,49 @@ def s072():
 
 
 def s073():
+    """A second active planning task for the same trip is rejected with 409
+    PLANNING_TASK_ACTIVE while the first is still QUEUED/RUNNING.
+
+    Deterministic by construction: the agent worker is paused first so the
+    first task cannot be consumed into a terminal; the second task (fresh
+    Idempotency-Key) is created immediately — the 409 must come from an
+    actually-active task, never from waiting for a WAITING_USER state.  The
+    worker is restored in a finally block and the first task must reach a
+    terminal afterwards (health + queue drained).
+    """
     user = L.new_user()
     _, trip = L.create_trip(user["token"])
-    st1, t1, _ = L.start_planning(user["token"], trip["id"])
-    terminal = L.poll_terminal(user["token"], trip["id"], timeout_s=60)
-    st2, t2, _ = L.start_planning(user["token"], trip["id"])
-    ok = terminal is not None and st2 == 409
-    return {"ok": ok, "evidence": f"active-slot second={st2} terminal={terminal.get('status') if terminal else None}"}
+    paused = False
+    evidence = ""
+    ok = False
+    try:
+        L.docker(["docker", "pause", L.AGENT_CONTAINER])
+        paused = True
+        st1, task1, _ = L.start_planning(user["token"], trip["id"])
+        time.sleep(1)
+        st_latest, latest = L.latest_task(user["token"], trip["id"])
+        first_active = st_latest == 200 and latest.get("status") in ("QUEUED", "RUNNING")
+        st2, body2, _ = L.start_planning(user["token"], trip["id"])
+        code = body2.get("code") if isinstance(body2, dict) else None
+        actives = L.db(
+            "SELECT count(*) FROM business.planning_task "
+            f"WHERE trip_id='{trip['id']}' AND status IN ('QUEUED','RUNNING')"
+        )
+        outboxes = L.db(
+            "SELECT count(*) FROM business.outbox_event "
+            "WHERE aggregate_type='PLANNING_TASK' AND event_type='PLANNING_CREATE_REQUESTED' "
+            f"AND aggregate_id='{task1['taskId']}'"
+        )
+        ok = (st1 == 202 and first_active and st2 == 409 and code == "PLANNING_TASK_ACTIVE"
+              and actives == "1" and outboxes == "1")
+        evidence = (f"first={st1}/{latest.get('status') if latest else None} "
+                    f"second={st2}/{code} active={actives} createOutbox={outboxes}")
+    finally:
+        if paused:
+            L.docker(["docker", "unpause", L.AGENT_CONTAINER])
+    terminal = L.poll_terminal(user["token"], trip["id"], timeout_s=180)
+    ok = ok and terminal is not None
+    return {"ok": ok, "evidence": evidence + f" terminal={terminal.get('status') if terminal else None}"}
 
 
 def s074():
@@ -339,8 +392,12 @@ def s079():
     events = L.db(f"SELECT event_type FROM business.planning_task_event WHERE task_id='{task['taskId']}' ORDER BY id")
     types = [e for e in events.splitlines() if e]
     terminals = [t for t in types if t in ("PLANNING_COMPLETED", "PLANNING_REVIEW_REQUIRED", "PLANNING_FAILED", "PLANNING_CANCELLED")]
-    ok = terminal is not None and len(terminals) <= 1
-    return {"ok": ok, "evidence": f"terminal={terminal.get('status') if terminal else None} terminalEvents={terminals}"}
+    versions = L.db(f"SELECT count(*) FROM business.itinerary_version WHERE planning_task_id='{task['taskId']}'")
+    # exactly one terminal event: no duplicate completion / late failure flip.
+    ok = terminal is not None and len(terminals) == 1
+    return {"ok": ok, "evidence": (
+        f"terminal={terminal.get('status') if terminal else None} "
+        f"terminalEvents={terminals} allEvents={types} versions={versions}")}
 
 
 def s080():

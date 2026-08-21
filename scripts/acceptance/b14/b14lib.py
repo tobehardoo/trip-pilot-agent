@@ -5,6 +5,7 @@ scripts/acceptance/b14/ (allowed by the B14 charter); no production code touched
 from __future__ import annotations
 
 import json
+import os
 import random
 import subprocess
 import time
@@ -12,7 +13,11 @@ import urllib.error
 import urllib.request
 import uuid
 
-BASE = "http://127.0.0.1:38085"
+# Functional matrices talk to the isolated travel-server directly (host port
+# 38086) so nginx auth rate-limiting (10r/m + burst 5, intentional product
+# config on the web image) cannot turn into spurious 503s.  Set B14_BASE_URL
+# to http://127.0.0.1:38085 to exercise the full web/nginx path explicitly.
+BASE = os.environ.get("B14_BASE_URL", "http://127.0.0.1:38086")
 ENV_FILE = r"C:\Windows\Temp\opencode\b14-acceptance.env"
 POSTGRES_CONTAINER = "trip-pilot-b14-acceptance-postgres-1"
 WEB_CONTAINER = "trip-pilot-b14-acceptance-web-1"
@@ -30,6 +35,101 @@ def _env_value(key: str) -> str:
         if line.startswith(key + "="):
             return line.split("=", 1)[1]
     raise KeyError(key)
+
+
+def _redacted_error(category: str, container: str | None, detail: str) -> str:
+    """Build a redacted error without echoing command arguments or secrets."""
+    container_part = f", container={container}" if container else ""
+    # Never include raw cmd or env values; only category and container.
+    return f"{category} failed{container_part}: {detail[:300] or 'no stderr'}"
+
+
+def docker_checked(cmd: list[str], *, category: str = "docker", container: str | None = None, timeout: int = 120) -> str:
+    """Run a docker command, raising a redacted RuntimeError on non-zero or timeout.
+
+    - Non-zero exit -> RuntimeError with category, container, exit code and stderr snippet (no password/token).
+    - TimeoutExpired -> RuntimeError with category, container and timeout (no command args leaked).
+    """
+    inferred_container = container
+    if inferred_container is None and len(cmd) >= 3 and cmd[0] == "docker":
+        # Try to infer container from common patterns: docker ... <container> ...
+        for token in cmd:
+            if token.startswith("trip-pilot-"):
+                inferred_container = token
+                break
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"{category} timed out (container={inferred_container or 'unknown'}, timeout={timeout}s)"
+        ) from exc
+    if proc.returncode != 0:
+        stderr = (proc.stderr or proc.stdout or "").strip()
+        # Q2 redaction: never echo the raw cmd (may contain secrets) and scrub
+        # secret-looking VALUES out of the stderr snippet itself, so a provider
+        # message such as "password mySecret123" cannot leak through the error.
+        raise RuntimeError(
+            f"{category} failed (container={inferred_container or container or 'unknown'}, "
+            f"exit={proc.returncode}): {_redact_secrets(stderr)[:300] or 'no stderr'}"
+        )
+    return (proc.stdout or "") + (proc.stderr or "")
+
+
+_SECRET_VALUE_PATTERN = (
+    r"(?i)\b(password|passwd|pwd|token|secret|api[_-]?key|authorization|"
+    r"refresh[_-]?cookie|amap[_-]?key)\b\s*[=: ]\s*[^\s,;]+"
+)
+
+
+def _redact_secrets(text: str) -> str:
+    """Replace secret VALUES with a placeholder; keeps the label.
+
+    Example: ``password mySecret123`` -> ``password <redacted>`` so the error
+    message stays debuggable without leaking the value.
+    """
+    import re
+
+    return re.sub(_SECRET_VALUE_PATTERN, r"\1 <redacted>", text)
+
+
+
+
+
+def wait_healthy_or_raise(container: str, timeout: int = 180) -> None:
+    """Poll a container's health status until healthy, raising on timeout."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            proc = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Health.Status}}", container],
+                capture_output=True, text=True, timeout=30,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"health check timed out (container={container}, timeout=30s)"
+            ) from exc
+        if proc.returncode == 0 and proc.stdout.strip() == "healthy":
+            return
+        time.sleep(3)
+    raise RuntimeError(f"Container {container} not healthy after {timeout}s")
+
+
+def docker(cmd):
+    """Run a docker command against the isolated stack and return output."""
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    return proc.stdout + proc.stderr
+
+
+def wait_healthy(container, timeout=180):
+    """Poll a container's health status until healthy."""
+    start = time.time()
+    while time.time() - start < timeout:
+        proc = subprocess.run(["docker", "inspect", "-f", "{{.State.Health.Status}}", container],
+                              capture_output=True, text=True, timeout=30)
+        if proc.stdout.strip() == "healthy":
+            return True
+        time.sleep(3)
+    return False
 
 
 def http(method: str, path: str, body=None, token=None, headers=None, timeout=30):
@@ -142,12 +242,25 @@ def place_search(token, city="广州", keyword="天河公园", limit=5):
 
 
 def db(sql):
-    user = _env_value("POSTGRES_USER")
-    pw = _env_value("POSTGRES_PASSWORD")
-    dbname = _env_value("POSTGRES_DB")
-    cmd = ["docker", "exec", "-e", f"PGPASSWORD={pw}", POSTGRES_CONTAINER,
-           "psql", "-U", user, "-d", dbname, "-t", "-A", "-c", sql]
+    """Run a psql query inside the isolated PostgreSQL container.
+
+    Credentials come from the container's own POSTGRES_USER/POSTGRES_DB
+    environment (psql -U "$POSTGRES_USER" inside the container) — never
+    guessed from the host env file, never echoed as plaintext.  A non-zero
+    psql exit raises a redacted RuntimeError instead of silently returning
+    an empty string, so harness bugs cannot masquerade as "no rows".
+    """
+    cmd = ["docker", "exec", POSTGRES_CONTAINER, "sh", "-c",
+           'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -A -v ON_ERROR_STOP=1 -c "$1"',
+           "b14-db", sql]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip()
+        raise RuntimeError(
+            "psql failed "
+            f"(exit={proc.returncode}, container={POSTGRES_CONTAINER}): "
+            f"{stderr[:300] or 'no stderr'}"
+        )
     return proc.stdout.strip()
 
 

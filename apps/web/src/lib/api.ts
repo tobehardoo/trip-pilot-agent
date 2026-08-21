@@ -167,11 +167,24 @@ export interface PlanningTask {
   actualProviders?: ProviderSource[] | null
   fallbackReason?: string | null
   fallbackOperations?: ProviderFallbackOperation[] | null
+  conflicts?: PlanningConflict[] | null
+  relaxationSuggestions?: PlanningRelaxationSuggestion[] | null
   feasibilityReport?: unknown
   candidateItinerary?: unknown
   evaluation?: PlanEvaluation | null
   createdAt: string
   updatedAt: string
+}
+
+export interface PlanningConflict {
+  code: string
+  message: string
+  affected?: string[]
+}
+
+export interface PlanningRelaxationSuggestion {
+  code: string
+  message: string
 }
 
 export type PlanningTaskStatus =
@@ -453,6 +466,12 @@ export interface ItineraryTransitLeg {
   providerRouteId: string | null
   calculatedAt: string
   stale: boolean
+  modeLabel?: string
+  routeDurationSeconds?: number
+  waitSeconds?: number
+  costSource?: 'PROVIDER' | 'RULE_ESTIMATE' | 'DEMO' | 'UNKNOWN'
+  costMeaning?: 'NONE' | 'TRANSIT_FARE' | 'ROAD_TOLL' | 'TAXI_FARE_ESTIMATE'
+  displayCost?: number | null
   polyline: Array<{
     longitude: number
     latitude: number
@@ -500,6 +519,8 @@ export interface Itinerary {
   knowledge: ItineraryKnowledge
   factImpacts?: ItineraryFactImpact[]
   rollbackFromVersionId?: string | null
+  accommodationStatus?: 'CONFIRMED' | 'AREA_ESTIMATED' | 'UNRESOLVED' | null
+  accommodationLabel?: string | null
   createdAt: string
 }
 
@@ -599,7 +620,7 @@ export interface ItineraryEditInput {
   targetOrder?: number
   targetStartTime?: string
   targetEndTime?: string
-  transitMode?: 'WALKING' | 'TRANSIT' | 'DRIVING' | 'TAXI'
+  transitMode?: 'AUTO' | 'WALKING' | 'TRANSIT' | 'TAXI'
   transitLocked?: boolean
   /** Client-generated UUID for idempotency.  Reused on retry, regenerated on re-edit. */
   idempotencyKey?: string
@@ -651,9 +672,15 @@ export interface SharedItinerary {
     }>
     transitLegs: Array<{
       mode: string
+      modeLabel?: string
       distanceMeters: number
       durationSeconds: number
-      estimatedCost: number
+      routeDurationSeconds?: number
+      waitSeconds?: number
+      estimatedCost?: number | null
+      displayCost?: number | null
+      costSource?: string
+      costMeaning?: string
       provider: string
       estimated: boolean
       stale: boolean

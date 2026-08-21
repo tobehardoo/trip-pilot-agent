@@ -790,10 +790,44 @@ describe('readPlanningTaskOutcome', () => {
     expect(outcome.kind).toBe('malformed')
   })
 
-  test('SUCCEEDED with UNVERIFIED report fails closed', () => {
+  test('SUCCEEDED with UNVERIFIED blocker-free report is a completed outcome (B16)', () => {
     const outcome = readPlanningTaskOutcome({
       status: 'SUCCEEDED',
       feasibilityReport: unverifiedReportFixture,
+      evaluation: evaluationFixture,
+    })
+    // B16: Information Missing != Planning Failed — an UNVERIFIED report
+    // without a blocker (no FAIL, no missing required rule) is a savable
+    // completion, not a malformed wire body.
+    expect(outcome.kind).toBe('completed')
+    if (outcome.kind === 'completed') {
+      expect(outcome.report.status).toBe('UNVERIFIED')
+    }
+  })
+
+  test('SUCCEEDED with UNVERIFIED blocker report fails closed', () => {
+    const outcome = readPlanningTaskOutcome({
+      status: 'SUCCEEDED',
+      feasibilityReport: {
+        ...unverifiedReportFixture,
+        summary: { ...unverifiedReportFixture.summary, failCount: 1 },
+        ruleResults: [
+          { ...unverifiedReportFixture.ruleResults[0], outcome: 'FAIL' },
+          ...unverifiedReportFixture.ruleResults.slice(1),
+        ],
+      },
+      evaluation: evaluationFixture,
+    })
+    expect(outcome.kind).toBe('malformed')
+  })
+
+  test('SUCCEEDED with missing required rule fails closed', () => {
+    const outcome = readPlanningTaskOutcome({
+      status: 'SUCCEEDED',
+      feasibilityReport: {
+        ...unverifiedReportFixture,
+        missingRequiredRuleIds: ['OPENING_HOURS'],
+      },
       evaluation: evaluationFixture,
     })
     expect(outcome.kind).toBe('malformed')
@@ -863,6 +897,29 @@ describe('readPlanningTaskOutcome', () => {
       errorMessage: 'boom',
       evaluation: evaluationFixture,
     }).kind).toBe('malformed')
+  })
+
+  test('FAILED with conflicts and relaxation suggestions composes a rich error message', () => {
+    const outcome = readPlanningTaskOutcome({
+      status: 'FAILED',
+      safeMessage: '时间不足，请调整条件后重试',
+      conflicts: [
+        {
+          code: 'INSUFFICIENT_DAY_CAPACITY',
+          message: '实际交通时长无法在固定返程时间前完成',
+          affected: ['DEPARTURE'],
+        },
+      ],
+      relaxationSuggestions: [
+        { code: 'EXTEND_AVAILABLE_TIME', message: '请提前出发、延后返程时间，或减少前序行程' },
+      ],
+    })
+    expect(outcome.kind).toBe('failed')
+    if (outcome.kind === 'failed') {
+      expect(outcome.errorMessage).toContain('时间不足，请调整条件后重试')
+      expect(outcome.errorMessage).toContain('实际交通时长无法在固定返程时间前完成')
+      expect(outcome.errorMessage).toContain('建议：请提前出发、延后返程时间，或减少前序行程')
+    }
   })
 
   test('CANCELLED is cancelled and rejects outcome fields', () => {

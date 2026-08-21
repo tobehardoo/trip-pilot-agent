@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, expect, test } from 'vitest'
 
 import PlanningProgress from '../src/components/PlanningProgress.vue'
@@ -89,4 +89,19 @@ test('renders a bounded repair attempt as the active pipeline stage', () => {
   expect(view.getByTestId('planning-current-stage').textContent)
     .toContain('有界修复')
   expect(view.getByText('attemptIndex: 2')).toBeTruthy()
+})
+
+test('collapsed progress section expands on click when not queued', async () => {
+  const view = render(PlanningProgress, {
+    props: {
+      planningState: 'waiting_user',
+      progress: null,
+      progressHistory: [],
+    },
+  })
+  const toggle = view.container.querySelector('button[aria-expanded="false"]') as HTMLButtonElement
+  expect(toggle).toBeTruthy()
+  expect(view.getByTestId('planning-current-stage').textContent).toContain('预览方案已生成，等待处理')
+  await fireEvent.click(toggle)
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
 })

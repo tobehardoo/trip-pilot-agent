@@ -50,6 +50,8 @@ export default defineConfig(({ mode }) => {
           'src/lib/planning-stream.ts',
           'src/components/FeasibilityReportPanel.vue',
           'src/components/PlanningReviewPanel.vue',
+          'src/components/PlanningProgress.vue',
+          'src/lib/feasibility-presentation.ts',
           'src/components/TripWeatherTimeline.vue',
           'src/components/PlaceAutocomplete.vue',
           'src/components/TravelStyleEditor.vue',

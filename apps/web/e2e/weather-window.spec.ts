@@ -171,29 +171,26 @@ test('1440×900: waiting_user without a formal itinerary shows weather and candi
 
   const review = page.locator('#planning-review-section')
   await expect(review).toBeVisible()
-  await expect(review.getByRole('heading', { name: '候选行程' })).toBeVisible()
+  await expect(review.getByRole('heading', { name: '方案需要调整' })).toBeVisible()
+  await expect(review.getByText('预览方案')).toBeVisible()
   await expect(review.getByText('候选活动')).toBeVisible()
 
-  // B13_FIX R7 (P1-4): the candidate and its main risks lead the panel, and
-  // the validation details stay collapsed by default.  In a 900px viewport
-  // the candidate must be visible WITHOUT scrolling: the page is pinned at
-  // scrollY=0 and the candidate heading's box must already fit the first
-  // viewport, before the collapsed validation toggle.
+  // B15: the preview plan and its Chinese issue summary lead the panel; no
+  // technical details toggle exists on the user page.  In a 900px viewport
+  // the status heading must be visible WITHOUT scrolling: the page is pinned
+  // at scrollY=0 and the heading's box must already fit the first viewport.
   await page.evaluate(() => window.scrollTo(0, 0))
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
-  const candidateBox = await review.getByRole('heading', { name: '候选行程' }).boundingBox()
-  expect(candidateBox!.y).toBeGreaterThanOrEqual(0)
-  expect(candidateBox!.y + candidateBox!.height).toBeLessThanOrEqual(900)
-  // The candidate heading must sit ABOVE the collapsed validation toggle.
-  const toggleBox = await review.getByTestId('validation-details-toggle').boundingBox()
-  expect(candidateBox!.y + candidateBox!.height).toBeLessThanOrEqual(toggleBox!.y + 1)
-  await expect(review.getByText('主要风险')).toBeVisible()
-  await expect(review.getByText('午餐窗口缺少安排')).toBeVisible()
+  const statusBox = await review.getByRole('heading', { name: '方案需要调整' }).boundingBox()
+  expect(statusBox!.y).toBeGreaterThanOrEqual(0)
+  expect(statusBox!.y + statusBox!.height).toBeLessThanOrEqual(900)
+  await expect(review.getByText('需要调整（1）')).toBeVisible()
+  await expect(review.getByText('该项安排需要调整').first()).toBeVisible()
   await expect(review.getByText('MEAL_PLACEMENT_MISSING', { exact: true })).toHaveCount(0)
   await expect(review.getByText('hard-validator-v4', { exact: true })).toHaveCount(0)
-  await expect(review.getByTestId('validation-details-toggle')).toHaveAttribute('aria-expanded', 'false')
+  await expect(review.getByTestId('validation-details-toggle')).toHaveCount(0)
 
-  // Weather window sits above the review/validation details in the layout.
+  // Weather window sits above the review section in the layout.
   const weatherBox = await weather.boundingBox()
   const reviewBox = await review.boundingBox()
   expect(weatherBox!.y + weatherBox!.height).toBeLessThanOrEqual(reviewBox!.y + 1)
@@ -302,7 +299,7 @@ test('P1-7: with a formal itinerary present, weather clicks still target the WAI
   // 1440×900 viewport without scrolling (same gate as the no-formal case).
   await page.evaluate(() => window.scrollTo(0, 0))
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
-  const candidateBox = await review.getByRole('heading', { name: '候选行程' }).boundingBox()
+  const candidateBox = await review.getByRole('heading', { name: '方案需要调整' }).boundingBox()
   expect(candidateBox!.y).toBeGreaterThanOrEqual(0)
   expect(candidateBox!.y + candidateBox!.height).toBeLessThanOrEqual(900)
 

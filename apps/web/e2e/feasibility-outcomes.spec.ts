@@ -368,9 +368,8 @@ test('renders the authoritative VERIFIED report with the experience evaluation',
   await page.getByRole('button', { name: '打开 Controlled feasibility trip' }).click()
   await page.getByTestId('start-planning').click()
 
-  await expect(page.getByRole('heading', { name: '硬可行性验证' })).toBeVisible()
-  await expect(page.getByText('已验证').first()).toBeVisible()
-  await expect(page.getByText('营业时间内开放')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '行程已验证并保存' })).toBeVisible()
+  await expect(page.getByText('已保存').first()).toBeVisible()
   await expect(page.getByText('91/100', { exact: true })).toBeVisible()
   await expect(page.getByText('仅代表体验质量，不代表硬可行性验证')).toBeVisible()
 })
@@ -386,15 +385,12 @@ test('shows the NEEDS_REPAIR review panel without replacing the formal itinerary
   await page.getByRole('button', { name: '打开 Controlled feasibility trip' }).click()
   await page.getByTestId('start-planning').click()
 
-  await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
-  // B13_FIX R7 (P1-4): the FAIL surfaces as a main risk up front; the full
-  // report panel (修复历史/尝试) is collapsed behind the details toggle.
-  await expect(page.getByText('主要风险')).toBeVisible()
-  await expect(page.getByText('场地在该时段关闭')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '方案需要调整' })).toBeVisible()
+  // B15: the FAIL surfaces as a Chinese issue summary; no rule wall, no
+  // technical details toggle, no repair history on the user page.
+  await expect(page.getByText('需要调整（1）')).toBeVisible()
+  await expect(page.getByText('部分地点的营业时间与行程安排冲突')).toBeVisible()
   await expect(page.getByText('修复历史')).toHaveCount(0)
-  await page.getByTestId('validation-details-toggle').click()
-  await expect(page.getByText('修复历史')).toBeVisible()
-  await expect(page.getByText(/尝试 1/)).toBeVisible()
   await expect(page.getByText('Candidate itinerary')).toBeVisible()
   await expect(page.getByText('Candidate activity').first()).toBeVisible()
   // No accept / force-save / skip buttons.
@@ -414,11 +410,12 @@ test('shows an UNVERIFIED review without any verified wording', async ({ page })
   await page.getByRole('button', { name: '打开 Controlled feasibility trip' }).click()
   await page.getByTestId('start-planning').click()
 
-  await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
-  // B13_FIX R7 (P1-4): the UNKNOWN rule shows as a main risk; the report
-  // badge is inside the collapsed validation details.
-  await expect(page.getByText('主要风险')).toBeVisible()
-  await expect(page.getByText('营业时间未知').first()).toBeVisible()
+  await expect(page.getByRole('heading', { name: '方案还需要完善' })).toBeVisible()
+  // B15: the UNKNOWN rule shows as a Chinese issue summary; no verified
+  // wording anywhere on the user page.  B16: UNKNOWN now reads as
+  // "system suggestion, confirm before departure".
+  await expect(page.getByText('待核实信息（1）')).toBeVisible()
+  await expect(page.getByText('部分地点的营业时间采用系统建议，建议出发前确认').first()).toBeVisible()
   await expect(page.getByText('未验证')).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('已验证')
 })
@@ -485,7 +482,7 @@ test('reconnects the stream with Last-Event-ID and applies the terminal event on
 
   // Terminal applied once: one formal itinerary, no disconnect error.
   await expect(page.getByRole('heading', { name: 'Formal itinerary' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '硬可行性验证' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '行程已验证并保存' })).toBeVisible()
   await expect(page.getByText('任务状态连接已中断，请稍后重试')).toHaveCount(0)
   expect(streamAttempts).toBeGreaterThanOrEqual(2)
   // The reconnect carries the last seen event id (progress id 2) as Last-Event-ID.
@@ -535,14 +532,13 @@ test('recovers a review-required task through the latest endpoint after a refres
   await page.getByRole('button', { name: '打开 Controlled feasibility trip' }).click()
 
   // The review is discovered via the latest endpoint, not the version chain.
-  await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '方案需要调整' })).toBeVisible()
   await expect(page.getByText('Candidate itinerary')).toBeVisible()
-  // B13_FIX R7 (P1-4): the FAIL shows as a main risk; the report badge is
-  // inside the collapsed validation details.
-  await expect(page.getByText('主要风险')).toBeVisible()
+  // B15: the FAIL shows as a Chinese issue summary on the user page.
+  await expect(page.getByText('需要调整（1）')).toBeVisible()
   // The formal itinerary and its old version badge stay untouched.
   await expect(page.getByRole('heading', { name: 'Formal itinerary' })).toBeVisible()
-  await expect(page.getByText('已验证').first()).toBeVisible()
+  await expect(page.getByText('已保存').first()).toBeVisible()
 })
 
 test('fails closed on an illegal WAITING_USER + VERIFIED combination', async ({ page }) => {
@@ -588,8 +584,8 @@ test('applies a duplicated terminal frame only once and reloads the itinerary on
   await page.getByRole('button', { name: '打开 Controlled feasibility trip' }).click()
   await page.getByTestId('start-planning').click()
 
-  await expect(page.getByRole('heading', { name: '硬可行性验证' })).toBeVisible()
-  await expect(page.getByText('已验证').first()).toBeVisible()
+  await expect(page.getByRole('heading', { name: '行程已验证并保存' })).toBeVisible()
+  await expect(page.getByText('已保存').first()).toBeVisible()
   await expect(page.locator('body')).not.toContainText('规划结果无法安全读取，请重新规划')
   // Initial hydration load plus exactly one terminal-triggered reload; the
   // duplicated COMPLETED and the late progress frame must be short-circuited.
@@ -626,8 +622,8 @@ test('abandons a waiting-user candidate via the cancel API and keeps the formal 
   await page.getByRole('button', { name: '打开 Controlled feasibility trip' }).click()
 
   // The review was recovered through the latest endpoint after a "refresh".
-  await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
-  await expect(page.getByText(/放弃候选不会删除当前正式版本/)).toBeVisible()
+  await expect(page.getByRole('heading', { name: '方案需要调整' })).toBeVisible()
+  await expect(page.getByText(/放弃本方案/)).toBeVisible()
 
   await page.getByTestId('abandon-candidate').click()
 
@@ -636,6 +632,6 @@ test('abandons a waiting-user candidate via the cancel API and keeps the formal 
   await expect(page.getByText('规划已取消', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Formal itinerary' })).toBeVisible()
   await expect(page.getByText('Candidate itinerary')).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: '规划需要确认' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '方案需要调整' })).toHaveCount(0)
   expect(deleteCalls).toBe(1)
 })

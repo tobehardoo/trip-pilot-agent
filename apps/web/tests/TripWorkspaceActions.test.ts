@@ -1078,9 +1078,9 @@ describe('TripWorkspace WAITING_USER state machine (B13_FIX.2 R10)', () => {
     // WAITING_USER copy: the progress header and the button are localized.
     expect(await screen.findByText('规划进度')).toBeTruthy()
     const startButton = await screen.findByTestId('start-planning')
-    expect(startButton.textContent).toContain('候选待确认')
+    expect(startButton.textContent).toContain('等待规划结果')
     // Candidate and formal itinerary coexist without replacing each other.
-    expect(await screen.findAllByText('候选行程')).not.toHaveLength(0)
+    expect(await screen.findAllByText('预览方案')).not.toHaveLength(0)
     expect(screen.getByRole('heading', { name: itineraryResponse.title })).toBeTruthy()
   })
 })

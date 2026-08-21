@@ -354,12 +354,12 @@ test('keeps a selected commute mode in the itinerary timeline', async () => {
   })
 
   await fireEvent.click(view.getByTestId('transit-leg-open-44444444-4444-4444-4444-444444444444'))
-  await fireEvent.click(view.getByTestId('transit-option-DRIVING'))
+  await fireEvent.click(view.getByTestId('transit-option-TAXI'))
 
-  expect(view.getByTestId('transit-option-DRIVING').getAttribute('aria-pressed')).toBe('true')
+  expect(view.getByTestId('transit-option-TAXI').getAttribute('aria-pressed')).toBe('true')
 })
 
-test('stages the recommended transit as a reviewed default instead of retaining a 70-minute walk', async () => {
+test('does not auto-stage a local recommendation for a long walk', async () => {
   const longWalk = {
     ...itineraryWithTransit,
     days: [{
@@ -376,16 +376,17 @@ test('stages the recommended transit as a reviewed default instead of retaining 
     },
   })
   await fireEvent.click(view.getByTestId('transit-leg-open-44444444-4444-4444-4444-444444444444'))
-  await waitFor(() => {
-    expect(view.getByTestId('transit-option-TRANSIT').getAttribute('aria-pressed')).toBe('true')
-    expect(view.getByTestId('save-itinerary-draft')).toBeTruthy()
-  })
+  expect(view.getByTestId('transit-option-WALKING').getAttribute('aria-pressed')).toBe('true')
+  expect(view.queryByTestId('save-itinerary-draft')).toBeNull()
+
+  await fireEvent.click(view.getByTestId('transit-option-AUTO'))
+  expect(view.getByTestId('transit-option-AUTO').getAttribute('aria-pressed')).toBe('true')
 
   await fireEvent.click(view.getByTestId('save-itinerary-draft'))
   expect(commitEdits).toHaveBeenCalledWith(longWalk.versionId, [expect.objectContaining({
     operation: 'UPDATE_TRANSIT_LEG',
     transitLegId: '44444444-4444-4444-4444-444444444444',
-    transitMode: 'TRANSIT',
+    transitMode: 'AUTO',
   })])
 })
 
@@ -449,7 +450,7 @@ test('accumulates commute mode and lock changes until the user saves one draft v
   })
 
   await fireEvent.click(view.getAllByTestId('transit-leg-open-44444444-4444-4444-4444-444444444444')[0]!)
-  await fireEvent.click(view.getByTestId('transit-option-DRIVING'))
+  await fireEvent.click(view.getByTestId('transit-option-TAXI'))
   await fireEvent.click(view.getByTestId('transit-lock-44444444-4444-4444-4444-444444444444'))
 
   expect(commitEdits).not.toHaveBeenCalled()
@@ -457,7 +458,7 @@ test('accumulates commute mode and lock changes until the user saves one draft v
   expect(commitEdits).toHaveBeenCalledWith(itinerary.versionId, [expect.objectContaining({
     operation: 'UPDATE_TRANSIT_LEG',
     transitLegId: '44444444-4444-4444-4444-444444444444',
-    transitMode: 'DRIVING',
+    transitMode: 'TAXI',
     transitLocked: true,
   })])
 })
@@ -486,11 +487,11 @@ test('keeps a draft visible when saving it fails', async () => {
   })
 
   await fireEvent.click(view.getByTestId('transit-leg-open-44444444-4444-4444-4444-444444444444'))
-  await fireEvent.click(view.getByTestId('transit-option-DRIVING'))
+  await fireEvent.click(view.getByTestId('transit-option-TAXI'))
 
   await fireEvent.click(view.getByTestId('save-itinerary-draft'))
   await waitFor(() => {
-    expect(view.getByTestId('transit-option-DRIVING').getAttribute('aria-pressed')).toBe('true')
+    expect(view.getByTestId('transit-option-TAXI').getAttribute('aria-pressed')).toBe('true')
     expect(view.getByTestId('save-itinerary-draft')).toBeTruthy()
     expect(view.getByRole('alert')).toBeTruthy()
   })

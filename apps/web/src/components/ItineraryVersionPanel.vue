@@ -8,6 +8,7 @@ import {
   type FeasibilityStatus,
 } from '../lib/feasibility'
 import type { ItineraryVersionDiff, ItineraryVersionSummary } from '../lib/api'
+import { commuteModeLabel } from '../lib/transit'
 
 const props = defineProps<{
   versions: ItineraryVersionSummary[]
@@ -110,7 +111,7 @@ async function confirmRollback() {
   >
     <div class="mb-5 flex items-start justify-between gap-4">
       <div>
-        <p class="mb-1 text-xs font-bold uppercase tracking-widest text-primary-500">Version History</p>
+        <p class="mb-1 text-xs font-bold tracking-widest text-primary-500">历史版本</p>
         <h2 id="itinerary-version-title" class="m-0 flex items-center gap-2 text-xl font-bold text-surface-800">
           <History :size="19" aria-hidden="true" />行程版本
         </h2>
@@ -213,14 +214,14 @@ async function confirmRollback() {
           调整：{{ activity.after.title }}（{{ activity.changes.join('、') }}）
         </li>
         <li v-for="leg in selectedDiff.addedTransitLegs" :key="`transit-added-${leg.key}`">
-          新增交通：{{ leg.fromTitle }} → {{ leg.toTitle }}（{{ leg.mode }}）
+          新增交通：{{ leg.fromTitle }} → {{ leg.toTitle }}（{{ commuteModeLabel(leg.mode) }}）
         </li>
         <li v-for="leg in selectedDiff.removedTransitLegs" :key="`transit-removed-${leg.key}`">
           移除交通：{{ leg.fromTitle }} → {{ leg.toTitle }}
         </li>
         <li v-for="leg in selectedDiff.changedTransitLegs" :key="`transit-changed-${leg.before.key}`">
           交通调整：{{ leg.after.fromTitle }} → {{ leg.after.toTitle }}
-          （{{ leg.before.mode }} → {{ leg.after.mode }}）
+          （{{ commuteModeLabel(leg.before.mode) }} → {{ commuteModeLabel(leg.after.mode) }}）
         </li>
         <li v-for="impact in selectedDiff.addedFactImpacts" :key="`fact-added-${impact.factId}-${impact.effect}`">
           新增规划依据：{{ impact.reason }}

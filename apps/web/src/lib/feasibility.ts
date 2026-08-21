@@ -707,8 +707,15 @@ function readTerminalOutcome(
     if (!report.ok) {
       return { kind: 'malformed', reason: `completed report is invalid: ${report.reason}` }
     }
-    if (report.value.status !== 'VERIFIED') {
-      return { kind: 'malformed', reason: `completed report must be VERIFIED, got ${report.value.status}` }
+    // B16: Information Missing != Planning Failed.  A saved completion may be
+    // UNVERIFIED (opening hours / visit duration unverified) as long as no
+    // blocker exists (no FAIL and no missing required rule).  The backend
+    // enforces the same rule before persisting; this reader re-validates so a
+    // corrupt wire body can never render an authoritative status.
+    const hasBlocker = report.value.summary.failCount > 0
+      || report.value.missingRequiredRuleIds.length > 0
+    if (report.value.status !== 'VERIFIED' && hasBlocker) {
+      return { kind: 'malformed', reason: `completed report must be VERIFIED or blocker-free, got ${report.value.status}` }
     }
     if (present(candidateInput)) {
       return { kind: 'malformed', reason: 'completed outcome must not carry a candidate' }
@@ -748,17 +755,43 @@ function readTerminalOutcome(
  */
 export function readPlanningTaskOutcome(task: {
   status: string
+  message?: string | null
   errorMessage?: string | null
+  safeMessage?: string | null
   feasibilityReport?: unknown
   candidateItinerary?: unknown
   evaluation?: unknown
+  conflicts?: unknown
+  relaxationSuggestions?: unknown
 }): PlanningOutcome {
+  const errorParts: string[] = []
+  const primaryError = [task.message, task.errorMessage, task.safeMessage]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  if (primaryError) errorParts.push(primaryError)
+  if (Array.isArray(task.conflicts)) {
+    for (const conflict of task.conflicts) {
+      if (conflict && typeof conflict === 'object' && 'message' in conflict
+        && typeof conflict.message === 'string' && conflict.message.trim()
+        && !errorParts.includes(conflict.message)) {
+        errorParts.push(conflict.message)
+      }
+    }
+  }
+  if (Array.isArray(task.relaxationSuggestions)) {
+    for (const suggestion of task.relaxationSuggestions) {
+      if (suggestion && typeof suggestion === 'object' && 'message' in suggestion
+        && typeof suggestion.message === 'string' && suggestion.message.trim()) {
+        errorParts.push(`建议：${suggestion.message}`)
+      }
+    }
+  }
+  const errorText = errorParts.length > 0 ? errorParts.join('；') : null
   return readTerminalOutcome(
     task.status,
     task.feasibilityReport,
     task.candidateItinerary,
     task.evaluation,
-    task.errorMessage ?? null,
+    errorText,
   )
 }
 

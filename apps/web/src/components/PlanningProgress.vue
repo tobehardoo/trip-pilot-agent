@@ -58,7 +58,7 @@ const currentStepIndex = computed(() => {
 
 const currentMessage = computed(() => {
   if (props.planningState === 'succeeded') return '行程规划已完成'
-  if (props.planningState === 'waiting_user') return '候选行程已生成，等待处理'
+  if (props.planningState === 'waiting_user') return '预览方案已生成，等待处理'
   if (props.planningState === 'failed') return '行程规划未能完成'
   if (props.planningState === 'cancelled') return '行程规划已取消'
   if (props.progress) return stageMessages[props.progress.stage]

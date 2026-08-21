@@ -2059,13 +2059,12 @@ describe('itinerary knowledge evidence states', () => {
     streamController.close()
 
     // Waiting-user review panel appears with the authoritative report.
-    expect(await screen.findByText('规划需要确认')).toBeTruthy()
-    // B13_FIX R7 (P1-4): the FAIL surfaces as a main risk up front; the
-    // full report panel is collapsed behind the details toggle.
-    expect(screen.getByText('主要风险')).toBeTruthy()
-    expect(screen.getByText('景点在行程时间关闭')).toBeTruthy()
-    // Candidate renders as candidate, distinct from the formal itinerary.
-    expect(screen.getAllByText('候选行程').length).toBeGreaterThan(0)
+    expect(await screen.findByText('方案需要调整')).toBeTruthy()
+    // B15: the FAIL surfaces as a Chinese issue summary; no rule wall.
+    expect(screen.getByText('需要调整（1）')).toBeTruthy()
+    expect(screen.getByText('部分地点的营业时间与行程安排冲突')).toBeTruthy()
+    // Candidate renders as preview, distinct from the formal itinerary.
+    expect(screen.getAllByText('预览方案').length).toBeGreaterThan(0)
     expect(screen.getByText('候选活动')).toBeTruthy()
     // The formal itinerary heading is still the existing one, not replaced.
     expect(screen.getByRole('heading', { name: '行程时间轴' })).toBeTruthy()
@@ -2182,7 +2181,7 @@ describe('itinerary knowledge evidence states', () => {
 
     // The weather window must be visible in waiting_user WITHOUT any
     // formal itinerary, above the review panel.
-    expect(await screen.findByText('规划需要确认')).toBeTruthy()
+    expect(await screen.findByText('方案需要调整')).toBeTruthy()
     const weatherRegion = screen.getByRole('region', { name: '行程天气' })
     expect(weatherRegion).toBeTruthy()
     // No formal itinerary → no itinerary heading, and no crash.
@@ -2283,7 +2282,7 @@ describe('itinerary knowledge evidence states', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '广州周末四日' })
     await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
-    await screen.findByRole('heading', { name: '规划需要确认' })
+    await screen.findByRole('heading', { name: '方案需要调整' })
 
     // The formal itinerary is present with a same-day activity.
     const formalActivity = document.getElementById('activity-66666666-6666-6666-6666-666666666666')
@@ -2598,10 +2597,8 @@ describe('itinerary knowledge evidence states', () => {
 
     expect(await screen.findByRole('heading', { name: '广州 Demo 行程' })).toBeTruthy()
     // Authoritative feasibility panel with VERIFIED status.
-    // The version record also carries the VERIFIED metadata badge (W5).
-    expect((await screen.findAllByText('已验证')).length).toBeGreaterThan(0)
-    expect(screen.getByText('硬可行性验证')).toBeTruthy()
-    expect(screen.getByText('营业时间内开放')).toBeTruthy()
+    expect((await screen.findAllByText('已保存')).length).toBeGreaterThan(0)
+    expect(screen.getByText('行程已验证并保存')).toBeTruthy()
     // Evaluation still renders as experience quality.
     expect(await screen.findByText('91/100')).toBeTruthy()
   })
@@ -2688,9 +2685,9 @@ describe('itinerary knowledge evidence states', () => {
 
     // The illegal WAITING_USER + VERIFIED combination must fail closed.
     expect(await screen.findByText('规划结果无法安全读取，请重新规划')).toBeTruthy()
-    expect(screen.queryByText('规划需要确认')).toBeNull()
-    expect(screen.queryByText('已验证')).toBeNull()
-    expect(screen.queryByText('待修复')).toBeNull()
+    expect(screen.queryByText('方案还需要完善')).toBeNull()
+    expect(screen.queryByText('已保存')).toBeNull()
+    expect(screen.queryByText('方案需要调整')).toBeNull()
   })
 
   test('clears the previous outcome when a new planning task starts', async () => {
@@ -2738,7 +2735,7 @@ describe('itinerary knowledge evidence states', () => {
     await screen.findByRole('heading', { name: '广州周末四日' })
     await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
     // Page load hydrates the current version's SUCCEEDED task outcome.
-    expect(await screen.findByText('已验证')).toBeTruthy()
+    expect(await screen.findByText('行程已验证并保存')).toBeTruthy()
     expect(await screen.findByText('91/100')).toBeTruthy()
 
     await fireEvent.click(screen.getByRole('button', { name: '重新规划' }))
@@ -2747,7 +2744,7 @@ describe('itinerary knowledge evidence states', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '规划中' })).toHaveProperty('disabled', true)
     })
-    expect(screen.queryByText('已验证')).toBeNull()
+    expect(screen.queryByText('行程已验证并保存')).toBeNull()
     expect(screen.queryByText('91/100')).toBeNull()
   })
 
@@ -2796,7 +2793,7 @@ describe('itinerary knowledge evidence states', () => {
     await signIn(fetchMock)
     await screen.findByRole('heading', { name: '广州周末四日' })
     await fireEvent.click(await waitFor(() => screen.getByRole('button', { name: '打开 广州周末四日' })))
-    expect(await screen.findByText('已验证')).toBeTruthy()
+    expect(await screen.findByText('行程已验证并保存')).toBeTruthy()
 
     await fireEvent.click(screen.getByRole('button', { name: '重新规划' }))
     await waitFor(() => {
@@ -2815,7 +2812,7 @@ describe('itinerary knowledge evidence states', () => {
     streamController.close()
 
     expect(await screen.findByText('规划已取消')).toBeTruthy()
-    expect(screen.queryByText('已验证')).toBeNull()
+    expect(screen.queryByText('行程已验证并保存')).toBeNull()
     expect(screen.queryByText('91/100')).toBeNull()
   })
 
@@ -3013,6 +3010,9 @@ describe('itinerary knowledge evidence states', () => {
     await screen.findByRole('heading', { name: tripResponse.title })
     await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
     await screen.findByText('尚未生成行程')
+    for (const internalLabel of ['Trip', 'Constraints', 'Live Guide Intelligence']) {
+      expect(screen.queryByText(internalLabel)).toBeNull()
+    }
 
     await fireEvent.click(screen.getByRole('button', { name: '修改旅行名称' }))
     await fireEvent.update(screen.getByLabelText('旅行新名称'), '国庆广州行')
@@ -3020,6 +3020,42 @@ describe('itinerary knowledge evidence states', () => {
 
     await waitFor(() => expect(renameBody).toEqual({ expectedVersion: 0, title: '国庆广州行' }))
     expect(await screen.findByRole('heading', { name: '国庆广州行' })).toBeTruthy()
+  })
+
+  test('B13-C clears a custom title to restore the server-generated title', async () => {
+    let renameBody: unknown
+    const automaticTitle = '2026年07月18日—07月21日 广州市旅行规划'
+    const renamedTrip = { ...tripResponse, title: automaticTitle, version: 1 }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = urlOf(input)
+      if (url.endsWith('/api/auth/login')) return response(authResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/metadata`) && init?.method === 'PUT') {
+        renameBody = JSON.parse(String(init.body))
+        return response(renamedTrip)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}`)) return response(tripResponse)
+      if (url.endsWith(`/api/trips/${tripResponse.id}/planning-tasks/latest`)) {
+        return response({ code: 'PLANNING_TASK_NOT_FOUND', message: 'Planning task was not found' }, 404)
+      }
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary/versions`)) return response([])
+      if (url.endsWith(`/api/trips/${tripResponse.id}/itinerary`)) {
+        return response({ code: 'ITINERARY_NOT_FOUND', message: 'Not planned' }, 404)
+      }
+      if (url.endsWith('/api/trips')) return response([tripResponse])
+      throw new Error(`Unexpected request: ${init?.method ?? 'GET'} ${url}`)
+    })
+
+    await signIn(fetchMock)
+    await screen.findByRole('heading', { name: tripResponse.title })
+    await fireEvent.click(screen.getByRole('button', { name: `打开 ${tripResponse.title}` }))
+    await screen.findByText('尚未生成行程')
+
+    await fireEvent.click(screen.getByRole('button', { name: '修改旅行名称' }))
+    await fireEvent.update(screen.getByLabelText('旅行新名称'), '')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(renameBody).toEqual({ expectedVersion: 0, title: '' }))
+    expect(await screen.findByRole('heading', { name: automaticTitle })).toBeTruthy()
   })
 
   test('B13-C surfaces a 409 rename conflict without overwriting the title', async () => {

@@ -133,12 +133,8 @@ function typeAnchor(kind: 'arrival' | 'departure' | 'accommodation', text: strin
           type="datetime-local"
           :class="inputClass"
         />
-        <!-- B13_FIX R6 (P1-3): the create page owns exactly two datetime
-             inputs (TripBoundaryEditor); the anchor time is derived from
-             the authoritative arrivalAt boundary at save time. -->
-        <p v-else-if="model.arrivalPlace" class="text-xs text-surface-400">
-          到达时间沿用抵达时间（{{ model.arrivalTime || '未填' }}）
-        </p>
+        <!-- Create owns exactly two authoritative datetime inputs in
+             TripBoundaryEditor; do not repeat a stale derived time here. -->
       </div>
       <div>
         <label :for="fieldId('departure-place')" class="mb-1.5 block text-xs font-semibold text-surface-600">返程地点</label>
@@ -164,9 +160,6 @@ function typeAnchor(kind: 'arrival' | 'departure' | 'accommodation', text: strin
           type="datetime-local"
           :class="inputClass"
         />
-        <p v-else-if="model.departurePlace" class="text-xs text-surface-400">
-          返程时间沿用离开时间（{{ model.departureTime || '未填' }}）
-        </p>
       </div>
       <div class="sm:col-span-2">
         <label :for="fieldId('accommodation')" class="mb-1.5 block text-xs font-semibold text-surface-600">住宿锚点</label>

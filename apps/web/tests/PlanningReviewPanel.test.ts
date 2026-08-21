@@ -1,12 +1,14 @@
 import { cleanup, render, screen } from '@testing-library/vue'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 
 import PlanningReviewPanel from '../src/components/PlanningReviewPanel.vue'
-import type { CandidateItinerary, FeasibilityReport } from '../src/lib/feasibility'
+import type { CandidateItinerary, FeasibilityReport, FeasibilityRuleResult } from '../src/lib/feasibility'
 
 afterEach(() => cleanup())
 
-function makeReport(status: 'NEEDS_REPAIR' | 'UNVERIFIED'): FeasibilityReport {
+function makeReport(status: 'NEEDS_REPAIR' | 'UNVERIFIED', rules: FeasibilityRuleResult[]): FeasibilityReport {
+  const failCount = rules.filter((r) => r.outcome === 'FAIL').length
+  const unknownCount = rules.filter((r) => r.outcome === 'UNKNOWN').length
   return {
     schemaVersion: 1,
     reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
@@ -17,252 +19,73 @@ function makeReport(status: 'NEEDS_REPAIR' | 'UNVERIFIED'): FeasibilityReport {
     requiredRuleIds: ['OPENING_HOURS'],
     missingRequiredRuleIds: [],
     summary: {
-      totalCount: 1,
-      passCount: 0,
-      failCount: status === 'NEEDS_REPAIR' ? 1 : 0,
-      unknownCount: status === 'UNVERIFIED' ? 1 : 0,
+      totalCount: rules.length,
+      passCount: rules.length - failCount - unknownCount,
+      failCount,
+      unknownCount,
       notApplicableCount: 0,
       missingRequiredCount: 0,
     },
-    ruleResults: [{
-      ruleId: 'OPENING_HOURS',
-      ruleVersion: 'hard-rule-v1',
-      outcome: status === 'NEEDS_REPAIR' ? 'FAIL' : 'UNKNOWN',
-      reasonCode: status === 'NEEDS_REPAIR' ? 'VENUE_CLOSED' : 'OPENING_HOURS_UNVERIFIED',
-      message: status === 'NEEDS_REPAIR' ? '景点在行程时间关闭' : '营业时间未知',
-      affectedDates: ['2026-08-01'],
-      affectedEntityRefs: [],
-      evidenceRefs: [],
-      repairable: true,
-    }],
+    ruleResults: rules,
     repairAttempts: [],
   }
 }
 
-function makeCandidate(): CandidateItinerary {
+function ruleResult(partial: Partial<FeasibilityRuleResult> & { ruleId: string; outcome: FeasibilityRuleResult['outcome'] }): FeasibilityRuleResult {
   return {
-    title: 'Benchmark itinerary',
-    days: [{
-      date: '2026-08-01',
+    ruleVersion: 'hard-rule-v1',
+    reasonCode: 'X',
+    message: 'raw english message',
+    affectedDates: [],
+    affectedEntityRefs: [],
+    evidenceRefs: [],
+    repairable: false,
+    ...partial,
+  }
+}
+
+function makeCandidate(days = 1): CandidateItinerary {
+  const dayActivities = Array.from({ length: days }, (_, d) => ({
+    activityId: `00000000-0000-4000-8000-00000000000${d}`,
+    title: `地点${d + 1}`,
+    startTime: '2026-08-17T00:45:00Z',
+    endTime: '2026-08-17T10:49:00Z',
+    estimatedCost: 0,
+    source: 'DEMO',
+    providerPoiId: null,
+    coordinates: null,
+    address: null,
+    typeCode: null,
+    typeName: null,
+    kind: null,
+    timeFixed: null,
+  }))
+  return {
+    title: '北京行程建议',
+    days: Array.from({ length: days }, (_, d) => ({
+      date: `2026-08-1${7 + d}`,
       dayType: null,
-      activities: [{
-        activityId: '3d76fb9e-362e-4b28-8a9e-18e8ac7050ae',
-        title: 'Activity 1',
-        startTime: '2026-08-01T09:00:00Z',
-        endTime: '2026-08-01T10:00:00Z',
-        estimatedCost: 0,
-        source: 'DEMO',
-        providerPoiId: null,
-        coordinates: null,
-        address: null,
-        typeCode: null,
-        typeName: null,
-        kind: null,
-        timeFixed: null,
-      }],
+      activities: [dayActivities[d]],
       transitLegs: [],
-    }],
+    })),
     estimatedTotalCost: 500,
   }
 }
 
-test('shows 规划需要确认 title and candidate not formal', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  expect(screen.getByText('规划需要确认')).toBeTruthy()
-  expect(screen.getByText(/候选行程尚未成为正式版本/)).toBeTruthy()
-})
-
-test('renders authoritative feasibility report panel for NEEDS_REPAIR', async () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  // B13_FIX R7 (P1-4): the report panel is collapsed behind the details
-  // toggle by default; the main-risk section still surfaces the FAIL up
-  // front.
-  expect(screen.getByText('主要风险')).toBeTruthy()
-  expect(screen.getByText('景点在行程时间关闭')).toBeTruthy()
-  expect(screen.queryByText('硬可行性验证')).toBeNull()
-  await screen.getByTestId('validation-details-toggle').click()
-  expect(screen.getByText('硬可行性验证')).toBeTruthy()
-})
-
-test('renders candidate itinerary title and cost', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  expect(screen.getByText('Benchmark itinerary')).toBeTruthy()
-  expect(screen.getByText('¥500')).toBeTruthy()
-})
-
-test('renders candidate day activity summary', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  expect(screen.getByText('Activity 1')).toBeTruthy()
-  // Candidate times are UTC on the wire and rendered in the local timezone.
-  expect(screen.getByText(/17:00/)).toBeTruthy()
-})
-
-test('shows no formal version message when currentItinerary is null', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('UNVERIFIED'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  expect(screen.getByText(/当前尚无正式版本/)).toBeTruthy()
-})
-
-test('compares candidate against current formal itinerary without claiming equality', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: {
-        title: 'Formal route',
-        estimatedTotalCost: 800,
-        days: [{ date: '2026-08-01', activities: [{ title: 'Formal Activity' }] }],
-      },
-    },
-  })
-  expect(screen.getByText('Formal route')).toBeTruthy()
-  expect(screen.getByText('Formal Activity')).toBeTruthy()
-  expect(screen.getByText('¥800')).toBeTruthy()
-})
-
-test('never offers accept / force save / skip verification buttons', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  expect(screen.queryByText(/接受/)).toBeNull()
-  expect(screen.queryByText(/强制保存/)).toBeNull()
-  expect(screen.queryByText(/忽略验证/)).toBeNull()
-  expect(screen.queryByText(/跳过验证/)).toBeNull()
-})
-
-test('offers only the abandon-candidate action with formal-version-safe wording', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  const abandon = screen.getByTestId('abandon-candidate')
-  expect(abandon).toBeTruthy()
-  expect(screen.getByText('放弃候选')).toBeTruthy()
-  expect(screen.getByText(/放弃候选不会删除当前正式版本/)).toBeTruthy()
-  // Abandonment is still the only action; acceptance is not offered.
-  expect(screen.queryByText(/接受/)).toBeNull()
-})
-
-test('emits abandon exactly once per click', async () => {
-  const { emitted } = render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('UNVERIFIED'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  const abandon = screen.getByTestId('abandon-candidate')
-  await abandon.click()
-  await abandon.click()
-  expect(emitted('abandon')).toHaveLength(2)
-})
-
-test('disables the abandon action while a request is in flight', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('UNVERIFIED'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-      abandonBusy: true,
-    },
-  })
-  expect((screen.getByTestId('abandon-candidate') as HTMLButtonElement).disabled).toBe(true)
-  expect(screen.getByText('正在放弃…')).toBeTruthy()
-})
-
-test('malformed candidate shows stable error panel', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: { not: 'an itinerary' },
-      currentItinerary: null,
-    },
-  })
-  expect(screen.getByText(/候选行程暂时无法读取/)).toBeTruthy()
-})
-
-test('malformed report shows stable error without guessing status', async () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: null,
-      malformedReport: true,
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  // The malformed-report panel lives inside the collapsed validation
-  // details (B13_FIX R7 / P1-4).
-  await screen.getByTestId('validation-details-toggle').click()
-  expect(screen.getByText(/验证结果暂时无法读取/)).toBeTruthy()
-})
-
-test('candidate does not replace the passed formal itinerary', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: {
-        title: 'Formal route',
-        estimatedTotalCost: 800,
-        days: [{ date: '2026-08-01', activities: [{ title: 'Formal Activity' }] }],
-      },
-    },
-  })
-  // Candidate title is distinct from formal title; both render.
-  expect(screen.getByText('Benchmark itinerary')).toBeTruthy()
-  expect(screen.getByText('Formal route')).toBeTruthy()
-})
-
-function makeCandidateWithTransit() {
+function makeCandidateWithTransit(): CandidateItinerary {
   return {
-    title: 'Benchmark itinerary',
+    title: '北京行程建议',
     days: [{
-      date: '2026-08-01',
+      date: '2026-08-17',
       dayType: null,
       activities: [
         {
-          activityId: '3d76fb9e-362e-4b28-8a9e-18e8ac7050ae',
-          title: 'Activity 1',
-          startTime: '2026-08-01T09:00:00Z',
-          endTime: '2026-08-01T10:00:00Z',
-          estimatedCost: 0,
-          source: 'DEMO',
+          activityId: '00000000-0000-4000-8000-000000000001',
+          title: '故宫博物院',
+          startTime: '2026-08-17T00:45:00Z',
+          endTime: '2026-08-17T03:00:00Z',
+          estimatedCost: 60,
+          source: 'AMAP',
           providerPoiId: null,
           coordinates: null,
           address: null,
@@ -272,12 +95,12 @@ function makeCandidateWithTransit() {
           timeFixed: null,
         },
         {
-          activityId: '4d76fb9e-362e-4b28-8a9e-18e8ac7050ae',
-          title: 'Activity 2',
-          startTime: '2026-08-01T10:30:00Z',
-          endTime: '2026-08-01T12:00:00Z',
-          estimatedCost: 0,
-          source: 'DEMO',
+          activityId: '00000000-0000-4000-8000-000000000002',
+          title: '奥华餐厅',
+          startTime: '2026-08-17T05:00:00Z',
+          endTime: '2026-08-17T06:00:00Z',
+          estimatedCost: 120,
+          source: 'AMAP',
           providerPoiId: null,
           coordinates: null,
           address: null,
@@ -291,114 +114,542 @@ function makeCandidateWithTransit() {
         transitId: '61f3d628-8c83-4c51-986d-8e87353a2d6a',
         fromActivityIndex: 0,
         toActivityIndex: 1,
-        mode: 'WALKING',
-        distanceMeters: 300,
-        durationSeconds: 300,
-        provider: 'DEMO',
+        mode: 'TAXI',
+        distanceMeters: 5000,
+        durationSeconds: 1500,
+        provider: 'AMAP',
         estimated: true,
         polyline: [],
+        estimatedCost: null,
+        costSource: null,
       }],
     }],
     estimatedTotalCost: 500,
   }
 }
 
-test('renders the full start–end time window for each candidate activity', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidate(),
-      currentItinerary: null,
-    },
-  })
-  // Wire times are UTC; the panel renders Asia/Shanghai local times.
-  expect(screen.getByText(/17:00–18:00/)).toBeTruthy()
-})
+// ── R1: internal content leakage ──────────────────────────────────────────
 
-test('renders candidate transit summary with resolved activity titles', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidateWithTransit(),
-      currentItinerary: null,
-    },
-  })
-  expect(screen.getByText(/Activity 1 → Activity 2 · 步行（估算） · 5 分钟 · 300 米/)).toBeTruthy()
-})
-
-test('renders current formal itinerary transit summary in the comparison', () => {
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate: makeCandidateWithTransit(),
-      currentItinerary: {
-        title: 'Formal route',
-        estimatedTotalCost: 800,
-        days: [{
-          date: '2026-08-01',
-          activities: [
-            { id: 'f-1', title: 'Formal A' },
-            { id: 'f-2', title: 'Formal B' },
-          ],
-          transitLegs: [{
-            fromActivityId: 'f-1',
-            toActivityId: 'f-2',
-            mode: 'TRANSIT',
-            distanceMeters: 2400,
-            durationSeconds: 1200,
-            estimated: false,
-          }],
-        }],
+describe('R1 internal content leakage', () => {
+  test('never renders REVIEW / FEASIBILITY / ITINERARY labels', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
       },
-    },
+    })
+    expect(screen.queryByText(/REVIEW/i)).toBeNull()
+    expect(screen.queryByText(/FEASIBILITY/i)).toBeNull()
+    expect(screen.queryByText(/ITINERARY/i)).toBeNull()
   })
-  expect(screen.getByText(/Formal A → Formal B · 公共交通 · 20 分钟 · 2.4 公里/)).toBeTruthy()
+
+  test('never renders validator version / reasonCode / ruleId / schemaVersion / UUID', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.queryByText(/hard-validator/i)).toBeNull()
+    expect(screen.queryByText(/reasonCode|reason-code/i)).toBeNull()
+    expect(screen.queryByText(/schemaVersion/i)).toBeNull()
+    expect(screen.queryByText(/c9c467cc/i)).toBeNull()
+    expect(screen.queryByText(/00000000-0000-4000-8000/i)).toBeNull()
+  })
+
+  test('never renders raw english rule message or rule statistics console', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [
+          ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN', message: 'Opening hours unverified for venues' }),
+        ]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.queryByText(/Opening hours unverified/)).toBeNull()
+    expect(screen.queryByText(/规则总数/)).toBeNull()
+    expect(screen.queryByText(/^通过$/)).toBeNull()
+    expect(screen.queryByText(/^失败$/)).toBeNull()
+    expect(screen.queryByText(/^不适用$/)).toBeNull()
+    expect(screen.queryByText(/缺失规则/)).toBeNull()
+  })
+
+  test('does not offer a technical details toggle', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.queryByTestId('validation-details-toggle')).toBeNull()
+    expect(screen.queryByTestId('feasibility-technical-toggle')).toBeNull()
+    expect(screen.queryByText(/查看验证详情/)).toBeNull()
+    expect(screen.queryByText(/查看技术详情/)).toBeNull()
+  })
+
+  test('keeps necessary proper nouns like place names', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidateWithTransit(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText(/故宫博物院/)).toBeTruthy()
+    expect(screen.getByText(/奥华餐厅/)).toBeTruthy()
+  })
 })
 
-test('formats transit durations of one hour or more', () => {
-  // B13_FIX R8 (P1-8): hour-level duration formatting branches.
-  const candidate = makeCandidateWithTransit()
-  candidate.days[0].transitLegs[0].durationSeconds = 5400 // 90 minutes
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate,
-      currentItinerary: null,
-    },
+// ── R2: status and actions ────────────────────────────────────────────────
+
+describe('R2 status and actions', () => {
+  test('UNVERIFIED shows Chinese title, badge, description and two actions', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('方案还需要完善')).toBeTruthy()
+    expect(screen.getByText('部分信息待核实')).toBeTruthy()
+    expect(screen.getByText(/已生成一份预览方案，但部分信息暂时无法核实，因此还不能保存/)).toBeTruthy()
+    expect(screen.getByText('修改要求')).toBeTruthy()
+    expect(screen.getByText('放弃本方案')).toBeTruthy()
   })
-  expect(screen.getByText(/Activity 1 → Activity 2 · 步行（估算） · 1 小时 30 分/)).toBeTruthy()
+
+  test('NEEDS_REPAIR shows Chinese title, badge, description and two actions', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('NEEDS_REPAIR', [ruleResult({ ruleId: 'ACTIVITY_OVERLAP', outcome: 'FAIL' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('方案需要调整')).toBeTruthy()
+    expect(screen.getByText('存在需要处理的问题')).toBeTruthy()
+    expect(screen.getByText(/当前安排存在冲突，请修改旅行要求后重新规划/)).toBeTruthy()
+    expect(screen.getByText('修改要求')).toBeTruthy()
+    expect(screen.getByText('放弃本方案')).toBeTruthy()
+  })
+
+  test('never offers confirm / accept / save-candidate buttons', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('NEEDS_REPAIR', [ruleResult({ ruleId: 'ACTIVITY_OVERLAP', outcome: 'FAIL' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.queryByText(/确认/)).toBeNull()
+    expect(screen.queryByText(/接受/)).toBeNull()
+    expect(screen.queryByText(/仍然保存/)).toBeNull()
+    expect(screen.queryByText(/保存候选/)).toBeNull()
+    expect(screen.queryByText(/待确认/)).toBeNull()
+    expect(screen.queryByText(/候选待确认/)).toBeNull()
+    expect(screen.queryByText(/规划需要确认/)).toBeNull()
+  })
+
+  test('malformed report fails closed with safe Chinese message', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: null,
+        malformedReport: true,
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('暂时无法读取规划结果')).toBeTruthy()
+    expect(screen.getByText('结果异常')).toBeTruthy()
+    expect(screen.getByText(/系统无法安全读取本次规划结果，请重新规划/)).toBeTruthy()
+  })
+
+  test('修改要求 emits edit request without creating a task', async () => {
+    const { emitted } = render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    await screen.getByTestId('edit-requirements').click()
+    expect(emitted('edit')).toHaveLength(1)
+    expect(emitted('start')).toBeUndefined()
+  })
+
+  test('evidence gaps offer an explicit verification path without claiming they passed', async () => {
+    const { emitted } = render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [
+          ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' }),
+          ruleResult({ ruleId: 'VISIT_DURATION', outcome: 'UNKNOWN' }),
+        ]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+
+    expect(screen.getByText(/可先同步城市情报或补充可信攻略/)).toBeTruthy()
+    expect(screen.getByText(/同步不会自动把未核实信息判为通过/)).toBeTruthy()
+    await screen.getByTestId('verify-evidence').click()
+    expect(emitted('verify')).toHaveLength(1)
+    expect(screen.queryByText(/已经核实|行程已验证并保存/)).toBeNull()
+  })
+
+  test('放弃本方案 emits abandon and keeps saved itinerary wording', async () => {
+    const { emitted } = render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    await screen.getByTestId('abandon-candidate').click()
+    expect(emitted('abandon')).toHaveLength(1)
+    expect(screen.getByText(/修改并保存要求后，可以重新开始规划/)).toBeTruthy()
+  })
+
+  test('abandon disables while busy and repeats safely', async () => {
+    const { emitted } = render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+        abandonBusy: true,
+      },
+    })
+    expect((screen.getByTestId('abandon-candidate') as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText('正在放弃…')).toBeTruthy()
+    expect(emitted('abandon')).toBeUndefined()
+  })
+
+  test('action buttons meet the 44px minimum touch height (B15.1 R3)', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    const edit = screen.getByTestId('edit-requirements') as HTMLButtonElement
+    const abandon = screen.getByTestId('abandon-candidate') as HTMLButtonElement
+    // h-12 = 48px >= 44px; the review actions must never regress below the
+    // touch-target recommendation (B15 acceptance Minor 2).
+    expect(edit.className).toMatch(/h-12/)
+    expect(abandon.className).toMatch(/h-12/)
+  })
 })
 
-test('formats whole-hour transit durations without a minute remainder', () => {
-  const candidate = makeCandidateWithTransit()
-  candidate.days[0].transitLegs[0].durationSeconds = 7200 // exactly 2 hours
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate,
-      currentItinerary: null,
-    },
+// ── R3: Chinese issue summaries ───────────────────────────────────────────
+
+describe('R3 issue summary', () => {
+  test('UNVERIFIED issue section titled 待核实信息（N） with count', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({
+          ruleId: 'OPENING_HOURS',
+          outcome: 'UNKNOWN',
+          affectedEntityRefs: ['activity:00000000-0000-4000-8000-000000000001'],
+        })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('待核实信息（1）')).toBeTruthy()
+    expect(screen.getByText('1个地点的营业时间采用系统建议，建议出发前确认')).toBeTruthy()
   })
-  expect(screen.getByText(/Activity 1 → Activity 2 · 步行（估算） · 2 小时 ·/)).toBeTruthy()
+
+  test('NEEDS_REPAIR issue section titled 需要调整（N） with summary', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('NEEDS_REPAIR', [ruleResult({ ruleId: 'ACTIVITY_OVERLAP', outcome: 'FAIL' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('需要调整（1）')).toBeTruthy()
+    expect(screen.getByText('部分活动时间发生重叠')).toBeTruthy()
+  })
+
+  test('only PASS/NOT_APPLICABLE rules render no issue section', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [
+          ruleResult({ ruleId: 'BUDGET_LIMIT', outcome: 'PASS' }),
+          ruleResult({ ruleId: 'MEAL_WINDOW', outcome: 'NOT_APPLICABLE' }),
+        ]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.queryByText(/待核实信息/)).toBeNull()
+    expect(screen.queryByText(/需要调整/)).toBeNull()
+  })
+
+  test('renders Chinese dates in issues', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('NEEDS_REPAIR', [ruleResult({
+          ruleId: 'OPENING_HOURS',
+          outcome: 'FAIL',
+          affectedDates: ['2026-08-17', '2026-08-18'],
+        })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('8月17日、8月18日')).toBeTruthy()
+    expect(screen.queryByText('2026-08-17')).toBeNull()
+  })
+
+  test('more than 3 issues collapse to 3 with 查看全部 N 项', () => {
+    const rules = [
+      ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' }),
+      ruleResult({ ruleId: 'VISIT_DURATION', outcome: 'UNKNOWN' }),
+      ruleResult({ ruleId: 'MEAL_WINDOW', outcome: 'UNKNOWN' }),
+      ruleResult({ ruleId: 'BUDGET_LIMIT', outcome: 'UNKNOWN' }),
+      ruleResult({ ruleId: 'DUPLICATE_POI', outcome: 'UNKNOWN' }),
+    ]
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', rules),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('待核实信息（5）')).toBeTruthy()
+    expect(screen.getByText('查看全部 5 项')).toBeTruthy()
+    // collapsed: exactly 3 issue cards rendered
+    const issueCards = document.querySelectorAll('[data-testid^="issue-card-"]')
+    expect(issueCards.length).toBe(3)
+  })
+
+  test('展开全部 shows all summaries', async () => {
+    const rules = [
+      ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' }),
+      ruleResult({ ruleId: 'VISIT_DURATION', outcome: 'UNKNOWN' }),
+      ruleResult({ ruleId: 'MEAL_WINDOW', outcome: 'UNKNOWN' }),
+      ruleResult({ ruleId: 'BUDGET_LIMIT', outcome: 'UNKNOWN' }),
+      ruleResult({ ruleId: 'DUPLICATE_POI', outcome: 'UNKNOWN' }),
+    ]
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', rules),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    await screen.getByText('查看全部 5 项').click()
+    const issueCards = document.querySelectorAll('[data-testid^="issue-card-"]')
+    expect(issueCards.length).toBe(5)
+  })
+
+  test('unknown rule id degrades without leaking code', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('NEEDS_REPAIR', [ruleResult({ ruleId: 'INTERNAL_UNKNOWN_RULE', outcome: 'FAIL' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('该项安排需要调整')).toBeTruthy()
+    expect(screen.queryByText(/INTERNAL_UNKNOWN_RULE/)).toBeNull()
+  })
 })
 
-test('candidate props are never mutated into the current itinerary', () => {
-  const candidate = makeCandidateWithTransit()
-  const current = {
-    title: 'Formal route',
-    estimatedTotalCost: 800,
-    days: [{ date: '2026-08-01', activities: [{ id: 'f-1', title: 'Formal A' }] }],
-  }
-  render(PlanningReviewPanel, {
-    props: {
-      report: makeReport('NEEDS_REPAIR'),
-      candidate,
-      currentItinerary: current,
-    },
+// ── R4: candidate preview noise reduction ─────────────────────────────────
+
+describe('R4 preview plan', () => {
+  test('preview section titled 预览方案 without REVIEW or 真实地点', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('预览方案')).toBeTruthy()
+    expect(screen.queryByText(/REVIEW/i)).toBeNull()
+    expect(screen.queryByText(/真实地点/)).toBeNull()
   })
-  // Both shapes render independently; neither object is written back.
-  expect(screen.getByText('Benchmark itinerary')).toBeTruthy()
-  expect(screen.getByText('Formal route')).toBeTruthy()
-  expect((candidate as { title: string }).title).toBe('Benchmark itinerary')
-  expect(current.title).toBe('Formal route')
+
+  test('day card is collapsed by default showing date, count and time range', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('8月17日 · 1项安排 · 08:45–18:49')).toBeTruthy()
+    expect(screen.getByText('地点1')).toBeTruthy()
+  })
+
+  test('day card expands to full activities with costs and times', async () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidateWithTransit(),
+        currentItinerary: null,
+      },
+    })
+    const toggle = screen.getByTestId('candidate-day-toggle-2026-08-17')
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    await toggle.click()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('故宫博物院')).toBeTruthy()
+    expect(screen.getByText('奥华餐厅')).toBeTruthy()
+    expect(screen.getByText('¥60')).toBeTruthy()
+    expect(screen.getByText('¥120')).toBeTruthy()
+  })
+
+  test('transit shows summary by default and detail in nested expandable', async () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidateWithTransit(),
+        currentItinerary: null,
+      },
+    })
+    // transit summary visible on collapsed card
+    expect(screen.getByText(/当天交通：1段 · 约25 分钟/)).toBeTruthy()
+    await screen.getByTestId('candidate-day-toggle-2026-08-17').click()
+    const legToggle = screen.getByTestId('candidate-leg-toggle-2026-08-17-0')
+    expect(legToggle.getAttribute('aria-expanded')).toBe('false')
+    await legToggle.click()
+    expect(legToggle.getAttribute('aria-expanded')).toBe('true')
+    // detail line shows full leg info
+    expect(screen.getByText(/故宫博物院 → 奥华餐厅 · 打车（估算） · 25 分钟 · 5.0 公里/)).toBeTruthy()
+  })
+
+  test('keyboard operable: Enter toggles day card', async () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    const toggle = screen.getByTestId('candidate-day-toggle-2026-08-17')
+    toggle.focus()
+    toggle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  test('highlight date expands and scrolls to the matching candidate day', async () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(2),
+        highlightDate: '2026-08-18',
+        currentItinerary: null,
+      },
+    })
+    const toggle = screen.getByTestId('candidate-day-toggle-2026-08-18')
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('8月18日 · 1项安排 · 08:45–18:49')).toBeTruthy()
+  })
+
+  test('highlight only touches candidate day, never the saved itinerary', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(1),
+        highlightDate: '2026-08-17',
+        currentItinerary: {
+          title: '已保存行程',
+          estimatedTotalCost: 800,
+          days: [{ date: '2026-08-17', activities: [{ id: 'f-1', title: '已保存活动' }] }],
+        },
+      },
+    })
+    // candidate day highlighted/expanded; saved itinerary heading untouched
+    expect(screen.getByTestId('candidate-day-toggle-2026-08-17').getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getAllByText('已保存行程').length).toBeGreaterThanOrEqual(1)
+    // candidate title differs from saved title — both independent
+    expect(screen.getByText('北京行程建议')).toBeTruthy()
+  })
+})
+
+// ── R5: saved itinerary empty / present states ────────────────────────────
+
+describe('R5 saved itinerary', () => {
+  test('no saved itinerary shows lightweight auto-save note only', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText('方案验证通过后会自动保存为正式行程。')).toBeTruthy()
+    expect(screen.queryByText(/当前正式版本/)).toBeNull()
+    expect(screen.queryByText(/当前尚无正式版本/)).toBeNull()
+    expect(screen.queryByText(/与当前正式版本对照/)).toBeNull()
+    expect(screen.queryByText(/与已保存行程相比/)).toBeNull()
+  })
+
+  test('saved itinerary present uses 已保存行程 and comparison title', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: {
+          title: '已保存行程',
+          estimatedTotalCost: 800,
+          days: [{ date: '2026-08-17', activities: [{ id: 'f-1', title: '已保存活动' }] }],
+        },
+      },
+    })
+    expect(screen.getAllByText('已保存行程').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('与已保存行程相比')).toBeTruthy()
+    expect(screen.queryByText(/正式版本/)).toBeNull()
+  })
+
+  test('comparison only renders reliable user-readable diffs', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(1),
+        currentItinerary: {
+          title: '已保存行程',
+          estimatedTotalCost: 800,
+          days: [{ date: '2026-08-17', activities: [{ id: 'f-1', title: '已保存活动' }] }],
+        },
+      },
+    })
+    expect(screen.getByText(/新增1个地点/)).toBeTruthy()
+  })
+
+  test('abandon keeps saved itinerary (saved section still renders)', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: makeCandidate(),
+        currentItinerary: {
+          title: '已保存行程',
+          estimatedTotalCost: 800,
+          days: [{ date: '2026-08-17', activities: [{ id: 'f-1', title: '已保存活动' }] }],
+        },
+      },
+    })
+    expect(screen.getAllByText('已保存行程').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('放弃本方案')).toBeTruthy()
+  })
+
+  test('malformed candidate shows safe message', () => {
+    render(PlanningReviewPanel, {
+      props: {
+        report: makeReport('UNVERIFIED', [ruleResult({ ruleId: 'OPENING_HOURS', outcome: 'UNKNOWN' })]),
+        candidate: { not: 'an itinerary' },
+        currentItinerary: null,
+      },
+    })
+    expect(screen.getByText(/预览方案暂时无法读取/)).toBeTruthy()
+  })
 })

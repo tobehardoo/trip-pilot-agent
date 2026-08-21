@@ -262,7 +262,7 @@ async function saveTrip() {
         <!-- Page Heading -->
         <div class="flex items-end justify-between gap-5 mb-4">
           <div>
-            <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">Trips</p>
+            <p class="text-xs font-semibold tracking-widest text-surface-400 mb-1">旅行列表</p>
             <h1 class="text-2xl sm:text-3xl font-bold text-surface-900 tracking-tight text-balance">我的旅行</h1>
           </div>
           <Button variant="primary" size="md" @click="openCreateTrip">
@@ -446,7 +446,7 @@ async function saveTrip() {
         >
           <div class="flex items-center justify-between gap-4 px-6 py-5 border-b border-surface-100">
             <div>
-              <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">New Trip</p>
+              <p class="text-xs font-semibold tracking-widest text-surface-400 mb-1">新建旅行</p>
               <h2 id="create-trip-title" class="text-lg font-bold text-surface-800">创建旅行</h2>
             </div>
             <button

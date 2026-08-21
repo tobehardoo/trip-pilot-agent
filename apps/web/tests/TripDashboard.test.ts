@@ -67,4 +67,24 @@ test('B13 offers exactly one create entry and opens an empty form', async () => 
   expect(view.queryByLabelText('城市')).toBeNull()
   expect(view.queryByText('快速开始')).toBeNull()
   expect(view.queryByText('用一句话描述旅行计划')).toBeNull()
+  expect(view.queryByText('Trips')).toBeNull()
+  expect(view.queryByText('New Trip')).toBeNull()
+})
+
+test('create form keeps boundary time in one place without a stale anchor-time note', async () => {
+  const view = render(TripDashboard, {
+    props: {
+      user: { id: 'user-1', email: 'traveler@example.com', displayName: 'Traveler' },
+      trips: [],
+      busy: false,
+      error: null,
+      createTrip: vi.fn(async () => {}),
+    },
+  })
+
+  await fireEvent.click(view.getByRole('button', { name: '创建旅行' }))
+  await fireEvent.update(view.getByLabelText('到达地点搜索'), '广州站')
+
+  expect(view.queryByText(/到达时间沿用/)).toBeNull()
+  expect(view.queryByText(/未填/)).toBeNull()
 })

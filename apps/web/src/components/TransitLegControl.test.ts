@@ -51,7 +51,7 @@ describe('TransitLegControl', () => {
     expect(view.emitted().select).toEqual([['TRANSIT'], ['TAXI']])
   })
 
-  it('allows a mode that exceeds the activity gap and marks it as requiring replanning', async () => {
+  it('does not guess route feasibility from the local activity gap', async () => {
     const view = render(TransitLegControl, {
       props: {
         leg: {
@@ -83,10 +83,12 @@ describe('TransitLegControl', () => {
     expect(transit).not.toBeNull()
     if (!transit) throw new Error('Expected the transit option')
     expect(transit.disabled).toBe(false)
-    expect(transit.dataset.availability).toBe('requires-replan')
+    expect(transit.dataset.availability).toBe('available')
 
     await fireEvent.click(transit)
     expect(view.emitted().select).toEqual([['TRANSIT']])
-    expect(view.getByRole('alert').textContent).toContain('需要调整活动时间')
+    expect(view.queryByRole('alert')).toBeNull()
+    expect(view.getByTestId('transit-change-leg-conflict').textContent)
+      .toContain('保存后由路线服务计算')
   })
 })

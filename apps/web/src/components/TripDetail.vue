@@ -53,7 +53,6 @@ import {
 import { cn } from '../lib/utils'
 import {
   type CommuteMode,
-  type ConcreteCommuteMode,
 } from '../lib/transit'
 import { useItineraryDraft } from '../composables/useItineraryDraft'
 import GuideIntelligencePanel from './GuideIntelligencePanel.vue'
@@ -194,7 +193,7 @@ function cancelRename() {
 
 async function saveRename() {
   const title = renameTitle.value.trim()
-  if (!title || renameBusy.value) return
+  if (renameBusy.value) return
   renameBusy.value = true
   renameError.value = null
   try {
@@ -301,7 +300,7 @@ function transitLegFor(day: Itinerary['days'][number], activityIndex: number): I
     ?? null
 }
 
-function transitModeFor(leg: ItineraryTransitLeg): CommuteMode {
+function transitModeFor(leg: ItineraryTransitLeg): CommuteMode | ItineraryTransitLeg['mode'] {
   if (selectedTransitModes[leg.id]) return selectedTransitModes[leg.id]
   return leg.mode
 }
@@ -351,7 +350,7 @@ async function saveItineraryDraft() {
   await commitItineraryDraft(props.itinerary.versionId)
 }
 
-async function selectTransitMode(leg: ItineraryTransitLeg, mode: ConcreteCommuteMode) {
+async function selectTransitMode(leg: ItineraryTransitLeg, mode: CommuteMode) {
   if (transitLockedFor(leg)) return
   const previousMode = selectedTransitModes[leg.id]
   selectedTransitModes[leg.id] = mode
@@ -454,6 +453,23 @@ function statusLabel(status: string) {
   return { DRAFT: '草稿', PLANNING: '规划中', READY: '可使用', FAILED: '规划失败' }[status] ?? status
 }
 
+// B19-E: accommodation resolution status rendered next to the requested label.
+// CONFIRMED — a provider POI with coordinates was projected; UNRESOLVED — the
+// requested hotel could not be located (the system never fabricates one).
+const ACCOMMODATION_STATUS_LABEL: Record<string, string> = {
+  CONFIRMED: '已确认',
+  AREA_ESTIMATED: '区域估计',
+  UNRESOLVED: '未定位',
+}
+const ACCOMMODATION_STATUS_CLASS: Record<string, string> = {
+  CONFIRMED: 'bg-emerald-100 text-emerald-700',
+  AREA_ESTIMATED: 'bg-amber-100 text-amber-700',
+  UNRESOLVED: 'bg-surface-200 text-surface-500',
+}
+function accommodationStatusLabel(status: string | null | undefined): string {
+  return status ? (ACCOMMODATION_STATUS_LABEL[status] ?? status) : ''
+}
+
 function formatDate(date: string) {
   return date.replaceAll('-', '.')
 }
@@ -546,6 +562,15 @@ function showAllMapRoutes() {
   selectedMapDate.value = null
   selectedActivityId.value = null
   candidateHighlightDate.value = null
+}
+
+function showEvidenceTools() {
+  void nextTick(() => {
+    document.getElementById('guide-intelligence-title')?.scrollIntoView?.({
+      block: 'start',
+      behavior: 'smooth',
+    })
+  })
 }
 
 async function openItineraryEdit(input: ItineraryEditInput, event?: Event) {
@@ -856,7 +881,7 @@ watch(() => props.planningState, (state) => {
 
             <div class="relative z-10 flex items-start justify-between gap-4">
               <div class="min-w-0">
-                <p class="text-xs font-semibold uppercase tracking-widest text-white/60 mb-1">Trip</p>
+                <p class="text-xs font-semibold tracking-widest text-white/60 mb-1">旅行</p>
                 <template v-if="renaming">
                   <div class="flex flex-wrap items-center gap-2">
                     <input
@@ -943,7 +968,7 @@ watch(() => props.planningState, (state) => {
           <Card padding="sm">
             <div class="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <p class="mb-1 text-xs font-semibold uppercase tracking-widest text-surface-400">Constraints</p>
+                <p class="mb-1 text-xs font-semibold tracking-widest text-surface-400">旅行要求</p>
                 <h2 id="constraint-summary-title" aria-label="结构化约束" class="text-lg font-bold text-surface-800">我的要求</h2>
               </div>
               <Button variant="outline" size="sm" @click="openEditor">
@@ -959,7 +984,15 @@ watch(() => props.planningState, (state) => {
               <div><dt class="text-xs text-surface-400">同行</dt><dd class="mt-1 text-sm font-semibold text-surface-700">{{ trip.constraints.travelers }} 人 · {{ travelerTypeLabel(trip.constraints.travelerType) }}</dd></div>
               <div><dt class="text-xs text-surface-400">节奏</dt><dd class="mt-1 text-sm font-semibold text-surface-700">{{ paceLabel(trip.constraints.pace) }}</dd></div>
               <template v-if="trip.constraints.accommodation?.placeName">
-                <div><dt class="text-xs text-surface-400">住宿</dt><dd class="mt-1 text-sm font-semibold text-surface-700">{{ trip.constraints.accommodation.placeName }}</dd></div>
+                <div><dt class="text-xs text-surface-400">住宿</dt>
+                  <dd class="mt-1 flex items-center gap-2 text-sm font-semibold text-surface-700">
+                    <span>{{ trip.constraints.accommodation.placeName }}</span>
+                    <span v-if="itinerary?.accommodationStatus" class="rounded-full px-2 py-0.5 text-xs font-medium"
+                          :class="ACCOMMODATION_STATUS_CLASS[itinerary.accommodationStatus] ?? 'bg-surface-200 text-surface-500'">
+                      {{ accommodationStatusLabel(itinerary.accommodationStatus) }}
+                    </span>
+                  </dd>
+                </div>
               </template>
               <template v-if="trip.constraints.preferences.length">
                 <div><dt class="text-xs text-surface-400">偏好</dt><dd class="mt-1 text-sm text-surface-600">{{ trip.constraints.preferences.join('、') }}</dd></div>
@@ -994,7 +1027,7 @@ watch(() => props.planningState, (state) => {
         </div>
 
         <!-- Feasibility Review / Authoritative Report -->
-        <section v-if="planningState === 'waiting_user'" id="planning-review-section" class="mb-4" aria-label="规划需要确认">
+        <section v-if="planningState === 'waiting_user'" id="planning-review-section" class="mb-4" aria-label="规划结果">
           <PlanningReviewPanel
             :report="readFeasibilityReportResult.ok ? readFeasibilityReportResult.value : null"
             :malformed-report="!readFeasibilityReportResult.ok && !!feasibilityReport"
@@ -1005,9 +1038,11 @@ watch(() => props.planningState, (state) => {
               ? { title: itinerary.title, estimatedTotalCost: itinerary.estimatedTotalCost, days: itinerary.days }
               : null"
             @abandon="emit('abandon')"
+            @edit="openEditor"
+            @verify="showEvidenceTools"
           />
         </section>
-        <section v-else-if="planningState === 'succeeded' || feasibilityLoadState === 'loaded'" class="mb-6" aria-label="硬可行性验证结果">
+        <section v-else-if="planningState === 'succeeded' || feasibilityLoadState === 'loaded'" class="mb-6" aria-label="行程验证结果">
           <FeasibilityReportPanel
             :report="readFeasibilityReportResult.ok ? readFeasibilityReportResult.value : null"
             :malformed="!!feasibilityReport && !readFeasibilityReportResult.ok"
@@ -1039,7 +1074,7 @@ watch(() => props.planningState, (state) => {
         <!-- Planning Actions -->
         <div class="mb-6 flex flex-wrap items-center gap-3">
           <div class="flex items-center gap-2 flex-1 min-w-0">
-            <span class="text-sm font-semibold text-surface-500 uppercase tracking-wider">Itinerary</span>
+            <span class="text-sm font-semibold text-surface-500">行程安排</span>
             <h3 v-if="itinerary" class="text-xs text-surface-400 font-normal m-0">{{ itinerary.title }}</h3>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -1064,7 +1099,7 @@ watch(() => props.planningState, (state) => {
               <LoaderCircle v-if="planningState === 'queued'" class="animate-spin" :size="15" aria-hidden="true" />
               <RefreshCw v-else-if="itinerary && planningState !== 'waiting_user'" :size="15" aria-hidden="true" />
               <Play v-else :size="15" aria-hidden="true" />
-              {{ planningState === 'queued' ? '规划中' : planningState === 'waiting_user' ? '候选待确认' : itinerary ? '重新规划' : '开始规划' }}
+              {{ planningState === 'queued' ? '规划中' : planningState === 'waiting_user' ? '等待规划结果' : itinerary ? '重新规划' : '开始规划' }}
             </Button>
             <Button
               v-if="planningState === 'queued'"
@@ -1479,7 +1514,7 @@ watch(() => props.planningState, (state) => {
       <div class="relative mx-4 w-full max-w-md animate-scale-in rounded-3xl bg-white shadow-dialog ring-1 ring-black/5 overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="itinerary-edit-title">
         <div class="flex items-center justify-between gap-4 px-6 py-5 border-b border-surface-100">
           <div>
-            <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">Itinerary Change</p>
+            <p class="text-xs font-semibold tracking-widest text-surface-400 mb-1">行程修改</p>
             <h2 id="itinerary-edit-title" class="text-base font-bold text-surface-800">确认行程修改</h2>
           </div>
           <button class="flex h-9 w-9 items-center justify-center rounded-xl border border-surface-200 text-surface-400 hover:bg-surface-50 transition-colors" type="button" title="关闭" aria-label="关闭" @click="closeItineraryEdit">
@@ -1539,7 +1574,7 @@ watch(() => props.planningState, (state) => {
       >
         <div class="flex items-center justify-between gap-4 px-6 py-5 border-b border-surface-100">
           <div>
-            <p class="text-xs font-semibold uppercase tracking-widest text-surface-400 mb-1">Edit Constraints</p>
+            <p class="text-xs font-semibold tracking-widest text-surface-400 mb-1">修改要求</p>
             <h2 id="edit-constraints-title" class="text-base font-bold text-surface-800">编辑约束</h2>
           </div>
           <button class="flex h-9 w-9 items-center justify-center rounded-xl border border-surface-200 text-surface-400 hover:bg-surface-50 transition-colors" type="button" title="关闭" aria-label="关闭" @click="editing = false">

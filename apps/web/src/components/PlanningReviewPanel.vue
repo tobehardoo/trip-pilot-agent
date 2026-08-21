@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { AlertTriangle, CalendarDays, ChevronDown, Coins, GitCompareArrows, Route, X } from 'lucide-vue-next'
+import { AlertTriangle, CalendarDays, ChevronDown, CircleHelp, Coins, Route, X } from 'lucide-vue-next'
 
 import {
-  formatValidatedAt,
   readCandidateItinerary,
   readFeasibilityReport,
+  type CandidateDay,
   type CandidateItinerary,
-  type CandidateTransitLeg,
   type FeasibilityReport,
 } from '../lib/feasibility'
-import FeasibilityReportPanel from './FeasibilityReportPanel.vue'
+import { formatChineseDate, formatChineseDateList, ruleIssueSummary } from '../lib/feasibility-presentation'
+import { commuteModeLabel } from '../lib/transit'
 import Badge from './ui/Badge.vue'
 import Button from './ui/Button.vue'
 import Card from './ui/Card.vue'
@@ -43,23 +43,89 @@ const props = withDefaults(defineProps<{
   highlightDate: null,
 })
 
-const emit = defineEmits<{ abandon: [] }>()
+const emit = defineEmits<{ abandon: []; edit: []; verify: [] }>()
 
 const reportRead = computed(() => readFeasibilityReport(props.report))
 const candidateRead = computed(() => readCandidateItinerary(props.candidate))
 
-// B13_FIX R7 (P1-4): validation details are secondary information and stay
-// collapsed by default; the candidate and its main risks lead the panel.
-const showValidationDetails = ref(false)
+// ── User status truth table (B15) ─────────────────────────────────────────
 
-// B13_FIX R7 (P1-4): only FAIL/UNKNOWN rules are "main risks" shown up
-// front; PASS/NA and technical fields live behind the details toggle.
-const mainRisks = computed(() => {
+const userStatus = computed(() => {
+  if (props.malformedReport || (props.report !== null && !reportRead.value.ok)) {
+    return { title: '暂时无法读取规划结果', badge: '结果异常', tone: 'danger' as const }
+  }
+  if (reportRead.value.ok) {
+    if (reportRead.value.value.status === 'NEEDS_REPAIR') {
+      return { title: '方案需要调整', badge: '存在需要处理的问题', tone: 'warning' as const }
+    }
+    return { title: '方案还需要完善', badge: '部分信息待核实', tone: 'info' as const }
+  }
+  return { title: '暂时无法读取规划结果', badge: '结果异常', tone: 'danger' as const }
+})
+
+const statusDescription = computed(() => {
+  if (userStatus.value.title === '方案需要调整') {
+    return '当前安排存在冲突，请修改旅行要求后重新规划。'
+  }
+  if (userStatus.value.title === '方案还需要完善') {
+    return '已生成一份预览方案，但部分信息暂时无法核实，因此还不能保存。'
+  }
+  return '系统无法安全读取本次规划结果，请重新规划。'
+})
+
+// ── Issue summaries (UNKNOWN/FAIL only, Chinese, counts from typed refs) ──
+
+const issues = computed(() => {
   if (!reportRead.value.ok) return []
-  return reportRead.value.value.ruleResults.filter(
-    (rule) => rule.outcome === 'FAIL' || rule.outcome === 'UNKNOWN',
+  return reportRead.value.value.ruleResults
+    .filter((rule) => rule.outcome === 'FAIL' || rule.outcome === 'UNKNOWN')
+    .map((rule) => ruleIssueSummary(rule))
+})
+
+const issueTitle = computed(() => {
+  if (!reportRead.value.ok) return ''
+  const prefix = reportRead.value.value.status === 'NEEDS_REPAIR' ? '需要调整' : '待核实信息'
+  return `${prefix}（${issues.value.length}）`
+})
+
+const hasEvidenceGaps = computed(() => {
+  if (!reportRead.value.ok) return false
+  return reportRead.value.value.ruleResults.some((rule) =>
+    rule.outcome === 'UNKNOWN'
+      && (rule.ruleId === 'OPENING_HOURS' || rule.ruleId === 'VISIT_DURATION'),
   )
 })
+
+const showAllIssues = ref(false)
+const visibleIssues = computed(() => (showAllIssues.value ? issues.value : issues.value.slice(0, 3)))
+
+// ── Preview plan (collapsible day cards) ──────────────────────────────────
+
+const expandedDays = ref<Set<string>>(new Set())
+const expandedLegs = ref<Set<string>>(new Set())
+
+function isDayExpanded(date: string) {
+  return expandedDays.value.has(date) || props.highlightDate === date
+}
+
+function toggleDay(date: string) {
+  const next = new Set(expandedDays.value)
+  if (next.has(date)) next.delete(date)
+  else next.add(date)
+  expandedDays.value = next
+}
+
+function isLegExpanded(dayDate: string, index: number) {
+  return expandedLegs.value.has(`${dayDate}-${index}`)
+}
+
+function toggleLeg(dayDate: string, index: number) {
+  const next = new Set(expandedLegs.value)
+  const key = `${dayDate}-${index}`
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedLegs.value = next
+}
 
 function formatTime(dateTime: string) {
   const value = new Date(dateTime)
@@ -68,11 +134,6 @@ function formatTime(dateTime: string) {
     hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     timeZone: 'Asia/Shanghai',
   }).format(value)
-}
-
-function formatDay(date: string) {
-  const [, month, day] = date.split('-')
-  return `${Number(month)}月${Number(day)}日`
 }
 
 function formatMoney(amount: number) {
@@ -93,68 +154,122 @@ function formatDistance(meters: number) {
 }
 
 function modeLabel(mode: string) {
-  return {
-    WALKING: '步行',
-    TRANSIT: '公共交通',
-    DRIVING: '驾车',
-    TAXI: '出租车',
-  }[mode] ?? mode
+  return commuteModeLabel(mode)
 }
 
-function candidateActivityTitle(day: CandidateItinerary['days'][number], index: number) {
-  const activity = day.activities[index]
-  return activity ? activity.title : '未知活动'
+function dayTimeRange(day: CandidateDay) {
+  if (day.activities.length === 0) return ''
+  const first = formatTime(day.activities[0].startTime)
+  const last = formatTime(day.activities[day.activities.length - 1].endTime)
+  return `${first}–${last}`
 }
 
-function candidateTransitLabel(day: CandidateItinerary['days'][number], leg: CandidateTransitLeg) {
-  const from = candidateActivityTitle(day, leg.fromActivityIndex)
-  const to = candidateActivityTitle(day, leg.toActivityIndex)
+function daySummary(day: CandidateDay) {
+  const date = formatChineseDate(day.date)
+  const count = `${day.activities.length}项安排`
+  const range = dayTimeRange(day)
+  return `${date} · ${count} · ${range}`
+}
+
+function dayPlaceNames(day: CandidateDay, limit = 2) {
+  const names = day.activities.slice(0, limit).map((a) => a.title)
+  return names.length === 0 ? '' : names.join('、')
+}
+
+function dayTransitSummary(day: CandidateDay) {
+  if (day.transitLegs.length === 0) return ''
+  const totalSeconds = day.transitLegs.reduce((sum, leg) => sum + leg.durationSeconds, 0)
+  return `当天交通：${day.transitLegs.length}段 · 约${formatDuration(totalSeconds)}`
+}
+
+function candidateTransitLabel(day: CandidateDay, legIndex: number) {
+  const leg = day.transitLegs[legIndex]
+  const from = day.activities[leg.fromActivityIndex]?.title ?? '未知地点'
+  const to = day.activities[leg.toActivityIndex]?.title ?? '未知地点'
   const estimate = leg.estimated ? '（估算）' : ''
   return `${from} → ${to} · ${modeLabel(leg.mode)}${estimate} · ${formatDuration(leg.durationSeconds)} · ${formatDistance(leg.distanceMeters)}`
 }
 
-function formalActivityTitle(day: NonNullable<typeof props.currentItinerary>['days'][number], id: string | null | undefined) {
-  if (!id) return '未知活动'
-  const activity = day.activities.find((item) => item.id === id)
-  return activity ? activity.title : '未知活动'
+// ── Saved itinerary comparison (user-readable diffs only) ─────────────────
+
+function savedDayActivityTitles(day: NonNullable<typeof props.currentItinerary>['days'][number]) {
+  return day.activities.map((a) => a.title)
 }
 
-function formalTransitLabel(
-  day: NonNullable<typeof props.currentItinerary>['days'][number],
-  leg: NonNullable<NonNullable<typeof props.currentItinerary>['days'][number]['transitLegs']>[number],
-) {
-  const from = formalActivityTitle(day, leg.fromActivityId)
-  const to = formalActivityTitle(day, leg.toActivityId)
-  const estimate = leg.estimated ? '（估算）' : ''
-  return `${from} → ${to} · ${modeLabel(leg.mode ?? '')}${estimate} · ${formatDuration(leg.durationSeconds ?? 0)} · ${formatDistance(leg.distanceMeters ?? 0)}`
-}
-
-function candidateDays(candidate: CandidateItinerary) {
-  return candidate.days
-}
+const comparisonDiffs = computed(() => {
+  if (!candidateRead.value.ok || !props.currentItinerary) return []
+  const diffs: string[] = []
+  const candidateTitles = new Set(
+    candidateRead.value.value.days.flatMap((day) => day.activities.map((a) => a.title)),
+  )
+  const savedTitles = new Set(
+    props.currentItinerary.days.flatMap((day) => savedDayActivityTitles(day)),
+  )
+  let added = 0
+  candidateTitles.forEach((title) => {
+    if (!savedTitles.has(title)) added += 1
+  })
+  if (added > 0) diffs.push(`新增${added}个地点`)
+  if (candidateRead.value.value.days.length !== props.currentItinerary.days.length) {
+    const delta = candidateRead.value.value.days.length - props.currentItinerary.days.length
+    diffs.push(delta > 0 ? `增加${delta}天安排` : `减少${Math.abs(delta)}天安排`)
+  }
+  const candidateTransit = candidateRead.value.value.days.reduce(
+    (sum, day) => sum + day.transitLegs.reduce((s, leg) => s + leg.durationSeconds, 0), 0,
+  )
+  const savedTransit = props.currentItinerary.days.reduce(
+    (sum, day) => sum + (day.transitLegs ?? []).reduce((s, leg) => s + (leg.durationSeconds ?? 0), 0), 0,
+  )
+  const transitDelta = candidateTransit - savedTransit
+  if (Math.abs(transitDelta) >= 60) {
+    diffs.push(transitDelta > 0
+      ? `预计交通时间增加${formatDuration(transitDelta)}`
+      : `预计交通时间减少${formatDuration(-transitDelta)}`)
+  }
+  return diffs
+})
 </script>
 
 <template>
-  <Card padding="sm" class="review-panel" aria-label="规划需要确认">
+  <Card padding="sm" class="review-panel" aria-label="规划结果">
+    <!-- 1. Status and actions -->
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0">
-        <p class="text-xs font-semibold uppercase tracking-widest text-amber-600">Review</p>
-        <h2 class="mt-1 text-lg font-bold text-surface-800">规划需要确认</h2>
-        <p class="mt-0.5 text-sm text-surface-500">候选行程尚未成为正式版本，当前正式版本保持不变。</p>
+        <h2 class="text-lg font-bold text-surface-800">{{ userStatus.title }}</h2>
+        <p class="mt-1 text-sm text-surface-600">{{ statusDescription }}</p>
       </div>
-      <Badge variant="warning" size="md">
-        <AlertTriangle :size="14" aria-hidden="true" />
-        待确认
+      <Badge
+        :variant="userStatus.tone === 'danger' ? 'danger' : userStatus.tone === 'warning' ? 'warning' : 'secondary'"
+        size="md"
+      >
+        <AlertTriangle v-if="userStatus.tone === 'warning' || userStatus.tone === 'danger'" :size="14" aria-hidden="true" />
+        <CircleHelp v-else :size="14" aria-hidden="true" />
+        {{ userStatus.badge }}
       </Badge>
     </div>
 
-    <p class="mt-3 text-sm text-surface-600">
-      你可以调整约束后重新规划；此界面不会把候选行程写入正式版本。
+    <p v-if="reportRead.ok" class="mt-1 text-sm text-surface-500">
+      修改并保存要求后，可以重新开始规划。
     </p>
 
-    <!-- Candidate first (B13_FIX R7 / P1-4): the candidate summary, date
-         navigation and main risks lead the panel. -->
-    <h3 class="mt-3 text-sm font-semibold text-surface-700">候选行程</h3>
+    <div class="mt-4 flex flex-wrap items-center gap-3">
+      <Button variant="primary" size="lg" data-testid="edit-requirements" @click="emit('edit')">
+        修改要求
+      </Button>
+      <Button
+        variant="outline"
+        size="lg"
+        data-testid="abandon-candidate"
+        :disabled="abandonBusy"
+        @click="emit('abandon')"
+      >
+        <X v-if="!abandonBusy" :size="14" aria-hidden="true" />
+        {{ abandonBusy ? '正在放弃…' : '放弃本方案' }}
+      </Button>
+    </div>
+
+    <!-- 2. Preview plan -->
+    <h3 class="mt-6 text-sm font-semibold text-surface-700">预览方案</h3>
     <div v-if="candidateRead.ok" class="mt-2">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <strong class="text-base text-surface-800">{{ candidateRead.value.title }}</strong>
@@ -165,7 +280,7 @@ function candidateDays(candidate: CandidateItinerary) {
       </div>
       <ul class="mt-3 space-y-3">
         <li
-          v-for="day in candidateDays(candidateRead.value)"
+          v-for="day in candidateRead.value.days"
           :key="day.date"
           :id="`candidate-day-${day.date}`"
           class="rounded-xl border p-3"
@@ -173,133 +288,142 @@ function candidateDays(candidate: CandidateItinerary) {
             ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-300'
             : 'border-surface-200/70'"
         >
-          <div class="flex items-center gap-2 text-sm">
-            <CalendarDays :size="14" class="text-surface-400" aria-hidden="true" />
-            <span class="font-semibold text-surface-700">{{ formatDay(day.date) }}</span>
-            <span class="text-xs text-surface-400">{{ day.activities.length }} 项活动</span>
+          <button
+            type="button"
+            class="flex w-full flex-wrap items-center justify-between gap-2 text-left focus-visible:outline-2 focus-visible:outline-primary-500"
+            :aria-expanded="isDayExpanded(day.date)"
+            :data-testid="`candidate-day-toggle-${day.date}`"
+            @click="toggleDay(day.date)"
+            @keydown.enter.prevent="toggleDay(day.date)"
+            @keydown.space.prevent="toggleDay(day.date)"
+          >
+            <span class="flex items-center gap-2 text-sm">
+              <CalendarDays :size="14" class="text-surface-400" aria-hidden="true" />
+              <span class="font-semibold text-surface-700">{{ daySummary(day) }}</span>
+            </span>
+            <span class="flex items-center gap-2">
+              <span v-if="dayPlaceNames(day)" class="text-xs text-surface-500">{{ dayPlaceNames(day) }}<template v-if="day.activities.length > 2">等</template></span>
+              <ChevronDown :size="16" class="text-surface-400 transition-transform" :class="{ 'rotate-180': isDayExpanded(day.date) }" aria-hidden="true" />
+            </span>
+          </button>
+          <p v-if="dayTransitSummary(day)" class="mt-1 text-xs text-surface-500">{{ dayTransitSummary(day) }}</p>
+
+          <div v-if="isDayExpanded(day.date)" class="mt-3 space-y-3">
+            <ul class="space-y-2">
+              <li v-for="activity in day.activities" :key="activity.activityId ?? activity.title" class="flex flex-wrap items-center gap-2 text-sm text-surface-600">
+                <span class="text-xs tabular-nums text-surface-400">
+                  {{ formatTime(activity.startTime) }}–{{ formatTime(activity.endTime) }}
+                </span>
+                <span class="truncate">{{ activity.title }}</span>
+                <span v-if="activity.estimatedCost > 0" class="ml-auto text-xs font-semibold text-surface-500">
+                  {{ formatMoney(activity.estimatedCost) }}
+                </span>
+              </li>
+            </ul>
+            <ul v-if="day.transitLegs.length" class="space-y-2">
+              <li
+                v-for="(leg, legIndex) in day.transitLegs"
+                :key="`${day.date}-leg-${legIndex}`"
+                class="rounded-lg border border-surface-200/60"
+              >
+                <button
+                  type="button"
+                  class="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-surface-500 focus-visible:outline-2 focus-visible:outline-primary-500"
+                  :aria-expanded="isLegExpanded(day.date, legIndex)"
+                  :data-testid="`candidate-leg-toggle-${day.date}-${legIndex}`"
+                  @click="toggleLeg(day.date, legIndex)"
+                >
+                  <Route :size="13" class="text-surface-400" aria-hidden="true" />
+                  <span class="truncate">{{ modeLabel(leg.mode) }} · {{ formatDuration(leg.durationSeconds) }}</span>
+                  <ChevronDown :size="14" class="ml-auto text-surface-400 transition-transform" :class="{ 'rotate-180': isLegExpanded(day.date, legIndex) }" aria-hidden="true" />
+                </button>
+                <p v-if="isLegExpanded(day.date, legIndex)" class="border-t border-surface-200/60 px-3 py-2 text-xs text-surface-500">
+                  {{ candidateTransitLabel(day, legIndex) }}
+                </p>
+              </li>
+            </ul>
           </div>
-          <ul class="mt-2 space-y-1">
-            <li v-for="activity in day.activities" :key="activity.activityId ?? activity.title" class="flex items-center gap-2 text-sm text-surface-600">
-              <span class="text-xs tabular-nums text-surface-400">
-                {{ formatTime(activity.startTime) }}–{{ formatTime(activity.endTime) }}
-              </span>
-              <span class="truncate">{{ activity.title }}</span>
-            </li>
-          </ul>
-          <ul v-if="day.transitLegs.length" class="mt-2 space-y-1 border-t border-surface-200/70 pt-2">
-            <li v-for="(leg, legIndex) in day.transitLegs" :key="`${day.date}-leg-${legIndex}`" class="flex items-center gap-2 text-xs text-surface-500">
-              <Route :size="13" class="text-surface-400" aria-hidden="true" />
-              <span>{{ candidateTransitLabel(day, leg) }}</span>
-            </li>
-          </ul>
         </li>
       </ul>
-      <p v-if="candidateRead.value.days.length === 0" class="text-sm text-surface-400">候选行程暂无日期</p>
+      <p v-if="candidateRead.value.days.length === 0" class="text-sm text-surface-400">预览方案暂无日期</p>
     </div>
     <div v-else class="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800" role="alert">
       <AlertTriangle :size="16" class="inline" aria-hidden="true" />
-      候选行程暂时无法读取，请稍后重试。
+      预览方案暂时无法读取，请稍后重试。
     </div>
 
-    <!-- Main risks (B13_FIX R7 / P1-4): only FAIL/UNKNOWN aggregations are
-         user-facing; PASS/NA and technical fields stay collapsed. -->
-    <h3 class="mt-5 text-sm font-semibold text-surface-700">主要风险</h3>
-    <ul v-if="mainRisks.length" class="mt-2 space-y-2">
-      <li
-        v-for="rule in mainRisks"
-        :key="rule.ruleId"
-        class="rounded-xl border p-3"
-        :class="rule.outcome === 'FAIL' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'"
-      >
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge :variant="rule.outcome === 'FAIL' ? 'danger' : 'warning'">
-            {{ rule.outcome === 'FAIL' ? '失败' : '未知' }}
-          </Badge>
-          <span class="text-sm font-semibold text-surface-800">{{ rule.message }}</span>
-        </div>
-        <p v-if="rule.affectedDates.length" class="mt-1 text-xs text-surface-500">
-          受影响日期：{{ rule.affectedDates.join('、') }}
-        </p>
-      </li>
-    </ul>
-    <p v-else class="mt-2 text-sm text-surface-500">
-      {{ reportRead.ok ? '未发现主要风险' : '暂无验证结果' }}
-    </p>
-
-    <!-- Abandon action: the only user action on a review candidate. -->
-    <div class="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-surface-200/70 p-3">
-      <Button
-        variant="outline"
-        size="sm"
-        data-testid="abandon-candidate"
-        :disabled="abandonBusy"
-        @click="emit('abandon')"
-      >
-        <X v-if="!abandonBusy" :size="14" aria-hidden="true" />
-        {{ abandonBusy ? '正在放弃…' : '放弃候选' }}
-      </Button>
-      <p class="m-0 text-xs text-surface-500">
-        放弃候选不会删除当前正式版本，之后可以调整约束重新规划。
-      </p>
-    </div>
-
-    <!-- Validation details (B13_FIX R7 / P1-4): collapsed by default;
-         reasonCode/validatorVersion/UUIDs live behind the toggle. -->
-    <div class="mt-4">
-      <button
-        type="button"
-        class="flex w-full items-center justify-between rounded-xl border border-surface-200/70 bg-surface-50/60 px-4 py-3 text-sm font-semibold text-surface-700 hover:bg-surface-100"
-        :aria-expanded="showValidationDetails"
-        data-testid="validation-details-toggle"
-        @click="showValidationDetails = !showValidationDetails"
-      >
-        <span>查看验证详情</span>
-        <ChevronDown :size="16" class="transition-transform" :class="{ 'rotate-180': showValidationDetails }" aria-hidden="true" />
-      </button>
-      <div v-if="showValidationDetails" class="mt-3">
-        <FeasibilityReportPanel
-          v-if="malformedReport"
-          :report="null"
-          :malformed="true"
-        />
-        <FeasibilityReportPanel v-else :report="reportRead.ok ? reportRead.value : null" />
-      </div>
-    </div>
-
-    <!-- Comparison with formal itinerary -->
-    <h3 class="mt-5 text-sm font-semibold text-surface-700">与当前正式版本对照</h3>
-    <div v-if="currentItinerary" class="mt-2 rounded-xl border border-surface-200/70 p-3">
-      <div class="flex items-center gap-2 text-sm">
-        <GitCompareArrows :size="14" class="text-surface-400" aria-hidden="true" />
-        <span class="font-semibold text-surface-700">{{ currentItinerary.title }}</span>
-        <span class="ml-auto text-sm font-semibold text-surface-600">{{ formatMoney(currentItinerary.estimatedTotalCost) }}</span>
-      </div>
-      <ul class="mt-2 space-y-1">
-        <li v-for="day in currentItinerary.days" :key="day.date" class="text-sm text-surface-600">
-          <span class="text-xs text-surface-400">{{ formatDay(day.date) }}</span>
-          <ul class="ml-4 mt-0.5 list-disc pl-4">
-            <li v-for="activity in day.activities" :key="activity.title">{{ activity.title }}</li>
-          </ul>
-          <ul v-if="day.transitLegs?.length" class="ml-4 mt-0.5 space-y-0.5">
-            <li v-for="(leg, legIndex) in day.transitLegs" :key="`formal-${day.date}-leg-${legIndex}`" class="flex items-center gap-2 text-xs text-surface-500">
-              <Route :size="13" class="text-surface-400" aria-hidden="true" />
-              <span>{{ formalTransitLabel(day, leg) }}</span>
-            </li>
-          </ul>
+    <!-- 3. Issue summary -->
+    <div v-if="issues.length" class="mt-6">
+      <h3 class="text-sm font-semibold text-surface-700">{{ issueTitle }}</h3>
+      <ul class="mt-2 space-y-2">
+        <li
+          v-for="(issue, index) in visibleIssues"
+          :key="`${issue.label}-${index}`"
+          :data-testid="`issue-card-${index}`"
+          class="rounded-xl border p-3"
+          :class="issue.kind === 'fail' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <Badge :variant="issue.kind === 'fail' ? 'danger' : 'warning'">
+              {{ issue.kind === 'fail' ? '需要调整' : '待核实' }}
+            </Badge>
+            <span class="text-sm font-semibold text-surface-800">{{ issue.label }}</span>
+          </div>
+          <p class="mt-1 text-sm text-surface-700">{{ issue.text }}</p>
+          <p v-if="issue.dates" class="mt-1 text-xs text-surface-500">{{ issue.dates }}</p>
         </li>
       </ul>
-    </div>
-    <p v-else class="mt-2 text-sm text-surface-500">当前尚无正式版本</p>
+      <button
+        v-if="issues.length > 3"
+        type="button"
+        class="mt-2 text-sm font-semibold text-primary-600 hover:text-primary-700 focus-visible:outline-2"
+        @click="showAllIssues = !showAllIssues"
+      >
+        {{ showAllIssues ? '收起' : `查看全部 ${issues.length} 项` }}
+      </button>
 
-    <!-- Metadata -->
-    <p v-if="reportRead.ok" class="mt-4 border-t border-surface-200/70 pt-3 text-xs text-surface-400">
-      验证时间 {{ formatValidatedAt(reportRead.value.validatedAt) }}
-    </p>
+      <div
+        v-if="hasEvidenceGaps"
+        class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 p-3"
+      >
+        <p class="m-0 max-w-2xl text-sm leading-relaxed text-sky-900">
+          可先同步城市情报或补充可信攻略，再重新规划；同步不会自动把未核实信息判为通过。
+        </p>
+        <Button variant="outline" size="sm" data-testid="verify-evidence" @click="emit('verify')">
+          去补充核实信息
+        </Button>
+      </div>
+    </div>
+
+    <!-- 4. Saved itinerary -->
+    <div class="mt-6">
+      <template v-if="currentItinerary">
+        <h3 class="text-sm font-semibold text-surface-700">已保存行程</h3>
+        <div class="mt-2 rounded-xl border border-surface-200/70 p-3">
+          <div class="flex items-center gap-2 text-sm">
+            <span class="font-semibold text-surface-700">{{ currentItinerary.title }}</span>
+            <span class="ml-auto text-sm font-semibold text-surface-600">{{ formatMoney(currentItinerary.estimatedTotalCost) }}</span>
+          </div>
+          <div v-if="comparisonDiffs.length" class="mt-2">
+            <p class="text-xs font-semibold text-surface-500">与已保存行程相比</p>
+            <ul class="mt-1 list-disc pl-4 text-sm text-surface-600">
+              <li v-for="diff in comparisonDiffs" :key="diff">{{ diff }}</li>
+            </ul>
+          </div>
+        </div>
+      </template>
+      <p v-else class="text-sm text-surface-500">方案验证通过后会自动保存为正式行程。</p>
+    </div>
   </Card>
 </template>
 
 <style scoped>
 .review-panel {
   border-left: 3px solid #f59e0b;
+}
+@media (prefers-reduced-motion: reduce) {
+  .review-panel * {
+    transition: none !important;
+  }
 }
 </style>

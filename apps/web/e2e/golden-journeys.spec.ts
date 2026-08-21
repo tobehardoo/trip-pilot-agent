@@ -307,10 +307,9 @@ test('G26 rollback VERIFIED creates a ROLLBACK version and shows a fresh report,
   // VERIFIED completion -> the review path is bypassed; a new ROLLBACK
   // version (version 3, source=ROLLBACK) becomes current with the fresh
   // VERIFIED report and evaluation.
-  await expect(page.getByRole('heading', { name: '硬可行性验证' })).toBeVisible()
-  await expect(page.getByText('已验证').first()).toBeVisible()
-  await expect(page.getByText('Opening hours verified')).toBeVisible()
-  await expect(page.getByRole('heading', { name: '规划需要确认' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: '行程已验证并保存' })).toBeVisible()
+  await expect(page.getByText('已保存').first()).toBeVisible()
+  await expect(page.getByRole('heading', { name: '方案需要调整' })).toHaveCount(0)
   await expect(page.getByText('版本 3').first()).toBeVisible()
   await expect(page.getByText('历史回滚')).toBeVisible()
 })
@@ -329,12 +328,13 @@ test('G27 rollback UNVERIFIED isolates the candidate and never shows verified wo
   await page.getByRole('button', { name: '回滚到版本 1' }).click()
   await page.getByRole('button', { name: '确认回滚到版本 1' }).click()
 
-  const reviewPanel = page.getByRole('region', { name: '规划需要确认' }).or(page.locator('.review-panel'))
+  const reviewPanel = page.locator('.review-panel')
   await expect(reviewPanel.first()).toBeVisible()
-  // B13_FIX R7 (P1-4): the UNKNOWN rule surfaces as a main risk up front;
-  // the report status badge lives inside the collapsed validation details.
-  await expect(page.getByText('主要风险')).toBeVisible()
-  await expect(page.getByText('Opening hours unknown').first()).toBeVisible()
+  // B15: the UNKNOWN rule surfaces as a Chinese issue summary; no verified
+  // wording anywhere on the user page.  B16: UNKNOWN reads as "system
+  // suggestion, confirm before departure".
+  await expect(page.getByText('待核实信息（1）')).toBeVisible()
+  await expect(page.getByText('部分地点的营业时间采用系统建议，建议出发前确认').first()).toBeVisible()
   await expect(page.getByText('未验证')).toHaveCount(0)
   // The rollback candidate is isolated: the review panel must never claim the
   // candidate was verified (the current formal version keeps its own badge).
@@ -356,15 +356,11 @@ test('G20 repair exhausted shows all three attempts in order with the remaining 
   await page.getByRole('button', { name: '回滚到版本 1' }).click()
   await page.getByRole('button', { name: '确认回滚到版本 1' }).click()
 
-  await expect(page.getByRole('heading', { name: '规划需要确认' })).toBeVisible()
-  // B13_FIX R7 (P1-4): technical details (repair history, raw codes) are
-  // collapsed behind the details toggle; the candidate and main risks lead.
+  await expect(page.getByRole('heading', { name: '方案需要调整' })).toBeVisible()
+  // B15: repair history and raw codes are never shown on the user page; the
+  // candidate and the Chinese issue summary lead.
   await expect(page.getByText('修复历史')).toHaveCount(0)
   await expect(page.getByText('DUPLICATE_POI', { exact: true })).toHaveCount(0)
-  await page.getByTestId('validation-details-toggle').click()
-  await expect(page.getByText('修复历史')).toBeVisible()
-  await expect(page.getByText(/尝试 1/)).toBeVisible()
-  await expect(page.getByText(/尝试 2/)).toBeVisible()
-  await expect(page.getByText(/尝试 3/)).toBeVisible()
-  await expect(page.getByText('DUPLICATE_POI', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('validation-details-toggle')).toHaveCount(0)
+  await expect(page.getByText(/尝试 1/)).toHaveCount(0)
 })

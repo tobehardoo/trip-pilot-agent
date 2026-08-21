@@ -68,7 +68,7 @@ function submit() {
         <span class="w-2.5 h-2.5 -mt-1.5 rounded-full bg-primary-400 border-2 border-primary-900 outline outline-1 outline-primary-400" />
         <span class="w-2.5 h-2.5 -mt-1.5 rounded-full bg-primary-400 border-2 border-primary-900 outline outline-1 outline-primary-400" />
       </div>
-      <p class="relative z-10 mt-4 hidden md:block text-xs font-semibold text-primary-300/70 m-0">GUANGZHOU · 23°N</p>
+      <p class="relative z-10 mt-4 hidden md:block text-xs font-semibold text-primary-300/70 m-0">广州 · 北纬 23°</p>
     </section>
 
     <!-- Auth Panel -->

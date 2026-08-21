@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { CalendarDays, Clock3, MapPin, Route, Wallet } from 'lucide-vue-next'
 
 import { getSharedItinerary, type SharedItinerary } from '../lib/api'
+import { commuteModeLabel } from '../lib/transit'
 
 const route = useRoute()
 const itinerary = ref<SharedItinerary | null>(null)
@@ -44,6 +45,12 @@ function timeLabel(value: string) {
 
 function minutes(seconds: number) {
   return Math.round(seconds / 60)
+}
+
+function transitCost(leg: SharedItinerary['days'][number]['transitLegs'][number]) {
+  if (leg.mode === 'DRIVING') return null
+  if (leg.displayCost !== undefined) return leg.displayCost
+  return leg.estimatedCost ?? null
 }
 </script>
 
@@ -93,7 +100,7 @@ function minutes(seconds: number) {
         </ol>
         <ul v-if="day.transitLegs.length" class="mt-4 space-y-2 p-0 text-sm text-surface-500">
           <li v-for="(leg, index) in day.transitLegs" :key="`${day.date}-${index}-${leg.mode}`">
-            {{ leg.mode }} · {{ minutes(leg.durationSeconds) }} 分钟 · ¥{{ leg.estimatedCost }}<span v-if="leg.estimated"> · 估算</span><span v-if="leg.stale"> · 待核验</span>
+            {{ leg.modeLabel ?? commuteModeLabel(leg.mode) }} · {{ minutes(leg.routeDurationSeconds ?? leg.durationSeconds) }} 分钟<span v-if="leg.waitSeconds"> · 候车 {{ minutes(leg.waitSeconds) }} 分钟</span><span v-if="transitCost(leg) !== null"> · ¥{{ transitCost(leg) }}</span><span v-if="leg.estimated"> · 估算</span><span v-if="leg.stale"> · 待核验</span>
           </li>
         </ul>
       </section>

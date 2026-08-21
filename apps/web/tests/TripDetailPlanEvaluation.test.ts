@@ -1,5 +1,5 @@
-import { cleanup, render } from '@testing-library/vue'
-import { afterEach, expect, test } from 'vitest'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
+import { afterEach, expect, test, vi } from 'vitest'
 
 import TripDetail from '../src/components/TripDetail.vue'
 import type { Itinerary, PlanEvaluation, Trip, User } from '../src/lib/api'
@@ -77,7 +77,7 @@ const evaluation: PlanEvaluation = {
 }
 
 function props(
-  planningState: 'idle' | 'queued' | 'succeeded' | 'failed' | 'cancelled',
+  planningState: 'idle' | 'queued' | 'succeeded' | 'waiting_user' | 'failed' | 'cancelled',
   value?: PlanEvaluation | null,
 ) {
   return {
@@ -96,6 +96,62 @@ function props(
     reloadTrip: async () => true,
     evaluation: value,
   }
+}
+
+const reviewReport = {
+  schemaVersion: 1,
+  reportId: '33333333-3333-4333-8333-333333333333',
+  validatorVersion: 'hard-validator-v4',
+  itineraryFingerprint: 'a'.repeat(64),
+  status: 'UNVERIFIED',
+  validatedAt: '2026-08-01T00:00:00Z',
+  requiredRuleIds: ['OPENING_HOURS'],
+  missingRequiredRuleIds: [],
+  summary: {
+    totalCount: 1,
+    passCount: 0,
+    failCount: 0,
+    unknownCount: 1,
+    notApplicableCount: 0,
+    missingRequiredCount: 0,
+  },
+  ruleResults: [{
+    ruleId: 'OPENING_HOURS',
+    ruleVersion: 'hard-rule-v1',
+    outcome: 'UNKNOWN',
+    reasonCode: 'OPENING_HOURS_UNVERIFIED',
+    message: 'opening hours are not verified',
+    affectedDates: ['2026-08-01'],
+    affectedEntityRefs: ['activity:22222222-2222-4222-8222-222222222222'],
+    evidenceRefs: [],
+    repairable: false,
+  }],
+  repairAttempts: [],
+}
+
+const reviewCandidate = {
+  title: '广州预览方案',
+  days: [{
+    date: '2026-08-01',
+    dayType: null,
+    activities: [{
+      activityId: '22222222-2222-4222-8222-222222222222',
+      title: '博物馆',
+      startTime: '2026-08-01T09:00:00+08:00',
+      endTime: '2026-08-01T11:00:00+08:00',
+      estimatedCost: 0,
+      source: 'AMAP',
+      providerPoiId: 'museum-poi',
+      coordinates: null,
+      address: '博物馆路',
+      typeCode: null,
+      typeName: null,
+      kind: null,
+      timeFixed: null,
+    }],
+    transitLegs: [],
+  }],
+  estimatedTotalCost: 100,
 }
 
 test('shows the current version evaluation after reopening an idle workspace', () => {
@@ -124,4 +180,21 @@ test('keeps the current version evaluation visible when a newer planning attempt
 
   expect(view.getByText('97/100')).toBeTruthy()
   expect(view.getByText('Planning failed')).toBeTruthy()
+})
+
+test('verification action scrolls to the guide intelligence evidence tools', async () => {
+  const scrollSpy = vi.fn()
+  Element.prototype.scrollIntoView = scrollSpy
+  const value = props('waiting_user')
+  const view = render(TripDetail, {
+    props: {
+      ...value,
+      feasibilityReport: reviewReport,
+      candidateItinerary: reviewCandidate,
+    },
+  })
+
+  await fireEvent.click(view.getByTestId('verify-evidence'))
+  expect(scrollSpy).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' })
+  expect(view.getByRole('heading', { name: '攻略情报' })).toBeTruthy()
 })

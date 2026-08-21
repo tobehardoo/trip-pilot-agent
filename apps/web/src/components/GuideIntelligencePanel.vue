@@ -309,7 +309,7 @@ function displayStatement(statement: string) {
   <section class="rounded-2xl border border-surface-200 bg-white shadow-card p-6 sm:p-7" aria-labelledby="guide-intelligence-title">
     <div class="flex justify-between gap-6 mb-5">
       <div>
-        <p class="text-xs font-bold uppercase tracking-widest text-primary-500 mb-1">Live Guide Intelligence</p>
+        <p class="text-xs font-bold tracking-widest text-primary-500 mb-1">实时攻略信息</p>
         <h2 id="guide-intelligence-title" class="flex items-center gap-2.5 mt-0.5 mb-2 text-xl font-bold text-surface-800">
           <Radar :size="19" class="text-primary-500" aria-hidden="true" />攻略情报
         </h2>

@@ -283,7 +283,9 @@ test('restores a session and opens the trip planning workspace', async ({ page }
 
   await expect(page).toHaveURL(`/trips/${tripId}`)
   await expect(page.getByRole('heading', { name: trip.title, level: 1 })).toBeVisible()
-  await expect(page.getByLabel('行程版本').getByText('版本 2')).toBeVisible()
+  // 历史版本默认收进 Drawer：先打开再断言「版本 2」可见（功能保持不变）。
+  await page.getByTestId('open-version-history').click()
+  await expect(page.getByLabel('历史版本').getByText('版本 2')).toBeVisible()
   await expect(page.getByRole('button', { name: '选择活动 漫步沙面岛' })).toBeVisible()
 })
 

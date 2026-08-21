@@ -75,9 +75,13 @@ public class ItineraryExportService {
                 lines.add(formatActivity(activity));
             }
             for (ItineraryService.TransitLegResponse leg : day.transitLegs()) {
-                lines.add("Transit " + leg.mode() + ": " + leg.distanceMeters() + " m, "
-                        + Math.round(leg.durationSeconds() / 60.0) + " min, "
-                        + amount(leg.estimatedCost()) + (leg.estimated() ? " (estimated)" : ""));
+                String cost = leg.displayCost() == null ? "" : ", 费用 " + amount(leg.displayCost());
+                String wait = leg.waitSeconds() == 0
+                        ? "" : ", 含候车 " + Math.round(leg.waitSeconds() / 60.0) + " 分钟";
+                String estimate = leg.estimated() ? "（估算）" : "";
+                lines.add("交通 " + leg.modeLabel() + "：" + leg.distanceMeters() + " 米，"
+                        + Math.round(leg.routeDurationSeconds() / 60.0) + " 分钟"
+                        + wait + cost + estimate);
             }
         }
         if (itinerary.knowledge() != null && !itinerary.knowledge().citations().isEmpty()) {

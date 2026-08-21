@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -18,6 +19,7 @@ import io.github.tobehardoo.trippilot.common.ApiException;
 import io.github.tobehardoo.trippilot.guide.GuideImportService;
 import io.github.tobehardoo.trippilot.itinerary.ItineraryMapper;
 import io.github.tobehardoo.trippilot.itinerary.ItineraryService;
+import io.github.tobehardoo.trippilot.itinerary.TransitLegSemantics;
 import io.github.tobehardoo.trippilot.infrastructure.mq.OutboxEventRecord;
 import io.github.tobehardoo.trippilot.infrastructure.mq.OutboxMapper;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
@@ -341,9 +343,61 @@ public class PlanningTaskService {
             List<LocalDate> changedDates,
             ItineraryService.ItineraryResponse candidate
     ) {
+        return createCandidateValidation(
+                ownerId, tripId, idempotencyKey, candidateType, baselineVersionId,
+                sourceVersionId, requestHash, changedDates, candidate, null);
+    }
+
+    private List<TransitRouteIntent> candidateTaxiRouteIntents(
+            ItineraryService.ItineraryResponse candidate,
+            List<LocalDate> impactedDates
+    ) {
+        List<TransitRouteIntent> intents = new java.util.ArrayList<>();
+        for (ItineraryService.DayResponse day : candidate.days()) {
+            Map<UUID, Integer> activityIndexes = new HashMap<>();
+            for (int index = 0; index < day.activities().size(); index++) {
+                activityIndexes.put(day.activities().get(index).id(), index);
+            }
+            for (ItineraryService.TransitLegResponse leg : day.transitLegs()) {
+                if (!"TAXI".equals(leg.mode())) {
+                    continue;
+                }
+                Integer fromIndex = activityIndexes.get(leg.fromActivityId());
+                Integer toIndex = activityIndexes.get(leg.toActivityId());
+                if (fromIndex == null || toIndex == null) {
+                    throw new IllegalStateException(
+                            "Candidate TAXI endpoints are missing from their itinerary day");
+                }
+                intents.add(new TransitRouteIntent(
+                        day.date(), fromIndex, toIndex, "TAXI",
+                        leg.estimatedCost() == null
+                                ? TransitLegSemantics.taxiFare(leg.distanceMeters())
+                                : leg.estimatedCost(),
+                        impactedDates.contains(day.date())));
+            }
+        }
+        return List.copyOf(intents);
+    }
+
+    @Transactional
+    public PlanningTaskResponse createCandidateValidation(
+            UUID ownerId,
+            UUID tripId,
+            UUID idempotencyKey,
+            String candidateType,
+            UUID baselineVersionId,
+            UUID sourceVersionId,
+            String requestHash,
+            List<LocalDate> changedDates,
+            ItineraryService.ItineraryResponse candidate,
+            List<TransitRouteIntent> routeIntents
+    ) {
         TripService.TripResponse trip = tripService.get(ownerId, tripId);
         List<LocalDate> canonicalChanged = validateCandidateDates(changedDates, trip);
         List<LocalDate> impacted = expandCandidateDates(canonicalChanged, trip);
+        List<TransitRouteIntent> effectiveRouteIntents = routeIntents == null
+                ? candidateTaxiRouteIntents(candidate, impacted)
+                : List.copyOf(routeIntents);
         var existing = planningTaskMapper.findOwnedByIdempotencyKey(
                 tripId, idempotencyKey, ownerId);
         if (existing.isPresent()) {
@@ -391,7 +445,7 @@ public class PlanningTaskService {
                 ownerId, task.id(), trip, guideFacts, now);
         if (planningTaskEventMapper.insert(new PlanningTaskEventRecord(
                 null, UUID.randomUUID(), task.id(), "PLANNING_QUEUED", 1,
-                writeJson(new TaskStatusPayload(TASK_STATUS)), now
+                writeJson(new CandidateQueuedPayload(TASK_STATUS, effectiveRouteIntents)), now
         )) != 1) {
             throw new IllegalStateException("Could not persist candidate planning queued event");
         }
@@ -419,6 +473,26 @@ public class PlanningTaskService {
         log.info("candidate queued: taskType={} candidateType={}",
                 task.taskType(), candidateType);
         return toResponse(task);
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Optional<PlanningTaskResponse> replayCandidateValidation(
+            UUID ownerId,
+            UUID tripId,
+            UUID idempotencyKey,
+            String candidateType,
+            UUID baselineVersionId,
+            UUID sourceVersionId,
+            String requestHash
+    ) {
+        return planningTaskMapper.findOwnedByIdempotencyKey(
+                        tripId, idempotencyKey, ownerId)
+                .map(existing -> {
+                    PlanningTaskIdempotency.requireCandidateIdentityMatch(
+                            existing, candidateType, baselineVersionId,
+                            sourceVersionId, requestHash);
+                    return toResponse(existing);
+                });
     }
 
     private List<LocalDate> validateCandidateDates(
@@ -483,12 +557,8 @@ public class PlanningTaskService {
                 ));
             }
             List<ReplanTransitSnapshot> transitLegs = day.transitLegs().stream()
-                    .map(leg -> new ReplanTransitSnapshot(
-                            activityIndexes.get(leg.fromActivityId()),
-                            activityIndexes.get(leg.toActivityId()), leg.mode(),
-                            leg.distanceMeters(), leg.durationSeconds(), leg.provider(),
-                            leg.estimated(), leg.polyline(), leg.locked()
-                    ))
+                    .map(leg -> toReplanTransitSnapshot(
+                            leg, day.activities(), activityIndexes))
                     .toList();
             return new ReplanDaySnapshot(day.date(), activities, transitLegs, day.dayType());
         }).toList();
@@ -498,15 +568,82 @@ public class PlanningTaskService {
         );
     }
 
-    private String planningProvider(ItineraryService.ItineraryResponse itinerary) {
-        if ("MIXED".equals(itinerary.provider())) {
-            return "MIXED";
+    private ReplanTransitSnapshot toReplanTransitSnapshot(
+            ItineraryService.TransitLegResponse leg,
+            List<ItineraryService.ActivityResponse> activities,
+            Map<UUID, Integer> activityIndexes
+    ) {
+        Integer fromIndex = activityIndexes.get(leg.fromActivityId());
+        Integer toIndex = activityIndexes.get(leg.toActivityId());
+        if (fromIndex == null || toIndex == null) {
+            throw invalidReplanScope("Transit endpoints must belong to their itinerary day");
         }
-        return itinerary.days().stream()
+        if (!"TAXI".equals(leg.mode())) {
+            List<ItineraryService.CoordinatesResponse> polyline = leg.polyline();
+            if (polyline == null || polyline.isEmpty()) {
+                if (!"DEMO".equals(leg.provider()) || !leg.estimated()) {
+                    throw invalidReplanScope(
+                            "Real transit route geometry must not be empty");
+                }
+                ItineraryService.CoordinatesResponse from =
+                        activities.get(fromIndex).coordinates();
+                ItineraryService.CoordinatesResponse to =
+                        activities.get(toIndex).coordinates();
+                if (from == null || to == null) {
+                    throw invalidReplanScope(
+                            "Estimated transit routes require endpoint coordinates");
+                }
+                polyline = List.of(from, to);
+            }
+            return new ReplanTransitSnapshot(
+                    fromIndex, toIndex, leg.mode(), leg.distanceMeters(),
+                    leg.durationSeconds(), leg.provider(), leg.estimated(),
+                    polyline, leg.locked(), leg.estimatedCost(), leg.costSource());
+        }
+        if (leg.durationSeconds()
+                < TransitLegSemantics.TAXI_WAIT_SECONDS) {
+            throw invalidReplanScope("Taxi duration must include the configured wait time");
+        }
+        ItineraryService.CoordinatesResponse from = activities.get(fromIndex).coordinates();
+        ItineraryService.CoordinatesResponse to = activities.get(toIndex).coordinates();
+        if (from == null || to == null) {
+            throw invalidReplanScope("Taxi replanning requires both endpoint coordinates");
+        }
+        List<ItineraryService.CoordinatesResponse> polyline = leg.polyline();
+        String provider;
+        boolean estimated;
+        if ("AMAP".equals(leg.provider())) {
+            if (polyline == null || polyline.isEmpty()) {
+                throw invalidReplanScope("AMAP taxi replanning requires route geometry");
+            }
+            provider = "AMAP";
+            estimated = false;
+        } else if ("DEMO".equals(leg.provider()) && leg.estimated()) {
+            provider = "DEMO";
+            estimated = true;
+            if (polyline == null || polyline.isEmpty()) {
+                polyline = List.of(from, to);
+            }
+        } else {
+            throw invalidReplanScope("Taxi replanning has unsupported provider provenance");
+        }
+        return new ReplanTransitSnapshot(
+                fromIndex, toIndex, "DRIVING", leg.distanceMeters(),
+                leg.durationSeconds()
+                        - TransitLegSemantics.TAXI_WAIT_SECONDS,
+                provider, estimated, polyline, leg.locked(),
+                leg.estimatedCost(), leg.costSource());
+    }
+
+    private String planningProvider(ItineraryService.ItineraryResponse itinerary) {
+        Set<String> activityProviders = itinerary.days().stream()
                 .flatMap(day -> day.activities().stream())
                 .map(ItineraryService.ActivityResponse::source)
-                .findFirst()
-                .orElse(itinerary.provider());
+                .collect(java.util.stream.Collectors.toSet());
+        if (activityProviders.size() == 1) {
+            return activityProviders.iterator().next();
+        }
+        return itinerary.provider();
     }
 
     @Transactional
@@ -580,6 +717,7 @@ public class PlanningTaskService {
                 metadata.actualProviders(), metadata.fallbackReason(),
                 metadata.fallbackOperations(), metadata.evaluation(),
                 metadata.feasibilityReport(), metadata.candidateItinerary(),
+                metadata.conflicts(), metadata.relaxationSuggestions(),
                 task.createdAt(), task.updatedAt()
         );
     }
@@ -590,7 +728,8 @@ public class PlanningTaskService {
                 .orElseGet(() -> new TerminalMetadata(
                         task.errorCode(), null, null, null, null, null,
                         null, null, task.errorMessage(), null, null, null,
-                        List.of(), null, List.of(), null, null, null
+                        List.of(), null, List.of(), null, null, null,
+                        null, null
                 ));
     }
 
@@ -609,7 +748,8 @@ public class PlanningTaskService {
                 outcome.fallbackOperations(), outcome.evaluation(),
                 outcome.feasibilityReport() == null ? null
                         : objectMapper.valueToTree(outcome.feasibilityReport()),
-                outcome.candidateItinerary()
+                outcome.candidateItinerary(),
+                outcome.conflicts(), outcome.relaxationSuggestions()
         );
     }
 
@@ -658,6 +798,8 @@ public class PlanningTaskService {
             PlanEvaluation evaluation,
             JsonNode feasibilityReport,
             JsonNode candidateItinerary,
+            List<ConflictResponse> conflicts,
+            List<RelaxationSuggestionResponse> relaxationSuggestions,
             Instant createdAt,
             Instant updatedAt
     ) {
@@ -681,7 +823,22 @@ public class PlanningTaskService {
             List<FallbackOperationResponse> fallbackOperations,
             PlanEvaluation evaluation,
             JsonNode feasibilityReport,
-            JsonNode candidateItinerary
+            JsonNode candidateItinerary,
+            List<ConflictResponse> conflicts,
+            List<RelaxationSuggestionResponse> relaxationSuggestions
+    ) {
+    }
+
+    public record ConflictResponse(
+            String code,
+            String message,
+            List<String> affected
+    ) {
+    }
+
+    public record RelaxationSuggestionResponse(
+            String code,
+            String message
     ) {
     }
 
@@ -817,7 +974,9 @@ public class PlanningTaskService {
             String provider,
             boolean estimated,
             List<ItineraryService.CoordinatesResponse> polyline,
-            boolean locked
+            boolean locked,
+            java.math.BigDecimal estimatedCost,
+            String costSource
     ) {
     }
 
@@ -861,5 +1020,32 @@ public class PlanningTaskService {
     }
 
     private record TaskStatusPayload(String status) {
+    }
+
+    private record CandidateQueuedPayload(
+            String status,
+            List<TransitRouteIntent> routeIntents
+    ) {
+        private CandidateQueuedPayload {
+            routeIntents = routeIntents == null ? List.of() : List.copyOf(routeIntents);
+        }
+    }
+
+    public record TransitRouteIntent(
+            LocalDate date,
+            int fromActivityIndex,
+            int toActivityIndex,
+            String targetMode,
+            java.math.BigDecimal candidateEstimatedCost,
+            boolean requireRealRoute
+    ) {
+        public TransitRouteIntent {
+            if (date == null || fromActivityIndex < 0 || toActivityIndex <= fromActivityIndex
+                    || !"TAXI".equals(targetMode)
+                    || candidateEstimatedCost == null
+                    || candidateEstimatedCost.signum() < 0) {
+                throw new IllegalArgumentException("Candidate transit route intent is invalid");
+            }
+        }
     }
 }

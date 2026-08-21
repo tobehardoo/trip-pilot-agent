@@ -1,6 +1,10 @@
 package io.github.tobehardoo.trippilot.itinerary;
 
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
@@ -21,6 +25,8 @@ import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningReviewRequiredEv
 import io.github.tobehardoo.trippilot.planning.PlanningCompletionService;
 import io.github.tobehardoo.trippilot.planning.PlanningEventRejectedException;
 import io.github.tobehardoo.trippilot.planning.PlanningReviewService;
+import io.github.tobehardoo.trippilot.route.AgentRouteClient;
+import io.github.tobehardoo.trippilot.route.AgentRouteDtos;
 import io.github.tobehardoo.trippilot.support.PlanningCompletedEventFixture;
 import io.github.tobehardoo.trippilot.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -28,10 +34,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -47,7 +57,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@Import(ItineraryEditFlowIntegrationTest.LegacyEditRegressionController.class)
+@Import({
+        ItineraryEditFlowIntegrationTest.LegacyEditRegressionController.class,
+        ItineraryEditFlowIntegrationTest.AutoRouteTestConfiguration.class
+})
 class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     private static UUID nextIdempotencyKey() {
@@ -80,6 +93,9 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Autowired
     private EditRequestFingerprint editRequestFingerprint;
+
+    @Autowired
+    private ScriptedAgentRouteClient routeClient;
 
     @Test
     void previewsDeletionWithoutChangingTheCurrentVersion() throws Exception {
@@ -171,6 +187,249 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
         assertThat(uuid(currentItinerary(context), "versionId")).isEqualTo(versionId);
         assertThat(count("business.itinerary_version")).isEqualTo(1);
+    }
+
+    @Test
+    void explicitTaxiUsesDrivingOnTheWireRestoresTaxiAndReplaysAfterCompletion()
+            throws Exception {
+        PlanningContext context = completedItinerary("edit-candidate-taxi@example.com");
+        JsonNode baseline = currentItinerary(context);
+        UUID baselineVersionId = uuid(baseline, "versionId");
+        UUID transitLegId = uuid(baseline.at("/days/0/transitLegs/0"), "id");
+        UUID idempotencyKey = nextIdempotencyKey();
+        String request = batchEditJson(baselineVersionId, transitEditJson(
+                baselineVersionId, transitLegId, "TAXI", false));
+
+        JsonNode accepted = json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isAccepted())
+                .andReturn());
+        UUID taskId = uuid(accepted, "taskId");
+        JsonNode command = candidateCommand(taskId);
+        ObjectNode wireLeg = (ObjectNode) command.at(
+                "/payload/itinerary/days/0/transitLegs/0");
+        assertThat(wireLeg.path("mode").asText()).isEqualTo("DRIVING");
+        assertThat(wireLeg.path("mode").asText()).isNotEqualTo("TAXI");
+
+        JsonNode queuedPayload = objectMapper.readTree(jdbcTemplate.queryForObject("""
+                SELECT payload::text FROM business.planning_task_event
+                WHERE task_id = ? AND event_type = 'PLANNING_QUEUED'
+                ORDER BY id LIMIT 1
+                """, String.class, taskId));
+        assertThat(queuedPayload.at("/routeIntents/0/date").asText())
+                .isEqualTo("2026-08-01");
+        assertThat(queuedPayload.at("/routeIntents/0/fromActivityIndex").asInt())
+                .isZero();
+        assertThat(queuedPayload.at("/routeIntents/0/toActivityIndex").asInt())
+                .isEqualTo(1);
+        assertThat(queuedPayload.at("/routeIntents/0/targetMode").asText())
+                .isEqualTo("TAXI");
+        BigDecimal candidateLegCost = wireLeg.path("estimatedCost").decimalValue();
+        BigDecimal candidateTotal = command.at("/payload/itinerary/estimatedTotalCost")
+                .decimalValue();
+        assertThat(queuedPayload.at("/routeIntents/0/candidateEstimatedCost")
+                .decimalValue()).isEqualByComparingTo(candidateLegCost);
+        assertThat(queuedPayload.at("/routeIntents/0/requireRealRoute").asBoolean())
+                .isTrue();
+
+        wireLeg.put("mode", "DRIVING");
+        wireLeg.put("distanceMeters", 2000);
+        wireLeg.put("durationSeconds", 600);
+        wireLeg.put("provider", "AMAP");
+        wireLeg.put("estimated", false);
+        wireLeg.remove("estimatedCost");
+        wireLeg.remove("costSource");
+        ArrayNode polyline = wireLeg.putArray("polyline");
+        polyline.add(command.at("/payload/itinerary/days/0/activities/0/coordinates"));
+        polyline.add(command.at("/payload/itinerary/days/0/activities/1/coordinates"));
+        ((ObjectNode) command.at("/payload/itinerary"))
+                .put("estimatedTotalCost", candidateTotal.subtract(candidateLegCost));
+
+        completionService.handle(candidateCompletedEvent(
+                context.tripId(), taskId, command));
+
+        JsonNode persisted = currentItinerary(context);
+        JsonNode taxi = persisted.at("/days/0/transitLegs/0");
+        assertThat(taxi.path("mode").asText()).isEqualTo("TAXI");
+        assertThat(taxi.path("provider").asText()).isEqualTo("AMAP");
+        assertThat(taxi.path("estimated").asBoolean()).isTrue();
+        assertThat(taxi.path("durationSeconds").asInt()).isEqualTo(900);
+        assertThat(taxi.path("routeDurationSeconds").asInt()).isEqualTo(600);
+        assertThat(taxi.path("waitSeconds").asInt()).isEqualTo(300);
+        assertThat(taxi.path("costSource").asText()).isEqualTo("RULE_ESTIMATE");
+        assertThat(taxi.path("estimatedCost").decimalValue())
+                .isEqualByComparingTo("17.20");
+        assertThat(persisted.path("estimatedTotalCost").decimalValue())
+                .isEqualByComparingTo(
+                        candidateTotal.subtract(candidateLegCost).add(new BigDecimal("17.20")));
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.taskId").value(taskId.toString()))
+                .andExpect(jsonPath("$.status").value("SUCCEEDED"));
+
+        assertThat(count("business.planning_task")).isEqualTo(2);
+        assertThat(count("business.itinerary_version")).isEqualTo(2);
+    }
+
+    @Test
+    void autoUsesThePythonRecommendationOutsideTheEditTransactionAndOnlyOnce()
+            throws Exception {
+        routeClient.reset("TRANSIT", false);
+        PlanningContext context = completedItinerary("edit-candidate-auto@example.com");
+        JsonNode baseline = currentItinerary(context);
+        UUID baselineVersionId = uuid(baseline, "versionId");
+        UUID transitLegId = uuid(baseline.at("/days/0/transitLegs/0"), "id");
+        UUID idempotencyKey = nextIdempotencyKey();
+        String request = batchEditJson(baselineVersionId, transitEditJson(
+                baselineVersionId, transitLegId, "AUTO", false));
+
+        JsonNode accepted = json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isAccepted())
+                .andReturn());
+        UUID taskId = uuid(accepted, "taskId");
+        JsonNode command = candidateCommand(taskId);
+        assertThat(command.at("/payload/itinerary/days/0/transitLegs/0/mode")
+                .asText()).isEqualTo("TRANSIT");
+        assertThat(command.at("/payload/itinerary/days/0/transitLegs/0/polyline").size())
+                .isEqualTo(2);
+        assertThat(command.at("/payload/itinerary/days/0/transitLegs/0/provider")
+                .asText()).isEqualTo("DEMO");
+        assertThat(command.at("/payload/itinerary/days/0/transitLegs/0/estimated")
+                .asBoolean()).isTrue();
+        assertThat(routeClient.requests).hasSize(1);
+        assertThat(routeClient.transactionStates).containsExactly(false);
+        AgentRouteDtos.RecommendRequest recommendationRequest =
+                routeClient.requests.getFirst();
+        assertThat(recommendationRequest.city()).isEqualTo("Guangzhou");
+        assertThat(recommendationRequest.mobilityLevel()).isEqualTo("STANDARD");
+        assertThat(recommendationRequest.origin().longitude())
+                .isEqualByComparingTo("113.3192630");
+
+        ObjectNode wireLeg = (ObjectNode) command.at(
+                "/payload/itinerary/days/0/transitLegs/0");
+        wireLeg.put("mode", "TRANSIT");
+        wireLeg.put("distanceMeters", 1800);
+        wireLeg.put("durationSeconds", 720);
+        wireLeg.put("provider", "AMAP");
+        wireLeg.put("estimated", false);
+        wireLeg.put("estimatedCost", 3.0);
+        ArrayNode polyline = wireLeg.putArray("polyline");
+        polyline.add(command.at("/payload/itinerary/days/0/activities/0/coordinates"));
+        polyline.add(command.at("/payload/itinerary/days/0/activities/1/coordinates"));
+        completionService.handle(candidateCompletedEvent(
+                context.tripId(), taskId, command));
+
+        JsonNode persisted = currentItinerary(context)
+                .at("/days/0/transitLegs/0");
+        assertThat(persisted.path("mode").asText()).isEqualTo("TRANSIT");
+        assertThat(persisted.path("provider").asText()).isEqualTo("AMAP");
+        assertThat(persisted.path("estimated").asBoolean()).isFalse();
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", idempotencyKey)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.taskId").value(taskId.toString()));
+        assertThat(routeClient.requests).hasSize(1);
+    }
+
+    @Test
+    void autoProviderFailureCreatesNeitherCandidateTaskNorVersion() throws Exception {
+        routeClient.reset("TRANSIT", true);
+        PlanningContext context = completedItinerary("edit-candidate-auto-failure@example.com");
+        JsonNode baseline = currentItinerary(context);
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(batchEditJson(uuid(baseline, "versionId"), transitEditJson(
+                                uuid(baseline, "versionId"),
+                                uuid(baseline.at("/days/0/transitLegs/0"), "id"),
+                                "AUTO", false))))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("ROUTE_PROVIDER_UNAVAILABLE"));
+
+        assertThat(count("business.planning_task")).isEqualTo(1);
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+        assertThat(routeClient.transactionStates).containsExactly(false);
+    }
+
+    @Test
+    void rejectsExplicitDrivingBecauseRoadIntentIsNotPersisted() throws Exception {
+        PlanningContext context = completedItinerary("edit-candidate-driving-rejected@example.com");
+        JsonNode baseline = currentItinerary(context);
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(batchEditJson(uuid(baseline, "versionId"), transitEditJson(
+                                uuid(baseline, "versionId"),
+                                uuid(baseline.at("/days/0/transitLegs/0"), "id"),
+                                "DRIVING", false))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("ITINERARY_EDIT_INVALID"));
+
+        assertThat(count("business.planning_task")).isEqualTo(1);
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsTaxiCompletionWhenWaitMakesTheValidatedRouteMissTheNextActivity()
+            throws Exception {
+        PlanningContext context = completedItinerary("edit-candidate-taxi-time-conflict@example.com");
+        JsonNode baseline = currentItinerary(context);
+        UUID taskId = uuid(json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(batchEditJson(uuid(baseline, "versionId"), transitEditJson(
+                                uuid(baseline, "versionId"),
+                                uuid(baseline.at("/days/0/transitLegs/0"), "id"),
+                                "TAXI", false))))
+                .andExpect(status().isAccepted())
+                .andReturn()), "taskId");
+        JsonNode command = candidateCommand(taskId);
+        ObjectNode wireLeg = (ObjectNode) command.at(
+                "/payload/itinerary/days/0/transitLegs/0");
+        wireLeg.put("mode", "DRIVING");
+        wireLeg.put("distanceMeters", 2000);
+        wireLeg.put("durationSeconds", 7000);
+        wireLeg.put("provider", "AMAP");
+        wireLeg.put("estimated", false);
+        wireLeg.remove("estimatedCost");
+        wireLeg.remove("costSource");
+        ArrayNode polyline = wireLeg.putArray("polyline");
+        polyline.add(command.at("/payload/itinerary/days/0/activities/0/coordinates"));
+        polyline.add(command.at("/payload/itinerary/days/0/activities/1/coordinates"));
+
+        PlanningCompletedEvent event = candidateCompletedEvent(
+                context.tripId(), taskId, command);
+        assertThatThrownBy(() -> completionService.handle(event))
+                .isInstanceOf(PlanningEventRejectedException.class)
+                .hasMessageContaining("does not fit");
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT status FROM business.planning_task WHERE id = ?",
+                String.class, taskId)).isEqualTo("QUEUED");
     }
 
     @Test
@@ -1091,7 +1350,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
-    void previewsTransitModeThatCannotFitAsRequiringReplanning() throws Exception {
+    void defersTransitTimeFeasibilityToTheProviderValidatedCandidate() throws Exception {
         PlanningContext context = completedItinerary("edit-transit-conflict@example.com");
         JsonNode current = currentItinerary(context);
         UUID versionId = uuid(current, "versionId");
@@ -1113,21 +1372,22 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transitEditJson(versionId, legId, "TRANSIT", false)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.canApply").value(false))
-                .andExpect(jsonPath("$.requiresReplan").value(true))
-                .andExpect(jsonPath("$.transitSelectionState").value("REQUIRES_REPLAN"))
+                .andExpect(jsonPath("$.canApply").value(true))
+                .andExpect(jsonPath("$.requiresReplan").value(false))
+                .andExpect(jsonPath("$.transitSelectionState").value("AVAILABLE"))
                 .andExpect(jsonPath("$.impactedDates.length()").value(1))
                 .andExpect(jsonPath("$.impactedActivityIds.length()").value(2))
-                .andExpect(jsonPath("$.warnings[0]").value("The selected transit mode requires schedule replanning"))
-                .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_TRANSIT_CONFLICT"));
+                .andExpect(jsonPath("$.warnings").isEmpty())
+                .andExpect(jsonPath("$.blockingReasons").isEmpty());
 
-        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits", context.tripId())
                         .header("Authorization", bearer(context.accessToken()))
                         .header("Idempotency-Key", nextIdempotencyKey().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(transitEditJson(versionId, legId, "TRANSIT", false)))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.code").value("ITINERARY_TRANSIT_CONFLICT"));
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.taskType").value("EDIT_VALIDATE"));
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
     }
 
     @Test
@@ -1314,6 +1574,87 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT version_source FROM business.itinerary_version WHERE id = ?
                 """, String.class, uuid(replanned, "versionId"))).isEqualTo("LOCAL_REPLAN");
+    }
+
+    @Test
+    void replansTaxiOverDrivingWireFactsAndRestoresFareWaitAndTotalCost() throws Exception {
+        PlanningContext context = completedItinerary("local-replan-taxi@example.com");
+        JsonNode source = currentItinerary(context);
+        UUID sourceVersionId = uuid(source, "versionId");
+        UUID sourceTransitLegId = uuid(source.at("/days/0/transitLegs/0"), "id");
+        jdbcTemplate.update("""
+                UPDATE business.transit_leg
+                SET mode = 'TAXI', distance_meters = 1000, duration_seconds = 800,
+                    provider = 'AMAP', estimated = true, estimated_cost = 14.60
+                WHERE id = ?
+                """, sourceTransitLegId);
+        jdbcTemplate.update("""
+                UPDATE business.itinerary_version
+                SET estimated_total_cost = 100.00
+                WHERE id = ?
+                """, sourceVersionId);
+
+        MvcResult taskResult = mockMvc.perform(post("/api/trips/{tripId}/itinerary/replans", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(replanJson(sourceVersionId, "2026-08-01")))
+                .andExpect(status().isAccepted())
+                .andReturn();
+        UUID taskId = uuid(json(taskResult), "taskId");
+        JsonNode command = replanCommand(taskId);
+        JsonNode wireLeg = command.at("/payload/itinerary/days/0/transitLegs/0");
+        assertThat(wireLeg.get("mode").asText()).isEqualTo("DRIVING");
+        assertThat(wireLeg.get("durationSeconds").asInt()).isEqualTo(500);
+        assertThat(wireLeg.get("provider").asText()).isEqualTo("AMAP");
+        assertThat(wireLeg.get("estimated").asBoolean()).isFalse();
+
+        completionService.handle(replanCompletedEvent(
+                context.tripId(), taskId, command, "DRIVING", 2000, 600));
+
+        JsonNode replanned = currentItinerary(context);
+        JsonNode taxi = replanned.at("/days/0/transitLegs/0");
+        assertThat(taxi.get("mode").asText()).isEqualTo("TAXI");
+        assertThat(taxi.get("provider").asText()).isEqualTo("AMAP");
+        assertThat(taxi.get("estimated").asBoolean()).isTrue();
+        assertThat(taxi.get("durationSeconds").asInt()).isEqualTo(900);
+        assertThat(taxi.get("routeDurationSeconds").asInt()).isEqualTo(600);
+        assertThat(taxi.get("waitSeconds").asInt()).isEqualTo(300);
+        assertThat(taxi.get("estimatedCost").decimalValue()).isEqualByComparingTo("17.20");
+        assertThat(replanned.get("estimatedTotalCost").decimalValue()).isEqualByComparingTo("102.60");
+    }
+
+    @Test
+    void mapsLegacyDemoTaxiToADemoDrivingSnapshotWithoutChangingActivityProvider()
+            throws Exception {
+        PlanningContext context = completedItinerary("local-replan-demo-taxi@example.com");
+        JsonNode source = currentItinerary(context);
+        UUID sourceVersionId = uuid(source, "versionId");
+        UUID sourceTransitLegId = uuid(source.at("/days/0/transitLegs/0"), "id");
+        jdbcTemplate.update("""
+                UPDATE business.transit_leg
+                SET mode = 'TAXI', distance_meters = 1000, duration_seconds = 800,
+                    provider = 'DEMO', estimated = true, polyline = CAST('[]' AS jsonb),
+                    estimated_cost = 14.60
+                WHERE id = ?
+                """, sourceTransitLegId);
+
+        UUID taskId = uuid(json(mockMvc.perform(post(
+                                "/api/trips/{tripId}/itinerary/replans", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", UUID.randomUUID())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(replanJson(sourceVersionId, "2026-08-01")))
+                .andExpect(status().isAccepted())
+                .andReturn()), "taskId");
+        JsonNode command = replanCommand(taskId);
+        JsonNode wireLeg = command.at("/payload/itinerary/days/0/transitLegs/0");
+
+        assertThat(command.at("/payload/itinerary/provider").asText()).isEqualTo("AMAP");
+        assertThat(wireLeg.path("mode").asText()).isEqualTo("DRIVING");
+        assertThat(wireLeg.path("provider").asText()).isEqualTo("DEMO");
+        assertThat(wireLeg.path("estimated").asBoolean()).isTrue();
+        assertThat(wireLeg.path("polyline").size()).isEqualTo(2);
     }
 
     @Test
@@ -1569,10 +1910,12 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         ObjectNode itinerary = command.at("/payload/itinerary").deepCopy();
         itinerary.remove("provider");
         payload.set("itinerary", itinerary);
-        return eventParser.parse(
+        ObjectNode upgraded = (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.upgradeToV9(
-                        objectMapper.writeValueAsString(root)
-                ).getBytes(StandardCharsets.UTF_8));
+                        objectMapper.writeValueAsString(root)));
+        upgraded.put("schemaVersion", 11);
+        ((ObjectNode) upgraded.path("payload")).put("hasBlocker", false);
+        return eventParser.parse(objectMapper.writeValueAsBytes(upgraded));
     }
 
     private PlanningReviewRequiredEvent candidateReviewEvent(
@@ -1580,6 +1923,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         ObjectNode root = (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.sharedReviewV1Fixture(
                         "review-v1-needs-repair-demo.json"));
+        root.put("schemaVersion", 2);
         root.put("eventId", UUID.randomUUID().toString());
         root.put("traceId", command.path("traceId").asText());
         root.put("taskId", taskId.toString());
@@ -1602,15 +1946,26 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     private PlanningCompletedEvent replanCompletedEvent(
             UUID tripId, UUID taskId, JsonNode command, int distanceMeters) throws Exception {
+        return replanCompletedEvent(tripId, taskId, command, "WALKING", distanceMeters, 480);
+    }
+
+    private PlanningCompletedEvent replanCompletedEvent(
+            UUID tripId,
+            UUID taskId,
+            JsonNode command,
+            String mode,
+            int distanceMeters,
+            int durationSeconds
+    ) throws Exception {
         ObjectNode itinerary = command.at("/payload/itinerary").deepCopy();
         String provider = itinerary.remove("provider").asText();
         ArrayNode activities = (ArrayNode) itinerary.at("/days/0/activities");
         ObjectNode transit = objectMapper.createObjectNode();
         transit.put("fromActivityIndex", 0);
         transit.put("toActivityIndex", 1);
-        transit.put("mode", "WALKING");
+        transit.put("mode", mode);
         transit.put("distanceMeters", distanceMeters);
-        transit.put("durationSeconds", 480);
+        transit.put("durationSeconds", durationSeconds);
         transit.put("provider", "AMAP");
         transit.put("estimated", false);
         ArrayNode polyline = transit.putArray("polyline");
@@ -1635,11 +1990,12 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         ((ObjectNode) knowledge.get("freshness")).remove("staleReason");
         payload.set("knowledge", knowledge);
         payload.set("itinerary", itinerary);
-        return eventParser.parse(
+        ObjectNode upgraded = (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.upgradeToV9(
-                        objectMapper.writeValueAsString(root)
-                ).getBytes(StandardCharsets.UTF_8)
-        );
+                        objectMapper.writeValueAsString(root)));
+        upgraded.put("schemaVersion", 11);
+        ((ObjectNode) upgraded.path("payload")).put("hasBlocker", false);
+        return eventParser.parse(objectMapper.writeValueAsBytes(upgraded));
     }
 
     private PlanningCompletedEvent replanCompletedEventWithTwoTransitLegs(
@@ -1668,11 +2024,12 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         ((ObjectNode) knowledge.get("freshness")).remove("staleReason");
         payload.set("knowledge", knowledge);
         payload.set("itinerary", itinerary);
-        return eventParser.parse(
+        ObjectNode upgraded = (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.upgradeToV9(
-                        objectMapper.writeValueAsString(root)
-                ).getBytes(StandardCharsets.UTF_8)
-        );
+                        objectMapper.writeValueAsString(root)));
+        upgraded.put("schemaVersion", 11);
+        ((ObjectNode) upgraded.path("payload")).put("hasBlocker", false);
+        return eventParser.parse(objectMapper.writeValueAsBytes(upgraded));
     }
 
     private ObjectNode replanTransitLeg(int fromIndex, int toIndex, ArrayNode activities) {
@@ -1734,6 +2091,15 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                   "transitLocked": %s
                 }
                 """.formatted(versionId, legId, mode, locked);
+    }
+
+    private String batchEditJson(UUID versionId, String edit) {
+        return """
+                {
+                  "baseVersionId": "%s",
+                  "edits": [%s]
+                }
+                """.formatted(versionId, edit);
     }
 
     private UUID ownerId(String email) {
@@ -1822,6 +2188,56 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     private record PlanningContext(String accessToken, UUID tripId) {
     }
 
+    @TestConfiguration
+    static class AutoRouteTestConfiguration {
+        @Bean
+        @Primary
+        ScriptedAgentRouteClient scriptedAgentRouteClient() {
+            return new ScriptedAgentRouteClient();
+        }
+    }
+
+    static final class ScriptedAgentRouteClient implements AgentRouteClient {
+        private final List<AgentRouteDtos.RecommendRequest> requests = new ArrayList<>();
+        private final List<Boolean> transactionStates = new ArrayList<>();
+        private String selectedMode = "TRANSIT";
+        private boolean fail;
+
+        void reset(String selectedMode, boolean fail) {
+            requests.clear();
+            transactionStates.clear();
+            this.selectedMode = selectedMode;
+            this.fail = fail;
+        }
+
+        @Override
+        public AgentRouteDtos.RouteFacts route(AgentRouteDtos.RouteRequest request) {
+            throw new AssertionError("AUTO must use the recommendation endpoint");
+        }
+
+        @Override
+        public AgentRouteDtos.Recommendation recommend(
+                AgentRouteDtos.RecommendRequest request
+        ) {
+            requests.add(request);
+            transactionStates.add(
+                    TransactionSynchronizationManager.isActualTransactionActive());
+            if (fail) {
+                throw new ApiException(
+                        org.springframework.http.HttpStatus.BAD_GATEWAY,
+                        "ROUTE_PROVIDER_UNAVAILABLE",
+                        "Route service is temporarily unavailable");
+            }
+            AgentRouteDtos.RouteFacts route = new AgentRouteDtos.RouteFacts(
+                    selectedMode, 1800, 720,
+                    List.of(request.origin(), request.destination()),
+                    BigDecimal.valueOf(3), 200, 1,
+                    "AMAP", false, false, Instant.parse("2026-08-20T04:00:00Z"));
+            return new AgentRouteDtos.Recommendation(
+                    selectedMode, "TEST_RECOMMENDATION", 2, false, route);
+        }
+    }
+
     /** Keeps legacy direct-write service regressions testable without exposing a production bypass. */
     @RestController
     @RequestMapping("/api/test/trips/{tripId}/itinerary")
@@ -1891,5 +2307,111 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 throw new IllegalArgumentException("Invalid regression-test request", exception);
             }
         }
+    }
+    @Test
+    void previewAcceptsAutoAndRejectsDrivingLikeCommit() throws Exception {
+        // F8: preview and commit must expose the same public mode contract —
+        // AUTO accepted (system decides), DRIVING rejected as a technical
+        // route mode.  They used to be inverted (preview: DRIVING yes/AUTO no;
+        // commit: AUTO yes/DRIVING no).
+        routeClient.reset("TRANSIT", false);
+        PlanningContext context = completedItinerary("preview-contract@example.com");
+        JsonNode baseline = currentItinerary(context);
+        UUID baselineVersionId = uuid(baseline, "versionId");
+        UUID transitLegId = uuid(baseline.at("/days/0/transitLegs/0"), "id");
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(baselineVersionId, transitLegId, "AUTO", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canApply").value(true));
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/preview", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(baselineVersionId, transitLegId, "DRIVING", false)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canApply").value(false))
+                .andExpect(jsonPath("$.blockingReasons[0].code").value("ITINERARY_EDIT_INVALID"));
+    }
+    @Test
+    void batchAutoResolvesAgainstPriorEditsInOrder() throws Exception {
+        // F1: in a batch, an AUTO transit edit must be resolved against the
+        // itinerary AS EDITED by the preceding edits — a prior MOVE of the
+        // FROM activity shifts the departure time the AUTO recommendation
+        // sees.  It used to resolve every AUTO against the untouched
+        // baseline, selecting a mode for the wrong OD/departure.
+        routeClient.reset("TRANSIT", false);
+        PlanningContext context = completedItinerary("batch-auto-order@example.com");
+        JsonNode baseline = currentItinerary(context);
+        UUID baselineVersionId = uuid(baseline, "versionId");
+        UUID fromActivityId = uuid(baseline.at("/days/0/activities/0"), "id");
+        UUID transitLegId = uuid(baseline.at("/days/0/transitLegs/0"), "id");
+        String move = """
+                ,
+                "targetDate": "2026-08-01",
+                "targetOrder": 0,
+                "targetStartTime": "2026-08-01T11:00:00+08:00",
+                "targetEndTime": "2026-08-01T12:00:00+08:00"
+                """;
+        String batch = batchEditJson(baselineVersionId,
+                editJson(baselineVersionId, "MOVE_ACTIVITY", fromActivityId, move) + "," +
+                transitEditJson(baselineVersionId, transitLegId, "AUTO", false));
+
+        mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(batch))
+                .andExpect(status().isAccepted());
+
+        assertThat(routeClient.requests).hasSize(1);
+        // FROM activity moved to end 12:00+08:00 -> departure must be 04:00Z,
+        // not the baseline 03:00Z (11:00+08:00).
+        assertThat(routeClient.requests.getFirst().departureAt())
+                .isEqualTo(java.time.OffsetDateTime.parse("2026-08-01T04:00:00Z"));
+    }
+    @Test
+    void concurrentSameKeyAutoCommitsCallRouteServiceOnce() throws Exception {
+        // F7: concurrent requests with the SAME Idempotency-Key must not each
+        // call the external route service — AUTO resolution happened before
+        // the DB idempotency reservation, so both used to recommend (1-3
+        // wasted provider calls).  With the per-key serialization only the
+        // winning request recommends; the loser replays the same task.
+        routeClient.reset("TRANSIT", false);
+        PlanningContext context = completedItinerary("concurrent-auto-key@example.com");
+        JsonNode baseline = currentItinerary(context);
+        UUID baselineVersionId = uuid(baseline, "versionId");
+        UUID transitLegId = uuid(baseline.at("/days/0/transitLegs/0"), "id");
+        UUID idempotencyKey = UUID.randomUUID();
+        String request = batchEditJson(baselineVersionId,
+                transitEditJson(baselineVersionId, transitLegId, "AUTO", false));
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+
+        try (java.util.concurrent.ExecutorService executor =
+                     java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<Integer> call = () -> {
+                start.await();
+                return mockMvc.perform(post("/api/trips/{tripId}/itinerary/edits/commit", context.tripId())
+                                .header("Authorization", bearer(context.accessToken()))
+                                .header("Idempotency-Key", idempotencyKey)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(request))
+                        .andReturn().getResponse().getStatus();
+            };
+            java.util.concurrent.Future<Integer> first = executor.submit(call);
+            java.util.concurrent.Future<Integer> second = executor.submit(call);
+            start.countDown();
+            assertThat(java.util.List.of(
+                    first.get(20, java.util.concurrent.TimeUnit.SECONDS),
+                    second.get(20, java.util.concurrent.TimeUnit.SECONDS)))
+                    // 202 accepted / 200 idempotent replay / 409 one-active
+                    .allMatch(status -> status == 202 || status == 200 || status == 409);
+        }
+
+        assertThat(routeClient.requests).hasSize(1);
     }
 }

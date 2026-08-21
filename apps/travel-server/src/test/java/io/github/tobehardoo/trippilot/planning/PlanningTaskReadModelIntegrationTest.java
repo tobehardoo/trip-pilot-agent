@@ -139,6 +139,40 @@ class PlanningTaskReadModelIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void failedRestSnapshotExposesConflictsAndRelaxationSuggestions() throws Exception {
+        PlanningContext context = createPlanningContext("readmodel-failed-rest@example.com");
+        setTaskState(context, "FAILED", "PLANNING_FAILED", """
+                {"status":"FAILED","errorCode":"NO_FEASIBLE_ITINERARY",
+                 "errorCategory":"PLANNING_INFEASIBLE","provider":"AMAP",
+                 "operation":"PLANNING","retryable":false,"retryCount":0,
+                 "fallbackAttempted":false,"fallbackSucceeded":false,
+                 "safeMessage":"时间不足，请调整条件后重试",
+                 "requestedProviderMode":"REAL_ONLY","primaryProvider":"AMAP",
+                 "actualProviders":["AMAP"],
+                 "conflicts":[{"code":"INSUFFICIENT_DAY_CAPACITY",
+                     "message":"实际交通时长无法在固定返程时间前完成",
+                     "affected":["DEPARTURE"]}],
+                 "relaxationSuggestions":[{"code":"EXTEND_AVAILABLE_TIME",
+                     "message":"请提前出发、延后返程时间，或减少前序行程"}]}
+                """);
+        JsonNode task = getTask(context);
+        assertThat(task.path("status").asText()).isEqualTo("FAILED");
+        assertThat(task.path("safeMessage").asText()).isEqualTo("时间不足，请调整条件后重试");
+        assertThat(task.path("conflicts")).hasSize(1);
+        assertThat(task.path("conflicts").path(0).path("code").asText())
+                .isEqualTo("INSUFFICIENT_DAY_CAPACITY");
+        assertThat(task.path("conflicts").path(0).path("message").asText())
+                .contains("固定返程时间");
+        assertThat(task.path("conflicts").path(0).path("affected").path(0).asText())
+                .isEqualTo("DEPARTURE");
+        assertThat(task.path("relaxationSuggestions")).hasSize(1);
+        assertThat(task.path("relaxationSuggestions").path(0).path("code").asText())
+                .isEqualTo("EXTEND_AVAILABLE_TIME");
+        assertThat(task.path("relaxationSuggestions").path(0).path("message").asText())
+                .contains("提前出发");
+    }
+
+    @Test
     void cancelledExposesNoOutcomeFields() throws Exception {
         PlanningContext context = createPlanningContext("readmodel-cancelled@example.com");
         setTaskState(context, "CANCELLED", "PLANNING_CANCELLED", """

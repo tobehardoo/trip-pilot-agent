@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -97,7 +98,10 @@ public class PlanningReviewRequiredEventParser {
             }
         }
         int schemaVersion = event.path("schemaVersion").asInt();
-        if (schemaVersion != 1) {
+        // v1 is the historical review contract; v2 (B19-B) is structurally
+        // identical but allows TRANSIT as a planner-generated provider route
+        // mode, mirroring completion v11.
+        if (schemaVersion != 1 && schemaVersion != 2) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         JsonNode payload = event.path("payload");
@@ -146,7 +150,7 @@ public class PlanningReviewRequiredEventParser {
                     throw invalid("activityId must be a UUID string");
                 }
             }
-            validateTransitLegTypes(day);
+            validateTransitLegTypes(day, schemaVersion);
         }
     }
 
@@ -219,7 +223,7 @@ public class PlanningReviewRequiredEventParser {
         }
     }
 
-    private void validateTransitLegTypes(JsonNode day) {
+    private void validateTransitLegTypes(JsonNode day, int schemaVersion) {
         JsonNode transitLegs = day.path("transitLegs");
         if (!transitLegs.isArray()) {
             throw invalid("day transitLegs must be an array");
@@ -239,6 +243,27 @@ public class PlanningReviewRequiredEventParser {
             if (leg.has("transitId") && !leg.path("transitId").isNull()
                     && !leg.path("transitId").isTextual()) {
                 throw invalid("transitId must be a UUID string");
+            }
+            // B19-B: review v1 keeps the narrow WALKING/DRIVING semantics; v2
+            // adds TRANSIT.  TAXI is never allowed (no real provider).
+            String mode = leg.path("mode").asText();
+            boolean allowedByVersion = schemaVersion >= 2
+                    ? List.of("WALKING", "TRANSIT", "DRIVING").contains(mode)
+                    : List.of("WALKING", "DRIVING").contains(mode);
+            if (!allowedByVersion) {
+                throw invalid("transit leg fields are invalid");
+            }
+            if (leg.has("estimatedCost")
+                    && (schemaVersion < 2 || (!leg.path("estimatedCost").isNull()
+                    && !leg.path("estimatedCost").isNumber()))) {
+                throw invalid("transit estimatedCost is only supported as money in review v2");
+            }
+            if (leg.has("costSource")
+                    && (schemaVersion < 2 || (!leg.path("costSource").isNull()
+                    && (!leg.path("costSource").isTextual()
+                    || !List.of("PROVIDER", "RULE_ESTIMATE", "DEMO", "UNKNOWN")
+                            .contains(leg.path("costSource").asText()))))) {
+                throw invalid("transit costSource is only supported in review v2");
             }
         }
     }
@@ -270,7 +295,7 @@ public class PlanningReviewRequiredEventParser {
 
     private void validate(PlanningReviewRequiredEvent event) {
         if (!"PLANNING_REVIEW_REQUIRED".equals(event.eventType())
-                || event.schemaVersion() != 1) {
+                || (event.schemaVersion() != 1 && event.schemaVersion() != 2)) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (event.eventId() == null || event.traceId() == null || event.taskId() == null
@@ -297,13 +322,13 @@ public class PlanningReviewRequiredEventParser {
             throw invalid("estimatedTotalCost must fit NUMERIC(12,2)");
         }
         for (PlanningCompletedEvent.Day day : itinerary.days()) {
-            validateDay(day, payload.provider());
+            validateDay(day, payload.provider(), event.schemaVersion());
         }
         validateKnowledge(payload.knowledge());
         validateFeasibilityReport(payload.feasibilityReport());
     }
 
-    private void validateDay(PlanningCompletedEvent.Day day, String provider) {
+    private void validateDay(PlanningCompletedEvent.Day day, String provider, int schemaVersion) {
         if (day == null || day.date() == null || day.activities() == null
                 || day.activities().isEmpty()) {
             throw invalid("each itinerary day requires activities");
@@ -350,7 +375,11 @@ public class PlanningReviewRequiredEventParser {
                 }
                 boolean sourceMatchesEstimate = ("AMAP".equals(leg.provider()) && !leg.estimated())
                         || ("DEMO".equals(leg.provider()) && leg.estimated());
-                if (!("WALKING".equals(leg.mode()) || "DRIVING".equals(leg.mode()))
+                // B19-B: review v1 keeps WALKING/DRIVING; v2 adds TRANSIT.
+                boolean allowedMode = schemaVersion >= 2
+                        ? List.of("WALKING", "TRANSIT", "DRIVING").contains(leg.mode())
+                        : List.of("WALKING", "DRIVING").contains(leg.mode());
+                if (!allowedMode
                         || !sourceMatchesEstimate
                         || leg.distanceMeters() < 0 || leg.durationSeconds() < 0) {
                     throw invalid("transit leg fields are invalid");

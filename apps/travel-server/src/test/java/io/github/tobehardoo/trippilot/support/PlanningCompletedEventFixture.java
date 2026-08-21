@@ -359,6 +359,52 @@ public final class PlanningCompletedEventFixture {
     }
 
     /**
+     * Builds a v10 completion (B16: Information Missing != Planning Failed).
+     * The report is UNVERIFIED with UNKNOWN-only rule outcomes (no FAIL, no
+     * missing required rule), so the payload carries hasBlocker=false and the
+     * event is a savable completion despite the unverified status.
+     */
+    public static String completedAmapEventV10(
+            UUID eventId, UUID traceId, UUID taskId, UUID tripId
+    ) {
+        String v9 = completedAmapEventV9(eventId, traceId, taskId, tripId);
+        try {
+            ObjectNode event = (ObjectNode) new ObjectMapper().readTree(v9);
+            event.put("schemaVersion", 10);
+            ObjectNode payload = (ObjectNode) event.path("payload");
+            ObjectNode report = (ObjectNode) payload.path("feasibilityReport");
+            report.put("status", "UNVERIFIED");
+            ((ObjectNode) report.path("summary"))
+                    .put("passCount", 0)
+                    .put("unknownCount", V9_REQUIRED_RULE_IDS.length)
+                    .put("notApplicableCount", 0);
+            ArrayNode ruleResults = (ArrayNode) report.path("ruleResults");
+            ruleResults.removeAll();
+            for (String ruleId : V9_REQUIRED_RULE_IDS) {
+                ruleResults.add(v10UnknownRuleResult(ruleId));
+            }
+            payload.put("hasBlocker", false);
+            return new ObjectMapper().writeValueAsString(event);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Could not build v10 completion fixture", exception);
+        }
+    }
+
+    private static ObjectNode v10UnknownRuleResult(String ruleId) {
+        ObjectNode result = new ObjectMapper().createObjectNode();
+        result.put("ruleId", ruleId);
+        result.put("ruleVersion", "hard-rule-v1");
+        result.put("outcome", "UNKNOWN");
+        result.put("reasonCode", "EVIDENCE_UNAVAILABLE");
+        result.put("message", "no evidence available in demo mode");
+        result.putArray("affectedDates");
+        result.putArray("affectedEntityRefs");
+        result.putArray("evidenceRefs");
+        result.put("repairable", false);
+        return result;
+    }
+
+    /**
      * Upgrades a historical (v1-v8) completion event to the active v9 shape
      * for runtime integration tests: schemaVersion=9 plus the v9-required
      * knowledge/factImpacts/evaluation/feasibilityReport fields, keeping the

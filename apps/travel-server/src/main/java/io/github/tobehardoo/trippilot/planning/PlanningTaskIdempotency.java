@@ -50,15 +50,28 @@ final class PlanningTaskIdempotency {
             List<LocalDate> impactedDates,
             ObjectMapper objectMapper
     ) {
+        requireCandidateIdentityMatch(
+                existing, candidateType, baselineVersionId, sourceVersionId, requestHash);
+        if (!canonicalDates(changedDates).equals(
+                        storedDates(existing.changedDatesJson(), objectMapper))
+                || !canonicalDates(impactedDates).equals(
+                        storedDates(existing.impactedDatesJson(), objectMapper))) {
+            throw reusedKey();
+        }
+    }
+
+    static void requireCandidateIdentityMatch(
+            PlanningTaskRecord existing,
+            String candidateType,
+            UUID baselineVersionId,
+            UUID sourceVersionId,
+            String requestHash
+    ) {
         if (!(candidateType + "_VALIDATE").equals(existing.taskType())
                 || !candidateType.equals(existing.candidateType())
                 || !baselineVersionId.equals(existing.baselineItineraryVersionId())
                 || !sourceVersionId.equals(existing.candidateSourceVersionId())
-                || !requestHash.equals(existing.candidateRequestHash())
-                || !canonicalDates(changedDates).equals(
-                        storedDates(existing.changedDatesJson(), objectMapper))
-                || !canonicalDates(impactedDates).equals(
-                        storedDates(existing.impactedDatesJson(), objectMapper))) {
+                || !requestHash.equals(existing.candidateRequestHash())) {
             throw reusedKey();
         }
     }

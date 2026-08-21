@@ -44,6 +44,7 @@ public interface ItineraryVersionMapper {
                    version.parent_version_id, version.title,
                    version.estimated_total_cost, version.provider,
                    version.constraint_snapshot::text AS constraint_snapshot_json,
+                   version.accommodation_status, version.accommodation_label,
                    version.created_at
             FROM business.itinerary_version version
             JOIN business.itinerary ON itinerary.id = version.itinerary_id

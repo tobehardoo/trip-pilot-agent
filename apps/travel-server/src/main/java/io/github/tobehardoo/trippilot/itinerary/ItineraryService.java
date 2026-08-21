@@ -84,7 +84,9 @@ public class ItineraryService {
                 .orElseThrow(this::itineraryNotFound);
         return toItineraryResponse(new ItineraryMapper.CurrentVersion(
                 version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
-                version.estimatedTotalCost(), version.provider(), version.createdAt(), null
+                version.estimatedTotalCost(), version.provider(),
+                version.accommodationStatus(), version.accommodationLabel(),
+                version.createdAt(), null
         ));
     }
 
@@ -140,6 +142,39 @@ public class ItineraryService {
     }
 
     /**
+     * F1: apply a batch of edits strictly in order against the current draft
+     * and return the resulting candidate view WITHOUT persisting anything.
+     * Lets the routing coordinator resolve a later AUTO edit against the
+     * itinerary as edited by the preceding edits (moved activities shift the
+     * OD and departure time the recommendation sees), instead of against the
+     * untouched baseline.
+     */
+    @Transactional
+    public ItineraryResponse simulateEdits(
+            UUID ownerId, UUID tripId, UUID baseVersionId,
+            List<ItineraryEditRequest> edits) {
+        ItineraryMapper.EditableCurrentVersion version = lockCurrentVersionForEdit(ownerId, tripId);
+        if (baseVersionId == null || !baseVersionId.equals(version.versionId())) {
+            throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                    "The itinerary draft does not match the current version");
+        }
+        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        for (ItineraryEditRequest edit : edits) {
+            if (edit == null || !baseVersionId.equals(edit.baseVersionId())) {
+                throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
+                        "The itinerary draft does not match the current version");
+            }
+            EditEvaluation evaluation = evaluate(
+                    itinerary, edit, budgetFrom(version.constraintSnapshotJson()));
+            if (!evaluation.canApply()) {
+                throw evaluation.toApiException();
+            }
+            apply(itinerary, edit, evaluation.operation());
+        }
+        return toCandidateResponse(version, itinerary);
+    }
+
+    /**
      * Builds an immutable edit candidate and submits it to the authoritative
      * planning validation gate. No itinerary version is written here.
      */
@@ -148,6 +183,15 @@ public class ItineraryService {
             UUID ownerId, UUID tripId, UUID idempotencyKey,
             ItineraryEditRequest request, String requestHash
     ) {
+        if (request != null && request.baseVersionId() != null) {
+            java.util.Optional<PlanningTaskService.PlanningTaskResponse> replay =
+                    planningTaskService.replayCandidateValidation(
+                            ownerId, tripId, idempotencyKey, "EDIT",
+                            request.baseVersionId(), request.baseVersionId(), requestHash);
+            if (replay.isPresent()) {
+                return replay.get();
+            }
+        }
         ItineraryMapper.EditableCurrentVersion version = lockCurrentVersionForEdit(ownerId, tripId);
         if (request == null || request.baseVersionId() == null
                 || !request.baseVersionId().equals(version.versionId())) {
@@ -172,6 +216,15 @@ public class ItineraryService {
             UUID ownerId, UUID tripId, UUID idempotencyKey,
             ItineraryBatchEditRequest request, String requestHash
     ) {
+        if (request != null && request.baseVersionId() != null) {
+            java.util.Optional<PlanningTaskService.PlanningTaskResponse> replay =
+                    planningTaskService.replayCandidateValidation(
+                            ownerId, tripId, idempotencyKey, "EDIT",
+                            request.baseVersionId(), request.baseVersionId(), requestHash);
+            if (replay.isPresent()) {
+                return replay.get();
+            }
+        }
         ItineraryMapper.EditableCurrentVersion version = lockCurrentVersionForEdit(ownerId, tripId);
         if (request == null || request.baseVersionId() == null
                 || !request.baseVersionId().equals(version.versionId())) {
@@ -197,10 +250,11 @@ public class ItineraryService {
             changedDates.addAll(evaluation.impact().dates());
             apply(itinerary, edit, evaluation.operation());
         }
+        ItineraryResponse candidate = toCandidateResponse(version, itinerary);
         return planningTaskService.createCandidateValidation(
                 ownerId, tripId, idempotencyKey, "EDIT", version.versionId(),
                 version.versionId(), requestHash, List.copyOf(changedDates),
-                toCandidateResponse(version, itinerary));
+                candidate);
     }
 
     /** Commits a user-reviewed draft as one immutable version. */
@@ -322,8 +376,9 @@ public class ItineraryService {
                 ))
                 .toList();
         return new ItineraryResponse(
-            version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
-                version.estimatedTotalCost(), responseProvider(version.provider(), days), days,
+                version.id(), version.versionNumber(), version.parentVersionId(), version.title(),
+                humanVisibleTotalCost(version.estimatedTotalCost(), days),
+                responseProvider(version.provider(), days), days,
                 toKnowledgeResponse(version.id()),
                 factImpactMapper.findByVersion(version.id()).stream()
                         .map(impact -> new FactImpactResponse(
@@ -336,6 +391,7 @@ public class ItineraryService {
                                 impact.conflicted(), impact.refreshFailed()
                         ))
                         .toList(),
+                version.accommodationStatus(), version.accommodationLabel(),
                 version.createdAt(), version.rollbackFromVersionId()
         );
     }
@@ -349,6 +405,19 @@ public class ItineraryService {
         });
         return providers.contains("AMAP") && providers.contains("DEMO")
                 ? "MIXED" : storedProvider;
+    }
+
+    private static BigDecimal humanVisibleTotalCost(
+            BigDecimal storedTotal,
+            List<DayResponse> days
+    ) {
+        BigDecimal roadTolls = days.stream()
+                .flatMap(day -> day.transitLegs().stream())
+                .filter(leg -> "DRIVING".equals(leg.mode()))
+                .map(TransitLegResponse::estimatedCost)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return storedTotal.subtract(roadTolls).max(BigDecimal.ZERO);
     }
 
     private EditableItinerary readEditableItinerary(UUID versionId) {
@@ -422,41 +491,26 @@ public class ItineraryService {
                     "A transit mode or lock state is required");
         }
         if (request.transitMode() != null
-                && !List.of("WALKING", "TRANSIT", "DRIVING", "TAXI")
+                && !List.of("WALKING", "TRANSIT", "TAXI", "AUTO")
                         .contains(request.transitMode())) {
             return EditEvaluation.blocked("ITINERARY_EDIT_INVALID",
                     "The selected transit mode is not supported");
+        }
+        if ("DRIVING".equals(request.transitMode())) {
+            // F8: DRIVING is a technical route mode (persisted DRIVING is
+            // shown as TAXI).  Preview must reject it exactly like commit.
+            return EditEvaluation.blocked("ITINERARY_EDIT_INVALID",
+                    "DRIVING is a technical route mode; select TAXI for a road journey");
         }
         if (location.leg().locked() && request.transitMode() != null
                 && !request.transitMode().equals(location.leg().mode())) {
             return EditEvaluation.blocked("ITINERARY_TRANSIT_LEG_LOCKED",
                     "A locked transit leg cannot change its mode");
         }
-        if (request.transitMode() != null && !request.transitMode().equals(location.leg().mode())) {
-            ActivityLocation from = itinerary.findActivity(location.leg().fromActivityId());
-            ActivityLocation to = itinerary.findActivity(location.leg().toActivityId());
-            int durationSeconds = estimatedTransitDuration(request.transitMode(), location.leg().distanceMeters());
-            if (from == null || to == null
-                    || Duration.between(from.activity().endTime(), to.activity().startTime()).getSeconds()
-                    < durationSeconds) {
-                return EditEvaluation.requiresReplan(
-                        EditOperation.UPDATE_TRANSIT_LEG,
-                        impacted(location.day(),
-                                List.of(location.leg().fromActivityId(), location.leg().toActivityId()), false),
-                        "ITINERARY_TRANSIT_CONFLICT",
-                        "The selected transit mode does not fit between its activities"
-                );
-            }
-            BigDecimal updatedCost = estimatedTransitCost(request.transitMode(), location.leg().distanceMeters());
-            BigDecimal existingLegCost = location.leg().estimatedCost();
-            BigDecimal totalCost = itinerary.totalCost()
-                    .subtract(existingLegCost == null ? BigDecimal.ZERO : existingLegCost)
-                    .add(updatedCost);
-            if (budgetAmount != null && totalCost.compareTo(budgetAmount) > 0) {
-                return EditEvaluation.blocked("ITINERARY_BUDGET_CONFLICT",
-                        "The selected transit mode exceeds the trip budget");
-            }
-        }
+        // The candidate worker validates mode changes against refreshed
+        // provider facts. The legacy speed/cost estimates below are only a
+        // transient snapshot placeholder and must not veto AUTO or real
+        // provider decisions before that validation runs.
         return EditEvaluation.allowed(
                 EditOperation.UPDATE_TRANSIT_LEG,
                 impacted(location.day(), List.of(location.leg().fromActivityId(), location.leg().toActivityId()), false)
@@ -649,7 +703,9 @@ public class ItineraryService {
         requireOne(itineraryMapper.insertVersion(new ItineraryMapper.VersionWrite(
                 versionId, sourceVersion.itineraryId(), sourceVersion.versionNumber() + 1,
                 sourceVersion.versionId(), null, "USER_EDIT", sourceVersion.title(), totalCost,
-                sourceVersion.provider(), sourceVersion.constraintSnapshotJson(), Instant.now()
+                sourceVersion.provider(), sourceVersion.constraintSnapshotJson(),
+                sourceVersion.accommodationStatus(), sourceVersion.accommodationLabel(),
+                Instant.now()
         )), "itinerary edit version");
         versionPersister.copyKnowledge(sourceVersion.versionId(), versionId, "itinerary edit knowledge");
         factImpactMapper.copyToVersion(sourceVersion.versionId(), versionId);
@@ -711,8 +767,10 @@ public class ItineraryService {
         }).toList();
         return new ItineraryResponse(
                 version.versionId(), version.versionNumber(), version.parentVersionId(),
-                version.title(), itinerary.totalCost(), version.provider(), days,
-                toKnowledgeResponse(version.versionId()), List.of(), version.createdAt(), null
+                version.title(), itinerary.totalCost(),
+                version.provider(), days,
+                toKnowledgeResponse(version.versionId()), List.of(),
+                null, null, version.createdAt(), null
         );
     }
 
@@ -784,11 +842,16 @@ public class ItineraryService {
     }
 
     private TransitLegResponse toTransitLegResponse(ItineraryMapper.StoredTransitLeg leg) {
+        TransitLegSemantics.Presentation presentation = TransitLegSemantics.present(
+                leg.mode(), leg.durationSeconds(), leg.provider(), leg.estimated(), leg.estimatedCost());
         return new TransitLegResponse(
                 leg.id(), leg.legOrder(), leg.fromActivityId(), leg.toActivityId(), leg.mode(),
                 leg.distanceMeters(), leg.durationSeconds(), leg.provider(), leg.estimated(),
                 readPolyline(leg.polylineJson()), leg.locked(), leg.estimatedCost(),
-                leg.providerRouteId(), leg.calculatedAt(), leg.stale()
+                leg.providerRouteId(), leg.calculatedAt(), leg.stale(),
+                presentation.modeLabel(), presentation.routeDurationSeconds(),
+                presentation.waitSeconds(), presentation.costSource(),
+                presentation.costMeaning(), presentation.displayCost()
         );
     }
 
@@ -846,6 +909,8 @@ public class ItineraryService {
             List<DayResponse> days,
             KnowledgeResponse knowledge,
             List<FactImpactResponse> factImpacts,
+            String accommodationStatus,
+            String accommodationLabel,
             Instant createdAt,
             UUID rollbackFromVersionId
     ) {
@@ -915,7 +980,13 @@ public class ItineraryService {
             BigDecimal estimatedCost,
             String providerRouteId,
             Instant calculatedAt,
-            boolean stale
+            boolean stale,
+            String modeLabel,
+            int routeDurationSeconds,
+            int waitSeconds,
+            String costSource,
+            String costMeaning,
+            BigDecimal displayCost
         ) {
     }
 
@@ -1182,7 +1253,10 @@ public class ItineraryService {
                         itinerary.currentVersionId(), planningTaskId,
                         "PLANNING_TASK", result.title().strip(),
                         result.estimatedTotalCost(), provider,
-                        constraintSnapshotJson, now
+                        constraintSnapshotJson,
+                        result.accommodation() == null ? null : result.accommodation().status(),
+                        result.accommodation() == null ? null : result.accommodation().placeName(),
+                        now
                 )),
                 "itinerary version"
         );
@@ -1214,7 +1288,8 @@ public class ItineraryService {
             UUID tripId,
             PlanningCompletedEvent event,
             PlanningTaskCompletionRecord task,
-            Clock clock
+            Clock clock,
+            List<PlanningTaskService.TransitRouteIntent> routeIntents
     ) {
         ItineraryMapper.ItineraryState itinerary = itineraryMapper.findStateForUpdate(tripId)
                 .orElseThrow(() -> rejected("Itinerary was not found for candidate validation"));
@@ -1226,11 +1301,19 @@ public class ItineraryService {
         String versionSource = "ROLLBACK".equals(task.candidateType())
                 ? "ROLLBACK" : "USER_EDIT";
         String provider = completionProvider(event);
+        BigDecimal estimatedTotalCost = candidateEstimatedTotalCost(
+                result, routeIntents);
+        validateCandidateTransitSemantics(
+                result, routeIntents, estimatedTotalCost,
+                budgetFrom(task.constraintSnapshotJson()));
         requireOne(itineraryMapper.insertVersion(new ItineraryMapper.VersionWrite(
                 versionId, itinerary.id(), itinerary.currentVersionNumber() + 1,
                 itinerary.currentVersionId(), task.id(), versionSource,
-                result.title().strip(), result.estimatedTotalCost(), provider,
-                task.constraintSnapshotJson(), clock.instant()
+                result.title().strip(), estimatedTotalCost, provider,
+                task.constraintSnapshotJson(),
+                result.accommodation() == null ? null : result.accommodation().status(),
+                result.accommodation() == null ? null : result.accommodation().placeName(),
+                clock.instant()
         )), "candidate itinerary version");
         if ("ROLLBACK".equals(task.candidateType())) {
             requireOne(itineraryMapper.setRollbackSource(
@@ -1242,7 +1325,8 @@ public class ItineraryService {
         List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (int dayIndex = 0; dayIndex < result.days().size(); dayIndex++) {
             PersistedDayReferences references = persistDay(
-                    versionId, dayIndex, result.days().get(dayIndex), true);
+                    versionId, dayIndex, result.days().get(dayIndex), true,
+                    routeIntents);
             persistedActivities.addAll(references.activities());
             persistedTransit.addAll(references.transit());
         }
@@ -1305,7 +1389,9 @@ public class ItineraryService {
                         source.versionNumber() + 1, source.id(), task.id(),
                         "LOCAL_REPLAN", source.title(),
                         source.estimatedTotalCost(), provider,
-                        source.constraintSnapshotJson(), now
+                        source.constraintSnapshotJson(),
+                        source.accommodationStatus(), source.accommodationLabel(),
+                        now
                 )),
                 "local replan itinerary version"
         );
@@ -1315,6 +1401,7 @@ public class ItineraryService {
 
         List<PersistedActivityReference> persistedActivities = new ArrayList<>();
         List<PersistedTransitReference> persistedTransit = new ArrayList<>();
+        java.math.BigDecimal transitCostDelta = java.math.BigDecimal.ZERO;
         for (ItineraryMapper.StoredDay sourceDay : sourceDays) {
             PlanningCompletedEvent.Day resultDay =
                     resultDays.get(sourceDay.date());
@@ -1341,10 +1428,14 @@ public class ItineraryService {
             List<ItineraryMapper.StoredTransitLeg> sourceTransitLegs =
                     itineraryMapper.findTransitLegs(sourceDay.id());
             if (impactedDates.contains(sourceDay.date())) {
-                persistedTransit.addAll(persistResultTransit(
+                PersistedReplanTransit resultTransit = persistResultTransit(
                         targetDayId, activityIds,
                         activities, sourceTransitLegs, resultDay
-                ));
+                );
+                persistedTransit.addAll(resultTransit.references());
+                transitCostDelta = transitCostDelta
+                        .subtract(totalTransitCost(sourceTransitLegs))
+                        .add(resultTransit.estimatedCost());
             } else {
                 persistedTransit.addAll(copyTransitLegsFromSource(
                         targetDayId, activityIds,
@@ -1352,6 +1443,9 @@ public class ItineraryService {
                 ));
             }
         }
+        requireOne(itineraryMapper.updateEstimatedTotalCost(
+                versionId, source.estimatedTotalCost().add(transitCostDelta)),
+                "local replan itinerary total cost");
         requireOne(
                 itineraryMapper.updateCurrentVersion(
                         itinerary.id(), versionId),
@@ -1370,6 +1464,16 @@ public class ItineraryService {
             int dayIndex,
             PlanningCompletedEvent.Day day,
             boolean preserveCandidateLocks
+    ) {
+        return persistDay(versionId, dayIndex, day, preserveCandidateLocks, List.of());
+    }
+
+    private PersistedDayReferences persistDay(
+            UUID versionId,
+            int dayIndex,
+            PlanningCompletedEvent.Day day,
+            boolean preserveCandidateLocks,
+            List<PlanningTaskService.TransitRouteIntent> routeIntents
     ) {
         UUID dayId = UUID.randomUUID();
         requireOne(
@@ -1427,7 +1531,8 @@ public class ItineraryService {
                 .toList();
         List<PersistedTransitReference> persistedTransit = new ArrayList<>();
         for (int legIndex = 0; legIndex < orderedLegs.size(); legIndex++) {
-            PlanningCompletedEvent.TransitLeg leg = orderedLegs.get(legIndex);
+            PlanningCompletedEvent.TransitLeg leg = restoreCandidateTransitIntent(
+                    day.date(), orderedLegs.get(legIndex), routeIntents);
             UUID transitId = UUID.randomUUID();
             UUID fromActivityId = activityIds.get(leg.fromActivityIndex());
             UUID toActivityId = activityIds.get(leg.toActivityIndex());
@@ -1455,6 +1560,129 @@ public class ItineraryService {
             ));
         }
         return new PersistedDayReferences(persistedActivities, persistedTransit);
+    }
+
+    private BigDecimal candidateEstimatedTotalCost(
+            PlanningCompletedEvent.Itinerary itinerary,
+            List<PlanningTaskService.TransitRouteIntent> routeIntents
+    ) {
+        if (routeIntents == null || routeIntents.isEmpty()) {
+            return itinerary.estimatedTotalCost();
+        }
+        validateCandidateRouteIntents(itinerary, routeIntents);
+        BigDecimal result = itinerary.estimatedTotalCost();
+        for (PlanningTaskService.TransitRouteIntent intent : routeIntents) {
+            PlanningCompletedEvent.TransitLeg leg = candidateIntentLeg(
+                    itinerary, intent);
+            BigDecimal returnedWireCost = leg.estimatedCost() == null
+                    ? BigDecimal.ZERO : leg.estimatedCost();
+            result = result.subtract(returnedWireCost)
+                    .add(TransitLegSemantics.taxiFare(leg.distanceMeters()));
+        }
+        return result;
+    }
+
+    private void validateCandidateTransitSemantics(
+            PlanningCompletedEvent.Itinerary itinerary,
+            List<PlanningTaskService.TransitRouteIntent> routeIntents,
+            BigDecimal estimatedTotalCost,
+            BigDecimal budgetAmount
+    ) {
+        if (routeIntents == null || routeIntents.isEmpty()) {
+            return;
+        }
+        for (PlanningTaskService.TransitRouteIntent intent : routeIntents) {
+            PlanningCompletedEvent.Day day = itinerary.days().stream()
+                    .filter(candidate -> candidate.date().equals(intent.date()))
+                    .findFirst()
+                    .orElseThrow(() -> rejected(
+                            "Candidate route intent date is missing"));
+            PlanningCompletedEvent.TransitLeg leg = candidateIntentLeg(
+                    itinerary, intent);
+            PlanningCompletedEvent.Activity from =
+                    day.activities().get(leg.fromActivityIndex());
+            PlanningCompletedEvent.Activity to =
+                    day.activities().get(leg.toActivityIndex());
+            long availableSeconds = Duration.between(
+                    from.endTime(), to.startTime()).getSeconds();
+            long effectiveDuration = (long) leg.durationSeconds()
+                    + TransitLegSemantics.TAXI_WAIT_SECONDS;
+            if (availableSeconds < effectiveDuration) {
+                throw rejected(
+                        "Validated taxi route does not fit between its activities");
+            }
+        }
+        if (budgetAmount != null && estimatedTotalCost.compareTo(budgetAmount) > 0) {
+            throw rejected("Validated taxi route exceeds the trip budget");
+        }
+    }
+
+    private void validateCandidateRouteIntents(
+            PlanningCompletedEvent.Itinerary itinerary,
+            List<PlanningTaskService.TransitRouteIntent> routeIntents
+    ) {
+        Set<String> identities = new HashSet<>();
+        for (PlanningTaskService.TransitRouteIntent intent : routeIntents) {
+            String identity = intent.date() + ":" + intent.fromActivityIndex()
+                    + ":" + intent.toActivityIndex();
+            if (!identities.add(identity)) {
+                throw rejected("Candidate validation contains duplicate route intents");
+            }
+            candidateIntentLeg(itinerary, intent);
+        }
+    }
+
+    private PlanningCompletedEvent.TransitLeg candidateIntentLeg(
+            PlanningCompletedEvent.Itinerary itinerary,
+            PlanningTaskService.TransitRouteIntent intent
+    ) {
+        List<PlanningCompletedEvent.Day> days = itinerary.days().stream()
+                .filter(day -> day.date().equals(intent.date())).toList();
+        if (days.size() != 1) {
+            throw rejected("Candidate route intent date is missing or ambiguous");
+        }
+        List<PlanningCompletedEvent.TransitLeg> legs = days.getFirst().transitLegs()
+                .stream()
+                .filter(leg -> leg.fromActivityIndex() == intent.fromActivityIndex()
+                        && leg.toActivityIndex() == intent.toActivityIndex())
+                .toList();
+        if (legs.size() != 1) {
+            throw rejected("Candidate route intent endpoints are missing or ambiguous");
+        }
+        PlanningCompletedEvent.TransitLeg leg = legs.getFirst();
+        boolean validProvider = ("AMAP".equals(leg.provider()) && !leg.estimated())
+                || (!intent.requireRealRoute()
+                        && "DEMO".equals(leg.provider()) && leg.estimated());
+        if (!"TAXI".equals(intent.targetMode())
+                || !"DRIVING".equals(leg.mode())
+                || !validProvider
+                || leg.polyline().isEmpty()) {
+            throw rejected(intent.requireRealRoute()
+                    ? "TAXI candidate must return real AMAP DRIVING route facts"
+                    : "TAXI candidate must return valid technical DRIVING route facts");
+        }
+        return leg;
+    }
+
+    private PlanningCompletedEvent.TransitLeg restoreCandidateTransitIntent(
+            LocalDate date,
+            PlanningCompletedEvent.TransitLeg leg,
+            List<PlanningTaskService.TransitRouteIntent> routeIntents
+    ) {
+        boolean taxi = routeIntents != null && routeIntents.stream().anyMatch(intent ->
+                intent.date().equals(date)
+                        && intent.fromActivityIndex() == leg.fromActivityIndex()
+                        && intent.toActivityIndex() == leg.toActivityIndex());
+        if (!taxi) {
+            return leg;
+        }
+        return new PlanningCompletedEvent.TransitLeg(
+                leg.transitId(), leg.fromActivityIndex(), leg.toActivityIndex(),
+                "TAXI", leg.distanceMeters(),
+                leg.durationSeconds() + TransitLegSemantics.TAXI_WAIT_SECONDS,
+                leg.provider(), true, leg.polyline(),
+                TransitLegSemantics.taxiFare(leg.distanceMeters()),
+                "RULE_ESTIMATE", leg.locked());
     }
 
     private List<UUID> persistSourceActivities(
@@ -1489,7 +1717,7 @@ public class ItineraryService {
         return activityIds;
     }
 
-    private List<PersistedTransitReference> persistResultTransit(
+    private PersistedReplanTransit persistResultTransit(
             UUID dayId,
             List<UUID> activityIds,
             List<ItineraryMapper.StoredActivity> sourceActivities,
@@ -1503,6 +1731,7 @@ public class ItineraryService {
                                 PlanningCompletedEvent.TransitLeg::toActivityIndex))
                 .toList();
         List<PersistedTransitReference> persistedTransit = new ArrayList<>();
+        java.math.BigDecimal estimatedCost = java.math.BigDecimal.ZERO;
         for (int index = 0; index < legs.size(); index++) {
             PlanningCompletedEvent.TransitLeg leg = legs.get(index);
             if (leg.fromActivityIndex() < 0 || leg.toActivityIndex() < 0
@@ -1515,18 +1744,20 @@ public class ItineraryService {
                     activityIds.get(leg.fromActivityIndex());
             UUID toActivityId =
                     activityIds.get(leg.toActivityIndex());
+            ResolvedReplanTransit resolved = resolveReplanTransit(
+                    sourceActivities, sourceLegs, leg);
             UUID transitId = UUID.randomUUID();
             requireOne(
                     itineraryMapper.insertTransitLeg(
                             new ItineraryMapper.TransitLegWrite(
                                     transitId, dayId, index,
                                     fromActivityId, toActivityId,
-                                    leg.mode(), leg.distanceMeters(),
-                                    leg.durationSeconds(), leg.provider(),
-                                    leg.estimated(),
-                                    writeJson(leg.polyline()),
-                                    sourceTransitLocked(sourceActivities, sourceLegs, leg),
-                                    leg.estimatedCost(), null, Instant.now(), false
+                                    resolved.mode(), resolved.distanceMeters(),
+                                    resolved.durationSeconds(), resolved.provider(),
+                                    resolved.estimated(),
+                                    writeJson(resolved.polyline()),
+                                    resolved.locked(),
+                                    resolved.estimatedCost(), null, Instant.now(), false
                             )
                     ),
                     "local replan transit leg"
@@ -1537,8 +1768,11 @@ public class ItineraryService {
                     resultDay.activities().get(leg.toActivityIndex()).activityId(),
                     transitId, fromActivityId, toActivityId
             ));
+            if (resolved.estimatedCost() != null) {
+                estimatedCost = estimatedCost.add(resolved.estimatedCost());
+            }
         }
-        return List.copyOf(persistedTransit);
+        return new PersistedReplanTransit(List.copyOf(persistedTransit), estimatedCost);
     }
 
     private static String completionProvider(PlanningCompletedEvent event) {
@@ -1556,7 +1790,7 @@ public class ItineraryService {
         return provenance.actualProviders().getFirst().name();
     }
 
-    private static boolean sourceTransitLocked(
+    private static ResolvedReplanTransit resolveReplanTransit(
             List<ItineraryMapper.StoredActivity> sourceActivities,
             List<ItineraryMapper.StoredTransitLeg> sourceLegs,
             PlanningCompletedEvent.TransitLeg resultLeg) {
@@ -1569,7 +1803,32 @@ public class ItineraryService {
         if (matchingLegs.size() > 1) {
             throw rejected("Current itinerary contains duplicate transit endpoints");
         }
-        return matchingLegs.isEmpty() ? false : matchingLegs.get(0).locked();
+        if (matchingLegs.isEmpty()) {
+            if ("DRIVING".equals(resultLeg.mode())) {
+                throw rejected("Current itinerary has no intent for a returned road route");
+            }
+            return ResolvedReplanTransit.from(resultLeg, false);
+        }
+        ItineraryMapper.StoredTransitLeg sourceLeg = matchingLegs.getFirst();
+        if (!"TAXI".equals(sourceLeg.mode())) {
+            return ResolvedReplanTransit.from(resultLeg, sourceLeg.locked());
+        }
+        if (!"DRIVING".equals(resultLeg.mode())) {
+            throw rejected("Taxi replanning must return DRIVING route facts");
+        }
+        return new ResolvedReplanTransit(
+                "TAXI", resultLeg.distanceMeters(),
+                resultLeg.durationSeconds() + TransitLegSemantics.TAXI_WAIT_SECONDS,
+                resultLeg.provider(), true, resultLeg.polyline(), sourceLeg.locked(),
+                TransitLegSemantics.taxiFare(resultLeg.distanceMeters()));
+    }
+
+    private static java.math.BigDecimal totalTransitCost(
+            List<ItineraryMapper.StoredTransitLeg> legs) {
+        return legs.stream()
+                .map(ItineraryMapper.StoredTransitLeg::estimatedCost)
+                .filter(java.util.Objects::nonNull)
+                .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
     }
 
     private List<PersistedTransitReference> copyTransitLegsFromSource(
@@ -1737,6 +1996,40 @@ public class ItineraryService {
             UUID fromActivityId,
             UUID toActivityId
     ) {
+    }
+
+    private record PersistedReplanTransit(
+            List<PersistedTransitReference> references,
+            java.math.BigDecimal estimatedCost
+    ) {
+        private PersistedReplanTransit {
+            references = List.copyOf(references);
+        }
+    }
+
+    private record ResolvedReplanTransit(
+            String mode,
+            int distanceMeters,
+            int durationSeconds,
+            String provider,
+            boolean estimated,
+            List<PlanningCompletedEvent.Coordinates> polyline,
+            boolean locked,
+            java.math.BigDecimal estimatedCost
+    ) {
+        private ResolvedReplanTransit {
+            polyline = List.copyOf(polyline);
+        }
+
+        private static ResolvedReplanTransit from(
+                PlanningCompletedEvent.TransitLeg leg,
+                boolean locked
+        ) {
+            return new ResolvedReplanTransit(
+                    leg.mode(), leg.distanceMeters(), leg.durationSeconds(),
+                    leg.provider(), leg.estimated(), leg.polyline(), locked,
+                    leg.estimatedCost());
+        }
     }
 
     private record PersistedDayReferences(

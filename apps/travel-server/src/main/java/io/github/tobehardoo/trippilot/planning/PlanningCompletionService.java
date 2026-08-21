@@ -1,5 +1,6 @@
 package io.github.tobehardoo.trippilot.planning;
 
+import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
@@ -77,21 +78,30 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     }
 
     private void handleInScope(PlanningCompletedEvent event) {
-        // Second fail-closed gate: the parser already rejects non-v9 wire
+        // Second fail-closed gate: the parser already rejects non-v9/v10/v11 wire
         // events, but a caller that bypasses the parser must not be able to
-        // create a formal itinerary version without a VERIFIED report.
-        if (event.schemaVersion() != 9) {
-            throw rejected("Only schemaVersion 9 completions can create a version");
+        // create a formal itinerary version without a savable report.  v9
+        // still requires a VERIFIED report; v10/v11 accept a non-VERIFIED
+        // report when hasBlocker is false.  v11 only widens the route-mode
+        // contract with TRANSIT and keeps the v10 completion gate semantics.
+        if (event.schemaVersion() != 9
+                && event.schemaVersion() != 10
+                && event.schemaVersion() != 11) {
+            throw rejected("Only schemaVersion 9/10/11 completions can create a version");
         }
         if (event.payload() == null || event.payload().feasibilityReport() == null) {
-            throw rejected("A v9 completion requires a feasibilityReport");
+            throw rejected("A v9/v10/v11 completion requires a feasibilityReport");
         }
-        if (event.payload().feasibilityReport().status()
-                != io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.VERIFIED) {
-            throw rejected("A v9 completion requires a VERIFIED feasibilityReport");
+        if (event.schemaVersion() == 9) {
+            if (event.payload().feasibilityReport().status()
+                    != io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.VERIFIED) {
+                throw rejected("A v9 completion requires a VERIFIED feasibilityReport");
+            }
+        } else if (event.payload().hasBlocker()) {
+            throw rejected("A v10/v11 completion must not carry a blocker");
         }
         if (event.payload().evaluation() == null) {
-            throw rejected("A v9 completion requires an evaluation");
+            throw rejected("A v9/v10/v11 completion requires an evaluation");
         }
         PlanningTaskCompletionRecord task = taskMapper.findCompletionContextForUpdate(event.taskId())
                 .orElseThrow(() -> rejected("Planning task was not found"));
@@ -127,7 +137,9 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                 return;
             }
             ItineraryService.CreateItineraryResult result =
-                    itineraryService.createCandidateVersion(task.tripId(), event, task, clock);
+                    itineraryService.createCandidateVersion(
+                            task.tripId(), event, task, clock,
+                            candidateRouteIntents(task.id()));
             persistFactImpacts(event, result.versionId());
             String reportJson = persistFeasibilityReport(event, result);
             log.info("candidate queued: version persisted versionId={} versionNumber={}",
@@ -167,6 +179,28 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         updateTaskToSucceeded(
                 event, task, result, "PLANNING_COMPLETED",
                 writeJson(completionPayload(event, result, reportJson)));
+    }
+
+    private List<PlanningTaskService.TransitRouteIntent> candidateRouteIntents(
+            UUID taskId
+    ) {
+        PlanningTaskEventRecord queued = taskEventMapper.findAfter(taskId, 0).stream()
+                .filter(event -> "PLANNING_QUEUED".equals(event.eventType()))
+                .findFirst()
+                .orElseThrow(() -> rejected(
+                        "Candidate validation task is missing its queued event"));
+        try {
+            JsonNode intents = objectMapper.readTree(queued.payloadJson())
+                    .path("routeIntents");
+            if (intents.isMissingNode() || intents.isNull()) {
+                return List.of();
+            }
+            return objectMapper.readerForListOf(
+                            PlanningTaskService.TransitRouteIntent.class)
+                    .readValue(intents);
+        } catch (IOException | IllegalArgumentException exception) {
+            throw rejected("Candidate validation route intents are invalid");
+        }
     }
 
     private static boolean isCandidateTask(PlanningTaskCompletionRecord task) {

@@ -470,6 +470,105 @@ class PlanningCompletedEventParserTest {
                 .hasMessageContaining("feasibilityReport is invalid: status must be VERIFIED");
     }
 
+    // ── B16: v10 savable UNVERIFIED completions (Information Missing !=
+    //    Planning Failed) ────────────────────────────────────────────────────
+
+    @Test
+    void v10AcceptsSavableUnverifiedReportWithHasBlockerFalse() throws Exception {
+        PlanningCompletedEvent event = parser.parse(bytes(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        ));
+
+        assertThat(event.schemaVersion()).isEqualTo(10);
+        assertThat(event.payload().hasBlocker()).isFalse();
+        assertThat(event.payload().feasibilityReport().status())
+                .isEqualTo(io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.UNVERIFIED);
+        assertThat(event.payload().evaluation().feasible()).isTrue();
+    }
+
+    @Test
+    void v10RejectsBlockerReportEvenWhenFlagMatches() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        // A blocker report: one hard FAIL with consistent summary counts.
+        ObjectNode report = (ObjectNode) event.at("/payload/feasibilityReport");
+        report.put("status", "NEEDS_REPAIR");
+        ((ObjectNode) report.path("summary")).put("failCount", 1);
+        ((ObjectNode) report.path("summary")).put("unknownCount", 10);
+        ObjectNode failing = (ObjectNode) report.path("ruleResults").path(0);
+        failing.put("outcome", "FAIL");
+        failing.put("reasonCode", "TIME_CONFLICT");
+        failing.put("message", "activity conflicts with a fixed schedule");
+        ((ObjectNode) event.at("/payload")).put("hasBlocker", true);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport status must be VERIFIED");
+    }
+
+    @Test
+    void v10RejectsHasBlockerMismatchWithReportContent() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        // Report is UNVERIFIED with no blocker, but the flag lies.
+        ((ObjectNode) event.at("/payload")).put("hasBlocker", true);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("v10 hasBlocker must match the feasibility report blocker state");
+    }
+
+    @Test
+    void v10RequiresBooleanHasBlocker() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        ((ObjectNode) event.at("/payload")).put("hasBlocker", "yes");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("v10 payload requires a boolean hasBlocker");
+    }
+
+    @Test
+    void v10AcceptsProviderProvenanceWithRealOnlyEvidence() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        ObjectNode provenance = objectMapper.createObjectNode()
+                .put("requestedProviderMode", "REAL_ONLY")
+                .put("primaryProvider", "AMAP");
+        provenance.putArray("actualProviders").add("AMAP");
+        provenance.put("fallbackAttempted", false);
+        provenance.put("fallbackSucceeded", false);
+        provenance.putNull("fallbackReason");
+        provenance.putArray("fallbackOperations");
+        ((ObjectNode) event.at("/payload")).set("providerProvenance", provenance);
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.schemaVersion()).isEqualTo(10);
+        assertThat(parsed.payload().providerProvenance().requestedProviderMode())
+                .isEqualTo(PlanningCompletedEvent.ProviderExecutionMode.REAL_ONLY);
+    }
+
     @Test
     void v9RejectsMismatchedItineraryFingerprint() throws Exception {
         ObjectNode event = (ObjectNode) objectMapper.readTree(
@@ -665,8 +764,135 @@ class PlanningCompletedEventParserTest {
                 return;
             }
         }
-        ArrayNode refs = objectMapper.createArrayNode();
+ArrayNode refs = objectMapper.createArrayNode();
         refs.add(value);
         ((ObjectNode) results.get(0)).set("affectedEntityRefs", refs);
+    }
+
+    @Test
+    void acceptsV11TransitLegsWhileKeepingV10Compatible() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        event.put("schemaVersion", 11);
+        ((ObjectNode) event.at("/payload/itinerary/days/0/transitLegs/0"))
+                .put("mode", "TRANSIT")
+                .put("estimatedCost", 3.0)
+                .put("costSource", "PROVIDER");
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("itineraryFingerprint",
+                        io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                                .compute(event.at("/payload/itinerary")));
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.schemaVersion()).isEqualTo(11);
+        assertThat(parsed.payload().itinerary().days().get(0).transitLegs().get(0).mode())
+                .isEqualTo("TRANSIT");
+        assertThat(parsed.payload().itinerary().days().get(0).transitLegs().get(0)
+                .estimatedCost()).isEqualByComparingTo("3.0");
+        assertThat(parsed.payload().itinerary().days().get(0).transitLegs().get(0)
+                .costSource()).isEqualTo("PROVIDER");
+    }
+
+    @Test
+    void v10RejectsTransitLegsUntilTheV11Contract() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        ((ObjectNode) event.at("/payload/itinerary/days/0/transitLegs/0"))
+                .put("mode", "TRANSIT");
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("itineraryFingerprint",
+                        io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                                .compute(event.at("/payload/itinerary")));
+
+assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("transit leg fields are invalid");
+    }
+
+    @Test
+    void v11RejectsMissingEvaluation() throws Exception {
+        // F4: v11 schema/CompletionService require evaluation; the parser must
+        // not let an event without it through (it used to silently accept,
+        // risking a dropped message with the task stuck RUNNING).
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        event.put("schemaVersion", 11);
+        ((ObjectNode) event.at("/payload")).remove("evaluation");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("evaluation is required in schema v9/v10/v11");
+    }
+    @Test
+    void v11RejectsUnpersistableTransitLegMoney() throws Exception {
+        // F2: transit estimatedCost must satisfy the same NUMERIC(12,2) money
+        // range/precision as every other persisted amount; an out-of-range or
+        // over-precision value used to pass the parser and hit the DB CHECK
+        // constraint, causing endless redelivery with the task stuck at 95%.
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        event.put("schemaVersion", 11);
+        ObjectNode leg = (ObjectNode) event.at("/payload/itinerary/days/0/transitLegs/0");
+        leg.put("mode", "TRANSIT").put("estimatedCost", -1.0).put("costSource", "PROVIDER");
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("estimatedCost must fit NUMERIC(12,2)");
+    }
+    @Test
+    void v11ParsesAccommodationStatus() throws Exception {
+        // B19-E: itinerary accommodation resolution status flows through the
+        // parser into the persisted version (status + label, null-safe).
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        event.put("schemaVersion", 11);
+        ObjectNode itinerary = (ObjectNode) event.at("/payload/itinerary");
+        itinerary.set("accommodation", objectMapper.createObjectNode()
+                .put("status", "UNRESOLVED").put("placeName", "白天鹅宾馆"));
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("itineraryFingerprint",
+                        io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                                .compute(itinerary));
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+        assertThat(parsed.payload().itinerary().accommodation()).isNotNull();
+        assertThat(parsed.payload().itinerary().accommodation().status())
+                .isEqualTo("UNRESOLVED");
+        assertThat(parsed.payload().itinerary().accommodation().placeName())
+                .isEqualTo("白天鹅宾馆");
+    }
+
+    @Test
+    void v11ParsesMissingAccommodationAsNull() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        event.put("schemaVersion", 11);
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+        assertThat(parsed.payload().itinerary().accommodation()).isNull();
     }
 }

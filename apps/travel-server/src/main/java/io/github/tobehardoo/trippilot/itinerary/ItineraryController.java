@@ -24,17 +24,20 @@ public class ItineraryController {
 
     private final ItineraryService itineraryService;
     private final ItineraryVersionService versionService;
+    private final ItineraryEditRoutingCoordinator editRoutingCoordinator;
     private final ObjectMapper objectMapper;
     private final EditRequestFingerprint editRequestFingerprint;
 
     public ItineraryController(
             ItineraryService itineraryService,
             ItineraryVersionService versionService,
+            ItineraryEditRoutingCoordinator editRoutingCoordinator,
             ObjectMapper objectMapper,
             EditRequestFingerprint editRequestFingerprint
     ) {
         this.itineraryService = itineraryService;
         this.versionService = versionService;
+        this.editRoutingCoordinator = editRoutingCoordinator;
         this.objectMapper = objectMapper;
         this.editRequestFingerprint = editRequestFingerprint;
     }
@@ -108,7 +111,7 @@ public class ItineraryController {
             @PathVariable UUID tripId,
             @RequestHeader("Idempotency-Key") UUID idempotencyKey,
             @RequestBody JsonNode request) {
-        return itineraryService.validateEditCandidate(
+        return editRoutingCoordinator.validateEditCandidate(
                 UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
                 read(request, ItineraryService.ItineraryEditRequest.class),
                 editRequestFingerprint.forEdit(request));
@@ -121,7 +124,7 @@ public class ItineraryController {
             @PathVariable UUID tripId,
             @RequestHeader("Idempotency-Key") UUID idempotencyKey,
             @RequestBody JsonNode request) {
-        return itineraryService.validateEditCandidates(
+        return editRoutingCoordinator.validateEditCandidates(
                 UUID.fromString(jwt.getSubject()), tripId, idempotencyKey,
                 read(request, ItineraryService.ItineraryBatchEditRequest.class),
                 editRequestFingerprint.forBatch(request));

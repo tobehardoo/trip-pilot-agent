@@ -24,14 +24,15 @@ public record PlanningCompletedEvent(
             List<FactImpact> factImpacts,
             ProviderProvenance providerProvenance,
             PlanEvaluation evaluation,
-            io.github.tobehardoo.trippilot.feasibility.FeasibilityReport feasibilityReport
+            io.github.tobehardoo.trippilot.feasibility.FeasibilityReport feasibilityReport,
+            boolean hasBlocker
     ) {
         public Payload(
                 String provider,
                 Itinerary itinerary,
                 KnowledgeEvidence knowledge
         ) {
-            this(provider, itinerary, knowledge, List.of(), null, null, null);
+            this(provider, itinerary, knowledge, List.of(), null, null, null, false);
         }
 
         public Payload(
@@ -40,7 +41,7 @@ public record PlanningCompletedEvent(
                 KnowledgeEvidence knowledge,
                 List<FactImpact> factImpacts
         ) {
-            this(provider, itinerary, knowledge, factImpacts, null, null, null);
+            this(provider, itinerary, knowledge, factImpacts, null, null, null, false);
         }
 
         public Payload(
@@ -50,7 +51,7 @@ public record PlanningCompletedEvent(
                 List<FactImpact> factImpacts,
                 ProviderProvenance providerProvenance
         ) {
-            this(provider, itinerary, knowledge, factImpacts, providerProvenance, null, null);
+            this(provider, itinerary, knowledge, factImpacts, providerProvenance, null, null, false);
         }
 
         public Payload {
@@ -58,7 +59,12 @@ public record PlanningCompletedEvent(
         }
     }
 
-    public record Itinerary(String title, List<Day> days, BigDecimal estimatedTotalCost) {
+    public record Itinerary(String title, List<Day> days, BigDecimal estimatedTotalCost,
+                            AccommodationData accommodation) {
+    }
+
+    /** Optional accommodation resolution status carried for display. */
+    public record AccommodationData(String status, String placeName) {
     }
 
     public record Day(

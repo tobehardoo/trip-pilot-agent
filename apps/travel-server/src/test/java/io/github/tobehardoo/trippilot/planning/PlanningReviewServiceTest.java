@@ -122,7 +122,8 @@ class PlanningReviewServiceTest {
                                 event.payload().itinerary().days().get(0).activities(),
                                 List.of()
                         )),
-                        event.payload().itinerary().estimatedTotalCost()
+                        event.payload().itinerary().estimatedTotalCost(),
+                        null
                 );
         com.fasterxml.jackson.databind.JsonNode rawOutOfRange =
                 mapper.valueToTree(outOfRangeItinerary);
@@ -293,7 +294,7 @@ class PlanningReviewServiceTest {
                                 List.of()
                         )),
                         new java.math.BigDecimal("0")
-                );
+                , null);
         // The raw validated snapshot must be the exact tree the typed
         // itinerary deserialises from, and the report fingerprint must bind
         // it (B6J.2.2 integrity gate).

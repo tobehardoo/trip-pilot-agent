@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEvent;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningCompletedEventParser;
+import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningEventContractException;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEventParser;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningFailedEventParserTest;
 import io.github.tobehardoo.trippilot.infrastructure.mq.PlanningProgressEvent;
@@ -525,6 +526,92 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.days[0].activities[2].kind").value("MEAL"))
                 .andExpect(jsonPath("$.days[0].activities[2].timeFixed").value(false))
                 .andExpect(jsonPath("$.days[0].activities[2].providerPoiId").doesNotExist());
+    }
+
+    @Test
+    void persistsSavableV10UnverifiedCompletionWithWarnings() throws Exception {
+        PlanningContext context = createPlanningContext("completion-v10@example.com");
+
+        completionService.handle(completedV10Event(UUID.randomUUID(), context));
+
+        Map<String, Object> result = jdbcTemplate.queryForMap("""
+                SELECT planning_task.status,
+                       itinerary.current_version_id,
+                       itinerary_version.version_number,
+                       itinerary_version.title
+                FROM business.planning_task
+                JOIN business.itinerary ON itinerary.trip_id = planning_task.trip_id
+                JOIN business.itinerary_version
+                  ON itinerary_version.id = itinerary.current_version_id
+                WHERE planning_task.id = ?
+                """, context.taskId());
+
+        // B16: an UNVERIFIED report without a blocker still saves the version.
+        assertThat(result).containsEntry("status", "SUCCEEDED")
+                .containsEntry("version_number", 1)
+                .containsEntry("title", "广州真实路线行程");
+        assertThat(count("business.planning_task_event")).isEqualTo(2);
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+
+        mockMvc.perform(get("/api/trips/{tripId}/itinerary", context.tripId())
+                        .header("Authorization", bearer(context.accessToken())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.versionNumber").value(1))
+                .andExpect(jsonPath("$.days[0].activities[0].source").value("AMAP"));
+    }
+
+    @Test
+    void persistsSavableV11CompletionWithTheV10NoBlockerRules() throws Exception {
+        PlanningContext context = createPlanningContext("completion-v11@example.com");
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        event.put("schemaVersion", 11);
+
+        completionService.handle(eventParser.parse(objectMapper.writeValueAsBytes(event)));
+
+        Map<String, Object> result = jdbcTemplate.queryForMap("""
+                SELECT planning_task.status,
+                       itinerary_version.version_number,
+                       itinerary_version.title
+                FROM business.planning_task
+                JOIN business.itinerary ON itinerary.trip_id = planning_task.trip_id
+                JOIN business.itinerary_version
+                  ON itinerary_version.id = itinerary.current_version_id
+                WHERE planning_task.id = ?
+                """, context.taskId());
+        assertThat(result).containsEntry("status", "SUCCEEDED")
+                .containsEntry("version_number", 1)
+                .containsEntry("title", "广州真实路线行程");
+    }
+
+    @Test
+    void rejectsV10CompletionWithBlockerEvenWhenReportIsWellFormed() throws Exception {
+        PlanningContext context = createPlanningContext("completion-v10-blocker@example.com");
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), context.traceId(), context.taskId(), context.tripId()
+                )
+        );
+        ObjectNode report = (ObjectNode) event.at("/payload/feasibilityReport");
+        report.put("status", "NEEDS_REPAIR");
+        ((ObjectNode) report.path("summary")).put("failCount", 1);
+        ((ObjectNode) report.path("summary")).put("unknownCount", 10);
+        ObjectNode failing = (ObjectNode) report.path("ruleResults").path(0);
+        failing.put("outcome", "FAIL");
+        failing.put("reasonCode", "TIME_CONFLICT");
+        failing.put("message", "activity conflicts with a fixed schedule");
+        ((ObjectNode) event.at("/payload")).put("hasBlocker", true);
+
+        assertThatThrownBy(() -> eventParser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("feasibilityReport status must be VERIFIED");
+        assertThat(count("business.itinerary_version")).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT status FROM business.planning_task WHERE id = ?",
+                String.class, context.taskId())).isEqualTo("QUEUED");
     }
 
     @Test
@@ -1335,6 +1422,12 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
                 PlanningCompletedEventFixture.completedEvent(
                         eventId, context.traceId(), context.taskId(), context.tripId()
                 )
+        )));
+    }
+
+    private PlanningCompletedEvent completedV10Event(UUID eventId, PlanningContext context) {
+        return eventParser.parse(bytes(PlanningCompletedEventFixture.completedAmapEventV10(
+                eventId, context.traceId(), context.taskId(), context.tripId()
         )));
     }
 

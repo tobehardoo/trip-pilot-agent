@@ -38,11 +38,13 @@ public interface ItineraryMapper {
     @Insert("""
             INSERT INTO business.itinerary_version(
                 id, itinerary_id, version_number, parent_version_id, planning_task_id,
-                version_source, title, estimated_total_cost, provider, constraint_snapshot, created_at
+                version_source, title, estimated_total_cost, provider, constraint_snapshot,
+                accommodation_status, accommodation_label, created_at
             ) VALUES (
                 #{id}, #{itineraryId}, #{versionNumber}, #{parentVersionId}, #{planningTaskId},
                 #{versionSource}, #{title}, #{estimatedTotalCost}, #{provider},
-                CAST(#{constraintSnapshotJson} AS jsonb), #{createdAt}
+                CAST(#{constraintSnapshotJson} AS jsonb),
+                #{accommodationStatus}, #{accommodationLabel}, #{createdAt}
             )
             """)
     int insertVersion(VersionWrite version);
@@ -54,6 +56,15 @@ public interface ItineraryMapper {
             """)
     int setRollbackSource(@Param("versionId") UUID versionId,
                           @Param("sourceVersionId") UUID sourceVersionId);
+
+    @Update("""
+            UPDATE business.itinerary_version
+            SET estimated_total_cost = #{estimatedTotalCost}
+            WHERE id = #{versionId}
+            """)
+    int updateEstimatedTotalCost(
+            @Param("versionId") UUID versionId,
+            @Param("estimatedTotalCost") BigDecimal estimatedTotalCost);
 
     @Insert("""
             INSERT INTO business.itinerary_day(id, itinerary_version_id, day_date, day_index, day_type)
@@ -126,6 +137,8 @@ public interface ItineraryMapper {
             SELECT itinerary_version.id, itinerary_version.version_number,
                    itinerary_version.parent_version_id, itinerary_version.title,
                    itinerary_version.estimated_total_cost, itinerary_version.provider,
+                   itinerary_version.accommodation_status,
+                   itinerary_version.accommodation_label,
                    itinerary_version.created_at,
                    itinerary_version.rollback_from_version_id
             FROM business.itinerary
@@ -142,6 +155,8 @@ public interface ItineraryMapper {
             SELECT itinerary_version.id, itinerary_version.version_number,
                    itinerary_version.parent_version_id, itinerary_version.title,
                    itinerary_version.estimated_total_cost, itinerary_version.provider,
+                   itinerary_version.accommodation_status,
+                   itinerary_version.accommodation_label,
                    itinerary_version.created_at,
                    itinerary_version.rollback_from_version_id
             FROM business.itinerary_version
@@ -167,6 +182,8 @@ public interface ItineraryMapper {
                    itinerary_version.estimated_total_cost,
                    itinerary_version.provider,
                    itinerary_version.constraint_snapshot::text AS constraint_snapshot_json,
+                   itinerary_version.accommodation_status,
+                   itinerary_version.accommodation_label,
                    itinerary_version.created_at
             FROM business.itinerary
             JOIN business.trip ON trip.id = itinerary.trip_id
@@ -187,6 +204,8 @@ public interface ItineraryMapper {
                    itinerary_version.estimated_total_cost,
                    itinerary_version.provider,
                    itinerary_version.constraint_snapshot::text AS constraint_snapshot_json,
+                   itinerary_version.accommodation_status,
+                   itinerary_version.accommodation_label,
                    itinerary_version.created_at
             FROM business.itinerary
             JOIN business.trip ON trip.id = itinerary.trip_id
@@ -266,7 +285,7 @@ public interface ItineraryMapper {
     @Select("""
             SELECT id, itinerary_id, version_number, parent_version_id, title,
                    estimated_total_cost, provider, constraint_snapshot::text AS constraint_snapshot_json,
-                   created_at
+                   accommodation_status, accommodation_label, created_at
             FROM business.itinerary_version
             WHERE id = #{versionId}
             """)
@@ -300,6 +319,8 @@ public interface ItineraryMapper {
             BigDecimal estimatedTotalCost,
             String provider,
             String constraintSnapshotJson,
+            String accommodationStatus,
+            String accommodationLabel,
             Instant createdAt
     ) {
     }
@@ -383,6 +404,8 @@ public interface ItineraryMapper {
             String title,
             BigDecimal estimatedTotalCost,
             String provider,
+            String accommodationStatus,
+            String accommodationLabel,
             Instant createdAt,
             UUID rollbackFromVersionId
     ) {
@@ -397,6 +420,8 @@ public interface ItineraryMapper {
             BigDecimal estimatedTotalCost,
             String provider,
             String constraintSnapshotJson,
+            String accommodationStatus,
+            String accommodationLabel,
             Instant createdAt
     ) {
     }
@@ -410,6 +435,8 @@ public interface ItineraryMapper {
             BigDecimal estimatedTotalCost,
             String provider,
             String constraintSnapshotJson,
+            String accommodationStatus,
+            String accommodationLabel,
             Instant createdAt
     ) {
     }

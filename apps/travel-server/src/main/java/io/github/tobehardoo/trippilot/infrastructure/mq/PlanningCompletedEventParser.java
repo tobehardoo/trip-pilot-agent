@@ -90,9 +90,12 @@ public class PlanningCompletedEventParser {
         JsonNode itinerary = payload.path("itinerary");
         JsonNode days = itinerary.path("days");
         int schemaVersion = event.path("schemaVersion").asInt();
-        // v9 is the only active completion contract.  v1-v8 are historical
-        // contracts and must not reach the runtime completion listener.
-        if (schemaVersion != 9) {
+        // v9/v10/v11 are the active completion contracts.  v1-v8 are historical
+        // contracts and must not reach the runtime completion listener.  v10
+        // carries the explicit hasBlocker flag (B16: Information Missing !=
+        // Planning Failed) and allows savable UNVERIFIED reports; v11 extends
+        // v10 with TRANSIT as a planner-generated provider route mode (B19-B).
+        if (schemaVersion != 9 && schemaVersion != 10 && schemaVersion != 11) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (!payload.isObject() || !payload.path("provider").isTextual()
@@ -136,18 +139,25 @@ public class PlanningCompletedEventParser {
                 }
                 validateActivityMetadataTypes(activity);
                 if (activity.has("activityId") && !activity.path("activityId").isNull()
-                        && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9)
+                        && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9
+                        && schemaVersion != 10 && schemaVersion != 11)
                         || !activity.path("activityId").isTextual())) {
-                    throw invalid("activityId is only supported as a UUID string in schema v6/v8/v9");
+                    throw invalid("activityId is only supported as a UUID string in schema v6/v8/v9/v10/v11");
                 }
             }
             validateTransitLegTypes(day, schemaVersion);
         }
-        if (schemaVersion == 9) {
+        if (schemaVersion == 9 || schemaVersion == 10 || schemaVersion == 11) {
             JsonNode report = payload.path("feasibilityReport");
             if (!ItineraryFingerprintVerifier.matches(
                     itinerary, report.path("itineraryFingerprint").asText())) {
                 throw invalid("feasibilityReport itineraryFingerprint does not match the itinerary");
+            }
+        }
+        if (schemaVersion == 10 || schemaVersion == 11) {
+            JsonNode blocker = payload.path("hasBlocker");
+            if (!blocker.isBoolean()) {
+                throw invalid("v10 payload requires a boolean hasBlocker");
             }
         }
     }
@@ -194,8 +204,9 @@ public class PlanningCompletedEventParser {
                 || payload.get("providerProvenance").isNull()) {
             return;
         }
-        if (schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9) {
-            throw invalid("provider provenance is only supported in schema v6/v8/v9");
+        if (schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9
+                && schemaVersion != 10 && schemaVersion != 11) {
+            throw invalid("provider provenance is only supported in schema v6/v8/v9/v10/v11");
         }
         JsonNode provenance = payload.path("providerProvenance");
         JsonNode actualProviders = provenance.path("actualProviders");
@@ -305,9 +316,37 @@ public class PlanningCompletedEventParser {
                 throw invalid("transit leg field types do not match the JSON Schema");
             }
             if (leg.has("transitId") && !leg.path("transitId").isNull()
-                    && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9)
+                    && ((schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9
+                    && schemaVersion != 10 && schemaVersion != 11)
                     || !leg.path("transitId").isTextual())) {
-                throw invalid("transitId is only supported as a UUID string in schema v6/v8/v9");
+                throw invalid("transitId is only supported as a UUID string in schema v6/v8/v9/v10/v11");
+            }
+            // B19-B: older contracts must keep their narrow semantics — v10 and
+            // below allow only WALKING/DRIVING; v11 adds TRANSIT (the planner's
+            // Provider-backed route mode).  TAXI is never allowed here because
+            // the planner has no real TAXI provider.
+            String mode = leg.path("mode").asText();
+            boolean allowedByVersion = schemaVersion >= 11
+                    ? List.of("WALKING", "TRANSIT", "DRIVING").contains(mode)
+                    : List.of("WALKING", "DRIVING").contains(mode);
+            if (!allowedByVersion) {
+                throw invalid("transit leg fields are invalid");
+            }
+            if (leg.has("estimatedCost")
+                    && (schemaVersion < 11 || (!leg.path("estimatedCost").isNull()
+                    && !leg.path("estimatedCost").isNumber()))) {
+                throw invalid("transit estimatedCost is only supported as money in schema v11");
+            }
+            if (leg.has("estimatedCost") && !leg.path("estimatedCost").isNull()
+                    && !isPersistableMoney(leg.path("estimatedCost").decimalValue())) {
+                throw invalid("transit estimatedCost must fit NUMERIC(12,2)");
+            }
+            if (leg.has("costSource")
+                    && (schemaVersion < 11 || (!leg.path("costSource").isNull()
+                    && (!leg.path("costSource").isTextual()
+                    || !List.of("PROVIDER", "RULE_ESTIMATE", "DEMO", "UNKNOWN")
+                            .contains(leg.path("costSource").asText()))))) {
+                throw invalid("transit costSource is only supported in schema v11");
             }
             for (JsonNode point : leg.path("polyline")) {
                 if (!point.isObject() || !point.path("longitude").isNumber()
@@ -339,7 +378,8 @@ public class PlanningCompletedEventParser {
 
     private void validate(PlanningCompletedEvent event) {
         if (!"PLANNING_COMPLETED".equals(event.eventType())
-                || event.schemaVersion() != 9) {
+                || (event.schemaVersion() != 9 && event.schemaVersion() != 10
+                && event.schemaVersion() != 11)) {
             throw invalid("unsupported eventType or schemaVersion");
         }
         if (event.eventId() == null || event.traceId() == null || event.taskId() == null
@@ -374,9 +414,9 @@ public class PlanningCompletedEventParser {
     }
 
     private void validateFeasibilityReportTypes(JsonNode payload, int schemaVersion) {
-        if (schemaVersion != 9) {
+        if (schemaVersion != 9 && schemaVersion != 10 && schemaVersion != 11) {
             if (payload.has("feasibilityReport")) {
-                throw invalid("feasibilityReport is only supported in schema v9");
+                throw invalid("feasibilityReport is only supported in schema v9/v10/v11");
             }
             return;
         }
@@ -402,13 +442,14 @@ public class PlanningCompletedEventParser {
 
     private void validateEvaluationTypes(JsonNode payload, int schemaVersion) {
         if (!payload.has("evaluation") || payload.get("evaluation").isNull()) {
-            if (schemaVersion == 9) {
-                throw invalid("evaluation is required in schema v9");
+            if (schemaVersion == 9 || schemaVersion == 10 || schemaVersion == 11) {
+                throw invalid("evaluation is required in schema v9/v10/v11");
             }
             return;
         }
-        if (schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9) {
-            throw invalid("evaluation is only supported in schema v6/v8/v9");
+        if (schemaVersion != 6 && schemaVersion != 8 && schemaVersion != 9
+                && schemaVersion != 10 && schemaVersion != 11) {
+            throw invalid("evaluation is only supported in schema v6/v8/v9/v10/v11");
         }
         JsonNode evaluation = payload.path("evaluation");
         if (!evaluation.isObject()
@@ -428,13 +469,14 @@ public class PlanningCompletedEventParser {
     private void validateEvaluation(PlanningCompletedEvent event) {
         PlanningCompletedEvent.PlanEvaluation evaluation = event.payload().evaluation();
         if (evaluation == null) {
-            if (event.schemaVersion() == 9) {
-                throw invalid("evaluation is required in schema v9");
+            if (event.schemaVersion() == 9 || event.schemaVersion() == 10) {
+                throw invalid("evaluation is required in schema v9/v10");
             }
             return;
         }
         if ((event.schemaVersion() != 6 && event.schemaVersion() != 8
-                && event.schemaVersion() != 9)
+                && event.schemaVersion() != 9 && event.schemaVersion() != 10
+                && event.schemaVersion() != 11)
                 || (evaluation.schemaVersion() != 1
                 && evaluation.schemaVersion() != 2)) {
             throw invalid("evaluation schemaVersion must be 1 or 2");
@@ -516,21 +558,37 @@ public class PlanningCompletedEventParser {
     }
 
     private void validateFeasibilityReport(PlanningCompletedEvent event) {
-        if (event.schemaVersion() != 9) {
+        if (event.schemaVersion() != 9 && event.schemaVersion() != 10
+                && event.schemaVersion() != 11) {
             return;
         }
         io.github.tobehardoo.trippilot.feasibility.FeasibilityReport report =
                 event.payload().feasibilityReport();
         if (report == null) {
-            throw invalid("feasibilityReport is required in schema v9");
+            throw invalid("feasibilityReport is required in schema v9/v10");
         }
         try {
             io.github.tobehardoo.trippilot.feasibility.FeasibilityReportValidator.validate(report);
         } catch (IllegalArgumentException exception) {
             throw invalid("feasibilityReport is invalid: " + exception.getMessage());
         }
-        if (report.status() != io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.VERIFIED) {
+        if (event.schemaVersion() == 9) {
+            if (report.status() != io.github.tobehardoo.trippilot.feasibility.FeasibilityStatus.VERIFIED) {
+                throw invalid("feasibilityReport status must be VERIFIED");
+            }
+            return;
+        }
+        // v10 (B16: Information Missing != Planning Failed): a savable report
+        // is VERIFIED or (non-VERIFIED with no blocker).  A blocker report
+        // (FAIL or missing required rule) must never be a completion; the
+        // hasBlocker flag must agree with the report content.
+        boolean blockerFromReport = report.summary() != null && report.summary().failCount() > 0
+                || !report.missingRequiredRuleIds().isEmpty();
+        if (blockerFromReport) {
             throw invalid("feasibilityReport status must be VERIFIED");
+        }
+        if (event.payload().hasBlocker() != blockerFromReport) {
+            throw invalid("v10 hasBlocker must match the feasibility report blocker state");
         }
     }
 
@@ -545,7 +603,8 @@ public class PlanningCompletedEventParser {
             return;
         }
         if ((event.schemaVersion() != 6 && event.schemaVersion() != 8
-                && event.schemaVersion() != 9)
+                && event.schemaVersion() != 9 && event.schemaVersion() != 10
+                && event.schemaVersion() != 11)
                 || provenance.requestedProviderMode() == null
                 || provenance.primaryProvider() == null
                 || provenance.actualProviders().isEmpty()
@@ -835,10 +894,12 @@ public class PlanningCompletedEventParser {
             }
             return;
         }
-        // Gaps between adjacent activities are allowed only in v8/v9 (unresolved
-        // structural nodes such as a meal without a bound restaurant have no
-        // transit leg). Older producers always emit one leg per adjacent pair.
-        boolean strictAdjacency = schemaVersion != 8 && schemaVersion != 9;
+        // Gaps between adjacent activities are allowed only in v8/v9/v10/v11
+        // (unresolved structural nodes such as a meal without a bound
+        // restaurant have no transit leg). Older producers always emit one
+        // leg per adjacent pair.
+        boolean strictAdjacency = schemaVersion != 8 && schemaVersion != 9
+                && schemaVersion != 10 && schemaVersion != 11;
         if (strictAdjacency
                 && day.transitLegs().size() != day.activities().size() - 1) {
             throw invalid("transit legs must connect every adjacent activity");
@@ -873,7 +934,8 @@ public class PlanningCompletedEventParser {
         boolean sourceMatchesEstimate = ("AMAP".equals(leg.provider()) && !leg.estimated())
                 || ("DEMO".equals(leg.provider()) && leg.estimated());
         boolean supportedMode = "WALKING".equals(leg.mode())
-                || (schemaVersion >= 5 && "DRIVING".equals(leg.mode()));
+                || (schemaVersion >= 5 && "DRIVING".equals(leg.mode()))
+                || (schemaVersion >= 11 && "TRANSIT".equals(leg.mode()));
         return supportedMode
                 && leg.distanceMeters() >= 0
                 && leg.distanceMeters() <= MAX_ROUTE_DISTANCE_METERS

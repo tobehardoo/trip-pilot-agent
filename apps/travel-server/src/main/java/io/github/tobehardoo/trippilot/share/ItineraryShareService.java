@@ -105,8 +105,9 @@ public class ItineraryShareService {
                         activity.estimatedCost(), activity.address()
                 )).toList(),
                 day.transitLegs().stream().map(leg -> new PublicTransitLeg(
-                        leg.mode(), leg.distanceMeters(), leg.durationSeconds(), leg.estimatedCost(),
-                        leg.provider(), leg.estimated(), leg.stale()
+                        leg.mode(), leg.modeLabel(), leg.distanceMeters(), leg.durationSeconds(),
+                        leg.routeDurationSeconds(), leg.waitSeconds(), leg.displayCost(),
+                        leg.costSource(), leg.costMeaning(), leg.provider(), leg.estimated(), leg.stale()
                 )).toList()
         )).toList();
         List<PublicSource> sources = itinerary.knowledge() == null ? List.of()
@@ -189,9 +190,14 @@ public class ItineraryShareService {
 
     public record PublicTransitLeg(
             String mode,
+            String modeLabel,
             int distanceMeters,
             int durationSeconds,
+            int routeDurationSeconds,
+            int waitSeconds,
             BigDecimal estimatedCost,
+            String costSource,
+            String costMeaning,
             String provider,
             boolean estimated,
             boolean stale

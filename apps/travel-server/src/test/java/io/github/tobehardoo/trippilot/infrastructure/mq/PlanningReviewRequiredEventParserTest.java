@@ -148,9 +148,10 @@ class PlanningReviewRequiredEventParserTest {
     }
 
     @Test
-    void rejectsSchemaVersionNotOne() throws Exception {
+    void rejectsUnsupportedSchemaVersion() throws Exception {
         ObjectNode event = sharedReviewEvent();
-        event.put("schemaVersion", 2);
+        // v1/v2 are the supported review contracts; any other version must fail.
+        event.put("schemaVersion", 99);
 
         assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
                 .isInstanceOf(PlanningEventContractException.class)
@@ -383,7 +384,39 @@ class PlanningReviewRequiredEventParserTest {
         );
     }
 
-    private byte[] bytes(String value) {
+private byte[] bytes(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void acceptsV2TransitLegs() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        event.put("schemaVersion", 2);
+        ((ObjectNode) event.at("/payload/itinerary/days/0/transitLegs/0"))
+                .put("mode", "TRANSIT")
+                .put("estimatedCost", 3.0)
+                .put("costSource", "PROVIDER");
+        refreshFingerprint(event);
+
+        PlanningReviewRequiredEvent parsed =
+                parser.parse(objectMapper.writeValueAsBytes(event));
+
+        assertThat(parsed.schemaVersion()).isEqualTo(2);
+        assertThat(parsed.payload().itinerary().days().get(0).transitLegs().get(0).mode())
+                .isEqualTo("TRANSIT");
+        assertThat(parsed.payload().itinerary().days().get(0).transitLegs().get(0)
+                .estimatedCost()).isEqualByComparingTo("3.0");
+    }
+
+    @Test
+    void v1RejectsTransitLegsUntilTheV2Contract() throws Exception {
+        ObjectNode event = sharedReviewEvent();
+        ((ObjectNode) event.at("/payload/itinerary/days/0/transitLegs/0"))
+                .put("mode", "TRANSIT");
+        refreshFingerprint(event);
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(PlanningEventContractException.class)
+                .hasMessageContaining("transit leg fields are invalid");
     }
 }

@@ -73,7 +73,13 @@ public class PlanningTaskOutcomeReadModel {
                                   JsonNode payload) {
         requireStatus(task, "SUCCEEDED", event);
         FeasibilityReport report = parseReport(payload);
-        if (report.status() != FeasibilityStatus.VERIFIED) {
+        // B16 (Information Missing != Planning Failed): a completed task may
+        // carry a non-VERIFIED report as long as it has no blocker (a FAIL or
+        // a missing required rule).  This mirrors the v10 parser contract;
+        // the read model must accept the same savable completions.
+        boolean blockerFromReport = report.summary() != null && report.summary().failCount() > 0
+                || !report.missingRequiredRuleIds().isEmpty();
+        if (blockerFromReport) {
             throw invalid(event);
         }
         PlanEvaluation evaluation = parseEvaluation(payload, event);
@@ -95,7 +101,8 @@ public class PlanningTaskOutcomeReadModel {
                 fallbackOperationList(payload, "fallbackOperations"),
                 evaluation, report,
                 payload.has("candidateItinerary")
-                        ? payload.get("candidateItinerary") : null
+                        ? payload.get("candidateItinerary") : null,
+                null, null
         );
     }
 
@@ -134,7 +141,8 @@ public class PlanningTaskOutcomeReadModel {
                 nullableStringList(payload, "actualProviders"),
                 text(payload, "fallbackReason"),
                 fallbackOperationList(payload, "fallbackOperations"),
-                null, report, candidate
+                null, report, candidate,
+                null, null
         );
     }
 
@@ -189,7 +197,9 @@ public class PlanningTaskOutcomeReadModel {
                 nullableStringList(payload, "actualProviders"),
                 text(payload, "fallbackReason"),
                 fallbackOperationList(payload, "fallbackOperations"),
-                null, null, null
+                null, null, null,
+                conflictList(payload, "conflicts"),
+                relaxationSuggestionList(payload, "relaxationSuggestions")
         );
     }
 
@@ -208,7 +218,8 @@ public class PlanningTaskOutcomeReadModel {
                 nullableStringList(payload, "actualProviders"),
                 text(payload, "fallbackReason"),
                 fallbackOperationList(payload, "fallbackOperations"),
-                null, null, null
+                null, null, null,
+                null, null
         );
     }
 
@@ -306,6 +317,59 @@ public class PlanningTaskOutcomeReadModel {
         return List.copyOf(result);
     }
 
+    private List<PlanningTaskService.ConflictResponse> conflictList(
+            JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (!value.isArray()) {
+            throw invalid(payload);
+        }
+        java.util.ArrayList<PlanningTaskService.ConflictResponse> result =
+                new java.util.ArrayList<>();
+        value.forEach(item -> {
+            if (!item.isObject()) {
+                throw invalid(payload);
+            }
+            java.util.ArrayList<String> affected = new java.util.ArrayList<>();
+            JsonNode affectedNode = item.get("affected");
+            if (affectedNode != null && !affectedNode.isNull()) {
+                if (!affectedNode.isArray()) {
+                    throw invalid(payload);
+                }
+                affectedNode.forEach(ref -> affected.add(ref.asText()));
+            }
+            result.add(new PlanningTaskService.ConflictResponse(
+                    text(item, "code", null), text(item, "message", null),
+                    List.copyOf(affected)
+            ));
+        });
+        return List.copyOf(result);
+    }
+
+    private List<PlanningTaskService.RelaxationSuggestionResponse> relaxationSuggestionList(
+            JsonNode payload, String field) {
+        JsonNode value = payload.get(field);
+        if (value == null || value.isNull()) {
+            return null;
+        }
+        if (!value.isArray()) {
+            throw invalid(payload);
+        }
+        java.util.ArrayList<PlanningTaskService.RelaxationSuggestionResponse> result =
+                new java.util.ArrayList<>();
+        value.forEach(item -> {
+            if (!item.isObject()) {
+                throw invalid(payload);
+            }
+            result.add(new PlanningTaskService.RelaxationSuggestionResponse(
+                    text(item, "code", null), text(item, "message", null)
+            ));
+        });
+        return List.copyOf(result);
+    }
+
     private UUID optionalUuid(JsonNode payload, String field) {
         JsonNode value = payload.get(field);
         return value == null || value.isNull() ? null : UUID.fromString(value.asText());
@@ -338,7 +402,9 @@ public class PlanningTaskOutcomeReadModel {
             List<PlanningTaskService.FallbackOperationResponse> fallbackOperations,
             PlanEvaluation evaluation,
             FeasibilityReport feasibilityReport,
-            JsonNode candidateItinerary
+            JsonNode candidateItinerary,
+            List<PlanningTaskService.ConflictResponse> conflicts,
+            List<PlanningTaskService.RelaxationSuggestionResponse> relaxationSuggestions
     ) {
     }
 }

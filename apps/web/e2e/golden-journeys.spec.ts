@@ -315,7 +315,8 @@ test('G26 rollback VERIFIED creates a ROLLBACK version and shows a fresh report,
   await expect(page.getByText('当前').first()).toBeVisible()
   await expect(page.getByRole('heading', { name: '方案需要调整' })).toHaveCount(0)
   await expect(page.getByText('版本 3').first()).toBeVisible()
-  await expect(page.getByText('历史回滚')).toBeVisible()
+  // 主面板当前行 + Drawer 当前行各展示一个「历史回滚」source 徽章。
+  await expect(page.getByText('历史回滚').first()).toBeVisible()
 })
 
 test('G27 rollback UNVERIFIED isolates the candidate and never shows verified wording', async ({ page }) => {

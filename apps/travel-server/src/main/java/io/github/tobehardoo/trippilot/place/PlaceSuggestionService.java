@@ -3,6 +3,8 @@ package io.github.tobehardoo.trippilot.place;
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.tobehardoo.trippilot.common.ApiException;
@@ -40,6 +42,16 @@ public class PlaceSuggestionService {
     private final PlaceSelectionTokenService tokenService;
     private final Clock clock;
     private final ConcurrentHashMap<SearchCacheKey, CacheEntry> cache = new ConcurrentHashMap<>();
+    /**
+     * In-flight provider calls keyed by the same structured search identity.
+     * Concurrent identical lookups collapse onto a single provider call via
+     * {@code computeIfAbsent}: the first thread builds a {@link
+     * CompletableFuture} and runs the lookup; the rest await the same
+     * future. Without this, N concurrent identical queries produced N
+     * independent provider calls — a real (if hidden) rate-limit / cost
+     * hazard on shared keys.
+     */
+    private final ConcurrentHashMap<SearchCacheKey, CompletableFuture<PlaceSearchResponse>> inFlight = new ConcurrentHashMap<>();
 
     public PlaceSuggestionService(AgentPlaceSearchClient client) {
         this(client, new PlaceSelectionTokenService(), Clock.systemUTC());
@@ -100,20 +112,58 @@ public class PlaceSuggestionService {
             // Expired entry: remove it before inserting a fresh one.
             cache.remove(key, entry);
         }
-        PlaceSearchResponse response = client.search(new PlaceSearchRequest(city, keyword, limit));
+        // Coalesce concurrent identical lookups onto a single provider call.
+        // putIfAbsent is the standard pattern for "first thread runs the work,
+        // the rest await" on a ConcurrentHashMap. computeIfAbsent cannot be
+        // used here because its remapping function must not mutate the same
+        // map (Recursive update). putIfAbsent is atomic and returns the prior
+        // value (null when we are the first thread for this key).
+        CompletableFuture<PlaceSearchResponse> future = new CompletableFuture<>();
+        CompletableFuture<PlaceSearchResponse> prior = inFlight.putIfAbsent(key, future);
+        if (prior == null) {
+            try {
+                future.complete(performProviderSearch(key));
+            } catch (Throwable t) {
+                future.completeExceptionally(t);
+            } finally {
+                inFlight.remove(key, future);
+            }
+        } else {
+            future = prior;
+        }
+        PlaceSearchResponse response;
+        try {
+            response = future.join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException(cause);
+        }
+        cache.put(key, new CacheEntry(response, now + CACHE_TTL_MILLIS));
+        sweepExpired(now);
+        return response;
+    }
+
+    /**
+     * Run the provider call and decorate candidates with selection tokens.
+     * Extracted so the in-flight coalescing branch can keep the lock-holding
+     * region of {@code computeIfAbsent} focused on I/O.
+     */
+    private PlaceSearchResponse performProviderSearch(SearchCacheKey key) {
+        PlaceSearchResponse response = client.search(
+                new PlaceSearchRequest(key.city(), key.keyword(), key.limit()));
         List<PlaceCandidate> candidates = response.candidates().stream()
                 .map(candidate -> new PlaceCandidate(
                         candidate.provider(), candidate.providerPoiId(), candidate.name(),
                         candidate.address(), candidate.province(), candidate.city(),
                         candidate.district(), candidate.longitude(), candidate.latitude(),
                         candidate.estimated(),
-                        tokenService.issue(ownerId, candidate)))
+                        tokenService.issue(key.ownerId(), candidate)))
                 .toList();
-        PlaceSearchResponse issued = new PlaceSearchResponse(
+        return new PlaceSearchResponse(
                 response.provider(), response.estimated(), candidates);
-        cache.put(key, new CacheEntry(issued, now + CACHE_TTL_MILLIS));
-        sweepExpired(now);
-        return issued;
     }
 
     /**

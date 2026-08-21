@@ -1,162 +1,195 @@
 # TripPilot
 
-> Constraint-driven travel planning system for real, executable itineraries.
+A constraint-driven intelligent travel planning system for generating realistic, executable, and editable itineraries.
 
-TripPilot 是一个面向国内单城市自由行的**约束驱动旅行规划系统**：把日期、预算、必去地点、固定安排、用餐窗口与交通偏好转化为**真实、可执行、可编辑、可回滚**的多日行程。
+TripPilot is designed for independent travel planning in China. Instead of simply asking an LLM to "generate a trip", it treats travel planning as a constrained planning problem involving time windows, transportation, budgets, fixed activities, must-visit places, accommodation, real-world provider data, and itinerary feasibility.
 
-它不是一个"LLM 聊天式行程生成器"。规划由结构化约束驱动，经确定性 Hard Validation 与可行性判定后才产出正式行程版本——**每一步都可用代码解释，而不是凭大模型"编"出来**。
+> TripPilot 是一个面向国内自由行场景的约束驱动旅行规划系统，目标不是生成"看起来合理"的行程，而是生成时间、交通、预算和现实条件上**真正可执行**的旅行计划。
 
-项目本地优先运行：默认 `DEMO_ONLY` 模式无需任何外部凭据即可体验完整主流程；高德与 QWeather 是可选增强。
+## 与普通 AI 旅行规划的区别
+
+| 普通 LLM 行程生成 | TripPilot |
+|---|---|
+| 主要依赖文本生成 | 结构化约束 + 确定性规划 |
+| 行程可能看起来合理 | 对时间、交通、营业时间等做可行性验证 |
+| 修改通常重新生成全文 | 支持编辑、局部重规划和版本管理 |
+| 数据可能来自模型记忆 | 使用 Provider 获取真实地点和路线数据 |
+| 很难解释为什么不可行 | 能输出不可行原因和约束冲突 |
 
 ## 核心能力
 
-- **结构化旅行约束**：必去/回避地点、固定安排、时间窗、用餐三态（默认/自定义/不安排）、预算、出行节奏、到达/离开时间。
-- **多日行程规划**：逐日容量驱动（到离锚点、餐饮预留、固定安排与弹性时段填充），跨日位置连续。
-- **真实交通模式**：WALKING / TRANSIT / DRIVING 由 Provider facts 驱动；TAXI / AUTO 作为请求模型，持久化模型严格区分。
-- **交通与时长计算**：路线/通勤时间/费用来自 Provider 或明确标注的 DEMO 估计，行程总价包含交通票价。
-- **住宿语义**：CONFIRMED / AREA_ESTIMATED / UNRESOLVED 三态，端到端输出到行程版本与界面，绝不伪造确认。
-- **Hard Validation**：11/11 规则（营业时间、跨日连续性、游玩时长、餐饮窗口、重复/重叠…）→ 三态 Feasibility Report → 有界 repair；不可行时给出明确解释（`NO_FEASIBLE_ITINERARY`），不产生"假成功"。
-- **行程编辑与版本**：MOVE / 时间 / 模式编辑 → 候选预览 → 异步验证 → 提交；不可变版本、差异比较、回滚；正式版本只来自 VERIFIED 候选。
-- **真实地点检索**：省市区级联 + 地点搜索（PlaceRef 全链路），Demo 候选明确标注。
-- **分享与导出**：匿名只读分享、PDF、ICS。
-- **城市情报**：城市知识导入、来源与新鲜度证据、公共天气窗口（QWeather/高德归因）。
-- **异步规划与进度**：RabbitMQ 任务 → SSE 实时进度 → 终态事件（SUCCEEDED / WAITING_USER / FAILED / CANCELLED）。
+- **Constraint-driven planning**：目的地、日期、预算、偏好、must-visit、固定安排、住宿等结构化约束。
+- **Executable itinerary generation**：多日行程、景点安排、交通连接、时间窗与游玩时长。
+- **Multi-mode transport**：WALKING / TRANSIT / TAXI / DRIVING / AUTO 等交通语义与路线信息。
+- **Feasibility validation**：营业时间、时间冲突、通勤成本、预算和不可行解释。
+- **Editable & versioned itineraries**：编辑、重新规划、版本对比、回滚、分享与导出。
+- **Real asynchronous workflow**：Java API → Outbox → RabbitMQ → Python Planner → Event → Java Persistence → SSE。
 
 ## 系统架构
 
 ```mermaid
 flowchart LR
-    Browser["Vue 3 Web"] --> API["Spring Boot travel-server"]
-    API --> BizDB[("PostgreSQL business")]
-    API --> Cache[("Redis")]
-    API --> Queue["RabbitMQ"]
-    API --> SSE["SSE 进度事件"]
-    Queue --> Agent["Python agent-service"]
-    Agent --> AgentDB[("PostgreSQL agent / pgvector")]
-    Agent --> Cache
-    Agent --> Provider["Demo / AMap / QWeather"]
-    Agent --> Planner["Planner / OR-Tools"]
-    Queue --> API
-    SSE --> Browser
+    Web[Vue Web] --> API[Java / Spring Boot]
+    API --> DB[(PostgreSQL)]
+    API --> MQ[RabbitMQ]
+
+    MQ --> Agent[Python Agent Service]
+    Agent --> Provider[AMap / External Providers]
+    Agent --> Planner[Planning & OR-Tools]
+
+    Planner --> MQ
+    MQ --> API
+
+    API --> DB
+    API --> SSE[SSE]
+    SSE --> Web
 ```
 
-- `apps/web`：Vue 3 旅行工作台（约束编辑、规划进度、行程查看、版本、分享导出）。
-- `apps/travel-server`：Spring Boot 领域 API（认证、行程、版本、SSE、Outbox 发布）。
-- `apps/agent-service`：Python 规划 Agent（候选检索、Provider 增强、可行性、调度、消息消费）。
-- `contracts`：Java / Python / Web 间的版本化消息契约（JSON Schema）。
-- `knowledge`：城市知识、来源登记与评测语料。
-- `infra`：数据库扩展（PostGIS + pgvector）与可选监控。
-
-## 技术栈
-
-| 层 | 技术 | 为什么 |
-|---|---|---|
-| Frontend | Vue 3 · TypeScript · Vite | 组件化工作台，SSE 实时进度 |
-| Backend | Java 21 · Spring Boot 3.5 · MyBatis | 领域 API、Outbox、SSE、版本与幂等 |
-| Agent / Planning | Python 3.12+ · FastAPI · OR-Tools | 约束求解、Provider 增强、确定性可行性 |
-| Data | PostgreSQL 16（PostGIS + pgvector）· Redis 7 · RabbitMQ 4 | 关系/向量存储、缓存、异步消息 |
-| Provider | AMap（POI/路线/TRANSIT/Web 地图）· QWeather | 真实地点、路线与天气；无凭据时 DEMO 降级 |
-| Testing | pytest · JUnit · Vitest · Playwright | 分层自动化 + 真实浏览器链路 |
+- **Java**（travel-server）：用户、行程、版本、持久化、API、消息可靠性（Outbox / 幂等 / SSE）。
+- **Python**（agent-service）：候选处理、可行性、规划、交通与优化。
+- **RabbitMQ**：隔离同步 API 与长时间规划任务。
+- **PostgreSQL / PostGIS / pgvector**：业务数据、空间数据与知识检索。
 
 ## Planning Pipeline
 
 ```text
-Constraints（结构化约束）
-  → Candidate Retrieval（地点候选检索）
-  → Provider Enrichment（高德/天气增强）
-  → Feasibility（11/11 Hard Validation）
-  → Scheduling（逐日容量调度 / OR-Tools）
-  → Transport（WALKING / TRANSIT / DRIVING）
-  → Validation（编辑/回滚候选重验证）
-  → Itinerary（不可变行程版本）
+User Constraints
+      ↓
+Constraint Normalization
+      ↓
+Candidate Retrieval
+      ↓
+Provider Enrichment
+      ↓
+Feasibility Filtering
+      ↓
+Scheduling / Optimization
+      ↓
+Transport Planning
+      ↓
+Hard Validation
+      ↓
+Itinerary Persistence
 ```
 
-## 项目亮点
+LLM/Agent 组件用于语义推理场景；硬约束与可执行调度由确定性规则与优化（OR-Tools）负责——各做各自擅长的事情。
 
-- **Java / Python 双服务职责边界**：API 与状态机在 Java，规划领域在 Python，消息契约版本化（JSON Schema）为权威。
-- **异步规划 + Outbox**：任务可靠投递，RabbitMQ 停机恢复重投，无重复正式版本。
-- **不可变行程版本**：正式版本只来自 VERIFIED 候选，编辑走 candidate → validate → commit，幂等与 stale baseline 拒绝。
-- **确定性可行性**：Hard Validation 不依赖 LLM 判断；失败时明确终态与可解释原因，绝不静默失败或伪装成功。
-- **Provider fail-closed**：畸形响应拒绝而非降级误报；认证/权限错误永不回退到 Demo。
-- **真实端到端测试**：不 mock API 的浏览器真实链路、接口差异化样本、完整链路样本均有证据落盘。
+## 技术栈
 
-## 快速开始
+| Layer | Technology | Responsibility |
+|---|---|---|
+| Frontend | Vue 3, TypeScript, Vite | Trip creation, editing, progress, itinerary UI |
+| Backend | Java 21, Spring Boot, MyBatis | API, domain logic, persistence, versions, SSE |
+| Planning | Python 3.12, FastAPI, OR-Tools | Planning workflow, feasibility, optimization |
+| Messaging | RabbitMQ | Async planning and completion events |
+| Data | PostgreSQL, PostGIS, pgvector | Business, spatial and vector data |
+| Cache | Redis | Runtime/cache support |
+| Infra | Docker Compose | Local reproducible environment |
 
-前置条件：Docker Desktop / Docker Engine + Compose v2，建议至少 8 GB 可用内存。
+## 工程设计亮点
+
+### Reliable asynchronous planning
+
+API 不同步等待复杂规划，通过 Outbox + RabbitMQ 驱动 Python Worker，规划结果通过事件回写，并通过 SSE 更新前端。
+
+### Immutable itinerary versions
+
+编辑不会直接破坏已有行程，而是形成新的版本，支持 diff、rollback 和可追踪修改；正式版本只来自可行性验证通过的候选。
+
+### Idempotency & consistency
+
+对编辑和异步事件处理提供幂等保护，避免重复消费、重复修改等问题。
+
+### Contract versioning
+
+Java 与 Python 之间通过明确的 Event Contract 和版本策略协作（JSON Schema 为权威），而不是随意传 JSON。
+
+### Fail-closed feasibility
+
+关键数据不确定时不会伪造"成功"，而是显式表达 UNKNOWN / UNRESOLVED / infeasible；畸形 Provider 响应拒绝而非降级误报。
+
+### Real end-to-end validation
+
+不仅测试 Planner 函数，还验证完整链路：
+
+> HTTP → Java → RabbitMQ → Python → Provider → Planning → Event → Java → DB → SSE / Web
+
+## Quick Start
+
+### Requirements
+
+- **运行**：Docker Desktop / Docker Engine + Compose v2（建议至少 8 GB 内存）
+- **本地开发（可选）**：JDK 21、Python 3.12+、Node.js + pnpm
+
+### 1. Clone
 
 ```bash
-# 1. 克隆
 git clone https://github.com/tobehardoo/trip-pilot-agent.git
 cd trip-pilot-agent
+```
 
-# 2. 配置（不要提交 .env；无真实 Key 时保持 DEMO_ONLY 即可运行）
+### 2. Configure
+
+```bash
 cp .env.example .env
-# 编辑 .env：为 POSTGRES_PASSWORD / REDIS_PASSWORD / RABBITMQ_PASSWORD /
-# JWT_SECRET / AGENT_INTERNAL_TOKEN / INTERNAL_DIAGNOSTICS_TOKEN 设置互不相同的本地值
+```
 
-# 3. 启动（首次会构建镜像并执行数据库迁移）
+为 `POSTGRES_PASSWORD`、`REDIS_PASSWORD`、`RABBITMQ_PASSWORD`、`JWT_SECRET`、`AGENT_INTERNAL_TOKEN`、`INTERNAL_DIAGNOSTICS_TOKEN` 设置互不相同的本地值。
+
+- **无真实 Key**：保持 `PROVIDER_MODE=DEMO_ONLY` 即可运行完整主流程（确定性 Demo 数据，明确标注）。
+- **真实数据**：设置 `PROVIDER_MODE=REAL_ONLY`（或 `REAL_WITH_EXPLICIT_FALLBACK`），并在 `.env` 填入 `AMAP_WEB_SERVICE_KEY`（高德 Web 服务）、`QWEATHER_API_KEY`、`VITE_AMAP_WEB_JS_KEY` + `VITE_AMAP_SECURITY_CODE`（前端地图）。
+- 缺失关键 Key 时 Worker 启动即失败（fail-closed），不会静默降级。
+
+### 3. Start
+
+```bash
 docker compose -f compose.prod.yaml --env-file .env up -d --build --wait --wait-timeout 240
 ```
 
-- Web：<http://127.0.0.1:8080>
+- Web：<http://127.0.0.1:8080>（API 经 `/api` 代理）
 - Prometheus（可选）：<http://127.0.0.1:9090>
 
-可选增强：在 `.env` 配置 `PROVIDER_MODE=REAL_ONLY`（或 `REAL_WITH_EXPLICIT_FALLBACK`）并填入 `AMAP_WEB_SERVICE_KEY`、`QWEATHER_API_KEY` 等真实凭据。真实模式必须显式开启；缺少关键 Key 时 Worker 启动即失败（fail-closed）。
-
-停止：`docker compose -f compose.prod.yaml --env-file .env down`（数据卷保留，加 `-v` 删除）。
+停止：`docker compose -f compose.prod.yaml --env-file .env down`（加 `-v` 删除数据卷）。
 
 ## 测试
 
-分层自动化，全部可本地复现：
+当前发布通过 Python、Java、Web、Contract、集成测试与真实端到端规划工作流的全部自动化套件。
 
-| 层 | 结果（v1.0 收口） |
-|---|---|
-| Python（pytest + ruff） | 1717 passed, 3 skipped（3 个为可选真实 AMap 单测）· ruff 0 |
-| Java（JUnit, Testcontainers） | 558 passed, 0 failures |
-| Web（Vitest + coverage） | 446 passed · 95.51% · typecheck 0 |
-| Contract（JSON Schema 校验） | 全量通过 |
-| 真实浏览器链路（Playwright，零 mock） | PASS |
-| 接口差异化样本 / 完整链路样本 | 61/61 / 13/13 |
-| Compose / 脚本 / Markdown 链接 | 全部通过 |
+### Current release validation（v1.0 收口）
 
-测试入口：`apps/agent-service`（pytest）、`apps/travel-server`（mvn test）、`apps/web`（vitest / playwright）。详细门禁见 [测试策略](docs/development/测试策略.md) 与 [Release Readiness](docs/execution/QA-2026-08-21-closure/release-readiness.md)。
+- Python: **1717 passed**（3 个可选真实 AMap 单测保留 skip）· ruff 0
+- Java: **558 passed**
+- Web: **446 passed** · coverage 95.51% · typecheck 0
+- Real browser E2E: **PASS**（零 mock 真实链路）
+- Interface matrix / full-chain samples: **61/61 / 13/13**
 
-## 当前状态
-
-```text
-Status: Release-ready（v1.0 收口，已推 main）
-```
-
-- 核心设计目标已完成，主流程完整真实可用，无已知 P0/P1 阻塞问题。
-- 发布判定：`PASS_WITH_DEFECT / READY_WITH_MINOR_DEFECTS`（详见 [Release Readiness](docs/execution/QA-2026-08-21-closure/release-readiness.md)）。
-- 这是**本地运行的正式版本**，不代表公网生产环境已部署。
+详见 [Release Readiness Report](docs/execution/QA-2026-08-21-closure/release-readiness.md)。
 
 ## Current Limitations
 
-- **单城市**自由行，无跨城市联程规划。
-- **中国境内** Provider（高德、QWeather）；真实 Provider 需配置 Key，默认 DEMO 模式。
-- **manual-edit TRANSIT** 使用 DEMO/local estimate（Planner 生成的 TRANSIT 已是真实 AMAP）。
-- 请求模型（TAXI/AUTO）与持久化模型（WALKING/TRANSIT/DRIVING）严格区分，wire 层拒绝 TAXI/AUTO。
-- 本地优先运行，未部署公网，不代表生产环境状态。
-- 已知 Minor（非阻塞）：F7 并发锁理论 GC 竞态（未复现，观察项）、3 个可选真实 AMap 单测保留 skip。
+- Primarily designed for domestic single-city independent travel.
+- Real-world planning quality depends on external provider data availability（高德 / QWeather）。
+- manual-edit TRANSIT 使用本地估计（Planner 生成的 TRANSIT 已是真实 AMap）；请求模型（TAXI/AUTO）与持久化模型严格区分。
+- The current release is validated as a complete software release, but is not presented as a large-scale public production deployment（本地优先运行，未部署公网）。
 
 ## Roadmap
 
-下一版本方向（详见 [项目路线图](docs/product/项目路线图.md) 与 [系统未来方向与验收标准](docs/product/系统未来方向与验收标准.md)）：
+- Richer preference modeling（用户交通偏好、行程节奏）
+- Advanced multimodal transport planning（manual-edit TRANSIT 真实化、跨城 TRANSIT）
+- Weather-aware planning（天气与行李输入）
+- Stronger global itinerary optimization（OR-Tools 级跨 leg 联合优化）
+- Broader multi-city planning（多城市联程）
 
-1. manual-edit TRANSIT 真实化（AMap 闭环）。
-2. 模式语义收敛（TAXI/AUTO/DRIVING 全渠道一致）。
-3. Java 结构化日志与 traceId；拆分超大服务与页面。
-4. Road / Self-driving、用户交通偏好、全局 mode 优化（OR-Tools 级）等（明确不属于当前版本）。
+详细路线图见 [项目路线图](docs/product/项目路线图.md)。
 
 ## Documentation
 
-- [文档中心](docs/index.md) — 从入口按目的导航全部生效文档
-- [产品概述](docs/product/产品概述.md) — 项目定位、能力边界与完成标准
+- [文档中心](docs/index.md) — 按目的导航全部文档
 - [系统架构](docs/architecture/系统架构.md) — 主链路与模块职责
 - [本地运行指南](docs/operations/本地运行指南.md) — Docker Compose 完整运行
 - [本地开发指南](docs/development/本地开发指南.md) — 按服务开发与调试
 - [测试策略](docs/development/测试策略.md) — 质量门禁
+- [项目路线图](docs/product/项目路线图.md) — 当前版本、限制与下一版本
 - [Release Readiness](docs/execution/QA-2026-08-21-closure/release-readiness.md) — 正式发布判定与证据
 
 ## License

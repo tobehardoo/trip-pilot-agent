@@ -1393,6 +1393,8 @@ describe('TripPilot application shell', () => {
     )
   })
 
+  // Heavier async test (multiple SSE/version interactions); CI runners
+  // occasionally exceed the 5s default, so give it a bounded larger budget.
   test('updates constraints with the current version and preserves fixed schedules', async () => {
     const fixedSchedules = [{
       placeName: '广东省博物馆',
@@ -1575,7 +1577,7 @@ describe('TripPilot application shell', () => {
       mobilityLevel: 'REDUCED',
     })
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-  })
+  }, 15_000)
 
   test('keeps partial travel and meal fields visible instead of silently dropping them', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -838,7 +838,6 @@ class AgentLoop:
         ) = advance_failure_memory(
             kind=kind,
             signature=signature,
-            current_kind=state.failure_kind,
             current_signature=state.failure_signature,
             current_attempts=state.failure_attempts,
         )

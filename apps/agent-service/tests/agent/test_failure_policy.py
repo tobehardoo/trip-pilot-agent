@@ -292,11 +292,11 @@ def test_failure_memory_counts_consecutive_identical_failures() -> None:
     )
     assert advance_failure_memory(
         kind=kind, signature=signature,
-        current_kind=None, current_signature=None, current_attempts=0,
+        current_signature=None, current_attempts=0,
     ) == (kind, signature, 1)
     assert advance_failure_memory(
         kind=kind, signature=signature,
-        current_kind=kind, current_signature=signature, current_attempts=1,
+        current_signature=signature, current_attempts=1,
     ) == (kind, signature, 2)
 
     other, other_sig = classify_failure(
@@ -304,7 +304,7 @@ def test_failure_memory_counts_consecutive_identical_failures() -> None:
     )
     assert advance_failure_memory(
         kind=other, signature=other_sig,
-        current_kind=kind, current_signature=signature, current_attempts=2,
+        current_signature=signature, current_attempts=2,
     ) == (other, other_sig, 1)
 
 
@@ -313,7 +313,7 @@ def test_failure_memory_resets_on_success() -> None:
     assert (kind, signature) == (None, "")
     assert advance_failure_memory(
         kind=kind, signature=signature,
-        current_kind="TRANSIENT", current_signature="TRANSIENT:build_itinerary:NETWORK_ERROR",
+        current_signature="TRANSIENT:build_itinerary:NETWORK_ERROR",
         current_attempts=3,
     ) == (None, None, 0)
 

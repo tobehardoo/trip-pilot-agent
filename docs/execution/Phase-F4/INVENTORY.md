@@ -107,15 +107,15 @@
 |---|---|---|---|---|---|
 | D-1 | 死路由 trip-versions | router/index.ts | 3.0 审计 §1.5；本次 grep `versions` 0 命中 | ✅ **已清理** | 无需动作 |
 | D-2 | Java 空壳层 | application/* | 3.0 审计 §1.3 | ✅ **已清理** | 无需动作 |
-| D-3 | ConstraintPanel.vue 0 引用 | apps/web/src/components/agent-workspace/ConstraintPanel.vue | 3.0 审计 §1.4；本次 src+tests grep 仅文件自身 | ⚠️ **仍存活** | F-4.3 删除（P3） |
+| D-3 | ConstraintPanel.vue 0 引用 | apps/web/src/components/agent-workspace/ConstraintPanel.vue | 3.0 审计 §1.4；本次 src+tests grep 仅文件自身 | ✅ **已清理**（236d4de F-1b；F-4.0 快照过时） | 无需动作 |
 | D-4 | ortools 死依赖 | pyproject.toml | 3.0 §1.7 / 4.0 复验：pyproject 已无 ortools；本次全仓 grep 0 命中 | ✅ **依赖已移除** | README 失实声明待 F-4.5 修 |
-| D-5 | planning_task 死状态 CREATED/RETRYING/CANCELLING | V4 migration + PlanningTaskMapper | SQL CHECK 允许 9 值（V4__create_planning_and_outbox_tables.sql:17-22）；Java 实际写入点仅 QUEUED/RUNNING/WAITING_USER（Mapper:145,156-157）+ SUCCEEDED/FAILED/CANCELLED；CREATED/RETRYING/CANCELLING 仅出现在查询条件（Mapper:170,199）与注释（PlanningTaskService.java:663） | ⚠️ **仍存活** | F-4.3 评估收紧 CHECK 约束（P2，涉及 migration，谨慎） |
+| D-5 | planning_task 死状态 CREATED/RETRYING/CANCELLING | V4 migration + PlanningTaskMapper | SQL CHECK 允许 9 值（V4__create_planning_and_outbox_tables.sql:17-22）；Java 实际写入点仅 QUEUED/RUNNING/WAITING_USER（Mapper:145,156-157）+ SUCCEEDED/FAILED/CANCELLED；CREATED/RETRYING/CANCELLING 仅出现在查询条件（Mapper:170,199）与注释（PlanningTaskService.java:663） | ⚠️ **判定保留**：RETRYING/CANCELLING 为状态机预留中间态（查询条件 + 语义注释仍引用），收紧 CHECK 需新 migration 且对存量库不可逆；F-4.3 实扫无写入点属实，但收紧迫使查询条件变死条件 | F-5 审计复查（非死状态，F-4 不动） |
 | D-6 | REPLAN 声明可达性 | agent/graph.py | 3.0 §1.8：REPLAN 在 DECISION_SCHEMA（graph.py:574,594）为合法策略，tools.py 无 replan 工具；但 graph.py:776-784 有 E-1 有界反射预算守卫"neither decider may REPLAN without end" | ⚠️ **语义已变，需 F-5.2 专项核验** | 不在 F-4 删（可能是设计：REPLAN 由外部 replan command 触发），F-5 审计判断 |
-| D-7 | MealDemand.budget_per_person 死参数 | daily_schedule.py:212,431,451,464,541,605,694,715 | 3.0 §2.3：定义+透传但调用点不传 → 恒 None | ⚠️ 待复验（行号可能漂移） | F-4.3 确认后删（P2） |
-| D-8 | 终态集合双源 | PlanningTaskEventHub.java:112-116 vs PlanningTaskEventStreamService.java:15-16 | 3.0 §2.4 | ⚠️ 待复验 | F-4.3 合并（P2） |
+| D-7 | MealDemand.budget_per_person 死参数 | daily_schedule.py:212,431,451,464,541,605,694,715 | 3.0 §2.3："定义+透传但调用点不传 → 恒 None" | ✅ **已激活（非死代码）**：V3 P2-1 预算感知餐饮落地——test_meal_budget.py 专项测试（soft envelope first-match-wins）+ anchor_resolution.py:157 生产读取 meal.budget_per_person + daily_schedule.py:478-481 包络分支 | 无需动作（F-4.0 快照过时） |
+| D-8 | 终态集合双源 | PlanningTaskEventHub.java:112-116 vs PlanningTaskEventStreamService.java:15-16 | 3.0 §2.4 | ✅ **已合并**：PlanningTaskEventHub.java 已不存在，终态集合仅 PlanningTaskEventStreamService.java:22-23 单一来源（F-4.0 快照过时） | 无需动作 |
 | D-9 | TripSkeleton docstring 过时 | planning/trip_skeleton.py:22-24 | 3.0 §2.1："has not entered worker runtime" 不准确（processor.py:16-17,151-173 已接线） | ⚠️ 待复验 | F-4.4 修正注释（P3） |
 | D-10 | DecisionTrace docstring 过时 | planning/decision_trace.py:7-9 | 3.0 §2.2："so-far-unused vocabulary" 不准确（planning_provider.py:423 已构建 traces） | ⚠️ 待复验 | F-4.4 修正注释（P3） |
-| D-11 | vulture unused variable ×7 | failure_policy.py:275, dialog/service.py:999, redis_cache.py:9, agent_processor.py:110, amqp.py:82,84,93 | vulture 100% confidence | ⚠️ 局部变量 | F-4.4 顺手清理（P3） |
+| D-11 | vulture unused variable ×7 | failure_policy.py:275, dialog/service.py:999, redis_cache.py:9, agent_processor.py:110, amqp.py:82,84,93 | vulture 100% confidence | ⚠️ **2/7 已清理**（下一 commit）：`current_kind`（advance_failure_memory 参数，函数体从未读）+ `missed`（_ground_hint 参数，返回固定文案）；**5/7 判定保留**（Protocol 方法契约参数：redis_cache `ex`、agent_processor `mandatory`、amqp `requeue`×2/`mandatory`——结构协议签名面，vulture 误报） | F-4.3 已清理 + 记录判定 |
 | D-12 | API_ONLY 端点（无 UI 消费） | ItineraryController:68, CityIntelligenceController:27,35, CitySourceController:28,37, UserController:21, HealthController:11, InternalPlanningDiagnosticsController:33,42 | 3.0 §3 | ⚠️ 功能未死、UI 闲置 | 保留（内部运维/未来），不做动作，F-5.6 记录 |
 
 ---
@@ -135,7 +135,7 @@
 
 1. **F-4.1**：`planning_provider.py`（2450）——按职责拆（候选边界见下节）——✅ 已完成（83f62c0，Facade 861 + 6 协作者）；`ItineraryService.java`（2038）——编辑引擎/版本工厂分离（收敛计划 §四.3）
 2. **F-4.2**：`agent/itinerary_builder.py` 的 DemoPlanningProvider 硬编码 → 组合根注入（D-13 新发现）——✅ 已完成（下一 commit：注解改 `PlanningBackend` 结构协议，默认值保留 demo 语义；组合根 `_itinerary_builder_for_mode` 本已按 mode 注入）；worker/processor.py 对 planning 的 3 处 import 边界评估——✅ 方向健康（worker→domain/planning 纯函数），无需改动
-3. **F-4.3**：D-3（ConstraintPanel.vue）、D-5（死状态，谨慎）、D-7（budget_per_person）、D-8（终态双源）、D-11（unused variable）
+3. **F-4.3**：D-3（ConstraintPanel.vue）——✅ 已清理（236d4de F-1b，快照过时）；D-5（死状态）——✅ 判定保留（状态机预留中间态，F-5 复查）；D-7（budget_per_person）——✅ 判定已激活（V3 P2-1 软包络）；D-8（终态双源）——✅ 判定已合并（单一来源）；D-11（unused variable）——✅ 2/7 已清理（current_kind/missed），5/7 判定 Protocol 契约参数保留
 4. **F-4.4**：D-9/D-10（过时 docstring）、统一风格
 5. **F-4.5**：README OR-Tools 失实声明（D-4 关联）、过期文档清理
 

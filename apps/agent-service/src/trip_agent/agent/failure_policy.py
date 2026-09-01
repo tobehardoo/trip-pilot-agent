@@ -272,7 +272,6 @@ def advance_failure_memory(
     *,
     kind: FailureKind | None,
     signature: str,
-    current_kind: str | None,
     current_signature: str | None,
     current_attempts: int,
 ) -> tuple[str | None, str | None, int]:

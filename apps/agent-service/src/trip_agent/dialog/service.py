@@ -923,7 +923,7 @@ class AgentDialogService:
                     self._reply(
                         state,
                         "没找到：" + "、".join(misses) + "。"
-                        + self._ground_hint(state, "、".join(misses)),
+                        + self._ground_hint(state),
                     )
                     state.slots[pending.slot] = SlotView(
                         value=[hit["name"] for hit in grounded],
@@ -948,7 +948,7 @@ class AgentDialogService:
                 self._reply(
                     state,
                     f"在{city or '目的地'}没找到「{keyword}」。"
-                    + self._ground_hint(state, str(keyword)),
+                    + self._ground_hint(state),
                 )
                 state.pending = _Pending(
                     slot=pending.slot, mode="confirm", restore_view=pending.restore_view,
@@ -966,7 +966,7 @@ class AgentDialogService:
                 self._reply(
                     state,
                     f"在{city}没找到「{keyword}」，最接近的结果在{hit['city']}，先不采用。"
-                    + self._ground_hint(state, str(keyword)),
+                    + self._ground_hint(state),
                 )
                 state.pending = _Pending(
                     slot=pending.slot, mode="confirm", restore_view=pending.restore_view,
@@ -996,7 +996,7 @@ class AgentDialogService:
             self._reply(state, "地点搜索暂时不可用，先按你的说法保存；创建时会再次校验。")
             return True
 
-    def _ground_hint(self, state: _DialogState, missed: str) -> str:
+    def _ground_hint(self, state: _DialogState) -> str:
         return "换个说法试试（如去掉“附近”等后缀），或点“不用管”。"
 
     def _refs_json(self, hits: list[dict[str, str]]) -> list[dict[str, str]]:

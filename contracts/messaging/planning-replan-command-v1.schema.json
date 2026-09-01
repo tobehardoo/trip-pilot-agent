@@ -38,7 +38,7 @@
         "trip": {"$ref": "planning-create-command-v2.schema.json#/$defs/trip"},
         "itinerary": {"$ref": "#/$defs/replanItinerary"},
         "knowledge": {
-          "$ref": "planning-completed-event-v5.schema.json#/$defs/knowledgeEvidence"
+          "$ref": "planning-completed-event-v11.schema.json#/$defs/knowledgeEvidence"
         }
       }
     },
@@ -50,7 +50,7 @@
         "title": {"type": "string", "minLength": 1, "maxLength": 200},
         "provider": {"enum": ["AMAP", "DEMO"]},
         "days": {"type": "array", "minItems": 1, "maxItems": 7, "items": {"$ref": "#/$defs/replanDay"}},
-        "estimatedTotalCost": {"$ref": "planning-completed-event-v5.schema.json#/$defs/money"}
+        "estimatedTotalCost": {"$ref": "planning-completed-event-v11.schema.json#/$defs/money"}
       }
     },
     "replanDay": {
@@ -63,14 +63,14 @@
           "type": "array", "minItems": 1,
           "items": {
             "oneOf": [
-              {"$ref": "planning-completed-event-v5.schema.json#/$defs/amapActivity"},
-              {"$ref": "planning-completed-event-v5.schema.json#/$defs/demoActivity"}
+              {"$ref": "planning-completed-event-v11.schema.json#/$defs/amapActivity"},
+              {"$ref": "planning-completed-event-v11.schema.json#/$defs/demoActivity"}
             ]
           }
         },
         "transitLegs": {
           "type": "array", "maxItems": 999,
-          "items": {"$ref": "planning-completed-event-v5.schema.json#/$defs/transitLeg"}
+          "items": {"$ref": "planning-completed-event-v11.schema.json#/$defs/transitLeg"}
         }
       }
     }

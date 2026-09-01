@@ -1124,58 +1124,24 @@ class ProviderProvenance(MessageModel):
         return self
 
 
-class PlanningCompletedPayload(MessageModel):
-    provider: Literal["AMAP", "DEMO"]
-    itinerary: Itinerary
-    knowledge: KnowledgeEvidence
-    fact_impacts: tuple[PlanningFactImpact, ...] = Field(default=(), max_length=500)
-    provider_provenance: ProviderProvenance | None = None
-    evaluation: object | None = Field(default=None)
-
-    @field_validator("evaluation", mode="before")
-    @classmethod
-    def _normalize_evaluation(cls, value: object) -> object:
-        """Accept None or a PlanEvaluation; the PlanEvaluation type is
-        validated by importing it on first use to avoid a circular
-        dependency between contracts ↔ evaluation.models."""
-        if value is None:
-            return None
-        # Deferred import breaks the circular chain
-        from trip_agent.evaluation.models import PlanEvaluation  # noqa: PLC0415
-
-        if isinstance(value, PlanEvaluation):
-            return value
-        if isinstance(value, dict):
-            return PlanEvaluation.model_validate(value)
-        raise ValueError("evaluation must be a PlanEvaluation or None")
-
-    @model_validator(mode="after")
-    def validate_activity_sources(self) -> Self:
-        if any(
-            activity.source != self.provider
-            for day in self.itinerary.days
-            for activity in day.activities
-        ):
-            raise ValueError("activity source must match payload provider")
-        return self
+# ── B6: authoritative outcome events (v10/v11 completion / review v2) ──────
 
 
-class PlanningCompletedEvent(MessageModel):
-    event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[6, 8]
-    event_id: UUID
-    trace_id: UUID
-    task_id: UUID
-    trip_id: UUID
-    run_id: UUID
-    occurred_at: datetime
-    payload: PlanningCompletedPayload
+class PlanningCompletedPayloadV10(MessageModel):
+    """v10 completion payload: authoritative completion evidence.
 
+    Carries the full v9 completion contract (required PlanEvaluation plus
+    a feasibility report bound to the itinerary fingerprint) with explicit
+    blocker semantics on top: ``has_blocker`` mirrors the report's derived
+    blocker state so the Java side never guesses from ``warnings.length``.
+    A v10 completion may carry an UNVERIFIED report as long as no blocker
+    exists (Information Missing != Planning Failed); VERIFIED reports keep
+    has_blocker=False.
 
-# ── B6: authoritative outcome events (v9 completion / review-required v1) ──
+    F-3c: the V9 base class was terminated; its fields and validators are
+    inlined here so V10 stands alone while v11 reuses the same payload.
+    """
 
-
-class PlanningCompletedPayloadV9(MessageModel):
     provider: Literal["AMAP", "DEMO"]
     itinerary: Itinerary
     knowledge: KnowledgeEvidence
@@ -1183,13 +1149,14 @@ class PlanningCompletedPayloadV9(MessageModel):
     provider_provenance: ProviderProvenance | None = None
     evaluation: object
     feasibility_report: FeasibilityReport
+    has_blocker: bool
 
     @field_validator("evaluation", mode="before")
     @classmethod
     def _normalize_evaluation(cls, value: object) -> object:
         """Accept only a PlanEvaluation (deferred import avoids a cycle)."""
         if value is None:
-            raise ValueError("evaluation is required for v9 completion")
+            raise ValueError("evaluation is required for completion")
         from trip_agent.evaluation.models import PlanEvaluation  # noqa: PLC0415
 
         if isinstance(value, PlanEvaluation):
@@ -1217,60 +1184,12 @@ class PlanningCompletedPayloadV9(MessageModel):
             raise ValueError("feasibility report fingerprint must match the payload itinerary")
         return self
 
-
-class PlanningCompletedEventV9(MessageModel):
-    event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[9]
-    event_id: UUID
-    trace_id: UUID
-    task_id: UUID
-    trip_id: UUID
-    run_id: UUID
-    occurred_at: datetime
-    payload: PlanningCompletedPayloadV9
-
-    @model_validator(mode="after")
-    def require_verified_report(self) -> Self:
-        if self.payload.feasibility_report.status is not FeasibilityStatus.VERIFIED:
-            raise ValueError("v9 completion requires a VERIFIED feasibility report")
-        return self
-
-
-class PlanningCompletedPayloadV10(PlanningCompletedPayloadV9):
-    """v10 completion payload: adds explicit blocker semantics.
-
-    ``has_blocker`` mirrors the report's derived blocker state so the Java
-    side never guesses from ``warnings.length``.  A v10 completion may carry
-    an UNVERIFIED report as long as no blocker exists (Information Missing
-    != Planning Failed); VERIFIED reports keep has_blocker=False.
-    """
-
-    has_blocker: bool
-
     @model_validator(mode="after")
     def blocker_consistent(self) -> Self:
         if self.has_blocker != self.feasibility_report.has_blocker:
             raise ValueError("has_blocker must match the feasibility report blocker state")
         if self.has_blocker:
-            raise ValueError("v10 completion must not carry a blocker report")
-        return self
-
-
-class PlanningCompletedEventV10(MessageModel):
-    event_type: Literal["PLANNING_COMPLETED"]
-    schema_version: Literal[10]
-    event_id: UUID
-    trace_id: UUID
-    task_id: UUID
-    trip_id: UUID
-    run_id: UUID
-    occurred_at: datetime
-    payload: PlanningCompletedPayloadV10
-
-    @model_validator(mode="after")
-    def require_savable_report(self) -> Self:
-        if self.payload.feasibility_report.has_blocker:
-            raise ValueError("v10 completion requires a savable (no-blocker) feasibility report")
+            raise ValueError("completion must not carry a blocker report")
         return self
 
 
@@ -1339,18 +1258,6 @@ class PlanningReviewRequiredPayload(MessageModel):
         return self
 
 
-class PlanningReviewRequiredEvent(MessageModel):
-    event_type: Literal["PLANNING_REVIEW_REQUIRED"]
-    schema_version: Literal[1]
-    event_id: UUID
-    trace_id: UUID
-    task_id: UUID
-    trip_id: UUID
-    run_id: UUID
-    occurred_at: datetime
-    payload: PlanningReviewRequiredPayload
-
-
 class PlanningReviewRequiredEventV2(MessageModel):
     event_type: Literal["PLANNING_REVIEW_REQUIRED"]
     schema_version: Literal[2]
@@ -1388,26 +1295,6 @@ class PlanningConflict(MessageModel):
 class PlanningRelaxation(MessageModel):
     code: ShortText
     message: KnowledgeMessage
-
-
-class PlanningFailedPayloadV1(MessageModel):
-    status: Literal["FAILED"]
-    error_code: Literal["NO_FEASIBLE_ITINERARY"]
-    message: KnowledgeMessage
-    conflicts: tuple[PlanningConflict, ...] = Field(min_length=1, max_length=20)
-    relaxation_suggestions: tuple[PlanningRelaxation, ...] = Field(max_length=20)
-
-
-class PlanningFailedEventV1(MessageModel):
-    event_type: Literal["PLANNING_FAILED"]
-    schema_version: Literal[1]
-    event_id: UUID
-    trace_id: UUID
-    task_id: UUID
-    trip_id: UUID
-    run_id: UUID
-    occurred_at: datetime
-    payload: PlanningFailedPayloadV1
 
 
 class PlanningFailedPayload(MessageModel):

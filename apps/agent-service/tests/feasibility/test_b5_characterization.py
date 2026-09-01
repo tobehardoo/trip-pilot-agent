@@ -99,7 +99,7 @@ def test_v8_completion_schema_unchanged() -> None:
     from pathlib import Path
 
     schema = json.loads(
-        Path("../../contracts/messaging/planning-completed-event-v8.schema.json").read_text(
+        Path("../../contracts/messaging/legacy/planning-completed-event-v8.schema.json").read_text(
             encoding="utf-8"
         )
     )

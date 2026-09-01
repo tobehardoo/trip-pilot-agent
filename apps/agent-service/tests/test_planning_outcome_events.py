@@ -1,8 +1,10 @@
-"""B6 — authoritative outcome events: v9 completion and review-required v1.
+"""B6 — authoritative outcome events: v10/v11 completion and review-required v2.
 
-Locks the event-model semantics before the worker wiring: v9 accepts only
-VERIFIED feasibility reports; review v1 accepts only UNVERIFIED /
-NEEDS_REPAIR and never carries a PlanEvaluation.
+Locks the event-model semantics before the worker wiring: v10/v11 payloads
+require a PlanEvaluation and bind the feasibility report to the itinerary
+fingerprint; completion accepts VERIFIED or savable UNVERIFIED reports but
+never a blocker; review v2 accepts only UNVERIFIED / NEEDS_REPAIR reports
+and never carries a PlanEvaluation.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -20,11 +22,9 @@ from trip_agent.worker.contracts import (
     KnowledgeCitationSnapshot,
     KnowledgeEvidence,
     KnowledgeFreshness,
-    PlanningCompletedEventV9,
-    PlanningCompletedEventV10,
-    PlanningCompletedPayloadV9,
+    PlanningCompletedEventV11,
     PlanningCompletedPayloadV10,
-    PlanningReviewRequiredEvent,
+    PlanningReviewRequiredEventV2,
     PlanningReviewRequiredPayload,
 )
 
@@ -86,74 +86,9 @@ def _evaluation() -> PlanEvaluation:
     return get_plan_evaluator().evaluate(make_command(), make_result())
 
 
-def _payload(report: object) -> PlanningCompletedPayloadV9:
-    return PlanningCompletedPayloadV9(
-        provider="DEMO",
-        itinerary=make_result().itinerary,
-        knowledge=_knowledge(),
-        fact_impacts=(),
-        provider_provenance=None,
-        evaluation=_evaluation(),
-        feasibility_report=report,
-    )
-
-
-def test_v9_accepts_verified_report() -> None:
-    # The fixture demo itinerary has no evidence -> UNVERIFIED; forge a
-    # VERIFIED report via build_feasibility_report with all-PASS results.
-    from trip_agent.feasibility.catalog import IMPLEMENTED_RULE_IDS
-    from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
-    from trip_agent.feasibility.models import (
-        RuleOutcome,
-        RuleResult,
-        build_feasibility_report,
-    )
-
-    itinerary = make_result().itinerary
-    results = tuple(
-        RuleResult(
-            rule_id=rule_id,
-            rule_version="hard-rule-v1",
-            outcome=RuleOutcome.NOT_APPLICABLE,
-            reason_code="N/A",
-            message="na",
-        )
-        for rule_id in IMPLEMENTED_RULE_IDS
-    )
-    verified = build_feasibility_report(
-        report_id=REPORT_ID,
-        validator_version="hard-validator-v3",
-        itinerary_fingerprint=compute_itinerary_fingerprint(itinerary),
-        validated_at=_TS,
-        required_rule_ids=IMPLEMENTED_RULE_IDS,
-        rule_results=results,
-    )
-    assert verified.status is FeasibilityStatus.VERIFIED
-
-    event = PlanningCompletedEventV9(
-        event_type="PLANNING_COMPLETED",
-        schema_version=9,
-        **_identity(),
-        payload=_payload(verified),
-    )
-
-    assert event.schema_version == 9
-    assert event.payload.feasibility_report.status is FeasibilityStatus.VERIFIED
-
-
-def test_v9_rejects_unverified_report() -> None:
+def test_v10_payload_rejects_missing_report() -> None:
     with pytest.raises(ValidationError):
-        PlanningCompletedEventV9(
-            event_type="PLANNING_COMPLETED",
-            schema_version=9,
-            **_identity(),
-            payload=_payload(_report()),
-        )
-
-
-def test_v9_rejects_missing_report() -> None:
-    with pytest.raises(ValidationError):
-        PlanningCompletedPayloadV9(
+        PlanningCompletedPayloadV10(
             provider="DEMO",
             itinerary=make_result().itinerary,
             knowledge=_knowledge(),
@@ -161,13 +96,14 @@ def test_v9_rejects_missing_report() -> None:
             provider_provenance=None,
             evaluation=None,
             feasibility_report=None,
+            has_blocker=False,
         )
 
 
-def test_review_accepts_unverified_report() -> None:
-    event = PlanningReviewRequiredEvent(
+def test_review_v2_accepts_unverified_report() -> None:
+    event = PlanningReviewRequiredEventV2(
         event_type="PLANNING_REVIEW_REQUIRED",
-        schema_version=1,
+        schema_version=2,
         **_identity(),
         payload=PlanningReviewRequiredPayload(
             status="WAITING_USER",
@@ -256,22 +192,23 @@ def test_outcome_events_reject_unknown_fields() -> None:
 # ── B6.1: evaluation required + itinerary fingerprint binding ──────────────
 
 
-def test_v9_payload_requires_evaluation() -> None:
+def test_v10_payload_requires_evaluation() -> None:
     report = _report()
     with pytest.raises(ValidationError):
-        PlanningCompletedPayloadV9(
+        PlanningCompletedPayloadV10(
             provider="DEMO",
             itinerary=make_result().itinerary,
             knowledge=_knowledge(),
             fact_impacts=(),
             provider_provenance=None,
             feasibility_report=report,
+            has_blocker=False,
         )
 
 
-def test_v9_payload_rejects_none_evaluation() -> None:
+def test_v10_payload_rejects_none_evaluation() -> None:
     with pytest.raises(ValidationError):
-        PlanningCompletedPayloadV9(
+        PlanningCompletedPayloadV10(
             provider="DEMO",
             itinerary=make_result().itinerary,
             knowledge=_knowledge(),
@@ -279,12 +216,13 @@ def test_v9_payload_rejects_none_evaluation() -> None:
             provider_provenance=None,
             evaluation=None,
             feasibility_report=_report(),
+            has_blocker=False,
         )
 
 
-def test_v9_payload_rejects_non_evaluation_object() -> None:
+def test_v10_payload_rejects_non_evaluation_object() -> None:
     with pytest.raises(ValidationError):
-        PlanningCompletedPayloadV9(
+        PlanningCompletedPayloadV10(
             provider="DEMO",
             itinerary=make_result().itinerary,
             knowledge=_knowledge(),
@@ -292,10 +230,11 @@ def test_v9_payload_rejects_non_evaluation_object() -> None:
             provider_provenance=None,
             evaluation="not an evaluation",
             feasibility_report=_report(),
+            has_blocker=False,
         )
 
 
-def test_v9_payload_rejects_fingerprint_mismatch() -> None:
+def test_v10_payload_rejects_fingerprint_mismatch() -> None:
     from trip_agent.feasibility.catalog import IMPLEMENTED_RULE_IDS
     from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
     from trip_agent.feasibility.models import (
@@ -350,7 +289,7 @@ def test_v9_payload_rejects_fingerprint_mismatch() -> None:
         estimated_total_cost=Decimal("1.00"),
     )
     with pytest.raises(ValidationError):
-        PlanningCompletedPayloadV9(
+        PlanningCompletedPayloadV10(
             provider="DEMO",
             itinerary=other,
             knowledge=_knowledge(),
@@ -358,6 +297,7 @@ def test_v9_payload_rejects_fingerprint_mismatch() -> None:
             provider_provenance=None,
             evaluation=_evaluation(),
             feasibility_report=report,
+            has_blocker=False,
         )
 
 
@@ -423,7 +363,7 @@ def test_review_payload_rejects_fingerprint_mismatch() -> None:
         )
 
 
-# ── B16: v10 completion — Information Missing != Planning Failed ───────────
+# ── B16: completion (v10 payload / v11 event) — Information Missing != Planning Failed ──
 
 
 def _verified_report():
@@ -456,14 +396,14 @@ def _verified_report():
     )
 
 
-def test_v10_accepts_verified_report() -> None:
+def test_v11_accepts_verified_report() -> None:
     report = _verified_report()
     assert report.status is FeasibilityStatus.VERIFIED
     assert report.has_blocker is False
 
-    event = PlanningCompletedEventV10(
+    event = PlanningCompletedEventV11(
         event_type="PLANNING_COMPLETED",
-        schema_version=10,
+        schema_version=11,
         **_identity(),
         payload=PlanningCompletedPayloadV10(
             provider="DEMO",
@@ -476,21 +416,21 @@ def test_v10_accepts_verified_report() -> None:
             has_blocker=False,
         ),
     )
-    assert event.schema_version == 10
+    assert event.schema_version == 11
     assert event.payload.feasibility_report.status is FeasibilityStatus.VERIFIED
     assert event.payload.has_blocker is False
 
 
-def test_v10_accepts_unverified_no_blocker_report() -> None:
-    """3 opening-hours unknowns + 4 duration unknowns -> savable v10."""
+def test_v11_accepts_unverified_no_blocker_report() -> None:
+    """3 opening-hours unknowns + 4 duration unknowns -> savable v11."""
     report = _report()  # fixture demo itinerary has no evidence -> UNVERIFIED
     assert report.status is FeasibilityStatus.UNVERIFIED
     assert report.has_blocker is False
     assert report.can_save is True
 
-    event = PlanningCompletedEventV10(
+    event = PlanningCompletedEventV11(
         event_type="PLANNING_COMPLETED",
-        schema_version=10,
+        schema_version=11,
         **_identity(),
         payload=PlanningCompletedPayloadV10(
             provider="DEMO",
@@ -507,8 +447,8 @@ def test_v10_accepts_unverified_no_blocker_report() -> None:
     assert event.payload.has_blocker is False
 
 
-def test_v10_rejects_blocker_report() -> None:
-    """A FAIL (venue closed) must never be emitted as v10 completion."""
+def test_v11_rejects_blocker_report() -> None:
+    """A FAIL (venue closed) must never be emitted as a completion event."""
     from trip_agent.feasibility.catalog import IMPLEMENTED_RULE_IDS
     from trip_agent.feasibility.fingerprint import compute_itinerary_fingerprint
     from trip_agent.feasibility.models import (
@@ -558,9 +498,9 @@ def test_v10_rejects_blocker_report() -> None:
     assert report.has_blocker is True
 
     with pytest.raises(ValidationError):
-        PlanningCompletedEventV10(
+        PlanningCompletedEventV11(
             event_type="PLANNING_COMPLETED",
-            schema_version=10,
+            schema_version=11,
             **_identity(),
             payload=PlanningCompletedPayloadV10(
                 provider="DEMO",

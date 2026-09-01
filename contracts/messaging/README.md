@@ -15,7 +15,7 @@
 | `planning-failed-event-v2` | Python | Java 读取 v1 和 v2 |
 | `planning-failed-event-v1` | 已废弃 | 仅作为历史不可行事件的只读兼容保留 |
 | `planning-completed-event-v7` | 无 | **ABANDONED**：transit cost/mode 草案，未进入生产 |
-| `planning-completed-event-v1`–`v8` | 历史/冻结 | Java runtime fail closed，不再据此创建正式版本 |
+| `planning-completed-event-v1`–`v8` | 历史/冻结 | 全部移入 `legacy/`（v4–v8 于 F-3c 迁移）；Java runtime fail closed，不再据此创建正式版本 |
 
 新的 Python 失败事件仅使用 v2。failure v2 仅携带安全 Provider 诊断信息：category/code、provider、operation、可重试性/次数、回退标记、安全消息和可选安全 Provider 码。不得包含凭据、授权数据、完整 Provider 请求/响应、用户敏感输入或堆栈跟踪。
 

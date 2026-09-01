@@ -3,7 +3,6 @@ import hashlib
 import json
 from copy import deepcopy
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
 
@@ -15,31 +14,25 @@ from test_planning_context_v3 import _v3_command
 
 from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
 from trip_agent.worker.contracts import (
-    ActivityCoordinates,
-    Itinerary,
-    ItineraryActivity,
-    ItineraryDay,
-    KnowledgeEvidence,
-    KnowledgeFreshness,
-    PlanningCompletedEvent,
-    PlanningCompletedPayload,
     PlanningConflict,
     PlanningCreateCommand,
-    PlanningFailedEventV1,
-    PlanningFailedPayloadV1,
+    PlanningFailedEvent,
+    PlanningFailedPayload,
     PlanningProgressEvent,
     PlanningProgressPayload,
     PlanningRelaxation,
-    TransitLeg,
 )
 from trip_agent.worker.processor import process_planning_create
 
 CONTRACT_DIRECTORY = Path(__file__).parents[3] / "contracts" / "messaging"
-COMPLETION_V6_FIXTURE_DIRECTORY = (
-    Path(__file__).resolve().parents[3] / "contracts" / "fixtures" / "planning-completed-event-v6"
-)
 COMPLETION_V9_FIXTURE_DIRECTORY = (
     Path(__file__).resolve().parents[3] / "contracts" / "fixtures" / "planning-completed-event-v9"
+)
+COMPLETION_V11_FIXTURE_DIRECTORY = (
+    Path(__file__).resolve().parents[3]
+    / "contracts"
+    / "fixtures"
+    / "planning-completed-event-v11"
 )
 REVIEW_V1_FIXTURE_DIRECTORY = (
     Path(__file__).resolve().parents[3]
@@ -56,9 +49,6 @@ ACTIVE_SCHEMA_FILES = (
     "agent-step-event-v1.schema.json",
     "city-intelligence-refresh-command-v1.schema.json",
     "planning-cancel-command-v1.schema.json",
-    "planning-completed-event-v4.schema.json",
-    "planning-completed-event-v5.schema.json",
-    "planning-completed-event-v6.schema.json",
     "planning-create-command-v2.schema.json",
     "planning-create-command-v3.schema.json",
     "planning-create-command-v4.schema.json",
@@ -254,135 +244,6 @@ def test_completed_v10_shared_fixture_conforms_to_schema() -> None:
     assert fixture["payload"]["feasibilityReport"]["status"] == "UNVERIFIED"
 
 
-def test_v1_evaluation_schema_rejects_not_applicable_dimensions() -> None:
-    fixture = json.loads(
-        (COMPLETION_V6_FIXTURE_DIRECTORY / "completion-v6-evaluation-clean.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    fixture["payload"]["evaluation"]["dimensions"]["budgetFit"] = None
-
-    with pytest.raises(JsonSchemaValidationError):
-        Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).validate(
-            fixture
-        )
-
-
-@pytest.mark.parametrize(
-    "fixture_name",
-    (
-        "completion-v6-legacy-amap.json",
-        "completion-v6-demo.json",
-        "completion-v6-real-only-amap.json",
-        "completion-v6-explicit-fallback-mixed.json",
-        "completion-v6-multi-transit-mixed.json",
-    ),
-)
-def test_completion_v6_shared_fixtures_match_the_active_schema(
-    fixture_name: str,
-) -> None:
-    fixture = json.loads(
-        (COMPLETION_V6_FIXTURE_DIRECTORY / fixture_name).read_text(encoding="utf-8")
-    )
-
-    Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).validate(fixture)
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    (
-        ("requestedProviderMode", "REAL_ONLY"),
-        ("actualProviders", []),
-        ("fallbackAttempted", False),
-        ("fallbackOperations", []),
-    ),
-)
-def test_completion_v6_schema_rejects_illegal_provenance_combinations(
-    field: str, value: object
-) -> None:
-    fixture = json.loads(
-        (COMPLETION_V6_FIXTURE_DIRECTORY / "completion-v6-explicit-fallback-mixed.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    fixture["payload"]["providerProvenance"][field] = value
-
-    errors = list(
-        Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).iter_errors(
-            fixture
-        )
-    )
-
-    assert errors
-
-
-def test_v6_completed_event_contract_accepts_worker_output_with_a_transit_leg() -> None:
-    event = PlanningCompletedEvent(
-        event_type="PLANNING_COMPLETED",
-        schema_version=6,
-        event_id=UUID("5aa31052-2c21-53af-bddb-6a86614d801b"),
-        trace_id=UUID("ea930620-41a7-4fdc-b6d1-d298a850112a"),
-        task_id=UUID("dfb858fc-b910-4056-a375-2366dcaab690"),
-        trip_id=UUID("d209daf2-f004-42cc-8385-510825f40fe1"),
-        run_id=UUID("3b85b6b6-9e42-433b-90ef-d94a3eb26e18"),
-        occurred_at=datetime(2026, 7, 26, 8, 0, tzinfo=UTC),
-        payload=PlanningCompletedPayload(
-            provider="DEMO",
-            itinerary=Itinerary(
-                title="Demo itinerary",
-                estimated_total_cost=Decimal("0"),
-                days=(
-                    ItineraryDay(
-                        date=datetime(2026, 8, 1, tzinfo=UTC).date(),
-                        activities=(
-                            ItineraryActivity(
-                                title="Museum",
-                                start_time=datetime(2026, 8, 1, 9, 0, tzinfo=UTC),
-                                end_time=datetime(2026, 8, 1, 10, 0, tzinfo=UTC),
-                                estimated_cost=Decimal("0"),
-                                source="DEMO",
-                            ),
-                            ItineraryActivity(
-                                title="Park",
-                                start_time=datetime(2026, 8, 1, 11, 0, tzinfo=UTC),
-                                end_time=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
-                                estimated_cost=Decimal("0"),
-                                source="DEMO",
-                            ),
-                        ),
-                        transit_legs=(
-                            TransitLeg(
-                                from_activity_index=0,
-                                to_activity_index=1,
-                                mode="WALKING",
-                                distance_meters=100,
-                                duration_seconds=300,
-                                provider="DEMO",
-                                estimated=True,
-                                polyline=(ActivityCoordinates(longitude=0, latitude=0),),
-                                estimated_cost=Decimal("0"),
-                                cost_source="DEMO",
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-            knowledge=KnowledgeEvidence(
-                status="UNAVAILABLE",
-                query="demo",
-                citations=(),
-                freshness=KnowledgeFreshness(status="UNAVAILABLE"),
-                message="No production knowledge was used",
-            ),
-            fact_impacts=(),
-        ),
-    )
-
-    Draft202012Validator(_load_schema("planning-completed-event-v6.schema.json")).validate(
-        event.model_dump(mode="json", by_alias=True, exclude_none=True)
-    )
-
-
 def test_progress_event_model_matches_its_json_schema() -> None:
     event = PlanningProgressEvent(
         event_type="PLANNING_PROGRESS",
@@ -475,19 +336,26 @@ def test_every_active_messaging_schema_is_a_valid_draft_2020_12_schema() -> None
 
 
 def test_planning_failed_event_model_matches_its_json_schema() -> None:
-    event = PlanningFailedEventV1(
+    event = PlanningFailedEvent(
         event_type="PLANNING_FAILED",
-        schema_version=1,
+        schema_version=2,
         event_id=UUID("38e10d2b-fd84-55ae-97dc-a1e00cac682b"),
         trace_id=UUID("ea930620-41a7-4fdc-b6d1-d298a850112a"),
         task_id=UUID("dfb858fc-b910-4056-a375-2366dcaab690"),
         trip_id=UUID("d209daf2-f004-42cc-8385-510825f40fe1"),
         run_id=UUID("3b85b6b6-9e42-433b-90ef-d94a3eb26e18"),
         occurred_at=datetime(2026, 7, 26, 8, 0, tzinfo=UTC),
-        payload=PlanningFailedPayloadV1(
+        payload=PlanningFailedPayload(
             status="FAILED",
             error_code="NO_FEASIBLE_ITINERARY",
-            message="时间、交通与固定安排无法同时满足",
+            error_category="PLANNING_INFEASIBLE",
+            provider="PLANNER",
+            operation="PLANNING",
+            retryable=False,
+            retry_count=0,
+            fallback_attempted=False,
+            fallback_succeeded=False,
+            safe_message="时间、交通与固定安排无法同时满足",
             conflicts=(
                 PlanningConflict(
                     code="INSUFFICIENT_DAY_CAPACITY",
@@ -504,7 +372,7 @@ def test_planning_failed_event_model_matches_its_json_schema() -> None:
         ),
     )
 
-    schema = _load_schema("planning-failed-event-v1.schema.json")
+    schema = _load_schema("planning-failed-event-v2.schema.json")
     Draft202012Validator(schema).validate(event.model_dump(mode="json", by_alias=True))
 
 
@@ -612,7 +480,15 @@ def test_all_active_schemas_have_matching_fixture_sets() -> None:
         )
 
 
-def test_schema_and_model_agree_on_v9_required_fields() -> None:
+def test_schema_and_model_agree_on_required_fields() -> None:
+    """Both the v9 schema and the v11 model reject payloads missing the
+    authoritative outcome fields.
+
+    F-3c removed the v9 model; the schema half keeps the v9 fixture against
+    the v9 schema (still active), while the model half re-derives the same
+    hard-constraint check from the current v11 model + v11 fixture.
+    """
+    import copy
     import json
 
     schema = _load_schema("planning-completed-event-v9.schema.json")
@@ -624,19 +500,24 @@ def test_schema_and_model_agree_on_v9_required_fields() -> None:
     )
     # model requires evaluation and feasibilityReport; drop each and check
     # that BOTH the schema and the Pydantic model reject the payload.
-    import copy
-
     for field in ("evaluation", "feasibilityReport"):
         broken = copy.deepcopy(fixture)
         del broken["payload"][field]
         with pytest.raises(JsonSchemaValidationError):
             Draft202012Validator(schema, registry=registry).validate(broken)
-        raw_payload = broken["payload"]
-        raw_payload["provider"] = "AMAP"
-        from trip_agent.worker.contracts import PlanningCompletedEventV9
 
+    from trip_agent.worker.contracts import PlanningCompletedEventV11
+
+    v11_fixture = json.loads(
+        (
+            COMPLETION_V11_FIXTURE_DIRECTORY / "completion-v11-transit-savable.json"
+        ).read_text(encoding="utf-8")
+    )
+    for field in ("evaluation", "feasibilityReport"):
+        broken = copy.deepcopy(v11_fixture)
+        del broken["payload"][field]
         with pytest.raises(Exception) as exc:
-            PlanningCompletedEventV9.model_validate(broken)
+            PlanningCompletedEventV11.model_validate(broken)
         assert exc.value
 
 

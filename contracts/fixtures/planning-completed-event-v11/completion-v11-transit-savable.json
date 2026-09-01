@@ -173,7 +173,7 @@
       "schemaVersion": 1,
       "reportId": "e7b7cf53-62cf-428b-84ff-f68dfff8a6cd",
       "validatorVersion": "hard-validator-v4",
-      "itineraryFingerprint": "e8e68b0750eed9238cfbee315b813a44319172020c7b52e32e47b0ca9e7aa21e",
+      "itineraryFingerprint": "82a79af4d2b1cee55739b88e4b72cdb4611b4b551516569c5c4aadfc064261b2",
       "status": "UNVERIFIED",
       "validatedAt": "2026-08-10T12:00:00Z",
       "requiredRuleIds": [
@@ -192,10 +192,10 @@
       "missingRequiredRuleIds": [],
       "summary": {
         "totalCount": 11,
-        "passCount": 4,
+        "passCount": 0,
         "failCount": 0,
         "unknownCount": 3,
-        "notApplicableCount": 4,
+        "notApplicableCount": 8,
         "missingRequiredCount": 0
       },
       "ruleResults": [

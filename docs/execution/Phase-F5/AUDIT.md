@@ -31,13 +31,13 @@
 |---|---|---|---|
 | **P0** | **Web typecheck 21 错误 → production build 失败（vue-tsc 前置门禁）**：web Docker 镜像无法构建，README "typecheck 0" 失实 | `npm run typecheck` 实测 21 errors；`npm run build`（`vue-tsc -b && vite build`）在 vite 前中断 | **已修复**（`4062d94`）：cn 委托 clsx、11 处相对路径、ToolExecution 接口、pace/adcode/PlaceCandidate 等 5 类问题；修复后 typecheck 0 + 307 全绿 + build 通过 |
 | **P1** | README "Current release validation" 段落**整体过期**（v1.0 收口快照）：Python **1717**→实际 2051、Java **558**→626、Web **446**→307、coverage 95.51%→实测 86.83%；skip 描述"3 个可选真实 AMap 单测"与实际不符（实际 42 个含数据库配置未设置） | README.md:169-177 vs 审计实测 | **已修复**（`84002a8`）：更新为实测数字 + skip 原因；删除不可复现的 "61/61 / 13/13" interface-matrix 声明 |
-| P2 | .dockerignore 缺 `**/__pycache__`、`**/.mypy_cache`、`**/.ruff_cache`、`docs/`、`test-results/` 等（build context 偏大） | .dockerignore 全文 7 行 | 下轮维护时扩列（非发布阻塞） |
+| P2 | .dockerignore 缺 `**/__pycache__`、`**/.mypy_cache`、`**/.ruff_cache`、`docs/`、`test-results/` 等（build context 偏大） | .dockerignore 全文 7 行 | **已修复**（`ddd5c8b`）：扩列缓存/日志/文档/测试产物；保留 `knowledge/`（agent-service Dockerfile COPY 依赖）；compose config 复验通过 |
 | P3 | D-12 API_ONLY 端点（InternalPlanningDiagnosticsController /planning-failures、/retries；HealthController /health）无 UI 消费 | 控制器实扫 | 内部运维用途，保留记录在案 |
 | P3 | Web coverage 95.51%（README 声明）未在审计首轮实测复核 | — | 已在处置中实测：86.83%（statements/lines，`vitest run --coverage --coverage.clean=false`） |
 
 ## 4. 十分制评分
 
-**首轮（AUDIT ONLY 时点）：8 / 10** → **复审（P0/P1 处置后）：9 / 10**
+**8 / 10** → **复审（P0/P1 处置后）：9 / 10** → **终审（P2 处置后）：9.5 / 10**
 
 首轮得分构成：
 - 代码真实性 +5（规划/Agent/Web/E2E/部署全部有代码证据与运行验证，无"README 冒充代码"）
@@ -51,19 +51,24 @@
 - P0 发布阻塞已解除（typecheck 0 / 307 全绿 / build 通过）→ 原"无 P0"判定维持
 - P2（.dockerignore）与 P3（D-12 端点）为已知限制，保留 −0.5 → **9 / 10**
 
+终审调整（`ddd5c8b` 后）：
+- P2 已处置（.dockerignore 扩列 + compose config 复验）→ +0.5
+- 仅剩 P3（D-12 内部端点，记录在案即可，无代码动作）→ **9.5 / 10**
+
 ## 5. Release Decision
 
-**A 档——可进入 Release Freeze（前置动作已全部完成）**
+**A 档——可进入 Release Freeze（前置动作与全部发现处置已完成）**
 
 - 代码与测试：完整软件发布就绪（本地优先运行、未部署公网，README:185 限定诚实）
-- 前置动作执行情况：① README "Current release validation" 段落已更新为审计实测数字与 skip 原因（P1，`84002a8`）；② 审计中发现的 Web typecheck P0 发布阻塞已修复并验证（`4062d94`）
-- 复审评分 **9 / 10**，剩余扣分仅为非阻塞打磨项（P2 .dockerignore、P3 D-12 端点记录）
+- 前置动作执行情况：① README "Current release validation" 段落已更新为审计实测数字与 skip 原因（P1，`84002a8`）；② 审计中发现的 Web typecheck P0 发布阻塞已修复并验证（`4062d94`）；③ .dockerignore 已按 P2 扩列（`ddd5c8b`）
+- 终审评分 **9.5 / 10**，剩余 P3（D-12 内部端点）仅为记录在案，无代码动作
 - 动作指引：可进入 Release Freeze → Demo/简历引用（可用 **2051/626/307 + 零 mock E2E + typecheck 0/build 通过** 作为可辩护证据）
-- 限制记录：D-5 状态机预留值、D-12 内部端点、.dockerignore 扩列——作为已知限制记录在案，不影响发布
+- 限制记录：D-5 状态机预留值、D-12 内部端点——作为已知限制记录在案，不影响发布
 
 ## 6. Checkpoint
 
 - F-5 审计完成（AUDIT ONLY，首轮零生产代码改动）
-- 审计起点 `F4-accepted`（e0ac7a3）保持为发布候选基线；P0/P1 处置仅发生在审计发现确认之后（A 档前置动作，属 F-5 允许的唯一例外）
-- 处置 commit：`4062d94`（web typecheck/build P0 修复）、`84002a8`（README validation 数字刷新）
-- 已知限制（下轮维护）：P2 .dockerignore 扩列、P3 D-12 内部端点记录、D-5 状态机预留复查
+- 审计起点 `F4-accepted`（e0ac7a3）保持为发布候选基线；P0/P1/P2 处置仅发生在审计发现确认之后（A 档前置动作，属 F-5 允许的唯一例外）
+- 处置 commit：`4062d94`（web typecheck/build P0 修复）、`84002a8`（README validation 数字刷新）、`ddd5c8b`（.dockerignore 扩列，P2）
+- 终审评分 **9.5 / 10**；tag `F5-release-ready`
+- 已知限制（记录在案，无代码动作）：P3 D-12 内部端点（InternalPlanningDiagnosticsController /planning-failures、/retries；HealthController /health）、D-5 状态机预留中间态复查

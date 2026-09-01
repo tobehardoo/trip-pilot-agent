@@ -17,6 +17,7 @@ from test_planning_intelligence_v1 import (
     _weather_route_provider,
 )
 
+from trip_agent.infrastructure.amap import day_emitter as emitter_module
 from trip_agent.infrastructure.amap import planning_provider as provider_module
 from trip_agent.planning import context_view
 from trip_agent.worker.contracts import PlanningCreateCommand
@@ -38,8 +39,11 @@ def _run_counted(command: PlanningCreateCommand) -> dict[str, int]:
     original_weather = context_view.weather_level_for_date
     original_pressure = context_view.budget_pressure
     original_cost = context_view.resolve_attraction_cost
-    provider_cost = provider_module.resolve_attraction_cost
-    provider_weather = provider_module.weather_level_for_date
+    # F-4.1: the emit-phase resolvers moved to the day_emitter module, so the
+    # fallback counters patch that namespace (patching the facade module would
+    # silently no-op and stop guarding the "no re-resolve in emit" property).
+    provider_cost = emitter_module.resolve_attraction_cost
+    provider_weather = emitter_module.weather_level_for_date
 
     def counting_weather(command_, trip_date):
         counts["weather_view"] += 1
@@ -70,10 +74,10 @@ def _run_counted(command: PlanningCreateCommand) -> dict[str, int]:
         mock.patch.object(context_view, "budget_pressure", counting_pressure),
         mock.patch.object(context_view, "resolve_attraction_cost", counting_cost),
         mock.patch.object(
-            provider_module, "resolve_attraction_cost", counting_cost_provider
+            emitter_module, "resolve_attraction_cost", counting_cost_provider
         ),
         mock.patch.object(
-            provider_module, "weather_level_for_date", counting_weather_emit
+            emitter_module, "weather_level_for_date", counting_weather_emit
         ),
     ):
         asyncio.run(planner.plan(command))

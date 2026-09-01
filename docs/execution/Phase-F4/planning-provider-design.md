@@ -182,7 +182,7 @@ self._day_emitter = DayEmitter(self._anchor_resolver, self._route_resolver)
 | R4 | 测试面兼容：`AmapPlanningProvider._magnitude_for_poi`（2 个测试文件直调） | 低 | Facade 保留同名静态方法委托 PoiRecaller |
 | R5 | 构造签名漂移：组合根 runtime.py:259 与 ~30 个测试文件位置参数/关键字参数 | **高** | `__init__` 签名一字不改；协作者在内部组装 |
 | R6 | 协作者构造顺序/共享状态 | 低 | 协作者全部无状态（仅注入依赖），无共享可变状态；Facade 唯一持有 route_cache/route_calls |
-| R7 | 私有方法被外部引用 | 低 | 已 grep 验证：测试仅经 `AmapPlanningProvider` 类入口，无 `provider._xxx` 直调；模块级私有函数无测试 import |
+| R7 | 私有方法被外部引用 | **高（实测存在）** | 实扫发现 10 个测试文件直调 8 个私有方法（`_collect_pois`/`_is_must_visit_poi`/`_resolve_travel_anchors`/`_resolve_meal_poi`/`_route`/`_route_cached`/`_route_for_pair`/`_leg_from_route`，共 ~45 处）；方案：Facade 保留同名委托垫片（纯转发，无逻辑），生产代码走协作者 |
 
 ## Compatibility Strategy
 
@@ -190,7 +190,7 @@ self._day_emitter = DayEmitter(self._anchor_resolver, self._route_resolver)
 2. **构造签名不变**：`(map_provider, route_provider, transit_route=None, route_fallback=None, candidate_ranker=None, provider_mode=REAL_ONLY, fallback_policy=None)`——组合根 runtime.py:259 与全部测试实例化零改动。
 3. **公共 API 不变**：`plan(command)` / `replan(command)` / `repair(request)`（PlanningProvider 协议要求，`WorkerRuntime.planning_provider: PlanningProvider` 类型约束）。
 4. **测试面静态方法保留**：`AmapPlanningProvider._magnitude_for_poi`（委托 PoiRecaller.magnitude_for_poi），2 个测试文件零改动。
-5. **私有方法自由迁移**：已 grep 证实无任何测试/生产代码直调 `provider._xxx` 或模块级私有函数（`_considered_modes`/`_entity_facts_for_pois` 等）。
+5. **私有方法迁移 + 委托垫片**：实扫发现测试直调 8 个私有方法（`_collect_pois`/`_is_must_visit_poi`/`_resolve_travel_anchors`/`_resolve_meal_poi`/`_route`/`_route_cached`/`_route_for_pair`/`_leg_from_route`）——Facade 保留同名**纯委托垫片**（标注"测试面兼容"，生产代码走协作者），测试零改动；模块级私有函数无测试 import。
 6. **纯移动零改写**：除 import 调整与 `self._x` → `self._y.x` 调用点改写外，方法体逐字节保留。
 7. **验证口径**：针对性单测（poi_recall/route/emit/repair 相关 ~20 个测试文件）→ 集成（test_planning_worker / test_amqp_worker / test_provider_modes / test_local_replanning）→ 全量回归（2051 passed / 42 skipped）→ ruff 全绿 → 单 commit。
 

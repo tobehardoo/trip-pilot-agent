@@ -588,12 +588,12 @@ def test_internal_planner_error_becomes_terminal_v2_instead_of_poison_requeue() 
 
 
 def test_real_worker_settings_require_a_secret_amap_key_at_startup() -> None:
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
 
     with pytest.raises(ValidationError):
-        amqp.WorkerSettings(_env_file=None, provider_mode="REAL_ONLY")
+        runtime.WorkerSettings(_env_file=None, provider_mode="REAL_ONLY")
 
-    settings = amqp.WorkerSettings(
+    settings = runtime.WorkerSettings(
         _env_file=None,
         provider_mode="REAL_ONLY",
         amap_web_service_key="worker-local-secret",
@@ -606,29 +606,29 @@ def test_real_worker_settings_require_a_secret_amap_key_at_startup() -> None:
 def test_worker_settings_default_to_demo_only_when_provider_mode_is_unset() -> None:
     # B12: no PROVIDER_MODE in the environment must resolve to DEMO_ONLY,
     # matching the compose.prod.yaml and documentation default.
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
     demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
 
-    settings = amqp.WorkerSettings(_env_file=None)
+    settings = runtime.WorkerSettings(_env_file=None)
 
-    assert settings.resolved_provider_mode is amqp.ProviderExecutionMode.DEMO_ONLY
+    assert settings.resolved_provider_mode is runtime.ProviderExecutionMode.DEMO_ONLY
     assert isinstance(
-        amqp.build_planning_provider(settings), demo_planning.DemoPlanningProvider
+        runtime.build_planning_provider(settings), demo_planning.DemoPlanningProvider
     )
 
 
 def test_real_dashscope_worker_settings_require_a_secret_embedding_key() -> None:
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
 
     with pytest.raises(ValidationError, match="DASHSCOPE_API_KEY"):
-        amqp.WorkerSettings(
+        runtime.WorkerSettings(
             _env_file=None,
             provider_mode="REAL_ONLY",
             amap_web_service_key="worker-local-secret",
             knowledge_embedding_provider="dashscope",
         )
 
-    settings = amqp.WorkerSettings(
+    settings = runtime.WorkerSettings(
         _env_file=None,
         provider_mode="REAL_ONLY",
         amap_web_service_key="worker-local-secret",
@@ -641,8 +641,8 @@ def test_real_dashscope_worker_settings_require_a_secret_embedding_key() -> None
 
 
 def test_business_database_url_never_uses_the_optional_knowledge_store_override() -> None:
-    amqp = import_module("trip_agent.worker.amqp")
-    settings = amqp.WorkerSettings(
+    runtime = import_module("trip_agent.worker.runtime")
+    settings = runtime.WorkerSettings(
         _env_file=None,
         knowledge_database_url="postgresql://knowledge:secret@knowledge-db/rag",
         postgres_host="business-db",
@@ -659,10 +659,10 @@ def test_business_database_url_never_uses_the_optional_knowledge_store_override(
 
 
 def test_real_only_worker_provider_factory_builds_strict_amap_v3_with_routes() -> None:
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
     contracts = import_module("trip_agent.worker.contracts")
     processor = import_module("trip_agent.worker.processor")
-    settings = amqp.WorkerSettings(
+    settings = runtime.WorkerSettings(
         _env_file=None,
         provider_mode="REAL_ONLY",
         amap_web_service_key="factory-test-key",
@@ -762,7 +762,7 @@ def test_real_only_worker_provider_factory_builds_strict_amap_v3_with_routes() -
     async def run_scenario():
         cache = NoopJsonCache()
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            provider = amqp.build_planning_provider(
+            provider = runtime.build_planning_provider(
                 settings,
                 http_client=client,
                 cache=cache,
@@ -797,32 +797,34 @@ def test_real_only_worker_provider_factory_builds_strict_amap_v3_with_routes() -
 
 
 def test_demo_worker_factory_and_runtime_do_not_allocate_external_resources() -> None:
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
     demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
-    settings = amqp.WorkerSettings(_env_file=None, provider_mode="DEMO_ONLY")
+    settings = runtime.WorkerSettings(_env_file=None, provider_mode="DEMO_ONLY")
 
     assert isinstance(
-        amqp.build_planning_provider(settings), demo_planning.DemoPlanningProvider
+        runtime.build_planning_provider(settings), demo_planning.DemoPlanningProvider
     )
 
     async def run_scenario() -> None:
-        async with amqp.planning_provider_runtime(settings) as provider:
+        async with runtime.planning_provider_runtime(settings) as provider:
             assert isinstance(provider, demo_planning.DemoPlanningProvider)
 
     asyncio.run(run_scenario())
 
 
 def test_worker_runtime_composes_demo_planning_and_knowledge_ports() -> None:
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
     demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
     demo_knowledge = import_module("trip_agent.infrastructure.demo.knowledge_provider")
-    settings = amqp.WorkerSettings(_env_file=None, provider_mode="DEMO_ONLY")
+    settings = runtime.WorkerSettings(_env_file=None, provider_mode="DEMO_ONLY")
 
     async def run_scenario() -> None:
-        async with amqp.worker_runtime(settings) as runtime:
-            assert isinstance(runtime.planning_provider, demo_planning.DemoPlanningProvider)
+        async with runtime.worker_runtime(settings) as composed:
             assert isinstance(
-                runtime.knowledge_provider,
+                composed.planning_provider, demo_planning.DemoPlanningProvider
+            )
+            assert isinstance(
+                composed.knowledge_provider,
                 demo_knowledge.DemoKnowledgeEvidenceProvider,
             )
 
@@ -830,10 +832,10 @@ def test_worker_runtime_composes_demo_planning_and_knowledge_ports() -> None:
 
 
 def test_real_worker_knowledge_factory_uses_the_retrieval_port() -> None:
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
     embeddings = import_module("trip_agent.retrieval.embeddings")
     knowledge = import_module("trip_agent.worker.knowledge")
-    settings = amqp.WorkerSettings(
+    settings = runtime.WorkerSettings(
         _env_file=None,
         provider_mode="REAL_ONLY",
         amap_web_service_key="runtime-test-key",
@@ -849,7 +851,7 @@ def test_real_worker_knowledge_factory_uses_the_retrieval_port() -> None:
             del city, citations
             raise AssertionError("factory construction must not perform I/O")
 
-    provider = amqp.build_knowledge_provider(
+    provider = runtime.build_knowledge_provider(
         settings,
         embedding_provider=embeddings.HashEmbeddingProvider(dimensions=8),
         repository=Repository(),
@@ -860,9 +862,9 @@ def test_real_worker_knowledge_factory_uses_the_retrieval_port() -> None:
 
 
 def test_real_worker_runtime_owns_lazy_http_and_redis_resources() -> None:
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
     amap_planning = import_module("trip_agent.infrastructure.amap.planning_provider")
-    settings = amqp.WorkerSettings(
+    settings = runtime.WorkerSettings(
         _env_file=None,
         provider_mode="REAL_ONLY",
         amap_web_service_key="runtime-test-key",
@@ -870,7 +872,7 @@ def test_real_worker_runtime_owns_lazy_http_and_redis_resources() -> None:
     )
 
     async def run_scenario() -> None:
-        async with amqp.planning_provider_runtime(settings) as provider:
+        async with runtime.planning_provider_runtime(settings) as provider:
             assert isinstance(provider, amap_planning.AmapPlanningProvider)
             assert "p%40ss%20word" in settings.redis_connection_url()
 

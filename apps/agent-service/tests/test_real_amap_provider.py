@@ -11,8 +11,8 @@ from trip_agent.domain.planning.protocols import PlanningInfeasibleError
 from trip_agent.infrastructure.amap.planning_provider import AmapPlanningProvider
 from trip_agent.providers.map import AmapMapProvider, PoiSearchRequest, ProviderSuccess
 from trip_agent.providers.route import AmapRouteProvider, RouteRequest
-from trip_agent.worker.amqp import WorkerSettings
 from trip_agent.worker.contracts import PlanningCreateCommand
+from trip_agent.worker.runtime import WorkerSettings
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_REAL_PROVIDER_TESTS", "").lower() != "true",

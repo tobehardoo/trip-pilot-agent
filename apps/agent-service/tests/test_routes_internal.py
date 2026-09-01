@@ -81,7 +81,7 @@ def test_route_runtime_caps_the_actual_upstream_budget_to_one_attempt_per_mode(
     monkeypatch,
 ) -> None:
     from trip_agent.routes.api import create_route_runtime
-    from trip_agent.worker.amqp import WorkerSettings
+    from trip_agent.worker.runtime import WorkerSettings
 
     monkeypatch.setattr("trip_agent.routes.api.httpx.AsyncClient", lambda **_kwargs: object())
     monkeypatch.setattr(

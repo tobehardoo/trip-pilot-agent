@@ -21,7 +21,7 @@ from trip_agent.providers.redis_cache import RedisJsonCache
 from trip_agent.providers.retry import RetryingRouteProvider
 from trip_agent.providers.route import RoutePlan, RouteRequest
 from trip_agent.routes.service import RouteRecommendation, RouteService, RouteServiceFailure
-from trip_agent.worker.amqp import WorkerSettings
+from trip_agent.worker.runtime import WorkerSettings
 
 router = APIRouter(prefix="/internal/v1/routes", tags=["routes"])
 

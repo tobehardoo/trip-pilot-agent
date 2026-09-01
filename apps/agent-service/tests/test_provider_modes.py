@@ -14,8 +14,8 @@ from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvide
 from trip_agent.providers.errors import ProviderErrorCategory, ProviderExecutionMode
 from trip_agent.providers.map import Coordinates, ProviderFailure
 from trip_agent.providers.route import RouteRequest
-from trip_agent.worker.amqp import WorkerSettings, build_planning_provider
 from trip_agent.worker.contracts import PlanningCreateCommand
+from trip_agent.worker.runtime import WorkerSettings, build_planning_provider
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider
 
 
@@ -89,7 +89,7 @@ def test_real_only_factory_does_not_construct_a_planning_fallback() -> None:
 
 
 def test_real_only_factory_constructs_zero_demo_providers(monkeypatch: object) -> None:
-    amqp = import_module("trip_agent.worker.amqp")
+    runtime = import_module("trip_agent.worker.runtime")
     calls = {"planning": 0, "route": 0}
 
     def planning_spy() -> object:
@@ -100,8 +100,8 @@ def test_real_only_factory_constructs_zero_demo_providers(monkeypatch: object) -
         calls["route"] += 1
         raise AssertionError("REAL_ONLY must not construct DemoRouteProvider")
 
-    monkeypatch.setattr(amqp, "DemoPlanningProvider", planning_spy)
-    monkeypatch.setattr(amqp, "DemoRouteProvider", route_spy)
+    monkeypatch.setattr(runtime, "DemoPlanningProvider", planning_spy)
+    monkeypatch.setattr(runtime, "DemoRouteProvider", route_spy)
     settings = WorkerSettings(
         _env_file=None,
         provider_mode="REAL_ONLY",
@@ -111,7 +111,7 @@ def test_real_only_factory_constructs_zero_demo_providers(monkeypatch: object) -
         transport=httpx.MockTransport(lambda _: httpx.Response(500))
     )
 
-    provider = amqp.build_planning_provider(settings, http_client=client)
+    provider = runtime.build_planning_provider(settings, http_client=client)
     asyncio.run(client.aclose())
 
     assert isinstance(provider, AmapPlanningProvider)

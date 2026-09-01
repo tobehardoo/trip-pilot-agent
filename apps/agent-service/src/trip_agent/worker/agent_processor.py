@@ -588,9 +588,9 @@ def _itinerary_builder_for_mode() -> RealItineraryBuilder | DemoItineraryBuilder
     worker uses.  DEMO mode (or missing configuration) keeps the demo
     builder; a misconfigured real mode degrades to demo with a warning
     instead of taking the dialog feature down."""
-    # Deferred: worker.amqp imports this module at load time.
+    # Deferred: keeps this probe import-free until the provider mode is known.
     from trip_agent.providers.errors import ProviderExecutionMode
-    from trip_agent.worker.amqp import WorkerSettings, build_planning_provider
+    from trip_agent.worker.runtime import WorkerSettings, build_planning_provider
 
     settings = WorkerSettings()
     if settings.resolved_provider_mode == ProviderExecutionMode.DEMO_ONLY:

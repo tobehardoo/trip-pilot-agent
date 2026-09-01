@@ -177,9 +177,9 @@ def _knowledge_stack() -> tuple[Callable[[str], Any], Any] | None:
     if not database_url:
         return None
     try:
-        # Deferred: worker.amqp imports worker.agent_processor at load time.
+        # Deferred: keeps this probe import-free until the database is known.
         from trip_agent.retrieval.repository import PsycopgKnowledgeRepository
-        from trip_agent.worker.amqp import (
+        from trip_agent.worker.runtime import (
             WorkerSettings,
             _configured_embedding_provider,
         )

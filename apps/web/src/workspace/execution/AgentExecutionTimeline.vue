@@ -16,7 +16,7 @@ import { computed } from 'vue'
 
 import AgentMessage from './AgentMessage.vue'
 
-import type { AgentExecutionStep } from '../../../lib/agent-timeline'
+import type { AgentExecutionStep } from '../../lib/agent-timeline'
 
 const props = withDefaults(defineProps<{
   steps?: AgentExecutionStep[]

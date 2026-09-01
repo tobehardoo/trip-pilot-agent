@@ -3,7 +3,7 @@
 // 不是大 Hero Card：大标题 + 小号辅助信息 + 几个紧凑数据项，然后 Divider。
 import { computed } from 'vue'
 
-import type { Trip } from '../../../lib/api'
+import type { Trip } from '../../lib/api'
 import { formatChinaDate, formatChinaMoney, daySpanOfRange } from '../lib/present'
 
 const props = defineProps<{

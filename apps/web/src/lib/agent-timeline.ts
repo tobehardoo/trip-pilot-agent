@@ -16,6 +16,22 @@ export interface AgentExecutionStep {
   title: string
 }
 
+/** 工具执行详情（Agent UX 2.0 §8：Tool Call 是消息的附加详情）。 */
+export interface ToolExecutionMetric {
+  label: string
+  value: string
+}
+
+export interface ToolExecution {
+  displayName: string
+  identifier: string
+  status: 'running' | 'completed' | 'failed'
+  activity: string
+  detailLabel?: string
+  inputs?: ToolExecutionMetric[]
+  outputs?: ToolExecutionMetric[]
+}
+
 export type TurnOutcome =
   | { kind: 'question'; question: string; options: string[]; expectedType: string | null }
   | { kind: 'completed'; summary: string; itinerary: Record<string, unknown>; slots: Record<string, AgentSlotViewWire> }

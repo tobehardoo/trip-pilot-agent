@@ -11,7 +11,7 @@ import Drawer from '../../components/ui/Drawer.vue'
 import CitySearchInput from '../lib/CitySearchInput.vue'
 import PlaceSearchInput from '../lib/PlaceSearchInput.vue'
 import { useTripStore } from '../stores/tripStore'
-import type { PlaceRef, Trip } from '../../../lib/api'
+import type { PlaceRef, Trip } from '../../lib/api'
 
 const props = defineProps<{
   open: boolean
@@ -111,10 +111,8 @@ async function submit() {
       preferences: form.preferences,
       mustVisitPlaces: mustVisitPlaceRefs.map((r) => r.name),
       mustVisitPlaceRefs,
-      transitModes: [],
-      accommodationPreference: null,
-      pace: 'MODERATE',
-      mealBudget: null,
+      fixedSchedules: [],
+      pace: 'BALANCED',
     })
     emit('close')
   } catch (cause: any) {

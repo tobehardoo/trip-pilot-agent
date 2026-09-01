@@ -11,7 +11,7 @@ import {
   type PlaceSearchState,
   IDLE_SEARCH_STATE,
 } from '../../lib/place-selection'
-import type { PlaceRef } from '../../lib/api'
+import type { PlaceCandidate, PlaceRef } from '../../lib/api'
 
 const props = defineProps<{
   modelValue: string
@@ -64,7 +64,7 @@ function onInput(e: Event) {
   searcher.update(value)
 }
 
-function select(candidate: ReturnType<typeof toPlaceRef>) {
+function select(candidate: PlaceCandidate) {
   query.value = candidate.name
   open.value = false
   emit('update:modelValue', candidate.name)

@@ -14,7 +14,7 @@ import { ArrowRight, Plus } from 'lucide-vue-next'
 import Drawer from '../../components/ui/Drawer.vue'
 import CitySearchInput from '../lib/CitySearchInput.vue'
 import PlaceSearchInput from '../lib/PlaceSearchInput.vue'
-import type { CreateTripInput, PlaceRef, RegionRef } from '../../../lib/api'
+import type { CreateTripInput, PlaceRef, RegionRef } from '../../lib/api'
 
 const props = defineProps<{
   open: boolean
@@ -116,10 +116,8 @@ function submit() {
       preferences: [...form.selectedPrefs],
       mustVisitPlaces: mustVisitPlaceRefs.map((r) => r.name),
       mustVisitPlaceRefs,
-      transitModes: [],
-      accommodationPreference: null,
-      pace: 'MODERATE',
-      mealBudget: null,
+      fixedSchedules: [],
+      pace: 'BALANCED',
     },
   })
 }

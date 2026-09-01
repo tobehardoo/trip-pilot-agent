@@ -24,7 +24,7 @@ import EmptyState from '../components/ui/EmptyState.vue'
 import AgentDialog from './execution/AgentDialog.vue'
 
 import { useTripStore } from './stores/tripStore'
-import type { CreateTripInput } from '../../lib/api'
+import type { CreateTripInput } from '../lib/api'
 
 const tripStore = useTripStore()
 const { trips, itinerary, selectTrip, createTrip, loadTrips, updateConstraints } = tripStore

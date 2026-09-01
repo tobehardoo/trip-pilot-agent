@@ -5,7 +5,7 @@
 import { computed, ref } from 'vue'
 
 import AgentExecutionTimeline from './AgentExecutionTimeline.vue'
-import type { AgentExecutionStep } from '../../../lib/agent-timeline'
+import type { AgentExecutionStep } from '../../lib/agent-timeline'
 
 const props = defineProps<{
   agent: {

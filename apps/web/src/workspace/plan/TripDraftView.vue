@@ -4,7 +4,7 @@
 import { computed } from 'vue'
 
 import { constraintRows } from '../lib/present'
-import type { Trip } from '../../../lib/api'
+import type { Trip } from '../../lib/api'
 
 const props = defineProps<{
   trip: Trip

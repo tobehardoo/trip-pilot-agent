@@ -7,7 +7,7 @@ import { computed } from 'vue'
 
 import TripMap from '../../components/TripMap.vue'
 
-import type { Trip, Itinerary } from '../../../lib/api'
+import type { Trip, Itinerary } from '../../lib/api'
 
 const props = withDefaults(
   defineProps<{

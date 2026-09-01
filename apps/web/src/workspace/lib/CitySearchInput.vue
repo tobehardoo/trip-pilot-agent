@@ -37,7 +37,9 @@ const allCities = computed<CityEntry[]>(() => {
           cityName: city.name,
           provinceName: province.name,
           cityCode: city.adcode,
-          provinceCode: province.adcode ?? '',
+          // 省级 adcode = 城市码前两位 + 0000（与 constraint-draft 的 endsWith('0000') 校验一致；
+          // 直辖市城市码自身即省级码，前两位推导不变式同样成立）。
+          provinceCode: `${city.adcode.slice(0, 2)}0000`,
         })
       }
     }

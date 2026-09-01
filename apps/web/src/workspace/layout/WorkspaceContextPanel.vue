@@ -3,7 +3,7 @@
 // F-UI-11 Phase 1：真实 API 数据接入。
 import { computed } from 'vue'
 
-import type { Trip } from '../../../lib/api'
+import type { Trip } from '../../lib/api'
 import type { TripPhase } from '../lib/phase'
 import { formatChinaDate, formatChinaMoney, preferencesLabel, mustVisitLabel } from '../lib/present'
 

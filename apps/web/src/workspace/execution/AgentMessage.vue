@@ -5,7 +5,7 @@
 //   ok=true  → completed；ok=false → failed；默认 → running。
 import { computed } from 'vue'
 
-import type { AgentExecutionStep, ToolExecution } from '../../../lib/agent-timeline'
+import type { AgentExecutionStep, ToolExecution } from '../../lib/agent-timeline'
 
 const props = withDefaults(defineProps<{
   step: AgentExecutionStep

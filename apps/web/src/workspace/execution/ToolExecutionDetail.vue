@@ -6,7 +6,7 @@
 import { ref } from 'vue'
 import { ChevronDown, ChevronRight } from 'lucide-vue-next'
 
-import type { ToolExecution } from '../../../lib/agent-timeline'
+import type { ToolExecution } from '../../lib/agent-timeline'
 
 const props = defineProps<{
   execution: ToolExecution

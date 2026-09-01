@@ -1,0 +1,249 @@
+package io.github.tobehardoo.trippilot.planning;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
+
+@Mapper
+public interface PlanningTaskMapper {
+
+    @Insert("""
+            INSERT INTO business.planning_task(
+                id, trip_id, idempotency_key, task_type, status,
+                baseline_trip_version, baseline_itinerary_version_id, impacted_dates,
+                constraint_snapshot, guide_evidence_snapshot,
+                trace_id, retry_count, version, candidate_type,
+                candidate_source_version_id, candidate_request_hash, changed_dates
+            ) VALUES (
+                #{id}, #{tripId}, #{idempotencyKey}, #{taskType}, #{status},
+                #{baselineTripVersion}, #{baselineItineraryVersionId},
+                CAST(#{impactedDatesJson} AS jsonb), CAST(#{constraintSnapshotJson} AS jsonb),
+                CAST(#{guideEvidenceSnapshotJson} AS jsonb),
+                #{traceId}, #{retryCount}, #{version}, #{candidateType},
+                #{candidateSourceVersionId}, #{candidateRequestHash},
+                CAST(#{changedDatesJson} AS jsonb)
+            )
+            ON CONFLICT DO NOTHING
+            """)
+    int insert(PlanningTaskRecord task);
+
+    @Select("""
+            SELECT planning_task.id, planning_task.trip_id, planning_task.idempotency_key,
+                   planning_task.task_type, planning_task.status, planning_task.baseline_trip_version,
+                   planning_task.baseline_itinerary_version_id,
+                   planning_task.impacted_dates::text AS impacted_dates_json,
+                   planning_task.constraint_snapshot::text AS constraint_snapshot_json,
+                   planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
+                   planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
+                   planning_task.error_message, planning_task.version,
+                   planning_task.created_at, planning_task.updated_at,
+                   planning_task.candidate_type,
+                   planning_task.candidate_source_version_id,
+                   planning_task.candidate_request_hash,
+                   planning_task.changed_dates::text AS changed_dates_json
+            FROM business.planning_task
+            JOIN business.trip ON trip.id = planning_task.trip_id
+            WHERE planning_task.trip_id = #{tripId}
+              AND planning_task.idempotency_key = #{idempotencyKey}
+              AND trip.owner_id = #{ownerId}
+            """)
+    Optional<PlanningTaskRecord> findOwnedByIdempotencyKey(
+            @Param("tripId") UUID tripId,
+            @Param("idempotencyKey") UUID idempotencyKey,
+            @Param("ownerId") UUID ownerId);
+
+    @Select("""
+            SELECT planning_task.id, planning_task.trip_id, planning_task.idempotency_key,
+                   planning_task.task_type, planning_task.status, planning_task.baseline_trip_version,
+                   planning_task.baseline_itinerary_version_id,
+                   planning_task.impacted_dates::text AS impacted_dates_json,
+                   planning_task.constraint_snapshot::text AS constraint_snapshot_json,
+                   planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
+                   planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
+                   planning_task.error_message, planning_task.version,
+                   planning_task.created_at, planning_task.updated_at,
+                   planning_task.candidate_type,
+                   planning_task.candidate_source_version_id,
+                   planning_task.candidate_request_hash,
+                   planning_task.changed_dates::text AS changed_dates_json
+            FROM business.planning_task
+            JOIN business.trip ON trip.id = planning_task.trip_id
+            WHERE planning_task.id = #{taskId} AND trip.owner_id = #{ownerId}
+            """)
+    Optional<PlanningTaskRecord> findOwnedById(
+            @Param("taskId") UUID taskId, @Param("ownerId") UUID ownerId
+    );
+
+    @Select("""
+            SELECT planning_task.id, planning_task.trip_id, planning_task.idempotency_key,
+                   planning_task.task_type, planning_task.status, planning_task.baseline_trip_version,
+                   planning_task.baseline_itinerary_version_id,
+                   planning_task.impacted_dates::text AS impacted_dates_json,
+                   planning_task.constraint_snapshot::text AS constraint_snapshot_json,
+                   planning_task.guide_evidence_snapshot::text AS guide_evidence_snapshot_json,
+                   planning_task.trace_id, planning_task.retry_count, planning_task.error_code,
+                   planning_task.error_message, planning_task.version,
+                   planning_task.created_at, planning_task.updated_at,
+                   planning_task.candidate_type,
+                   planning_task.candidate_source_version_id,
+                   planning_task.candidate_request_hash,
+                   planning_task.changed_dates::text AS changed_dates_json
+            FROM business.planning_task
+            JOIN business.trip ON trip.id = planning_task.trip_id
+            WHERE planning_task.trip_id = #{tripId} AND trip.owner_id = #{ownerId}
+            ORDER BY planning_task.created_at DESC, planning_task.id DESC
+            LIMIT 1
+            """)
+    Optional<PlanningTaskRecord> findLatestOwnedByTripId(
+            @Param("tripId") UUID tripId, @Param("ownerId") UUID ownerId
+    );
+
+    @Select("""
+            SELECT planning_task.id, planning_task.trip_id, planning_task.task_type,
+                   planning_task.status, planning_task.baseline_trip_version,
+                   planning_task.baseline_itinerary_version_id,
+                   planning_task.impacted_dates::text AS impacted_dates_json,
+                   planning_task.trace_id,
+                   planning_task.version AS task_version,
+                   planning_task.constraint_snapshot::text AS constraint_snapshot_json,
+                   trip.version AS current_trip_version,
+                   itinerary.current_version_id AS current_itinerary_version_id,
+                   trip.start_date AS trip_start_date,
+                   trip.end_date AS trip_end_date,
+                   planning_task.created_at
+                   , planning_task.candidate_type
+                   , planning_task.candidate_source_version_id
+            FROM business.planning_task
+            JOIN business.trip ON trip.id = planning_task.trip_id
+            LEFT JOIN business.itinerary ON itinerary.trip_id = planning_task.trip_id
+            WHERE planning_task.id = #{taskId}
+            FOR UPDATE OF planning_task, trip
+            """)
+    Optional<PlanningTaskCompletionRecord> findCompletionContextForUpdate(UUID taskId);
+
+    @Update("""
+            UPDATE business.planning_task
+            SET status = #{status}, error_code = #{errorCode}, error_message = #{errorMessage},
+                version = version + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{taskId} AND version = #{expectedVersion}
+              AND status IN ('QUEUED', 'RUNNING')
+            """)
+    int updateTerminalStatus(@Param("taskId") UUID taskId,
+                             @Param("expectedVersion") int expectedVersion,
+                             @Param("status") String status,
+                             @Param("errorCode") String errorCode,
+                             @Param("errorMessage") String errorMessage);
+
+    @Update("""
+            UPDATE business.planning_task
+            SET status = 'WAITING_USER', error_code = NULL,
+                error_message = NULL, version = version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{taskId} AND version = #{expectedVersion}
+              AND status IN ('QUEUED', 'RUNNING')
+            """)
+    int markWaitingUser(@Param("taskId") UUID taskId,
+                        @Param("expectedVersion") int expectedVersion);
+
+    @Update("""
+            UPDATE business.planning_task
+            SET status = 'RUNNING', version = version + 1, updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{taskId} AND version = #{expectedVersion} AND status = 'QUEUED'
+            """)
+    int markRunning(@Param("taskId") UUID taskId, @Param("expectedVersion") int expectedVersion);
+
+    @Update("""
+            UPDATE business.planning_task
+            SET status = 'CANCELLED', error_code = NULL,
+                error_message = NULL, version = planning_task.version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            FROM business.trip
+            WHERE planning_task.id = #{taskId}
+              AND business.trip.id = planning_task.trip_id
+              AND business.trip.owner_id = #{ownerId}
+              AND planning_task.status IN ('QUEUED', 'RUNNING', 'CANCELLING')
+            """)
+    int cancelOwned(@Param("taskId") UUID taskId, @Param("ownerId") UUID ownerId);
+
+    /**
+     * B12: explicit abandonment of a WAITING_USER review candidate.  The
+     * review outcome is already complete on the Python side, so this
+     * transition is purely local: it never publishes a cancel command and
+     * never touches itinerary versions, feasibility reports or the current
+     * version pointer.  Optimistic: only WAITING_USER rows owned by the
+     * caller are updated.
+     */
+    @Update("""
+            UPDATE business.planning_task
+            SET status = 'CANCELLED', error_code = NULL,
+                error_message = NULL, version = planning_task.version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            FROM business.trip
+            WHERE planning_task.id = #{taskId}
+              AND business.trip.id = planning_task.trip_id
+              AND business.trip.owner_id = #{ownerId}
+              AND planning_task.status = 'WAITING_USER'
+            """)
+    int abandonWaitingUserOwned(@Param("taskId") UUID taskId, @Param("ownerId") UUID ownerId);
+
+    @Select("""
+            SELECT EXISTS (
+                SELECT 1 FROM business.planning_task
+                WHERE trip_id = #{tripId}
+                  AND status IN ('CREATED','QUEUED','RUNNING','WAITING_USER','RETRYING','CANCELLING')
+            )
+            """)
+    boolean existsActiveByTripId(@Param("tripId") UUID tripId);
+
+    @Select("""
+            SELECT planning_task.id AS task_id, planning_task.trip_id, planning_task.task_type,
+                   planning_task.status, progress.payload ->> 'stage' AS last_stage,
+                   planning_task.error_code, planning_task.error_message,
+                   planning_task.retry_count, planning_task.trace_id, planning_task.updated_at
+            FROM business.planning_task
+            LEFT JOIN LATERAL (
+                SELECT payload
+                FROM business.planning_task_event
+                WHERE task_id = planning_task.id AND event_type = 'PLANNING_PROGRESS'
+                ORDER BY id DESC
+                LIMIT 1
+            ) progress ON TRUE
+            WHERE planning_task.status IN ('FAILED', 'STALE')
+            ORDER BY planning_task.updated_at DESC, planning_task.id
+            LIMIT #{limit}
+            """)
+    List<FailedTaskDiagnostic> findRecentFailures(@Param("limit") int limit);
+
+    @Select("""
+            SELECT planning_task.id AS task_id, planning_task.trip_id, trip.owner_id
+            FROM business.planning_task
+            JOIN business.trip ON trip.id = planning_task.trip_id
+            WHERE planning_task.id = #{taskId}
+              AND planning_task.task_type = 'CREATE'
+              AND planning_task.status = 'FAILED'
+            """)
+    Optional<RetryableFailedTask> findRetryableFailedCreate(@Param("taskId") UUID taskId);
+
+    record FailedTaskDiagnostic(
+            UUID taskId,
+            UUID tripId,
+            String taskType,
+            String status,
+            String lastStage,
+            String errorCode,
+            String errorMessage,
+            int retryCount,
+            UUID traceId,
+            java.time.Instant updatedAt
+    ) {
+    }
+
+    record RetryableFailedTask(UUID taskId, UUID tripId, UUID ownerId) {
+    }
+}

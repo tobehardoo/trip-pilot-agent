@@ -1,0 +1,269 @@
+name: trip-pilot-prod
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-trip-pilot-postgres:${IMAGE_TAG:-local}}
+    build:
+      context: .
+      dockerfile: infra/docker/postgres/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-trip_pilot}
+      POSTGRES_USER: ${POSTGRES_USER:-trip_pilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trip_pilot} -d ${POSTGRES_DB:-trip_pilot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7.4-alpine}
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE:-rabbitmq:4.1-management-alpine}
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-trip_pilot}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  travel-server:
+    image: ${TRAVEL_SERVER_IMAGE:-trip-pilot-travel-server:${IMAGE_TAG:-local}}
+    build:
+      context: .
+      dockerfile: apps/travel-server/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-trip_pilot}
+      POSTGRES_USER: ${POSTGRES_USER:-trip_pilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-trip_pilot}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      REFRESH_COOKIE_SECURE: ${REFRESH_COOKIE_SECURE:-true}
+      AGENT_SERVICE_BASE_URL: http://agent-api:8090
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN is required}
+      INTERNAL_DIAGNOSTICS_TOKEN: ${INTERNAL_DIAGNOSTICS_TOKEN:?INTERNAL_DIAGNOSTICS_TOKEN is required}
+      CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT: ${CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT:-PT2S}
+      OUTBOX_PUBLISHER_ENABLED: ${OUTBOX_PUBLISHER_ENABLED:-true}
+      EVENT_CONSUMER_ENABLED: ${EVENT_CONSUMER_ENABLED:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      agent-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/actuator/health | grep UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  agent-service:
+    image: ${AGENT_SERVICE_IMAGE:-trip-pilot-agent-service:${IMAGE_TAG:-local}}
+    build:
+      context: .
+      dockerfile: apps/agent-service/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Local-first default: DEMO_ONLY.  REAL_ONLY / REAL_WITH_EXPLICIT_FALLBACK
+      # must be set explicitly and REAL_ONLY requires AMAP_WEB_SERVICE_KEY;
+      # authentication/permission provider errors never fall back to Demo.
+      PROVIDER_MODE: ${PROVIDER_MODE:-DEMO_ONLY}
+      AMAP_WEB_SERVICE_KEY: ${AMAP_WEB_SERVICE_KEY:-}
+      AMAP_TIMEOUT_SECONDS: ${AMAP_TIMEOUT_SECONDS:-5}
+      PROVIDER_MAX_ATTEMPTS: ${PROVIDER_MAX_ATTEMPTS:-3}
+      PROVIDER_RETRY_BASE_DELAY_SECONDS: ${PROVIDER_RETRY_BASE_DELAY_SECONDS:-0.2}
+      PROVIDER_RETRY_MAX_DELAY_SECONDS: ${PROVIDER_RETRY_MAX_DELAY_SECONDS:-2}
+      PROVIDER_RETRY_MAX_ELAPSED_SECONDS: ${PROVIDER_RETRY_MAX_ELAPSED_SECONDS:-5}
+      PROVIDER_RETRY_JITTER_RATIO: ${PROVIDER_RETRY_JITTER_RATIO:-0.2}
+      PROVIDER_FALLBACK_CATEGORIES: ${PROVIDER_FALLBACK_CATEGORIES:-[]}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-trip_pilot}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-trip_pilot}
+      POSTGRES_USER: ${POSTGRES_USER:-trip_pilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      KNOWLEDGE_SOURCE_DIRECTORY: /app/knowledge/sources
+      KNOWLEDGE_DATABASE_URL: ${KNOWLEDGE_DATABASE_URL:-}
+      KNOWLEDGE_EMBEDDING_PROVIDER: ${KNOWLEDGE_EMBEDDING_PROVIDER:-demo}
+      KNOWLEDGE_EMBEDDING_MODEL: ${KNOWLEDGE_EMBEDDING_MODEL:-text-embedding-v4}
+      KNOWLEDGE_EMBEDDING_DIMENSIONS: ${KNOWLEDGE_EMBEDDING_DIMENSIONS:-1024}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_EMBEDDING_BASE_URL: ${DASHSCOPE_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      DASHSCOPE_EMBEDDING_TIMEOUT_SECONDS: ${DASHSCOPE_EMBEDDING_TIMEOUT_SECONDS:-10}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      knowledge-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          tr '\0' ' ' </proc/1/cmdline | grep -q trip-agent-worker
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  agent-api:
+    image: ${AGENT_SERVICE_IMAGE:-trip-pilot-agent-service:${IMAGE_TAG:-local}}
+    restart: unless-stopped
+    command:
+      - /app/.venv/bin/uvicorn
+      - trip_agent.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+    environment:
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:?AGENT_INTERNAL_TOKEN is required}
+      PROVIDER_MODE: ${PROVIDER_MODE:-DEMO_ONLY}
+      AMAP_WEB_SERVICE_KEY: ${AMAP_WEB_SERVICE_KEY:-}
+      AMAP_TIMEOUT_SECONDS: ${AMAP_TIMEOUT_SECONDS:-5}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      QWEATHER_API_KEY: ${QWEATHER_API_KEY:-}
+      QWEATHER_API_HOST: ${QWEATHER_API_HOST:-}
+      STRUCTURED_MODEL_ENDPOINT: ${STRUCTURED_MODEL_ENDPOINT:-}
+      STRUCTURED_MODEL_API_KEY: ${STRUCTURED_MODEL_API_KEY:-}
+      STRUCTURED_MODEL_NAME: ${STRUCTURED_MODEL_NAME:-}
+      STRUCTURED_MODEL_TIMEOUT_SECONDS: ${STRUCTURED_MODEL_TIMEOUT_SECONDS:-8}
+      STRUCTURED_MODEL_MAX_RETRIES: ${STRUCTURED_MODEL_MAX_RETRIES:-1}
+      STRUCTURED_MODEL_MAX_INPUT_CHARACTERS: ${STRUCTURED_MODEL_MAX_INPUT_CHARACTERS:-30000}
+      OCR_MODEL_ENDPOINT: ${OCR_MODEL_ENDPOINT:-}
+      OCR_MODEL_API_KEY: ${OCR_MODEL_API_KEY:-}
+      OCR_MODEL_NAME: ${OCR_MODEL_NAME:-}
+      OCR_MODEL_TIMEOUT_SECONDS: ${OCR_MODEL_TIMEOUT_SECONDS:-15}
+      OCR_MODEL_MAX_RETRIES: ${OCR_MODEL_MAX_RETRIES:-0}
+      OCR_FALLBACK_SCAN_ENABLED: ${OCR_FALLBACK_SCAN_ENABLED:-true}
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3).read()
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  knowledge-init:
+    image: ${AGENT_SERVICE_IMAGE:-trip-pilot-agent-service:${IMAGE_TAG:-local}}
+    restart: "no"
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        /app/.venv/bin/trip-agent-knowledge migrate &&
+        /app/.venv/bin/trip-agent-knowledge import /app/knowledge/guangzhou
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-trip_pilot}
+      POSTGRES_USER: ${POSTGRES_USER:-trip_pilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      KNOWLEDGE_DATABASE_URL: ${KNOWLEDGE_DATABASE_URL:-}
+      KNOWLEDGE_EMBEDDING_PROVIDER: ${KNOWLEDGE_EMBEDDING_PROVIDER:-demo}
+      KNOWLEDGE_EMBEDDING_MODEL: ${KNOWLEDGE_EMBEDDING_MODEL:-text-embedding-v4}
+      KNOWLEDGE_EMBEDDING_DIMENSIONS: ${KNOWLEDGE_EMBEDDING_DIMENSIONS:-1024}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_EMBEDDING_BASE_URL: ${DASHSCOPE_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      DASHSCOPE_EMBEDDING_TIMEOUT_SECONDS: ${DASHSCOPE_EMBEDDING_TIMEOUT_SECONDS:-10}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    image: ${WEB_IMAGE:-trip-pilot-web:${IMAGE_TAG:-local}}
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_AMAP_WEB_JS_KEY: ${VITE_AMAP_WEB_JS_KEY:-}
+        VITE_AMAP_SECURITY_CODE: ${VITE_AMAP_SECURITY_CODE:-}
+    restart: unless-stopped
+    ports:
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    environment:
+      TRUSTED_PROXY_CIDR: ${TRUSTED_PROXY_CIDR:-172.30.250.1/32}
+    depends_on:
+      travel-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/ | grep -q '<div id=\"app\"></div>'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-trip-pilot-prometheus:${IMAGE_TAG:-local}}
+    build:
+      context: .
+      dockerfile: infra/monitoring/Dockerfile
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - prometheus-data:/prometheus
+    depends_on:
+      travel-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:9090/-/healthy | grep -q Healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-data:
+  redis-data:
+  rabbitmq-data:
+  prometheus-data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${APP_NETWORK_SUBNET:-172.30.250.0/24}
+          gateway: ${APP_NETWORK_GATEWAY:-172.30.250.1}

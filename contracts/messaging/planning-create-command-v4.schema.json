@@ -1,0 +1,1697 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-create-command-v4.schema.json",
+  "title": "Planning Create Command v4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType", "schemaVersion", "eventId", "traceId", "taskId",
+    "tripId", "occurredAt", "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_CREATE_REQUESTED"},
+    "schemaVersion": {"const": 4},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskType", "baselineTripVersion", "idempotencyKey", "trip",
+        "guideEvidence", "planningContext"
+      ],
+      "properties": {
+        "taskType": {"const": "CREATE"},
+        "baselineTripVersion": {"type": "integer", "minimum": 0},
+        "idempotencyKey": {"type": "string", "format": "uuid"},
+        "trip": {"$ref": "#/$defs/trip"},
+        "guideEvidence": {"$ref": "#/$defs/guideEvidence"},
+        "planningContext": {"$ref": "#/$defs/planningContext"}
+      }
+    },
+    "trip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title", "destination", "startDate", "endDate", "status",
+        "version", "constraints", "arrivalAt", "departureAt"
+      ],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 120},
+        "destination": {"type": "string", "minLength": 1, "maxLength": 120},
+        "startDate": {"type": "string", "format": "date"},
+        "endDate": {"type": "string", "format": "date"},
+        "status": {"const": "DRAFT"},
+        "version": {"type": "integer", "minimum": 0},
+        "arrivalAt": {"type": ["string", "null"], "format": "date-time"},
+        "departureAt": {"type": ["string", "null"], "format": "date-time"},
+        "constraints": {"$ref": "#/$defs/constraints"}
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budgetAmount", "travelers", "travelerType", "pace", "preferences",
+        "fixedSchedules", "arrival", "departure", "accommodation",
+        "mustVisitPlaces", "avoidPlaces", "mealWindows", "mobilityLevel",
+        "schemaVersion"
+      ],
+      "properties": {
+        "budgetAmount": {"type": ["number", "null"], "minimum": 0},
+        "travelers": {"type": "integer", "minimum": 1, "maximum": 50},
+        "travelerType": {"enum": ["SOLO", "COUPLE", "FAMILY", "FRIENDS", "BUSINESS"]},
+        "pace": {"enum": ["RELAXED", "BALANCED", "INTENSIVE"]},
+        "preferences": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"type": "string", "minLength": 1, "maxLength": 60}
+        },
+        "fixedSchedules": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"$ref": "#/$defs/fixedSchedule"}
+        },
+        "arrival": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/travelAnchor"}]
+        },
+        "departure": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/travelAnchor"}]
+        },
+        "accommodation": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/placeAnchor"}]
+        },
+        "mustVisitPlaces": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"type": "string", "minLength": 1, "maxLength": 120}
+        },
+        "avoidPlaces": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"type": "string", "minLength": 1, "maxLength": 120}
+        },
+        "mustVisitPlaceRefs": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"$ref": "#/$defs/placeRef"}
+        },
+        "avoidPlaceRefs": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"$ref": "#/$defs/placeRef"}
+        },
+        "mealWindows": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {"$ref": "#/$defs/mealWindow"}
+        },
+        "mobilityLevel": {"enum": ["STANDARD", "REDUCED", "STEP_FREE"]},
+        "schemaVersion": {"enum": [2, 3]}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "schemaVersion": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "maxItems": 0
+              },
+              "avoidPlaceRefs": {
+                "maxItems": 0
+              },
+              "arrival": {
+                "properties": {
+                  "placeRef": false
+                }
+              },
+              "departure": {
+                "properties": {
+                  "placeRef": false
+                }
+              },
+              "accommodation": {
+                "properties": {
+                  "placeRef": false
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 1,
+                "maxContains": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 2,
+                "maxContains": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 2,
+                "maxContains": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 2,
+                "maxContains": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 2,
+                "maxContains": 2
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 3,
+                "maxContains": 3
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 3,
+                "maxContains": 3
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 3,
+                "maxContains": 3
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 3,
+                "maxContains": 3
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 4,
+                "maxContains": 4
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 4,
+                "maxContains": 4
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 4,
+                "maxContains": 4
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 4,
+                "maxContains": 4
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 5,
+                "maxContains": 5
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 5,
+                "maxContains": 5
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 5,
+                "maxContains": 5
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 5,
+                "maxContains": 5
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 6,
+                "maxContains": 6
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 6,
+                "maxContains": 6
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 6,
+                "maxContains": 6
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 6,
+                "maxContains": 6
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 7,
+                "maxContains": 7
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 7,
+                "maxContains": 7
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 7,
+                "maxContains": 7
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 7,
+                "maxContains": 7
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 8,
+                "maxContains": 8
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 8,
+                "maxContains": 8
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 8,
+                "maxContains": 8
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 8,
+                "maxContains": 8
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 9,
+                "maxContains": 9
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 9,
+                "maxContains": 9
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 9,
+                "maxContains": 9
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 9,
+                "maxContains": 9
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 10,
+                "maxContains": 10
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 10,
+                "maxContains": 10
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 10,
+                "maxContains": 10
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 10,
+                "maxContains": 10
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 11,
+                "maxContains": 11
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 11,
+                "maxContains": 11
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 11,
+                "maxContains": 11
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 11,
+                "maxContains": 11
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 12,
+                "maxContains": 12
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 12,
+                "maxContains": 12
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 12,
+                "maxContains": 12
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 12,
+                "maxContains": 12
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 13,
+                "maxContains": 13
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 13,
+                "maxContains": 13
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 13,
+                "maxContains": 13
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 13,
+                "maxContains": 13
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 14,
+                "maxContains": 14
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 14,
+                "maxContains": 14
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 14,
+                "maxContains": 14
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 14,
+                "maxContains": 14
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 15,
+                "maxContains": 15
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 15,
+                "maxContains": 15
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 15,
+                "maxContains": 15
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 15,
+                "maxContains": 15
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 16,
+                "maxContains": 16
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 16,
+                "maxContains": 16
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 16,
+                "maxContains": 16
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 16,
+                "maxContains": 16
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 17,
+                "maxContains": 17
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 17,
+                "maxContains": 17
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 17,
+                "maxContains": 17
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 17,
+                "maxContains": 17
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 18,
+                "maxContains": 18
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 18,
+                "maxContains": 18
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 18,
+                "maxContains": 18
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 18,
+                "maxContains": 18
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 19,
+                "maxContains": 19
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 19,
+                "maxContains": 19
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 19,
+                "maxContains": 19
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 19,
+                "maxContains": 19
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 20,
+                "maxContains": 20
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 20,
+                "maxContains": 20
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 20,
+                "maxContains": 20
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 20,
+                "maxContains": 20
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 21,
+                "maxContains": 21
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 21,
+                "maxContains": 21
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 21,
+                "maxContains": 21
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 21,
+                "maxContains": 21
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 22,
+                "maxContains": 22
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 22,
+                "maxContains": 22
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 22,
+                "maxContains": 22
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 22,
+                "maxContains": 22
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 23,
+                "maxContains": 23
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 23,
+                "maxContains": 23
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 23,
+                "maxContains": 23
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 23,
+                "maxContains": 23
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 24,
+                "maxContains": 24
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 24,
+                "maxContains": 24
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 24,
+                "maxContains": 24
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 24,
+                "maxContains": 24
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 25,
+                "maxContains": 25
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 25,
+                "maxContains": 25
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 25,
+                "maxContains": 25
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 25,
+                "maxContains": 25
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 26,
+                "maxContains": 26
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 26,
+                "maxContains": 26
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 26,
+                "maxContains": 26
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 26,
+                "maxContains": 26
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 27,
+                "maxContains": 27
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 27,
+                "maxContains": 27
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 27,
+                "maxContains": 27
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 27,
+                "maxContains": 27
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 28,
+                "maxContains": 28
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 28,
+                "maxContains": 28
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 28,
+                "maxContains": 28
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 28,
+                "maxContains": 28
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 29,
+                "maxContains": 29
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 29,
+                "maxContains": 29
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 29,
+                "maxContains": 29
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 29,
+                "maxContains": 29
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "mustVisitPlaceRefs"
+            ],
+            "properties": {
+              "mustVisitPlaceRefs": {
+                "contains": true,
+                "minContains": 30,
+                "maxContains": 30
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "mustVisitPlaces": {
+                "contains": true,
+                "minContains": 30,
+                "maxContains": 30
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "avoidPlaceRefs"
+            ],
+            "properties": {
+              "avoidPlaceRefs": {
+                "contains": true,
+                "minContains": 30,
+                "maxContains": 30
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "avoidPlaces": {
+                "contains": true,
+                "minContains": 30,
+                "maxContains": 30
+              }
+            }
+          }
+        }
+      ]
+    },
+    "placeRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider", "providerPoiId", "name", "address", "province", "city",
+        "district", "longitude", "latitude"
+      ],
+      "properties": {
+        "provider": {"enum": ["AMAP", "DEMO"]},
+        "providerPoiId": {"type": "string", "minLength": 1, "maxLength": 100},
+        "name": {"type": "string", "minLength": 1, "maxLength": 120},
+        "address": {"type": "string", "maxLength": 200},
+        "province": {"type": "string", "maxLength": 80},
+        "city": {"type": "string", "maxLength": 80},
+        "district": {"type": "string", "maxLength": 80},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90}
+      }
+    },
+    "fixedSchedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placeName", "startTime", "endTime"],
+      "properties": {
+        "placeName": {"type": "string", "minLength": 1, "maxLength": 120},
+        "startTime": {"type": "string", "format": "date-time"},
+        "endTime": {"type": "string", "format": "date-time"}
+      }
+    },
+    "travelAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placeName", "time"],
+      "properties": {
+        "placeName": {"type": "string", "minLength": 1, "maxLength": 120},
+        "time": {"type": "string", "format": "date-time"},
+        "placeRef": {"$ref": "#/$defs/placeRef"}
+      }
+    },
+    "placeAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placeName"],
+      "properties": {
+        "placeName": {"type": "string", "minLength": 1, "maxLength": 120},
+        "placeRef": {"$ref": "#/$defs/placeRef"}
+      }
+    },
+    "mealWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mealType", "startTime", "endTime"],
+      "properties": {
+        "mealType": {"enum": ["BREAKFAST", "LUNCH", "DINNER"]},
+        "startTime": {"type": "string"},
+        "endTime": {"type": "string"},
+        "source": {"enum": ["DEFAULT", "USER", "DISABLED"]}
+      }
+    },
+    "guideEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["facts"],
+      "properties": {
+        "facts": {"type": "array", "maxItems": 100, "items": {"type": "object"}}
+      }
+    },
+    "planningContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshotId", "schemaVersion", "tripId", "planningTaskId", "city",
+        "travelStartDate", "travelEndDate", "generatedAt", "stale", "sources",
+        "facts", "conflicts", "excludedFacts", "diagnostics"
+      ],
+      "properties": {
+        "snapshotId": {"type": "string", "format": "uuid"},
+        "schemaVersion": {"const": 3},
+        "tripId": {"type": "string", "format": "uuid"},
+        "planningTaskId": {"type": "string", "format": "uuid"},
+        "city": {"type": "string", "minLength": 1, "maxLength": 120},
+        "travelStartDate": {"type": "string", "format": "date"},
+        "travelEndDate": {"type": "string", "format": "date"},
+        "generatedAt": {"type": "string", "format": "date-time"},
+        "stale": {"type": "boolean"},
+        "sources": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/source"}},
+        "facts": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/fact"}},
+        "conflicts": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/conflict"}},
+        "excludedFacts": {"type": "array", "maxItems": 200, "items": {"$ref": "#/$defs/excludedFact"}},
+        "diagnostics": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/diagnostic"}}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceName", "sourceType", "sourceUrl", "reliabilityLevel"],
+      "properties": {
+        "sourceName": {"type": "string", "minLength": 1, "maxLength": 300},
+        "sourceType": {"type": "string", "minLength": 1, "maxLength": 60},
+        "sourceUrl": {"type": ["string", "null"], "format": "uri"},
+        "reliabilityLevel": {"type": "string", "minLength": 1, "maxLength": 60}
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "factId", "category", "statement", "evidence", "checkedAt", "expiresAt",
+        "stale", "sourceName", "sourceType", "sourceUrl", "reliabilityLevel",
+        "sourceReviewed", "hardConstraintEligible"
+      ],
+      "properties": {
+        "factId": {"type": "string", "minLength": 1, "maxLength": 80},
+        "category": {"type": "string", "minLength": 1, "maxLength": 60},
+        "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "normalizedValue": {"type": ["object", "null"]},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "effectiveDate": {"type": ["string", "null"], "format": "date"},
+        "checkedAt": {"type": "string", "format": "date-time"},
+        "expiresAt": {"type": "string", "format": "date-time"},
+        "stale": {"type": "boolean"},
+        "sourceName": {"type": "string", "minLength": 1, "maxLength": 300},
+        "sourceType": {"type": "string", "minLength": 1, "maxLength": 60},
+        "sourceUrl": {"type": ["string", "null"], "format": "uri"},
+        "reliabilityLevel": {"type": "string", "minLength": 1, "maxLength": 60},
+        "sourceReviewed": {"type": "boolean"},
+        "hardConstraintEligible": {"type": "boolean"}
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectedFactId", "conflictFactIds", "downgradedFactIds", "reason", "needsManualReview"],
+      "properties": {
+        "selectedFactId": {"type": "string", "minLength": 1, "maxLength": 80},
+        "conflictFactIds": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+        "downgradedFactIds": {"type": "array", "maxItems": 100, "items": {"type": "string"}},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "needsManualReview": {"type": "boolean"}
+      }
+    },
+    "excludedFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["factId", "category", "statement", "reason"],
+      "properties": {
+        "factId": {"type": "string", "minLength": 1, "maxLength": 80},
+        "category": {"type": "string", "minLength": 1, "maxLength": 60},
+        "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 200}
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {"type": ["string", "null"], "minLength": 1, "maxLength": 80},
+        "message": {"type": ["string", "null"], "minLength": 1, "maxLength": 500},
+        "refreshStatus": {"enum": ["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL", "FAILED", null]}
+      }
+    }
+  }
+}

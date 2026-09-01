@@ -1,0 +1,23 @@
+{
+  "eventType": "PLANNING_CANDIDATE_VALIDATION_REQUESTED",
+  "schemaVersion": 1,
+  "eventId": "c75013d4-b83a-4d11-a52c-66138751d75b",
+  "traceId": "6f24951e-94bb-4d9a-9446-043698479f24",
+  "taskId": "fb204eed-1484-4ccb-855e-af72d914b987",
+  "tripId": "fb21f112-d17f-4e4f-8598-b1cd1c64ca04",
+  "occurredAt": "2026-08-13T04:00:00Z",
+  "payload": {
+    "taskType": "EDIT_VALIDATE",
+    "candidateType": "EDIT",
+    "baselineTripVersion": 3,
+    "baselineItineraryVersionId": "5ed1e169-04ec-45ed-9102-f75d833f2b8c",
+    "rollbackFromVersionId": "1b748af8-58fc-4515-8c39-29c68c5ae9f3",
+    "idempotencyKey": "00000000-0000-4000-8000-000000000001",
+    "changedDates": ["2026-08-01"],
+    "impactedDates": ["2026-08-01"],
+    "trip": {},
+    "itinerary": {},
+    "knowledge": {},
+    "planningContext": null
+  }
+}

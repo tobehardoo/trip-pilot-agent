@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/agent-start-command-v1.schema.json",
+  "title": "Agent Start Command v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType",
+    "schemaVersion",
+    "eventId",
+    "traceId",
+    "tripId",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "AGENT_START"},
+    "schemaVersion": {"const": 1},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "userId": {"type": ["string", "null"], "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "\\S"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message"],
+      "properties": {
+        "message": {"$ref": "#/$defs/message"}
+      }
+    }
+  }
+}

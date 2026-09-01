@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-create-command-v2.schema.json",
+  "title": "Planning Create Command v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType", "schemaVersion", "eventId", "traceId", "taskId",
+    "tripId", "occurredAt", "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_CREATE_REQUESTED"},
+    "schemaVersion": {"const": 2},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "taskType", "baselineTripVersion", "idempotencyKey", "trip", "guideEvidence"
+      ],
+      "properties": {
+        "taskType": {"const": "CREATE"},
+        "baselineTripVersion": {"type": "integer", "minimum": 0},
+        "idempotencyKey": {"type": "string", "format": "uuid"},
+        "trip": {"$ref": "#/$defs/trip"},
+        "guideEvidence": {"$ref": "#/$defs/guideEvidence"}
+      }
+    },
+    "trip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title", "destination", "startDate", "endDate", "status", "version", "constraints"
+      ],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 120},
+        "destination": {"type": "string", "minLength": 1, "maxLength": 120},
+        "startDate": {"type": "string", "format": "date"},
+        "endDate": {"type": "string", "format": "date"},
+        "status": {"const": "DRAFT"},
+        "version": {"type": "integer", "minimum": 0},
+        "constraints": {"$ref": "#/$defs/constraints"}
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budgetAmount", "travelers", "travelerType", "pace", "preferences",
+        "fixedSchedules", "arrival", "departure", "accommodation",
+        "mustVisitPlaces", "avoidPlaces", "mealWindows", "mobilityLevel", "schemaVersion"
+      ],
+      "properties": {
+        "budgetAmount": {"type": ["number", "null"], "minimum": 0},
+        "travelers": {"type": "integer", "minimum": 1, "maximum": 50},
+        "travelerType": {"enum": ["SOLO", "COUPLE", "FAMILY", "FRIENDS", "BUSINESS"]},
+        "pace": {"enum": ["RELAXED", "BALANCED", "INTENSIVE"]},
+        "preferences": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"type": "string", "minLength": 1, "maxLength": 60}
+        },
+        "fixedSchedules": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"$ref": "#/$defs/fixedSchedule"}
+        },
+        "arrival": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/travelAnchor"}]
+        },
+        "departure": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/travelAnchor"}]
+        },
+        "accommodation": {
+          "oneOf": [{"type": "null"}, {"$ref": "#/$defs/placeAnchor"}]
+        },
+        "mustVisitPlaces": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"type": "string", "minLength": 1, "maxLength": 120}
+        },
+        "avoidPlaces": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"type": "string", "minLength": 1, "maxLength": 120}
+        },
+        "mealWindows": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {"$ref": "#/$defs/mealWindow"}
+        },
+        "mobilityLevel": {"enum": ["STANDARD", "REDUCED", "STEP_FREE"]},
+        "schemaVersion": {"const": 2}
+      }
+    },
+    "fixedSchedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placeName", "startTime", "endTime"],
+      "properties": {
+        "placeName": {"type": "string", "minLength": 1, "maxLength": 120},
+        "startTime": {"type": "string", "format": "date-time"},
+        "endTime": {"type": "string", "format": "date-time"}
+      }
+    },
+    "placeAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placeName"],
+      "properties": {
+        "placeName": {"type": "string", "minLength": 1, "maxLength": 120}
+      }
+    },
+    "travelAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placeName", "time"],
+      "properties": {
+        "placeName": {"type": "string", "minLength": 1, "maxLength": 120},
+        "time": {"type": "string", "format": "date-time"}
+      }
+    },
+    "mealWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mealType", "startTime", "endTime"],
+      "properties": {
+        "mealType": {"enum": ["BREAKFAST", "LUNCH", "DINNER"]},
+        "startTime": {"type": "string", "format": "time"},
+        "endTime": {"type": "string", "format": "time"}
+      }
+    },
+    "guideEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["facts"],
+      "properties": {
+        "facts": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/guideFact"}
+        }
+      }
+    },
+    "guideFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "guideImportId", "factId", "category", "statement", "evidence",
+        "sourceUrl", "sourceHost", "sourceTitle", "confidence", "observedAt", "expiresAt"
+      ],
+      "properties": {
+        "guideImportId": {"type": "string", "format": "uuid"},
+        "factId": {"type": "string", "format": "uuid"},
+        "category": {
+          "enum": [
+            "ATTRACTION", "DINING", "TRANSPORT", "TIMING",
+            "COST", "QUEUE", "RESERVATION", "TIP"
+          ]
+        },
+        "statement": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "sourceUrl": {"type": "string", "format": "uri", "pattern": "^https://"},
+        "sourceHost": {"type": "string", "minLength": 1, "maxLength": 253},
+        "sourceTitle": {"type": "string", "minLength": 1, "maxLength": 300},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "observedAt": {"type": "string", "format": "date-time"},
+        "expiresAt": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

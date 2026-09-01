@@ -1,0 +1,52 @@
+{
+  "eventType": "PLANNING_COMPLETED",
+  "schemaVersion": 6,
+  "eventId": "01000000-0000-4000-8000-000000000005",
+  "traceId": "02000000-0000-4000-8000-000000000005",
+  "taskId": "03000000-0000-4000-8000-000000000005",
+  "tripId": "04000000-0000-4000-8000-000000000005",
+  "runId": "05000000-0000-4000-8000-000000000005",
+  "occurredAt": "2026-08-01T01:00:00Z",
+  "payload": {
+    "provider": "AMAP",
+    "itinerary": {
+      "title": "Three-transit mixed itinerary",
+      "days": [{
+        "date": "2026-08-01",
+        "activities": [
+          {"activityId": "10000000-0000-4000-8000-000000000031", "title": "Stop 1", "startTime": "2026-08-01T08:00:00+08:00", "endTime": "2026-08-01T09:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-MULTI-1", "coordinates": {"longitude": 113.31, "latitude": 23.11}, "address": "Address 1"},
+          {"activityId": "10000000-0000-4000-8000-000000000032", "title": "Stop 2", "startTime": "2026-08-01T10:00:00+08:00", "endTime": "2026-08-01T11:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-MULTI-2", "coordinates": {"longitude": 113.32, "latitude": 23.12}, "address": "Address 2"},
+          {"activityId": "10000000-0000-4000-8000-000000000033", "title": "Stop 3", "startTime": "2026-08-01T12:00:00+08:00", "endTime": "2026-08-01T13:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-MULTI-3", "coordinates": {"longitude": 113.33, "latitude": 23.13}, "address": "Address 3"},
+          {"activityId": "10000000-0000-4000-8000-000000000034", "title": "Stop 4", "startTime": "2026-08-01T14:00:00+08:00", "endTime": "2026-08-01T15:00:00+08:00", "estimatedCost": 0, "source": "AMAP", "providerPoiId": "POI-MULTI-4", "coordinates": {"longitude": 113.34, "latitude": 23.14}, "address": "Address 4"}
+        ],
+        "transitLegs": [
+          {"transitId": "20000000-0000-4000-8000-000000000033", "fromActivityIndex": 2, "toActivityIndex": 3, "mode": "WALKING", "distanceMeters": 300, "durationSeconds": 300, "provider": "AMAP", "estimated": false, "polyline": [{"longitude": 113.33, "latitude": 23.13}, {"longitude": 113.34, "latitude": 23.14}]},
+          {"transitId": "20000000-0000-4000-8000-000000000031", "fromActivityIndex": 0, "toActivityIndex": 1, "mode": "WALKING", "distanceMeters": 300, "durationSeconds": 300, "provider": "AMAP", "estimated": false, "polyline": [{"longitude": 113.31, "latitude": 23.11}, {"longitude": 113.32, "latitude": 23.12}]},
+          {"transitId": "20000000-0000-4000-8000-000000000032", "fromActivityIndex": 1, "toActivityIndex": 2, "mode": "WALKING", "distanceMeters": 300, "durationSeconds": 300, "provider": "DEMO", "estimated": true, "polyline": [{"longitude": 113.32, "latitude": 23.12}, {"longitude": 113.33, "latitude": 23.13}]}
+        ]
+      }],
+      "estimatedTotalCost": 0
+    },
+    "knowledge": {"status": "UNAVAILABLE", "query": "multi-transit fixture", "citations": [], "freshness": {"status": "UNAVAILABLE"}, "message": "No knowledge fixture"},
+    "factImpacts": [],
+    "providerProvenance": {
+      "requestedProviderMode": "REAL_WITH_EXPLICIT_FALLBACK",
+      "primaryProvider": "AMAP",
+      "actualProviders": ["AMAP", "DEMO"],
+      "fallbackAttempted": true,
+      "fallbackSucceeded": true,
+      "fallbackReason": "ROUTE_PROVIDER_FAILURE",
+      "fallbackOperations": [{
+        "operation": "ROUTE",
+        "transitId": "20000000-0000-4000-8000-000000000032",
+        "fromActivityId": "10000000-0000-4000-8000-000000000032",
+        "toActivityId": "10000000-0000-4000-8000-000000000033",
+        "requestedMode": "REAL_WITH_EXPLICIT_FALLBACK",
+        "actualProvider": "DEMO",
+        "errorCategory": "TIMEOUT",
+        "errorCode": "PROVIDER_TIMEOUT",
+        "retryCount": 2
+      }]
+    }
+  }
+}

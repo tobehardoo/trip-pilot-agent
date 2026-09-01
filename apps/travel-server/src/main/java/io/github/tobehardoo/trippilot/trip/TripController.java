@@ -1,0 +1,92 @@
+package io.github.tobehardoo.trippilot.trip;
+
+import java.util.List;
+import java.util.UUID;
+
+import io.github.tobehardoo.trippilot.trip.TripRequests.CreateTripRequest;
+import io.github.tobehardoo.trippilot.trip.TripRequests.UpdateConstraintRequest;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/trips")
+public class TripController {
+
+    private final TripService tripService;
+
+    public TripController(TripService tripService) {
+        this.tripService = tripService;
+    }
+
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    TripService.TripResponse create(@AuthenticationPrincipal Jwt jwt,
+                                    @Valid @RequestBody CreateTripRequest request) {
+        return tripService.create(userId(jwt), request);
+    }
+
+    @GetMapping
+    List<TripService.TripResponse> list(@AuthenticationPrincipal Jwt jwt) {
+        return tripService.list(userId(jwt));
+    }
+
+    @GetMapping("/search")
+    TripService.TripPage search(
+            @AuthenticationPrincipal Jwt jwt,
+            @RequestParam(required = false) String destination,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) java.time.LocalDate startDate,
+            @RequestParam(required = false) java.time.LocalDate endDate,
+            @RequestParam(defaultValue = "false") boolean includeArchived,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return tripService.search(userId(jwt), new TripService.TripSearch(
+                destination, status, startDate, endDate, includeArchived, page, size
+        ));
+    }
+
+    @GetMapping("/{tripId}")
+    TripService.TripResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
+        return tripService.get(userId(jwt), tripId);
+    }
+
+    @PutMapping("/{tripId}/constraints")
+    TripService.TripResponse updateConstraints(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId,
+                                               @Valid @RequestBody UpdateConstraintRequest request) {
+        return tripService.updateConstraints(userId(jwt), tripId, request);
+    }
+
+    @PutMapping("/{tripId}/metadata")
+    TripService.TripResponse updateMetadata(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId,
+                                            @Valid @RequestBody TripRequests.UpdateTripMetadataRequest request) {
+        return tripService.updateMetadata(userId(jwt), tripId, request);
+    }
+
+    @PostMapping("/{tripId}/archive")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void archive(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
+        tripService.archive(userId(jwt), tripId);
+    }
+
+    @PostMapping("/{tripId}/restore")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void restore(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
+        tripService.restore(userId(jwt), tripId);
+    }
+
+    private UUID userId(Jwt jwt) {
+        return UUID.fromString(jwt.getSubject());
+    }
+}

@@ -1,0 +1,27 @@
+[[sources]]
+source_id = "beijing-tourism-bureau"
+city = "北京"
+source_name = "北京市文化和旅游局"
+reliability_level = "OFFICIAL"
+allowed_domains = ["whlyj.beijing.gov.cn"]
+resource_urls = [
+  "https://whlyj.beijing.gov.cn/",
+]
+fetch_interval_hours = 168
+min_request_interval_seconds = 2
+request_timeout_seconds = 10
+max_response_bytes = 2_000_000
+
+[[sources]]
+source_id = "beijing-visit-official"
+city = "北京"
+source_name = "北京旅游网"
+reliability_level = "OFFICIAL"
+allowed_domains = ["www.visitbeijing.com.cn"]
+resource_urls = [
+  "https://www.visitbeijing.com.cn/",
+]
+fetch_interval_hours = 168
+min_request_interval_seconds = 2
+request_timeout_seconds = 10
+max_response_bytes = 2_000_000

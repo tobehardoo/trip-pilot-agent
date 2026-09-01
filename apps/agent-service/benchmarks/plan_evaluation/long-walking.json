@@ -1,0 +1,6 @@
+{
+  "id": "long-walking",
+  "description": "A 30-minute walking leg triggers a long-walking warning.",
+  "profile": "long-walking",
+  "expect": {"minimum_score": 100, "maximum_score": 100, "required_warnings": ["LONG_WALKING", "ESTIMATED_TRANSIT"], "forbidden_warnings": []}
+}

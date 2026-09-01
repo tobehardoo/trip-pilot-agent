@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "reportId": "c9c467cc-65c4-8ff1-e175-4af42f2ed545",
+  "validatorVersion": "feasibility-v1",
+  "itineraryFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "NEEDS_REPAIR",
+  "validatedAt": "2026-08-09T12:00:00Z",
+  "requiredRuleIds": [
+    "OPENING_HOURS",
+    "TRANSIT"
+  ],
+  "missingRequiredRuleIds": [],
+  "summary": {
+    "totalCount": 2,
+    "passCount": 1,
+    "failCount": 1,
+    "unknownCount": 0,
+    "notApplicableCount": 0,
+    "missingRequiredCount": 0
+  },
+  "ruleResults": [
+    {
+      "ruleId": "OPENING_HOURS",
+      "ruleVersion": "1",
+      "outcome": "PASS",
+      "reasonCode": "REASON_OK",
+      "message": "ok",
+      "affectedDates": [],
+      "affectedEntityRefs": [],
+      "evidenceRefs": [
+        {
+          "evidenceId": "ev-oh-1",
+          "evidenceType": "OPENING_HOURS",
+          "state": "VERIFIED",
+          "hardConstraintEligible": true
+        }
+      ],
+      "repairable": false
+    },
+    {
+      "ruleId": "TRANSIT",
+      "ruleVersion": "1",
+      "outcome": "FAIL",
+      "reasonCode": "TRANSIT_GAP",
+      "message": "gap",
+      "affectedDates": [],
+      "affectedEntityRefs": [],
+      "evidenceRefs": [],
+      "repairable": true
+    }
+  ],
+  "repairAttempts": []
+}

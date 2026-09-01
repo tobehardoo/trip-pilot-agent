@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-create-command-v1.schema.json",
+  "title": "Planning Create Command v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType", "schemaVersion", "eventId", "traceId", "taskId",
+    "tripId", "occurredAt", "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_CREATE_REQUESTED"},
+    "schemaVersion": {"const": 1},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskType", "baselineTripVersion", "idempotencyKey", "trip"],
+      "properties": {
+        "taskType": {"const": "CREATE"},
+        "baselineTripVersion": {"type": "integer", "minimum": 0},
+        "idempotencyKey": {"type": "string", "format": "uuid"},
+        "trip": {"$ref": "#/$defs/trip"}
+      }
+    },
+    "trip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title", "destination", "startDate", "endDate", "status", "version", "constraints"
+      ],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 120},
+        "destination": {"type": "string", "minLength": 1, "maxLength": 120},
+        "startDate": {"type": "string", "format": "date"},
+        "endDate": {"type": "string", "format": "date"},
+        "status": {"const": "DRAFT"},
+        "version": {"type": "integer", "minimum": 0},
+        "constraints": {"$ref": "#/$defs/constraints"}
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "budgetAmount", "travelers", "travelerType", "pace",
+        "preferences", "fixedSchedules", "schemaVersion"
+      ],
+      "properties": {
+        "budgetAmount": {"type": ["number", "null"], "minimum": 0},
+        "travelers": {"type": "integer", "minimum": 1, "maximum": 50},
+        "travelerType": {"enum": ["SOLO", "COUPLE", "FAMILY", "FRIENDS", "BUSINESS"]},
+        "pace": {"enum": ["RELAXED", "BALANCED", "INTENSIVE"]},
+        "preferences": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"type": "string", "minLength": 1, "maxLength": 60}
+        },
+        "fixedSchedules": {
+          "type": "array",
+          "maxItems": 30,
+          "items": {"$ref": "#/$defs/fixedSchedule"}
+        },
+        "schemaVersion": {"const": 1}
+      }
+    },
+    "fixedSchedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["placeName", "startTime", "endTime"],
+      "properties": {
+        "placeName": {"type": "string", "minLength": 1, "maxLength": 120},
+        "startTime": {"type": "string", "format": "date-time"},
+        "endTime": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

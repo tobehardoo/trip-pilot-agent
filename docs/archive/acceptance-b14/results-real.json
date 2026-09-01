@@ -1,0 +1,90 @@
+[
+ {
+  "scenarioId": "S041",
+  "title": "一个结构化必去点",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "terminal=WAITING_USER exact=True",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S042",
+  "title": "两个结构化必去点，第一查询已达候选数",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "terminal=WAITING_USER both=True",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S043",
+  "title": "五个结构化必去点",
+  "risk": "P1",
+  "ok": false,
+  "evidence": "terminal=FAILED placed=0/5",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S044",
+  "title": "必去点排名低于普通候选 cutoff",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "terminal=WAITING_USER pinned=True",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S045",
+  "title": "同名 sibling 不得代替精确必去点",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "sibling=B0L374KRJ1 exact=True",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S046",
+  "title": "同一地点同时必去和避开",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "must+avoid-overlap create=400 code=VALIDATION_FAILED",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S047",
+  "title": "精确 avoid providerPoiId",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "avoided=False kept=True",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S048",
+  "title": "同名 sibling 不得被错误排除",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "exact-avoided=False",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S049",
+  "title": "必去点正式关闭",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "terminal=WAITING_USER report=UNVERIFIED",
+  "detail": ""
+ },
+ {
+  "scenarioId": "S050",
+  "title": "必去点路线不可达或时间无法安排",
+  "risk": "P1",
+  "ok": true,
+  "evidence": "terminal=FAILED errorCode=NO_FEASIBLE_ITINERARY",
+  "detail": ""
+ },
+ {
+  "scenarioId": "R01-20",
+  "title": "REAL_ONLY 20 动态 Provider 样本（12+ 城市，双必去/单必去，并发≤2）",
+  "risk": "P0",
+  "ok": true,
+  "evidence": "ok=19/20 429s=0 | 广州/天河公园=WAITING_USER(exact=True) | 广州/正佳广场=WAITING_USER(exact=True) | 广州/陈家祠=WAITING_USER(exact=True) | 北京/故宫=WAITING_USER(exact=True) | 北京/天坛=WAITING_USER(exact=True) | 上海/外滩=WAITING_USER(exact=True) | 上海/东方明珠=WAITING_USER(exact=True) | 重庆/洪崖洞=WAITING_USER(exact=True) | 杭州/西湖=WAITING_USER(exact=True) | 成都/宽窄巷子=WAITING_USER(exact=True) | 西安/大雁塔=WAITING_USER(exact=True) | 长沙/岳麓山=WAITING_USER(exact=True) | 昆明/滇池=WAITING_USER(exact=True) | 三亚/亚龙湾=FAILED(exact=False) | 广州/沙面=WAITING_USER(exact=True) | 广州/白云山=WAITING_USER(exact=True) | 北京/颐和园=WAITING_USER(exact=True) | 上海/豫园=WAITING_USER(exact=True) | 杭州/灵隐寺=WAITING_USER(exact=True) | 成都/武侯祠=WAITING_USER(exact=True)",
+  "detail": ""
+ }
+]

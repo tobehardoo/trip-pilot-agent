@@ -1,0 +1,45 @@
+{
+  "sampleId": "C",
+  "name": "Guangzhou infeasible budget",
+  "command": {
+    "eventType": "PLANNING_CREATE_REQUESTED",
+    "schemaVersion": 2,
+    "eventId": "30000000-0000-4000-8000-000000000001",
+    "traceId": "30000000-0000-4000-8000-000000000002",
+    "taskId": "30000000-0000-4000-8000-000000000003",
+    "tripId": "30000000-0000-4000-8000-000000000004",
+    "occurredAt": "2026-07-31T02:00:00Z",
+    "payload": {
+      "taskType": "CREATE",
+      "baselineTripVersion": 0,
+      "idempotencyKey": "30000000-0000-4000-8000-000000000005",
+      "trip": {
+        "title": "RC-C 广州不可行预算",
+        "destination": "广州",
+        "startDate": "2026-09-15",
+        "endDate": "2026-09-15",
+        "status": "DRAFT",
+        "version": 0,
+        "constraints": {
+          "budgetAmount": 50,
+          "travelers": 2,
+          "travelerType": "FRIENDS",
+          "pace": "BALANCED",
+          "preferences": ["博物馆", "历史"],
+          "fixedSchedules": [],
+          "mustVisitPlaces": [],
+          "avoidPlaces": [],
+          "mealWindows": [],
+          "mobilityLevel": "STANDARD",
+          "schemaVersion": 2
+        }
+      }
+    }
+  },
+  "expectations": {
+    "status": "FAILED",
+    "errorCode": "NO_FEASIBLE_ITINERARY",
+    "conflictCode": "BUDGET_EXCEEDED",
+    "noPartialItinerary": true
+  }
+}

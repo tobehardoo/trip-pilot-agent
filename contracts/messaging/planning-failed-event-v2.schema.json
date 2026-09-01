@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-failed-event-v2.schema.json",
+  "title": "Planning Failed Event v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType",
+    "schemaVersion",
+    "eventId",
+    "traceId",
+    "taskId",
+    "tripId",
+    "runId",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_FAILED"},
+    "schemaVersion": {"const": 2},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "runId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "shortText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "affectedItem": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "affected"],
+      "properties": {
+        "code": {"$ref": "#/$defs/shortText"},
+        "message": {"$ref": "#/$defs/message"},
+        "affected": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 30,
+          "items": {"$ref": "#/$defs/affectedItem"}
+        }
+      }
+    },
+    "relaxation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {"$ref": "#/$defs/shortText"},
+        "message": {"$ref": "#/$defs/message"}
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "status",
+        "errorCode",
+        "errorCategory",
+        "provider",
+        "operation",
+        "retryable",
+        "retryCount",
+        "fallbackAttempted",
+        "fallbackSucceeded",
+        "safeMessage",
+        "conflicts",
+        "relaxationSuggestions"
+      ],
+      "properties": {
+        "status": {"const": "FAILED"},
+        "errorCode": {"$ref": "#/$defs/shortText"},
+        "errorCategory": {
+          "enum": [
+            "CONFIGURATION_ERROR",
+            "AUTHENTICATION_ERROR",
+            "PERMISSION_DENIED",
+            "QUOTA_EXCEEDED",
+            "RATE_LIMITED",
+            "TIMEOUT",
+            "NETWORK_ERROR",
+            "PROVIDER_UNAVAILABLE",
+            "INVALID_REQUEST",
+            "NO_RESULT",
+            "UNSUPPORTED_MODE",
+            "MALFORMED_RESPONSE",
+            "DATA_QUALITY_ERROR",
+            "PROVIDER_ADAPTER_ERROR",
+            "PLANNING_INFEASIBLE",
+            "INTERNAL_ERROR"
+          ]
+        },
+        "provider": {"enum": ["AMAP", "DEMO", "PLANNER"]},
+        "operation": {
+          "enum": ["CONFIGURATION", "PLANNING", "REPLANNING", "POI_SEARCH", "ROUTE"]
+        },
+        "retryable": {"type": "boolean"},
+        "retryCount": {"type": "integer", "minimum": 0, "maximum": 10},
+        "fallbackAttempted": {"type": "boolean"},
+        "fallbackSucceeded": {"type": "boolean"},
+        "safeMessage": {"$ref": "#/$defs/message"},
+        "safeProviderCode": {
+          "anyOf": [{"$ref": "#/$defs/shortText"}, {"type": "null"}]
+        },
+        "causeType": {
+          "anyOf": [{"$ref": "#/$defs/shortText"}, {"type": "null"}]
+        },
+        "conflicts": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"$ref": "#/$defs/conflict"}
+        },
+        "relaxationSuggestions": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"$ref": "#/$defs/relaxation"}
+        }
+      }
+    }
+  }
+}

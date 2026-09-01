@@ -1,0 +1,59 @@
+{
+  "sampleId": "B",
+  "name": "Guangzhou two-day fixed appointment",
+  "command": {
+    "eventType": "PLANNING_CREATE_REQUESTED",
+    "schemaVersion": 2,
+    "eventId": "20000000-0000-4000-8000-000000000001",
+    "traceId": "20000000-0000-4000-8000-000000000002",
+    "taskId": "20000000-0000-4000-8000-000000000003",
+    "tripId": "20000000-0000-4000-8000-000000000004",
+    "occurredAt": "2026-07-31T02:00:00Z",
+    "payload": {
+      "taskType": "CREATE",
+      "baselineTripVersion": 0,
+      "idempotencyKey": "20000000-0000-4000-8000-000000000005",
+      "trip": {
+        "title": "RC-B 广州两日预约行程",
+        "destination": "广州",
+        "startDate": "2026-09-12",
+        "endDate": "2026-09-13",
+        "status": "DRAFT",
+        "version": 0,
+        "constraints": {
+          "budgetAmount": 3000,
+          "travelers": 2,
+          "travelerType": "COUPLE",
+          "pace": "BALANCED",
+          "preferences": ["历史", "岭南文化", "美食"],
+          "fixedSchedules": [
+            {
+              "placeName": "粤剧艺术博物馆预约",
+              "startTime": "2026-09-12T14:00:00+08:00",
+              "endTime": "2026-09-12T15:30:00+08:00"
+            }
+          ],
+          "mustVisitPlaces": ["广东省博物馆"],
+          "avoidPlaces": [],
+          "mealWindows": [
+            {
+              "mealType": "DINNER",
+              "startTime": "18:00:00",
+              "endTime": "19:30:00"
+            }
+          ],
+          "mobilityLevel": "STANDARD",
+          "schemaVersion": 2
+        }
+      }
+    }
+  },
+  "expectations": {
+    "provider": "AMAP",
+    "dayCount": 2,
+    "mustVisit": "广东省博物馆",
+    "minActivities": 4,
+    "minTransitLegs": 2,
+    "allTransitProvider": "AMAP"
+  }
+}

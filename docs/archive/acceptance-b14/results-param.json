@@ -1,0 +1,682 @@
+{
+ "scenarios": [
+  {
+   "scenarioId": "P001",
+   "title": "参数化批量 110 样本（预算/同行/节奏/行动/偏好/餐窗/天数，种子 20260815）",
+   "risk": "P2",
+   "ok": true,
+   "evidence": "samples=110 fails=0 ",
+   "detail": ""
+  },
+  {
+   "scenarioId": "S099",
+   "title": "10 个用户/10 个 trip 并发规划",
+   "risk": "P0",
+   "ok": true,
+   "evidence": "tasks=100 created202=100 terminal=100 stuck=0",
+   "detail": ""
+  }
+ ],
+ "samples": [
+  {
+   "n": 0,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 1,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 2,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 3,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 4,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 5,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 6,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 7,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 8,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 9,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 10,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 11,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 12,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 13,
+   "create": 201,
+   "terminal": "FAILED",
+   "ok": true
+  },
+  {
+   "n": 14,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 15,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 16,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 17,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 18,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 19,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 20,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 21,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 22,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 23,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 24,
+   "create": 201,
+   "terminal": "FAILED",
+   "ok": true
+  },
+  {
+   "n": 25,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 26,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 27,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 28,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 29,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 30,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 31,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 32,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 33,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 34,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 35,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 36,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 37,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 38,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 39,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 40,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 41,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 42,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 43,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 44,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 45,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 46,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 47,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 48,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 49,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 50,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 51,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 52,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 53,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 54,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 55,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 56,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 57,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 58,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 59,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 60,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 61,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 62,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 63,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 64,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 65,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 66,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 67,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 68,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 69,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 70,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 71,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 72,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 73,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 74,
+   "create": 201,
+   "terminal": "FAILED",
+   "ok": true
+  },
+  {
+   "n": 75,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 76,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 77,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 78,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 79,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 80,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 81,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 82,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 83,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 84,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 85,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 86,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 87,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 88,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 89,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 90,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 91,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 92,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 93,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 94,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 95,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 96,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 97,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 98,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 99,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 100,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 101,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 102,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 103,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 104,
+   "create": 201,
+   "terminal": "FAILED",
+   "ok": true
+  },
+  {
+   "n": 105,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 106,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 107,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 108,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  },
+  {
+   "n": 109,
+   "create": 201,
+   "terminal": "WAITING_USER",
+   "ok": true
+  }
+ ]
+}

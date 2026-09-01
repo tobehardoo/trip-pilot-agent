@@ -1,0 +1,48 @@
+suite_id = "guangzhou-retrieval-v1"
+version = 1
+as_of = 2026-07-23
+
+[corpus_versions]
+guangzhou-chen-clan-museum = 1
+guangzhou-shamian-history = 1
+guangzhou-xiguan-citywalk = 1
+
+[[cases]]
+case_id = "chen-clan-crafts"
+query = "广州哪里适合了解岭南民间工艺和传统建筑装饰？"
+city = "广州"
+category = "culture"
+expected_document_ids = ["guangzhou-chen-clan-museum"]
+
+[[cases]]
+case_id = "chen-clan-family"
+query = "带家人参观陈家祠时可以重点了解哪些文化内容？"
+city = "广州"
+category = "culture"
+expected_document_ids = ["guangzhou-chen-clan-museum"]
+
+[[cases]]
+case_id = "shamian-history"
+query = "想在广州安排一段近代建筑与历史街区步行体验"
+city = "广州"
+category = "culture"
+expected_document_ids = ["guangzhou-shamian-history"]
+
+[[cases]]
+case_id = "shamian-relaxed-walk"
+query = "节奏轻松的沙面城市漫步适合看什么？"
+city = "广州"
+expected_document_ids = ["guangzhou-shamian-history"]
+
+[[cases]]
+case_id = "xiguan-citywalk"
+query = "如何串联西关街区做一条广州文化 Citywalk？"
+city = "广州"
+category = "theme"
+expected_document_ids = ["guangzhou-xiguan-citywalk"]
+
+[[cases]]
+case_id = "xiguan-neighborhood"
+query = "想观察广州老城社区生活和西关文化，应该怎样步行游览？"
+city = "广州"
+expected_document_ids = ["guangzhou-xiguan-citywalk"]

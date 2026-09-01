@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/agent-ask-user-event-v1.schema.json",
+  "title": "Agent Ask User Event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType",
+    "schemaVersion",
+    "eventId",
+    "traceId",
+    "tripId",
+    "runId",
+    "occurredAt",
+    "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "AGENT_ASK_USER"},
+    "schemaVersion": {"const": 1},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "runId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {"$ref": "#/$defs/payload"}
+  },
+  "$defs": {
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "\\S"
+    },
+    "option": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "pattern": "\\S"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question"],
+      "properties": {
+        "question": {"$ref": "#/$defs/question"},
+        "options": {
+          "type": ["array", "null"],
+          "items": {"$ref": "#/$defs/option"},
+          "maxItems": 10
+        },
+        "expectedType": {
+          "enum": ["TEXT", "NUMBER", "DATE", "CHOICE", null]
+        }
+      }
+    }
+  }
+}

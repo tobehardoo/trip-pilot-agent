@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply min-h-screen m-0 bg-surface-50 text-surface-900 antialiased;
+    min-width: 320px;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  button,
+  input,
+  select {
+    letter-spacing: 0;
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    @apply outline-2 outline-primary-500 outline-offset-2;
+  }
+
+  /* Smooth scrolling for the whole page */
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  .glass-surface {
+    @apply bg-white/80 backdrop-blur-xl border-b border-surface-200/60;
+  }
+
+  /* Destination gradient utility — used by city cards */
+  .dest-gz  { background: linear-gradient(135deg, #f43f5e 0%, #f97316 50%, #eab308 100%); }
+  .dest-bj  { background: linear-gradient(135deg, #dc2626 0%, #b91c1c 50%, #7f1d1d 100%); }
+  .dest-hz  { background: linear-gradient(135deg, #10b981 0%, #14b8a6 50%, #06b6d4 100%); }
+  .dest-cs  { background: linear-gradient(135deg, #f97316 0%, #ef4444 50%, #e11d48 100%); }
+  .dest-cd  { background: linear-gradient(135deg, #22c55e 0%, #10b981 50%, #0d9488 100%); }
+  .dest-sh  { background: linear-gradient(135deg, #64748b 0%, #475569 50%, #1e293b 100%); }
+  .dest-sz  { background: linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #6366f1 100%); }
+
+  /* Decorative dot pattern overlay for hero cards */
+  .hero-pattern {
+    background-image: radial-gradient(circle at 20% 80%, rgba(255,255,255,0.15) 1px, transparent 1px),
+                      radial-gradient(circle at 80% 20%, rgba(255,255,255,0.1) 1.5px, transparent 1.5px);
+    background-size: 24px 24px, 32px 32px;
+  }
+
+  /* Page transition */
+  .page-enter-active {
+    transition: opacity 0.25s ease-out, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .page-leave-active {
+    transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+  }
+  .page-enter-from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .page-leave-to {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
+  /* Timeline item entrance */
+  .timeline-enter-active {
+    transition: opacity 0.4s ease-out, transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .timeline-leave-active {
+    transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+  }
+  .timeline-enter-from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  .timeline-leave-to {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+
+  /* Pipeline step entrance */
+  .pipeline-enter-active {
+    transition: opacity 0.3s ease-out, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .pipeline-enter-from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(148 163 184 / 0.4) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgb(148 163 184 / 0.35);
+    border-radius: 9999px;
+  }
+
+  /* Text balance for headings */
+  .text-balance {
+    text-wrap: balance;
+  }
+}

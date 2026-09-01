@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trippilot.local/contracts/planning-completed-event-v5.schema.json",
+  "title": "Planning Completed Event v5",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType", "schemaVersion", "eventId", "traceId", "taskId",
+    "tripId", "runId", "occurredAt", "payload"
+  ],
+  "properties": {
+    "eventType": {"const": "PLANNING_COMPLETED"},
+    "schemaVersion": {"const": 5},
+    "eventId": {"type": "string", "format": "uuid"},
+    "traceId": {"type": "string", "format": "uuid"},
+    "taskId": {"type": "string", "format": "uuid"},
+    "tripId": {"type": "string", "format": "uuid"},
+    "runId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "payload": {
+      "oneOf": [
+        {"$ref": "#/$defs/amapPayload"},
+        {"$ref": "#/$defs/demoPayload"}
+      ]
+    }
+  },
+  "$defs": {
+    "amapPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "itinerary", "knowledge"],
+      "properties": {
+        "provider": {"const": "AMAP"},
+        "itinerary": {"$ref": "#/$defs/amapItinerary"},
+        "knowledge": {"$ref": "#/$defs/knowledgeEvidence"}
+      }
+    },
+    "demoPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "itinerary", "knowledge"],
+      "properties": {
+        "provider": {"const": "DEMO"},
+        "itinerary": {"$ref": "#/$defs/demoItinerary"},
+        "knowledge": {"$ref": "#/$defs/knowledgeEvidence"}
+      }
+    },
+    "knowledgeEvidence": {
+      "oneOf": [
+        {"$ref": "#/$defs/realKnowledgeEvidence"},
+        {"$ref": "#/$defs/demoKnowledgeEvidence"},
+        {"$ref": "#/$defs/unavailableKnowledgeEvidence"}
+      ]
+    },
+    "realKnowledgeEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "query", "citations", "freshness"],
+      "properties": {
+        "status": {"const": "REAL"},
+        "query": {"type": "string", "minLength": 1, "maxLength": 200},
+        "citations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {"$ref": "#/$defs/knowledgeCitation"}
+        },
+        "freshness": {"$ref": "#/$defs/availableFreshness"}
+      }
+    },
+    "demoKnowledgeEvidence": {
+      "$ref": "#/$defs/nonRealKnowledgeEvidence",
+      "unevaluatedProperties": false,
+      "properties": {"status": {"const": "DEMO"}}
+    },
+    "unavailableKnowledgeEvidence": {
+      "$ref": "#/$defs/nonRealKnowledgeEvidence",
+      "unevaluatedProperties": false,
+      "properties": {"status": {"const": "UNAVAILABLE"}}
+    },
+    "nonRealKnowledgeEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "query", "citations", "freshness", "message"],
+      "properties": {
+        "status": {"enum": ["DEMO", "UNAVAILABLE"]},
+        "query": {"type": "string", "minLength": 1, "maxLength": 200},
+        "citations": {"type": "array", "maxItems": 0},
+        "freshness": {"$ref": "#/$defs/unavailableFreshness"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 300}
+      }
+    },
+    "knowledgeCitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentId", "documentVersion", "chunkId", "chunkIndex", "title",
+        "sourceUrl", "sourceName", "collectedAt", "reliabilityLevel", "similarity"
+      ],
+      "properties": {
+        "documentId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "documentVersion": {"type": "integer", "minimum": 1},
+        "chunkId": {"type": "string", "minLength": 1, "maxLength": 200},
+        "chunkIndex": {"type": "integer", "minimum": 0},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "sourceUrl": {"type": "string", "format": "uri", "pattern": "^https?://"},
+        "sourceName": {"type": "string", "minLength": 1, "maxLength": 120},
+        "collectedAt": {"type": "string", "format": "date-time"},
+        "reliabilityLevel": {"type": "string", "minLength": 1, "maxLength": 60},
+        "similarity": {"type": "number", "minimum": -1, "maximum": 1}
+      }
+    },
+    "availableFreshness": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "checkedAt"],
+          "properties": {
+            "status": {"const": "FRESH"},
+            "checkedAt": {"type": "string", "format": "date-time"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "checkedAt"],
+          "properties": {
+            "status": {"const": "STALE"},
+            "checkedAt": {"type": "string", "format": "date-time"},
+            "staleReason": {"type": "string", "minLength": 1, "maxLength": 60}
+          }
+        }
+      ]
+    },
+    "unavailableFreshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {"status": {"const": "UNAVAILABLE"}}
+    },
+    "amapItinerary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "days", "estimatedTotalCost"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "days": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/amapDay"}},
+        "estimatedTotalCost": {"$ref": "#/$defs/money"}
+      }
+    },
+    "demoItinerary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "days", "estimatedTotalCost"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "days": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/demoDay"}},
+        "estimatedTotalCost": {"$ref": "#/$defs/money"}
+      }
+    },
+    "amapDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "activities", "transitLegs"],
+      "properties": {
+        "date": {"type": "string", "format": "date"},
+        "activities": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/amapActivity"}},
+        "transitLegs": {"$ref": "#/$defs/transitLegs"}
+      }
+    },
+    "demoDay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["date", "activities", "transitLegs"],
+      "properties": {
+        "date": {"type": "string", "format": "date"},
+        "activities": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/demoActivity"}},
+        "transitLegs": {"$ref": "#/$defs/transitLegs"}
+      }
+    },
+    "transitLegs": {
+      "type": "array",
+      "maxItems": 999,
+      "items": {"$ref": "#/$defs/transitLeg"}
+    },
+    "transitLeg": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fromActivityIndex", "toActivityIndex", "mode", "distanceMeters",
+        "durationSeconds", "provider", "estimated", "polyline"
+      ],
+      "properties": {
+        "fromActivityIndex": {"type": "integer", "minimum": 0},
+        "toActivityIndex": {"type": "integer", "minimum": 1},
+        "mode": {"enum": ["WALKING", "DRIVING"]},
+        "distanceMeters": {"type": "integer", "minimum": 0, "maximum": 40100000},
+        "durationSeconds": {"type": "integer", "minimum": 0, "maximum": 31536000},
+        "provider": {"enum": ["AMAP", "DEMO"]},
+        "estimated": {"type": "boolean"},
+        "polyline": {"type": "array", "minItems": 1, "maxItems": 5000, "items": {"$ref": "#/$defs/coordinates"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"provider": {"const": "AMAP"}}}, "then": {"properties": {"estimated": {"const": false}}}},
+        {"if": {"properties": {"provider": {"const": "DEMO"}}}, "then": {"properties": {"estimated": {"const": true}}}}
+      ]
+    },
+    "amapActivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "startTime", "endTime", "estimatedCost", "source", "providerPoiId", "coordinates", "address"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "startTime": {"type": "string", "format": "date-time"},
+        "endTime": {"type": "string", "format": "date-time"},
+        "estimatedCost": {"$ref": "#/$defs/money"},
+        "source": {"const": "AMAP"},
+        "providerPoiId": {"type": "string", "minLength": 1, "maxLength": 100},
+        "coordinates": {"$ref": "#/$defs/coordinates"},
+        "address": {"type": "string", "minLength": 1, "maxLength": 300}
+      }
+    },
+    "demoActivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "startTime", "endTime", "estimatedCost", "source"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "startTime": {"type": "string", "format": "date-time"},
+        "endTime": {"type": "string", "format": "date-time"},
+        "estimatedCost": {"$ref": "#/$defs/money"},
+        "source": {"const": "DEMO"}
+      }
+    },
+    "coordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["longitude", "latitude"],
+      "properties": {
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90}
+      }
+    },
+    "money": {"type": "number", "minimum": 0, "maximum": 9999999999.99, "multipleOf": 0.01}
+  }
+}
+
+

@@ -1,0 +1,239 @@
+from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
+
+from trip_agent.guide_intelligence.travel_entities import (
+    FactProvenance,
+    FactValue,
+    TravelEntityLocation,
+    build_attraction,
+)
+from trip_agent.planning.candidates import CandidateRanker
+from trip_agent.planning.context_view import weather_statements_for_date
+from trip_agent.providers.map import Coordinates, Poi
+
+
+def poi(
+    provider_id: str,
+    name: str,
+    *,
+    city: str = "广州市",
+    address: str = "广州市越秀区",
+    longitude: float = 113.2644,
+    latitude: float = 23.1291,
+    type_name: str = "风景名胜",
+    type_code: str = "110000",
+) -> Poi:
+    return Poi(
+        provider_id=provider_id,
+        name=name,
+        coordinates=Coordinates(longitude=longitude, latitude=latitude),
+        type_name=type_name,
+        type_code=type_code,
+        province="广东省",
+        city=city,
+        district="越秀区",
+        address=address,
+    )
+
+
+def test_ranker_scores_preferences_and_returns_stable_explanations() -> None:
+    result = CandidateRanker().rank(
+        (
+            poi("park", "越秀公园", type_name="公园广场"),
+            poi("museum", "广州博物馆", type_name="科教文化服务"),
+            poi("tower", "广州塔"),
+        ),
+        destination="广州",
+        preferences=("博物馆", "岭南文化"),
+        traveler_type="FAMILY",
+        limit=2,
+    )
+
+    assert [item.poi.provider_id for item in result.selected] == ["museum", "park"]
+    assert "PREFERENCE_MATCH:博物馆" in result.selected[0].reasons
+    assert "FAMILY_FRIENDLY" in result.selected[1].reasons
+    assert [(item.poi.provider_id, item.reason) for item in result.rejected] == [
+        ("tower", "BELOW_SELECTION_CUTOFF")
+    ]
+
+
+def test_ranker_rejects_invalid_city_empty_address_and_duplicate_places() -> None:
+    result = CandidateRanker().rank(
+        (
+            poi("valid", "陈家祠"),
+            poi("duplicate-id", "陈家祠", longitude=113.26441, latitude=23.12909),
+            poi("empty-address", "沙面", address=" "),
+            poi("wrong-city", "西湖", city="杭州市"),
+            poi("valid", "重复 ID"),
+        ),
+        destination="广州",
+        preferences=(),
+        traveler_type="FRIENDS",
+        limit=5,
+    )
+
+    assert [item.poi.provider_id for item in result.selected] == ["valid"]
+    assert {item.reason for item in result.rejected} == {
+        "DUPLICATE_PLACE",
+        "EMPTY_ADDRESS",
+        "CITY_MISMATCH",
+        "DUPLICATE_PROVIDER_ID",
+    }
+
+
+def test_ranker_rejects_real_amap_sub_facilities_of_pinned_attractions() -> None:
+    result = CandidateRanker().rank(
+        (
+            poi(
+                "tower-main",
+                "广州塔",
+                longitude=113.324521,
+                latitude=23.106428,
+                type_code="110202",
+            ),
+            poi(
+                "tower-east",
+                "广州塔-东广场",
+                longitude=113.325324,
+                latitude=23.106236,
+                type_code="110105",
+            ),
+            poi(
+                "tower-a",
+                "广州塔A区",
+                longitude=113.324516,
+                latitude=23.106432,
+                type_code="110000|120000",
+            ),
+            poi(
+                "tower-plaza",
+                "广州塔广场",
+                longitude=113.324520,
+                latitude=23.105442,
+                type_code="060101",
+            ),
+            poi(
+                "tower-visitor-centre",
+                "广州塔旅游区游客中心",
+                longitude=113.324212,
+                latitude=23.106001,
+                type_code="070000",
+            ),
+            poi(
+                "tower-west-observation",
+                "广州塔观光区西登塔",
+                longitude=113.323890,
+                latitude=23.105933,
+                type_code="110000",
+            ),
+            poi(
+                "chen-name",
+                "陈家祠",
+                longitude=113.246930,
+                latitude=23.127050,
+                type_code="190700",
+            ),
+            poi(
+                "chen-hall",
+                "陈家祠堂",
+                longitude=113.245158,
+                latitude=23.126692,
+                type_code="110202",
+            ),
+            poi(
+                "chen-plaza",
+                "陈家祠广场",
+                longitude=113.246887,
+                latitude=23.126938,
+                type_code="110105",
+            ),
+        ),
+        destination="广州",
+        preferences=(),
+        traveler_type="SOLO",
+        limit=10,
+        pinned_provider_ids=frozenset({"tower-main", "chen-name"}),
+    )
+
+    assert {item.poi.provider_id for item in result.selected} == {"chen-name", "tower-main"}
+    assert {
+        item.poi.provider_id for item in result.rejected if item.reason == "DUPLICATE_PLACE"
+    } == {
+        "tower-east",
+        "tower-a",
+        "tower-plaza",
+        "tower-visitor-centre",
+        "tower-west-observation",
+        "chen-hall",
+        "chen-plaza",
+    }
+
+
+def test_ranker_prefers_indoor_places_when_city_weather_reports_rain() -> None:
+    result = CandidateRanker().rank(
+        (
+            poi("park", "越秀公园", type_name="公园广场"),
+            poi("museum", "广州博物馆", type_name="博物馆"),
+        ),
+        destination="广州",
+        preferences=(),
+        traveler_type="FRIENDS",
+        limit=2,
+        weather_statements=("广州市当前天气：雷阵雨，31℃，湿度78%。",),
+    )
+
+    assert [item.poi.provider_id for item in result.selected] == ["museum", "park"]
+    assert "WEATHER_INDOOR_PREFERENCE" in result.selected[0].reasons
+    assert "WEATHER_OUTDOOR_PENALTY" in result.selected[1].reasons
+
+
+def test_weather_statements_only_apply_to_their_effective_trip_date() -> None:
+    facts = (
+        SimpleNamespace(
+            category="WEATHER",
+            effective_date=date(2026, 8, 1),
+            statement="2026-08-01 广州雷阵雨",
+            evidence="白天雷阵雨",
+        ),
+        SimpleNamespace(
+            category="TIP",
+            effective_date=None,
+            statement="烟雨路适合步行",
+            evidence="社区攻略",
+        ),
+    )
+
+    assert weather_statements_for_date(facts, date(2026, 8, 1)) == (
+        "2026-08-01 广州雷阵雨 白天雷阵雨",
+    )
+    assert weather_statements_for_date(facts, date(2026, 8, 2)) == ()
+
+
+def test_ranker_explains_when_entity_facts_are_known_or_unknown() -> None:
+    checked_at = datetime(2026, 8, 1, tzinfo=UTC)
+    provenance = FactProvenance(
+        source="official-attraction",
+        source_type="OFFICIAL",
+        fetched_at=checked_at,
+        valid_until=checked_at + timedelta(days=1),
+        confidence=0.95,
+    )
+    entity = build_attraction(
+        city_adcode="440100",
+        provider_poi_id="museum",
+        name="广州博物馆",
+        category="MUSEUM",
+        location=TravelEntityLocation(113.26, 23.13, "广州市越秀区"),
+        opening_hours=FactValue.known("09:00-17:00", provenance),
+    )
+
+    result = CandidateRanker().rank(
+        (poi("museum", "广州博物馆"),),
+        destination="广州",
+        preferences=(),
+        traveler_type="FRIENDS",
+        limit=1,
+        entity_facts=(entity,),
+    )
+
+    assert "ENTITY_OPENING_HOURS_KNOWN" in result.selected[0].reasons

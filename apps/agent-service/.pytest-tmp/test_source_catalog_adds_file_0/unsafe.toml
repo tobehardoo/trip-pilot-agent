@@ -1,0 +1,8 @@
+
+[[sources]]
+source_id = "unsafe"
+city = "广州"
+source_name = "不安全来源"
+reliability_level = "CURATED"
+allowed_domains = ["example.com"]
+resource_urls = ["http://example.com/article"]

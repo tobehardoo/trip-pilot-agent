@@ -1,0 +1,11 @@
+
+suite_id = "cli-evaluation"
+version = 1
+as_of = 2026-07-23
+[corpus_versions]
+guangzhou-cli = 1
+[[cases]]
+case_id = "culture"
+query = "广州文化"
+city = "广州"
+expected_document_ids = ["guangzhou-cli"]

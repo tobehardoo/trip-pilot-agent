@@ -1,0 +1,8 @@
+# Historical test-fixture UUID, not a credential. The fixture now uses a visibly synthetic UUID.
+64e5da9d073171fa572727a2d46cc0a8b4f041df:apps/agent-service/tests/test_local_replanning.py:generic-api-key:21
+
+# Historical Java idempotency UUID, not a credential. The current fixture uses a visibly synthetic UUID.
+31806ba779cd9ff65c9e058e81be77c6f9d1d357:apps/travel-server/src/test/java/io/github/tobehardoo/trippilot/trip/TripFlowIntegrationTest.java:generic-api-key:102
+
+# Historical benchmark idempotency UUID, not a credential. The current fixture uses a visibly synthetic UUID.
+56eee3cb7393c02874e3ffa47e346063069c51e4:apps/agent-service/benchmarks/run_plan_evaluation.py:generic-api-key:183

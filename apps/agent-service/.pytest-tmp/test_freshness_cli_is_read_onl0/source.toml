@@ -1,0 +1,8 @@
+
+[[sources]]
+source_id = "source-a"
+city = "广州"
+source_name = "Source A"
+reliability_level = "OFFICIAL"
+allowed_domains = ["example.com"]
+resource_urls = ["https://example.com/a"]

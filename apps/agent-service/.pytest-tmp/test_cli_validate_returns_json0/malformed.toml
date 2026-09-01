@@ -1,0 +1,8 @@
+
+[[sources]]
+source_id = 123
+city = "广州"
+source_name = "错误来源"
+reliability_level = "CURATED"
+allowed_domains = [123]
+resource_urls = ["https://example.com/article"]

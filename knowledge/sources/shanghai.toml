@@ -1,0 +1,27 @@
+[[sources]]
+source_id = "shanghai-tourism-bureau"
+city = "上海"
+source_name = "上海市文化和旅游局"
+reliability_level = "OFFICIAL"
+allowed_domains = ["whlyj.sh.gov.cn"]
+resource_urls = [
+  "https://whlyj.sh.gov.cn/",
+]
+fetch_interval_hours = 168
+min_request_interval_seconds = 2
+request_timeout_seconds = 10
+max_response_bytes = 2_000_000
+
+[[sources]]
+source_id = "shanghai-visit-official"
+city = "上海"
+source_name = "上海旅游官方指南"
+reliability_level = "OFFICIAL"
+allowed_domains = ["www.meet-in-shanghai.net"]
+resource_urls = [
+  "https://www.meet-in-shanghai.net/",
+]
+fetch_interval_hours = 168
+min_request_interval_seconds = 2
+request_timeout_seconds = 10
+max_response_bytes = 2_000_000

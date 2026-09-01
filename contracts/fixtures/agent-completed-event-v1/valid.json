@@ -1,0 +1,36 @@
+{
+  "eventType": "AGENT_COMPLETED",
+  "schemaVersion": 1,
+  "eventId": "be2f3a4b-5c6d-4e7f-9a8b-0c1d2e3f4a5c",
+  "traceId": "1c2d3e4f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
+  "tripId": "9ee5e831-90f7-4a60-bb8d-fb488aa799ca",
+  "runId": "5a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+  "occurredAt": "2026-08-29T08:31:00Z",
+  "payload": {
+    "summary": "行程已生成：测试行程",
+    "itinerary": {
+      "title": "测试行程",
+      "days": [
+        {
+          "date": "2026-10-01",
+          "activities": [
+            {
+              "title": "武侯祠",
+              "startTime": "2026-10-01T09:00:00+00:00",
+              "endTime": "2026-10-01T11:00:00+00:00",
+              "estimatedCost": 0,
+              "source": "DEMO"
+            }
+          ],
+          "transitLegs": []
+        }
+      ],
+      "estimatedTotalCost": 0
+    },
+    "slots": {
+      "destination": {"value": "成都", "state": "CONFIRMED"},
+      "start_date": {"value": "10月1日", "state": "CONFIRMED"},
+      "end_date": {"value": "10月3日", "state": "CONFIRMED"}
+    }
+  }
+}

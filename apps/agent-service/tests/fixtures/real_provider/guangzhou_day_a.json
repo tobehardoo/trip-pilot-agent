@@ -1,0 +1,59 @@
+{
+  "sampleId": "A",
+  "name": "Guangzhou one-day baseline",
+  "poiQueries": [
+    "广州塔",
+    "广东省博物馆",
+    "越秀公园",
+    "陈家祠"
+  ],
+  "routeChecks": [
+    {
+      "origin": "广东省博物馆",
+      "destination": "广州塔",
+      "modes": ["WALKING", "DRIVING"]
+    }
+  ],
+  "command": {
+    "eventType": "PLANNING_CREATE_REQUESTED",
+    "schemaVersion": 2,
+    "eventId": "10000000-0000-4000-8000-000000000001",
+    "traceId": "10000000-0000-4000-8000-000000000002",
+    "taskId": "10000000-0000-4000-8000-000000000003",
+    "tripId": "10000000-0000-4000-8000-000000000004",
+    "occurredAt": "2026-07-31T02:00:00Z",
+    "payload": {
+      "taskType": "CREATE",
+      "baselineTripVersion": 0,
+      "idempotencyKey": "10000000-0000-4000-8000-000000000005",
+      "trip": {
+        "title": "RC-A 广州一日基础行程",
+        "destination": "广州",
+        "startDate": "2026-09-10",
+        "endDate": "2026-09-10",
+        "status": "DRAFT",
+        "version": 0,
+        "constraints": {
+          "budgetAmount": 1500,
+          "travelers": 2,
+          "travelerType": "FRIENDS",
+          "pace": "BALANCED",
+          "preferences": ["博物馆", "城市地标", "公园"],
+          "fixedSchedules": [],
+          "mustVisitPlaces": [],
+          "avoidPlaces": [],
+          "mealWindows": [],
+          "mobilityLevel": "STANDARD",
+          "schemaVersion": 2
+        }
+      }
+    }
+  },
+  "expectations": {
+    "provider": "AMAP",
+    "minPoiResults": 4,
+    "minActivities": 3,
+    "maxActivities": 5,
+    "transitModes": ["WALKING"]
+  }
+}

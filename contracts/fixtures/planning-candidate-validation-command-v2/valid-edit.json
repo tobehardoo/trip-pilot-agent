@@ -1,0 +1,125 @@
+{
+    "eventType":  "PLANNING_CANDIDATE_VALIDATION_REQUESTED",
+    "schemaVersion":  2,
+    "eventId":  "c75013d4-b83a-4d11-a52c-66138751d75b",
+    "traceId":  "6f24951e-94bb-4d9a-9446-043698479f24",
+    "taskId":  "fb204eed-1484-4ccb-855e-af72d914b987",
+    "tripId":  "fb21f112-d17f-4e4f-8598-b1cd1c64ca04",
+    "occurredAt":  "2026-08-13T04:00:00Z",
+    "payload":  {
+                    "taskType":  "EDIT_VALIDATE",
+                    "candidateType":  "EDIT",
+                    "baselineTripVersion":  3,
+                    "baselineItineraryVersionId":  "5ed1e169-04ec-45ed-9102-f75d833f2b8c",
+                    "rollbackFromVersionId":  null,
+                    "idempotencyKey":  "00000000-0000-4000-8000-000000000001",
+                    "changedDates":  [
+                                         "2026-08-01"
+                                     ],
+                    "impactedDates":  [
+                                          "2026-08-01",
+                                          "2026-08-02"
+                                      ],
+                    "trip":  {
+                                 "title":  "Guangzhou weekend",
+                                 "destination":  "Guangzhou",
+                                 "startDate":  "2026-08-01",
+                                 "endDate":  "2026-08-02",
+                                 "status":  "DRAFT",
+                                 "version":  3,
+                                 "constraints":  {
+                                                     "budgetAmount":  1000,
+                                                     "travelers":  2,
+                                                     "travelerType":  "FRIENDS",
+                                                     "pace":  "BALANCED",
+                                                     "preferences":  [
+                                                                         "history"
+                                                                     ],
+                                                     "fixedSchedules":  [
+
+                                                                        ],
+                                                     "arrival":  null,
+                                                     "departure":  null,
+                                                     "accommodation":  null,
+                                                     "mustVisitPlaces":  [
+
+                                                                         ],
+                                                     "avoidPlaces":  [
+
+                                                                     ],
+                                                     "mealWindows":  [
+
+                                                                     ],
+                                                     "mobilityLevel":  "STANDARD",
+                                                     "schemaVersion":  3
+                                                 },
+                                 "arrivalAt":  "2026-08-01T09:00:00+08:00",
+                                 "departureAt":  "2026-08-02T18:00:00+08:00"
+                             },
+                    "itinerary":  {
+                                      "title":  "Guangzhou route",
+                                      "provider":  "AMAP",
+                                      "estimatedTotalCost":  0,
+                                      "days":  [
+                                                   {
+                                                       "date":  "2026-08-01",
+                                                       "dayType":  "FULL_DAY",
+                                                       "activities":  [
+                                                                          {
+                                                                              "title":  "Museum",
+                                                                              "startTime":  "2026-08-01T09:00:00+08:00",
+                                                                              "endTime":  "2026-08-01T11:00:00+08:00",
+                                                                              "estimatedCost":  0,
+                                                                              "source":  "AMAP",
+                                                                              "providerPoiId":  "museum",
+                                                                              "coordinates":  {
+                                                                                                  "longitude":  113.31,
+                                                                                                  "latitude":  23.11
+                                                                                              },
+                                                                              "address":  "Museum Road",
+                                                                              "locked":  true
+                                                                          }
+                                                                      ],
+                                                       "transitLegs":  [
+
+                                                                       ]
+                                                   },
+                                                   {
+                                                       "date":  "2026-08-02",
+                                                       "dayType":  "FULL_DAY",
+                                                       "activities":  [
+                                                                          {
+                                                                              "title":  "Park",
+                                                                              "startTime":  "2026-08-02T09:00:00+08:00",
+                                                                              "endTime":  "2026-08-02T11:00:00+08:00",
+                                                                              "estimatedCost":  0,
+                                                                              "source":  "AMAP",
+                                                                              "providerPoiId":  "park",
+                                                                              "coordinates":  {
+                                                                                                  "longitude":  113.33,
+                                                                                                  "latitude":  23.13
+                                                                                              },
+                                                                              "address":  "Park Road",
+                                                                              "locked":  false
+                                                                          }
+                                                                      ],
+                                                       "transitLegs":  [
+
+                                                                       ]
+                                                   }
+                                               ]
+                                  },
+                    "knowledge":  {
+                                      "status":  "DEMO",
+                                      "query":  "Guangzhou history FRIENDS",
+                                      "citations":  [
+
+                                                    ],
+                                      "freshness":  {
+                                                        "status":  "UNAVAILABLE"
+                                                    },
+                                      "message":  "No production knowledge was used"
+                                  },
+                    "planningContext":  null
+                }
+}

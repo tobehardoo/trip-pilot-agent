@@ -1,0 +1,702 @@
+import asyncio
+import json
+from copy import deepcopy
+from datetime import UTC, datetime
+from decimal import Decimal
+from importlib import import_module
+from pathlib import Path
+
+import pytest
+from jsonschema import Draft202012Validator
+from pydantic import ValidationError
+
+COMMAND = {
+    "eventType": "PLANNING_CREATE_REQUESTED",
+    "schemaVersion": 1,
+    "eventId": "08db18af-3dfe-4e3f-9e3e-2900d43385b4",
+    "traceId": "8f5ef9c2-c194-4292-b847-5b9dcfda978b",
+    "taskId": "b0642d34-e24f-4b24-9ea7-82a68a4be781",
+    "tripId": "08be9aca-fb30-4309-aa4b-93c240f19d75",
+    "occurredAt": "2026-07-14T03:00:00Z",
+    "payload": {
+        "taskType": "CREATE",
+        "baselineTripVersion": 0,
+        "idempotencyKey": "d05b381a-39af-47b5-9925-52f412629f8f",
+        "trip": {
+            "title": "广州四日慢游",
+            "destination": "广州",
+            "startDate": "2026-08-01",
+            "endDate": "2026-08-04",
+            "status": "DRAFT",
+            "version": 0,
+            "constraints": {
+                "budgetAmount": 6000.00,
+                "travelers": 2,
+                "travelerType": "FRIENDS",
+                "pace": "BALANCED",
+                "preferences": ["美食", "历史"],
+                "fixedSchedules": [],
+                "schemaVersion": 1,
+            },
+        },
+    },
+}
+
+
+def test_contract_parses_java_command_and_rejects_unknown_fields() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_type = getattr(contracts, "PlanningCreateCommand", None)
+    assert command_type is not None
+
+    command = command_type.model_validate(COMMAND)
+
+    assert str(command.task_id) == COMMAND["taskId"]
+    assert command.payload.trip.destination == "广州"
+    assert command.payload.trip.constraints.budget_amount == 6000
+    with pytest.raises(ValidationError):
+        command_type.model_validate({**COMMAND, "unexpected": True})
+
+
+@pytest.mark.parametrize("travelers", [0, 51])
+def test_contract_rejects_out_of_range_traveler_counts(travelers: int) -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_type = contracts.PlanningCreateCommand
+    invalid = deepcopy(COMMAND)
+    invalid["payload"]["trip"]["constraints"]["travelers"] = travelers
+
+    with pytest.raises(ValidationError):
+        command_type.model_validate(invalid)
+
+
+def test_contract_rejects_schema_incompatible_coercions_and_empty_strings() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_type = contracts.PlanningCreateCommand
+    coerced_travelers = deepcopy(COMMAND)
+    coerced_travelers["payload"]["trip"]["constraints"]["travelers"] = "2"
+    coerced_budget = deepcopy(COMMAND)
+    coerced_budget["payload"]["trip"]["constraints"]["budgetAmount"] = "6000"
+    coerced_version = deepcopy(COMMAND)
+    coerced_version["payload"]["trip"]["version"] = "0"
+    empty_title = deepcopy(COMMAND)
+    empty_title["payload"]["trip"]["title"] = ""
+
+    for invalid in (coerced_travelers, coerced_budget, coerced_version, empty_title):
+        with pytest.raises(ValidationError):
+            command_type.model_validate(invalid)
+
+
+def test_contract_rejects_internal_field_names_on_the_wire() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_type = contracts.PlanningCreateCommand
+    snake_case = deepcopy(COMMAND)
+    snake_case["event_type"] = snake_case.pop("eventType")
+
+    with pytest.raises(ValidationError):
+        command_type.model_validate(snake_case)
+
+
+def test_contract_rejects_mismatched_baseline_trip_version() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_type = contracts.PlanningCreateCommand
+    mismatched = deepcopy(COMMAND)
+    mismatched["payload"]["baselineTripVersion"] = 99
+
+    with pytest.raises(ValidationError):
+        command_type.model_validate(mismatched)
+
+
+def test_contract_enforces_committed_string_limits() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_type = contracts.PlanningCreateCommand
+    long_title = deepcopy(COMMAND)
+    long_title["payload"]["trip"]["title"] = "x" * 121
+    long_preference = deepcopy(COMMAND)
+    long_preference["payload"]["trip"]["constraints"]["preferences"] = ["x" * 61]
+    long_place = deepcopy(COMMAND)
+    long_place["payload"]["trip"]["constraints"]["fixedSchedules"] = [
+        {
+            "placeName": "x" * 121,
+            "startTime": "2026-08-02T19:00:00+08:00",
+            "endTime": "2026-08-02T21:00:00+08:00",
+        }
+    ]
+
+    for invalid in (long_title, long_preference, long_place):
+        with pytest.raises(ValidationError):
+            command_type.model_validate(invalid)
+
+
+def test_contract_rejects_reversed_trip_dates_and_fixed_schedules() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    command_type = contracts.PlanningCreateCommand
+    reversed_trip = deepcopy(COMMAND)
+    reversed_trip["payload"]["trip"]["endDate"] = "2026-07-31"
+    reversed_schedule = deepcopy(COMMAND)
+    reversed_schedule["payload"]["trip"]["constraints"]["fixedSchedules"] = [
+        {
+            "placeName": "广州塔",
+            "startTime": "2026-08-02T21:00:00+08:00",
+            "endTime": "2026-08-02T19:00:00+08:00",
+        }
+    ]
+
+    with pytest.raises(ValidationError):
+        command_type.model_validate(reversed_trip)
+    with pytest.raises(ValidationError):
+        command_type.model_validate(reversed_schedule)
+
+
+def test_demo_processor_emits_a_deterministic_completed_event() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    processor = import_module("trip_agent.worker.processor")
+    demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
+    command_type = getattr(contracts, "PlanningCreateCommand", None)
+    provider_type = getattr(demo_planning, "DemoPlanningProvider", None)
+    process = getattr(processor, "process_planning_create", None)
+    assert command_type is not None
+    assert provider_type is not None
+    assert process is not None
+    command = command_type.model_validate(COMMAND)
+
+    first = asyncio.run(process(command, provider_type()))
+    repeated = asyncio.run(process(command, provider_type()))
+
+    # Demo lacks hard evidence -> deterministic UNVERIFIED report, but no
+    # blocker exists (B16: Information Missing != Planning Failed), so the
+    # outcome is a savable v11 completion (B19-B producer switch).
+    assert first.event_type == "PLANNING_COMPLETED"
+    assert first.schema_version == 11
+    assert first.event_id == repeated.event_id
+    assert first.run_id == repeated.run_id
+    assert first.trace_id == command.trace_id
+    assert first.task_id == command.task_id
+    assert first.trip_id == command.trip_id
+    assert first.payload.provider == "DEMO"
+    assert first.payload.knowledge.status == "DEMO"
+    assert first.payload.knowledge.query == "广州 美食 历史 FRIENDS"
+    assert first.payload.knowledge.citations == ()
+    assert first.payload.knowledge.freshness.status == "UNAVAILABLE"
+    assert first.payload.feasibility_report.status.value == "UNVERIFIED"
+    assert first.payload.has_blocker is False
+
+
+def test_v4_processor_serializes_real_knowledge_citations_and_freshness() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    processor = import_module("trip_agent.worker.processor")
+    demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+
+    class EvidenceProvider:
+        async def get_evidence(self, received_command: object):
+            assert received_command is command
+            return contracts.KnowledgeEvidence(
+                status="REAL",
+                query="广州 历史",
+                citations=(
+                    contracts.KnowledgeCitationSnapshot(
+                        document_id="guangzhou-history-001",
+                        document_version=2,
+                        chunk_id="guangzhou-history-001-v2-c0",
+                        chunk_index=0,
+                        title="广州历史文化资料",
+                        source_url="https://www.gz.gov.cn/history",
+                        source_name="广州市人民政府",
+                        collected_at="2026-07-22T02:00:00Z",
+                        reliability_level="official",
+                        similarity=0.87,
+                    ),
+                ),
+                freshness=contracts.KnowledgeFreshness(
+                    status="FRESH",
+                    checked_at="2026-07-23T01:00:00Z",
+                ),
+            )
+
+    completed = asyncio.run(
+        processor.process_planning_create(
+            command,
+            demo_planning.DemoPlanningProvider(),
+            knowledge_provider=EvidenceProvider(),
+            occurred_at=datetime(2026, 7, 23, 1, 5, tzinfo=UTC),
+        )
+    )
+    wire = completed.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    assert wire["schemaVersion"] == 11
+    assert wire["eventType"] == "PLANNING_COMPLETED"
+    assert wire["payload"]["hasBlocker"] is False
+    assert wire["payload"]["feasibilityReport"]["status"] == "UNVERIFIED"
+    assert wire["payload"]["knowledge"] == {
+        "status": "REAL",
+        "query": "广州 历史",
+        "citations": [
+            {
+                "documentId": "guangzhou-history-001",
+                "documentVersion": 2,
+                "chunkId": "guangzhou-history-001-v2-c0",
+                "chunkIndex": 0,
+                "title": "广州历史文化资料",
+                "sourceUrl": "https://www.gz.gov.cn/history",
+                "sourceName": "广州市人民政府",
+                "collectedAt": "2026-07-22T02:00:00Z",
+                "reliabilityLevel": "official",
+                "similarity": 0.87,
+            }
+        ],
+        "freshness": {
+            "status": "FRESH",
+            "checkedAt": "2026-07-23T01:00:00Z",
+        },
+    }
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3]
+         / "contracts/messaging/planning-completed-event-v11.schema.json").read_text(
+             encoding="utf-8"
+         )
+    )
+    validator = Draft202012Validator(schema)
+    validator.validate(wire)
+    invalid_url = deepcopy(wire)
+    invalid_url["payload"]["knowledge"]["citations"][0]["sourceUrl"] = (
+        "ftp://example.com/source"
+    )
+    assert list(validator.iter_errors(invalid_url))
+
+
+def test_demo_provider_builds_one_explicitly_sourced_day_per_trip_date() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    processor = import_module("trip_agent.worker.processor")
+    demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
+    command_type = getattr(contracts, "PlanningCreateCommand", None)
+    provider_type = getattr(demo_planning, "DemoPlanningProvider", None)
+    process = getattr(processor, "process_planning_create", None)
+    assert command_type is not None
+    assert provider_type is not None
+    assert process is not None
+    command = command_type.model_validate(COMMAND)
+
+    completed = asyncio.run(process(command, provider_type()))
+
+    assert [str(day.date) for day in completed.payload.itinerary.days] == [
+        "2026-08-01",
+        "2026-08-02",
+        "2026-08-03",
+        "2026-08-04",
+    ]
+    # B9.4: Demo days now carry explicit meal placeholders on top of the
+    # exploration block; every activity stays DEMO-sourced.
+    assert all(len(day.activities) >= 1 for day in completed.payload.itinerary.days)
+    assert all(day.transit_legs == () for day in completed.payload.itinerary.days)
+    assert all(
+        activity.source == "DEMO"
+        for day in completed.payload.itinerary.days
+        for activity in day.activities
+    )
+    assert completed.payload.itinerary.estimated_total_cost == 0
+
+
+@pytest.mark.parametrize("invalid_cost", ["0.001", "10000000000.00"])
+def test_completed_event_models_reject_unpersistable_money(invalid_cost: str) -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+
+    with pytest.raises(ValidationError):
+        contracts.Itinerary.model_validate(
+            {
+                "title": "Demo itinerary",
+                "days": [
+                    {
+                        "date": "2026-08-01",
+                        "activities": [
+                            {
+                                "title": "Demo activity",
+                                "startTime": "2026-08-01T09:00:00+08:00",
+                                "endTime": "2026-08-01T10:00:00+08:00",
+                                "estimatedCost": invalid_cost,
+                                "source": "DEMO",
+                            }
+                        ],
+                    }
+                ],
+                "estimatedTotalCost": invalid_cost,
+            }
+        )
+
+
+def test_completed_event_models_reject_titles_over_two_hundred_characters() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+
+    with pytest.raises(ValidationError):
+        contracts.Itinerary.model_validate(
+            {
+                "title": "x" * 201,
+                "days": [
+                    {
+                        "date": "2026-08-01",
+                        "activities": [
+                            {
+                                "title": "Demo activity",
+                                "startTime": "2026-08-01T09:00:00+08:00",
+                                "endTime": "2026-08-01T10:00:00+08:00",
+                                "estimatedCost": 0,
+                                "source": "DEMO",
+                            }
+                        ],
+                    }
+                ],
+                "estimatedTotalCost": 0,
+            }
+        )
+
+
+def test_v3_activity_contract_requires_real_amap_metadata_and_numeric_coordinates() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    activity_type = getattr(contracts, "ItineraryActivity", None)
+    coordinates_type = getattr(contracts, "ActivityCoordinates", None)
+    assert activity_type is not None
+    assert coordinates_type is not None
+
+    activity = activity_type(
+        title="广东省博物馆",
+        start_time="2026-08-01T09:00:00+08:00",
+        end_time="2026-08-01T11:00:00+08:00",
+        estimated_cost=0,
+        source="AMAP",
+        provider_poi_id="B00140TWHT",
+        coordinates=coordinates_type(
+            longitude=Decimal("113.319263"), latitude=Decimal("23.109078")
+        ),
+        address="珠江东路2号",
+    )
+    wire = activity.model_dump(mode="json", by_alias=True)
+
+    assert wire["providerPoiId"] == "B00140TWHT"
+    assert wire["coordinates"] == {"longitude": 113.319263, "latitude": 23.109078}
+    with pytest.raises(ValidationError, match="JSON numbers"):
+        coordinates_type(longitude="113.319263", latitude="23.109078")
+    with pytest.raises(ValidationError):
+        activity_type.model_validate({**wire, "coordinates": None})
+    with pytest.raises(ValidationError):
+        activity_type.model_validate(
+            {
+                **wire,
+                "source": "DEMO",
+                "providerPoiId": "pretend-amap-id",
+            }
+        )
+
+
+def test_v3_json_schema_enforces_provider_estimate_consistency() -> None:
+    schema = json.loads(
+        (Path(__file__).resolve().parents[3]
+         / "contracts/messaging/legacy/planning-completed-event-v3.schema.json").read_text(
+             encoding="utf-8"
+         )
+    )
+    validator = Draft202012Validator(schema)
+    valid = {
+        "eventType": "PLANNING_COMPLETED",
+        "schemaVersion": 3,
+        "eventId": "08db18af-3dfe-4e3f-9e3e-2900d43385b4",
+        "traceId": "8f5ef9c2-c194-4292-b847-5b9dcfda978b",
+        "taskId": "b0642d34-e24f-4b24-9ea7-82a68a4be781",
+        "tripId": "08be9aca-fb30-4309-aa4b-93c240f19d75",
+        "runId": "a61f2109-ec3f-51f8-a536-25f0049d8326",
+        "occurredAt": "2026-08-01T03:00:00Z",
+        "payload": {
+            "provider": "DEMO",
+            "itinerary": {
+                "title": "Demo",
+                "days": [{
+                    "date": "2026-08-01",
+                    "activities": [{
+                        "title": "First",
+                        "startTime": "2026-08-01T09:00:00+08:00",
+                        "endTime": "2026-08-01T11:00:00+08:00",
+                        "estimatedCost": 0,
+                        "source": "DEMO",
+                    }, {
+                        "title": "Second",
+                        "startTime": "2026-08-01T13:00:00+08:00",
+                        "endTime": "2026-08-01T15:00:00+08:00",
+                        "estimatedCost": 0,
+                        "source": "DEMO",
+                    }],
+                    "transitLegs": [{
+                        "fromActivityIndex": 0,
+                        "toActivityIndex": 1,
+                        "mode": "WALKING",
+                        "distanceMeters": 100,
+                        "durationSeconds": 60,
+                        "provider": "DEMO",
+                        "estimated": True,
+                        "polyline": [{"longitude": 113.3, "latitude": 23.1}],
+                    }],
+                }],
+                "estimatedTotalCost": 0,
+            },
+        },
+    }
+    validator.validate(valid)
+    invalid = deepcopy(valid)
+    invalid["payload"]["itinerary"]["days"][0]["transitLegs"][0]["provider"] = "AMAP"
+    assert list(validator.iter_errors(invalid))
+
+
+def test_v3_transit_leg_model_rejects_inconsistent_provider_estimate() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+
+    with pytest.raises(ValidationError, match="provider and estimated"):
+        contracts.TransitLeg(
+            from_activity_index=0,
+            to_activity_index=1,
+            mode="WALKING",
+            distance_meters=100,
+            duration_seconds=60,
+            provider="AMAP",
+            estimated=True,
+            polyline=[{"longitude": 113.3, "latitude": 23.1}],
+        )
+
+
+def test_v3_day_contract_requires_one_ordered_leg_between_each_adjacent_activity() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    activities = [
+        {
+            "title": f"Activity {index}",
+            "startTime": f"2026-08-01T{9 + index * 3:02d}:00:00+08:00",
+            "endTime": f"2026-08-01T{11 + index * 3:02d}:00:00+08:00",
+            "estimatedCost": 0,
+            "source": "DEMO",
+        }
+        for index in range(2)
+    ]
+    leg = {
+        "fromActivityIndex": 0,
+        "toActivityIndex": 1,
+        "mode": "WALKING",
+        "distanceMeters": 1200,
+        "durationSeconds": 900,
+        "provider": "DEMO",
+        "estimated": True,
+        "estimatedCost": 0,
+        "costSource": "DEMO",
+        "polyline": [
+            {"longitude": 113.31, "latitude": 23.11},
+            {"longitude": 113.32, "latitude": 23.12},
+        ],
+    }
+
+    day = contracts.ItineraryDay.model_validate(
+        {"date": "2026-08-01", "activities": activities, "transitLegs": [leg]}
+    )
+
+    assert day.transit_legs[0].distance_meters == 1200
+    with pytest.raises(ValidationError, match="adjacent"):
+        contracts.ItineraryDay.model_validate(
+            {
+                "date": "2026-08-01",
+                "activities": activities,
+                "transitLegs": [{**leg, "fromActivityIndex": 1}],
+            }
+        )
+    with pytest.raises(ValidationError, match="travel time"):
+        contracts.ItineraryDay.model_validate(
+            {
+                "date": "2026-08-01",
+                "activities": activities,
+                "transitLegs": [{**leg, "durationSeconds": 8000}],
+            }
+        )
+
+
+def test_amap_planner_rejects_inconsistent_successful_route_metadata() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    route_contracts = import_module("trip_agent.providers.route")
+    amap_planning = import_module("trip_agent.infrastructure.amap.planning_provider")
+    payload = deepcopy(COMMAND)
+    payload["payload"]["trip"]["endDate"] = "2026-08-01"
+    command = contracts.PlanningCreateCommand.model_validate(payload)
+    # V2 semantics: the meal resolver only accepts dining-class POIs, so the
+    # fixture carries a real restaurant sharing POI 1's coordinates.  The
+    # attraction→restaurant leg is then a zero-distance leg that bypasses the
+    # walking short-circuit and reaches the route provider — the condition
+    # this guard test exercises.  (Pre-V2 the leaky meal resolver reused the
+    # scenic POI itself as the restaurant to produce that leg.)
+    pois = tuple(
+        map_contracts.Poi(
+            provider_id=f"poi-{index}",
+            name=f"POI {index}",
+            coordinates=map_contracts.Coordinates(
+                longitude=113.31 + index / 100,
+                latitude=23.11 + index / 100,
+            ),
+            type_name="Scenic spot",
+            type_code="110000",
+            province="Guangdong",
+            city=command.payload.trip.destination,
+            district="Tianhe",
+            address=f"Address {index}",
+        )
+        for index in range(1, 3)
+    ) + (
+        map_contracts.Poi(
+            provider_id="poi-restaurant",
+            name="POI Restaurant",
+            coordinates=map_contracts.Coordinates(
+                longitude=113.32,
+                latitude=23.12,
+            ),
+            type_name="Restaurant",
+            type_code="050000",
+            province="Guangdong",
+            city=command.payload.trip.destination,
+            district="Tianhe",
+            address="Address restaurant",
+        ),
+    )
+
+    class MapProvider:
+        async def search_pois(self, request: object):
+            del request
+            return map_contracts.ProviderSuccess(
+                data=pois,
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 7, 17, tzinfo=UTC),
+                estimated=False,
+            )
+
+    class RouteProvider:
+        async def get_route(self, request: object):
+            plan = route_contracts.RoutePlan(
+                mode="WALKING",
+                distance_meters=100,
+                duration_seconds=60,
+                steps=(
+                    route_contracts.RouteStep(
+                        instruction="Walk",
+                        distance_meters=100,
+                        duration_seconds=60,
+                        polyline=(request.origin, request.destination),
+                    ),
+                ),
+                polyline=(request.origin, request.destination),
+            )
+            return map_contracts.ProviderSuccess(
+                data=plan,
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 7, 17, tzinfo=UTC),
+                estimated=True,
+            )
+
+    planner = amap_planning.AmapPlanningProvider(MapProvider(), RouteProvider())
+
+    with pytest.raises(RuntimeError, match="inconsistent source metadata"):
+        asyncio.run(planner.plan(command))
+
+
+def test_authentication_failure_is_not_hidden_by_explicit_demo_fallback() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    processor = import_module("trip_agent.worker.processor")
+    protocols = import_module("trip_agent.domain.planning.protocols")
+    amap_planning = import_module("trip_agent.infrastructure.amap.planning_provider")
+    demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
+    planner_pipeline = import_module("trip_agent.workflow.planner_pipeline")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+
+    class FailedMapProvider:
+        async def search_pois(self, request: object):
+            del request
+            return map_contracts.ProviderFailure(
+                provider="AMAP",
+                error_code="PROVIDER_AUTH_FAILED",
+                error_message="AMap authentication failed",
+                retryable=False,
+                latency_ms=3,
+                fetched_at=datetime(2026, 7, 16, tzinfo=UTC),
+            )
+
+    fallback_type = getattr(planner_pipeline, "FallbackPlanningProvider", None)
+    assert fallback_type is not None
+    route_provider = import_module("trip_agent.providers.route").DemoRouteProvider()
+    planner = fallback_type(
+        amap_planning.AmapPlanningProvider(FailedMapProvider(), route_provider),
+        demo_planning.DemoPlanningProvider(),
+    )
+
+    with pytest.raises(protocols.PlanningProviderError) as failure:
+        asyncio.run(processor.process_planning_create(command, planner))
+
+    assert failure.value.details.category.value == "AUTHENTICATION_ERROR"
+
+
+def test_unexpected_amap_exception_is_not_hidden_by_demo_fallback() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    processor = import_module("trip_agent.worker.processor")
+    amap_planning = import_module("trip_agent.infrastructure.amap.planning_provider")
+    demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
+    planner_pipeline = import_module("trip_agent.workflow.planner_pipeline")
+    command = contracts.PlanningCreateCommand.model_validate(COMMAND)
+
+    class BrokenMapProvider:
+        async def search_pois(self, request: object):
+            del request
+            raise RuntimeError("unexpected planner defect")
+
+    fallback_type = getattr(planner_pipeline, "FallbackPlanningProvider", None)
+    assert fallback_type is not None
+    route_provider = import_module("trip_agent.providers.route").DemoRouteProvider()
+    planner = fallback_type(
+        amap_planning.AmapPlanningProvider(BrokenMapProvider(), route_provider),
+        demo_planning.DemoPlanningProvider(),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected planner defect"):
+        asyncio.run(processor.process_planning_create(command, planner))
+
+
+def test_amap_planner_caps_not_found_queries_without_demo_substitution() -> None:
+    contracts = import_module("trip_agent.worker.contracts")
+    map_contracts = import_module("trip_agent.providers.map")
+    protocols = import_module("trip_agent.domain.planning.protocols")
+    amap_planning = import_module("trip_agent.infrastructure.amap.planning_provider")
+    demo_planning = import_module("trip_agent.infrastructure.demo.planning_provider")
+    planner_pipeline = import_module("trip_agent.workflow.planner_pipeline")
+    payload = deepcopy(COMMAND)
+    payload["payload"]["trip"]["constraints"]["preferences"] = [
+        f"preference-{index}" for index in range(10)
+    ]
+    command = contracts.PlanningCreateCommand.model_validate(payload)
+
+    class MissingMapProvider:
+        def __init__(self) -> None:
+            self.keywords: list[str] = []
+
+        async def search_pois(self, request: object):
+            self.keywords.append(request.keyword)
+            return map_contracts.ProviderFailure(
+                provider="AMAP",
+                error_code="POI_NOT_FOUND",
+                error_message="No matching POIs were found",
+                retryable=False,
+                latency_ms=1,
+                fetched_at=datetime(2026, 7, 16, tzinfo=UTC),
+            )
+
+    map_provider = MissingMapProvider()
+    route_provider = import_module("trip_agent.providers.route").DemoRouteProvider()
+    planner = planner_pipeline.FallbackPlanningProvider(
+        amap_planning.AmapPlanningProvider(map_provider, route_provider),
+        demo_planning.DemoPlanningProvider(),
+    )
+
+    with pytest.raises(protocols.PlanningProviderError) as failure:
+        asyncio.run(planner.plan(command))
+
+    assert failure.value.details.category.value == "NO_RESULT"
+    assert map_provider.keywords == [f"preference-{index}" for index in range(6)]

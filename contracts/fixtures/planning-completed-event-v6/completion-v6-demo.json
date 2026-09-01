@@ -1,0 +1,45 @@
+{
+  "eventType": "PLANNING_COMPLETED",
+  "schemaVersion": 6,
+  "eventId": "01000000-0000-4000-8000-000000000002",
+  "traceId": "02000000-0000-4000-8000-000000000002",
+  "taskId": "03000000-0000-4000-8000-000000000002",
+  "tripId": "04000000-0000-4000-8000-000000000002",
+  "runId": "05000000-0000-4000-8000-000000000002",
+  "occurredAt": "2026-08-01T01:00:00Z",
+  "payload": {
+    "provider": "DEMO",
+    "itinerary": {
+      "title": "Demo itinerary",
+      "days": [{
+        "date": "2026-08-01",
+        "activities": [{
+          "activityId": "10000000-0000-4000-8000-000000000001",
+          "title": "Demo stop",
+          "startTime": "2026-08-01T09:00:00+08:00",
+          "endTime": "2026-08-01T10:00:00+08:00",
+          "estimatedCost": 0,
+          "source": "DEMO"
+        }],
+        "transitLegs": []
+      }],
+      "estimatedTotalCost": 0
+    },
+    "knowledge": {
+      "status": "DEMO",
+      "query": "demo fixture",
+      "citations": [],
+      "freshness": {"status": "UNAVAILABLE"},
+      "message": "Demo data only"
+    },
+    "factImpacts": [],
+    "providerProvenance": {
+      "requestedProviderMode": "DEMO_ONLY",
+      "primaryProvider": "DEMO",
+      "actualProviders": ["DEMO"],
+      "fallbackAttempted": false,
+      "fallbackSucceeded": false,
+      "fallbackOperations": []
+    }
+  }
+}

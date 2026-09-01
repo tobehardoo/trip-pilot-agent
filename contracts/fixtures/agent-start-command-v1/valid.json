@@ -1,0 +1,11 @@
+{
+  "eventType": "AGENT_START",
+  "schemaVersion": 1,
+  "eventId": "9d1e2f3a-4b5c-4d6e-8f7a-0b1c2d3e4f5a",
+  "traceId": "1c2d3e4f-0a1b-4c2d-8e3f-4a5b6c7d8e9f",
+  "tripId": "9ee5e831-90f7-4a60-bb8d-fb488aa799ca",
+  "occurredAt": "2026-08-29T08:29:00Z",
+  "payload": {
+    "message": "十一想去成都玩，预算大概五千"
+  }
+}

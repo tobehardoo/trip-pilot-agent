@@ -1,0 +1,53 @@
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Java
+**/target/
+*.class
+
+# Python
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.pytest-temp-*/
+apps/agent-service/.tmp/
+**/.ruff_cache/
+**/.coverage
+*.py[cod]
+
+# Node
+**/node_modules/
+**/dist/
+**/coverage/
+**/playwright-report/
+**/test-results/
+*.tsbuildinfo
+apps/web/vite.config.d.ts
+
+# IDE and OS
+.claude/
+.pnpm-store/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Runtime data
+.data/
+logs/
+.run/
+output/
+.playwright-cli/
+
+# Local AI-agent / tool state (never part of the release)
+.omo/
+.serena/
+.workbuddy/
+.zcode/

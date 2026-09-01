@@ -12,11 +12,11 @@
 | `demo-screenshots/f5-demo-workspace.png` | 工作区主页 | 登录后真实跳转 `/workspace`、完整三栏布局（工作区/未选行程/智能体上下文）+ 底部 Command Bar |
 | `demo-screenshots/f5-demo-workspace-full.png` | 同上全页 | fullPage 渲染 |
 | `demo-screenshots/f5-demo-workspace-narrow.png` | 收窄视口 | 1152×800 响应式 |
-| `demo-screenshots/f5-demo-trip.png` | trip 详情页 | 真实访问 `/workspace/trips/bd897a90-...`（杭州 · AI 行程） |
+| `demo-screenshots/f5-demo-trip.png` | trip 详情页 | 真实访问 `/workspace/trips/bd897a90-...`（杭州 · AI 行程），渲染真实约束数据（目的地/日期/人数/预算） |
 
 - 脚本：`apps/web/scripts/f5-demo-screenshot.mjs`（id 选择器、等待 URL 离开 `/login` 才截图）
 - Playwright 已就绪：`chromium-1234` 缓存于 `~/AppData/Local/ms-playwright`
-- 已知边界：trip 详情页与 workspace 空状态截图同尺寸（29653 字节），trip 路由数据切换行为可能需要前端 store 进一步确认；不影响登录与 UI 真实性的证据效力
+- 深链接修复（本次）：整页导航/刷新到 `/workspace/trips/:id` 曾因 session 恢复时序渲染「未选择旅行」空状态（截图 29653 字节）；已修（`WorkspacePage.vue` 补认证后重选逻辑），现 trip 页渲染真实数据（截图 46518 字节，与空状态不再同尺寸）
 
 ## 2. 端到端规划任务（Web → Java → RabbitMQ → Python Worker → DB）
 
@@ -103,4 +103,4 @@ F-5 审计的"零 mock 真实链路"在 **FAILED** 路径上得到更完整的�
 
 - 任务失败因测试数据选了"杭州西湖风景名胜区-西湖幽静公园"做住宿，业务校验正确识别 → 验证失败路径反而证明业务逻辑可拦截坏数据
 - 若要 SUCCEEDED 路径：换一份约束合理的 trip（住宿=真实酒店 POI）并配合 AMap Key
-- trip 详情页与 workspace 空状态截图同尺寸：前端 trip 路由的数据切换逻辑需要后续 store 验证（不影响 API/UI 真实性）
+- ~~trip 详情页与 workspace 空状态截图同尺寸~~：已修复（2026-09-02），详见 §1 深链接修复说明与验证脚本 `apps/web/scripts/verify-trip-deeplink.mjs`

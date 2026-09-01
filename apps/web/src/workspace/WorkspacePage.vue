@@ -72,6 +72,18 @@ watch(
   { immediate: true },
 )
 
+// 深链接/刷新修复：页面挂载时 session 尚在 restoring，route watch 触发的
+// selectTrip 会被其「未认证即返回」守卫跳过；认证完成后必须重新按 URL 选中旅行，
+// 否则 currentTrip 永远为 null（渲染「未选择旅行」空状态）。
+watch(
+  () => session.phase,
+  (phase) => {
+    if (phase !== 'authenticated') return
+    const id = route.params.tripId
+    if (typeof id === 'string' && id !== tripStore.currentTripId) selectTrip(id)
+  },
+)
+
 lgUp.addEventListener('change', (event) => {
   drawerMode.value = !event.matches
   if (event.matches) {

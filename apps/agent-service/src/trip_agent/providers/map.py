@@ -19,7 +19,7 @@ from pydantic import (
     model_validator,
 )
 
-from trip_agent.infrastructure.amap.errors import (
+from trip_agent.providers.amap_error_codes import (
     AUTH_CODES,
     INVALID_REQUEST_CODES,
     PERMISSION_CODES,

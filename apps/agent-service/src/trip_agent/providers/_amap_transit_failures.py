@@ -1,13 +1,13 @@
 """Stable failure mapping for the AMap v3 transit API.
 
-Error-code frozensets are imported from ``trip_agent.infrastructure.amap.errors``
+Error-code frozensets are imported from ``trip_agent.providers.amap_error_codes``
 (the single source of truth, shared with the POI and route providers).
 """
 
 from datetime import UTC, datetime
 from time import perf_counter
 
-from trip_agent.infrastructure.amap.errors import (
+from trip_agent.providers.amap_error_codes import (
     AUTH_CODES,
     INVALID_REQUEST_CODES,
     PERMISSION_CODES,

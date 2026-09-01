@@ -1,8 +1,13 @@
-"""Shared AMap error-code classification for POI and route providers.
+"""Shared AMap error-code classification for POI, route and transit providers.
 
-Previously these five frozensets were duplicated verbatim in
-``providers/map.py`` (AmapMapProvider) and ``providers/_amap_route_failures.py``
-(AmapRouteFailures).  This module is the single source of truth.
+Single source of truth for the AMap infocode frozensets used by
+``providers/map.py`` (AmapMapProvider), ``providers/_amap_route_failures.py``
+(AmapRouteFailures) and ``providers/_amap_transit_failures.py``
+(AmapTransitFailures).
+
+F-3a: moved up from ``infrastructure/amap/errors.py`` so the dependency
+direction stays providers (contracts) <- infrastructure (adapters).  The
+providers layer must never import from infrastructure.
 
 Every value is a documented AMap v5 infocode string.
 """

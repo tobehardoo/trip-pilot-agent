@@ -19,9 +19,11 @@ optional fields.
 B3 established the domain foundation; B4A added the AMap transient
 projection (infrastructure/amap/accommodation_projection.py) and B4B added
 the ROUTE_ENDPOINT_CONTINUITY / CROSS_DAY_CONTINUITY assessors in
-feasibility/rules/continuity.py.  The skeleton itself remains a transient
-Python planning aggregate: it has not entered the worker runtime, message
-contracts, database or API.
+feasibility/rules/continuity.py.  The skeleton is a transient Python
+planning aggregate: it travels on ``PlanningResult`` and is consumed by the
+validation path (``validation_projection.build_trip_skeleton`` runs inside
+the worker's planning pipeline), but it never enters message contracts,
+persistence or API surfaces.
 """
 
 from __future__ import annotations

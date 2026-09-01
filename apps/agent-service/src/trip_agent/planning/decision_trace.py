@@ -6,9 +6,11 @@ evidence that drove it, so the plan can answer *why* — not only *what*.
 
 Traces are planning-process-only: they travel on ``PlanningResult`` and are
 never serialized into messaging, persistence, or API surfaces.  The evaluator
-converts them into user-facing ``DecisionExplanation`` records, which finally
-wires the existing but so-far-unused reason-code vocabulary
-(``TRANSIT_MODE`` / ``BUDGET_CONSTRAINT``) to real decisions.
+converts them into user-facing ``DecisionExplanation`` records, wiring the
+existing reason-code vocabulary (``PROVIDER_CONSTRAINT`` /
+``BUDGET_CONSTRAINT`` / ``INTEREST_MATCH`` / ``MUST_VISIT`` / ``PACE_POLICY``)
+to real decisions — the planning providers attach ``reason_codes`` when they
+demote or constrain a candidate.
 """
 
 from __future__ import annotations

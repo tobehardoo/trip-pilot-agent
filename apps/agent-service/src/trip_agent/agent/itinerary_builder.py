@@ -131,7 +131,11 @@ def build_demo_command(
 class DemoItineraryBuilder:
     """The no-key itinerary builder: slots → demo pipeline → itinerary."""
 
-    def __init__(self, *, provider: DemoPlanningProvider | None = None) -> None:
+    def __init__(self, *, provider: PlanningBackend | None = None) -> None:
+        # F-4.2 D-13: annotate with the structural protocol, not the demo
+        # concrete class — the demo builder stays interchangeable with the
+        # real backend (PlanningBackend below).  The no-arg default still
+        # resolves to the demo provider (DEMO mode / tests / bare registries).
         self._provider = provider or DemoPlanningProvider()
 
     async def __call__(

@@ -134,7 +134,7 @@
 ## E. F-4 修改范围建议（供 F-4.1~F-4.5 排序）
 
 1. **F-4.1**：`planning_provider.py`（2450）——按职责拆（候选边界见下节）——✅ 已完成（83f62c0，Facade 861 + 6 协作者）；`ItineraryService.java`（2038）——编辑引擎/版本工厂分离（收敛计划 §四.3）
-2. **F-4.2**：`agent/itinerary_builder.py` 的 DemoPlanningProvider 硬编码 → 组合根注入（D-13 新发现）；worker/processor.py 对 planning 的 3 处 import 边界评估
+2. **F-4.2**：`agent/itinerary_builder.py` 的 DemoPlanningProvider 硬编码 → 组合根注入（D-13 新发现）——✅ 已完成（下一 commit：注解改 `PlanningBackend` 结构协议，默认值保留 demo 语义；组合根 `_itinerary_builder_for_mode` 本已按 mode 注入）；worker/processor.py 对 planning 的 3 处 import 边界评估——✅ 方向健康（worker→domain/planning 纯函数），无需改动
 3. **F-4.3**：D-3（ConstraintPanel.vue）、D-5（死状态，谨慎）、D-7（budget_per_person）、D-8（终态双源）、D-11（unused variable）
 4. **F-4.4**：D-9/D-10（过时 docstring）、统一风格
 5. **F-4.5**：README OR-Tools 失实声明（D-4 关联）、过期文档清理

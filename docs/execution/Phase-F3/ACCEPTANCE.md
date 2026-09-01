@@ -62,3 +62,59 @@ commit 对象幸存，且无一个历史 tree 完整）。
 "after git store corruption" 基线记录），**强烈建议尽快 `git push` 到远端备份**
 （本会话内 fetch 因代理隧道 502 失败，非仓库问题）。历史 broken link 均为
 悬空对象，不影响当前 HEAD 链（`git rev-list --count HEAD` = 1 正常）。
+
+---
+
+## F-3b Worker 边界拆分（`b67fd7b`）
+
+### 拆出内容
+
+`worker/amqp.py`（1061 → 744 行）只保留**消费/投递**：队列/路由常量、
+IncomingDelivery / EventExchange 协议、PlanningProgressPublisher、
+CancellationRegistry、_is_cancelled、handle_delivery 家族、run_worker、_consume、
+main。
+
+新模块 `worker/runtime.py`（350 行，组合根）承载：
+`CancellationOracle`（Protocol）+ `PsycopgCancellationOracle` +
+`WorkerSettings` + `WorkerRuntime` + `build_planning_provider` +
+`build_knowledge_provider` + `_configured_embedding_provider` +
+`planning_provider_runtime` + `worker_runtime`。
+
+### 关键设计决策
+
+1. **落点是 `worker/runtime.py` 而非 `providers/`**：`build_knowledge_provider`
+   依赖 `worker/knowledge.py` 的 4 个符号（RetrievalKnowledgeEvidenceProvider 等）。
+   若把工厂下沉到 providers 层会制造 `providers → worker` 反向依赖——正好违反
+   F-3a 刚修复的依赖方向纪律。Worker 进程的组装属于 worker 层内部职责，
+   "Worker 边界" = 组装（runtime）与传输（amqp）分离。
+2. **`CancellationOracle` + `PsycopgCancellationOracle` 随组合根迁移**：
+   `worker_runtime` 构造 PsycopgCancellationOracle，若它留在 amqp.py 会产生
+   runtime ↔ amqp 循环依赖。取消机制的端口与实现随 runtime 走；
+   `CancellationRegistry`（进程内信号）留在消费侧，无循环。
+3. **不保留 re-export 垫片**：amqp.py 顶部不 re-export runtime 符号，
+   全部消费点显式改指 `trip_agent.worker.runtime`（5 个生产文件 + 4 个测试文件）。
+
+### 消费点迁移
+
+- `routes/api.py`、`agent/tool_capabilities.py`、`worker/agent_processor.py`
+  （均为延迟 import，循环依赖风险已随迁移消除，注释同步更新）
+- `tests/test_provider_modes.py`：from-import + monkeypatch 目标改指 runtime
+  （spy 必须落在工厂所在模块的全局名上才真实生效）
+- `tests/test_amqp_worker.py`：9 个函数改指 runtime 模块；修复
+  `as runtime:` 与模块变量同名导致的 F823 遮蔽（内部绑定改名 `composed`）
+- `tests/test_routes_internal.py`、`tests/test_real_amap_provider.py`：from-import
+
+### 验收
+
+- 针对性 5 文件：**48 passed / 3 skipped**
+- 全量 pytest：**2064 passed / 42 skipped**
+- ruff：全绿
+
+### 排障记录（双坑相互掩盖）
+
+① 删除 CancellationOracle 时误删 `PlanningProgressPublisher` 的
+`@dataclass(slots=True)` 装饰器 → dataclass 构造器消失
+（"takes no arguments"）；② 随后 ruff --fix 把已无用的 `dataclass` import
+自动删除 → 修复装饰器后出现 `NameError: name 'dataclass' is not defined`。
+两个错误叠加导致两轮失败。教训：**改完立即跑 ruff + 最小测试集**，
+不要在修复中间态上继续叠加操作。

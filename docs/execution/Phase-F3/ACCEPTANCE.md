@@ -179,3 +179,38 @@ main。
   （本机 mvn 需绕过 Git Bash 路径转换：用 Windows 路径 + LibericaJDK-21
    手工启动 classworlds；`MAVEN_HOME` 指向 mvnd 的旧配置会干扰 wrapper）
 - 提交：`224520a`（14 文件，+115/−399），跨语言单 commit，无半绿窗口
+
+---
+
+## F-3d compose 收敛（`ab6209d`）
+
+### 处置
+
+废弃 `compose.yaml`（删除），CI 与文档统一收敛到 `compose.prod.yaml`。
+
+依据（inventory §6.1 L139 确认）：
+1. **重复定义**：postgres/redis/rabbitmq 三服务与 compose.prod 完全重复
+2. **唯一消费者死亡**：全仓仅 ci.yml:100 `docker compose --env-file .env.example
+   config --quiet` 引用默认 compose；README 及全部运行文档只用 compose.prod
+3. **本地构建即失败**：compose.yaml postgres build context 为
+   `./infra/docker/postgres`，而 Dockerfile 内 `COPY infra/docker/postgres/init.sql`
+   相对仓库根解析——context 内找不到该路径（compose.prod 用仓库根 context 才正确）
+
+### 变更
+
+- 删除 `compose.yaml`（git rm）
+- ci.yml 删除默认-compose 校验步骤（L100）；`Validate production Compose`
+  + `Validate immutable image overrides` 步骤保留，已覆盖剩余基础设施校验
+
+### 影响面复核
+
+- 全仓 `compose.yaml` 引用：仅 ci.yml:100（已删）+ `docs/archive/acceptance-b14/
+  matrix_fault.py:95`（归档字符串，不执行）+ F-0 三份分析文档（记录本刀决策，不改）
+- `.env.example` 保留（开发者本地 `.env` 模板；CI prod 校验走 env: 块）
+- `.dockerignore` 扩列不在本刀范围（inventory L140 另项，待 F-4+）
+
+### 验收
+
+- `docker compose -f compose.prod.yaml config --quiet`：exit 0（本机 docker 实测）
+- ci.yml YAML 解析合法
+- 提交：`ab6209d`（2 文件，−55 行）

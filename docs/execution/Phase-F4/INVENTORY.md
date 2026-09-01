@@ -27,7 +27,7 @@
 
 | 文件 | LOC | 档位 | 备注 |
 |---|---|---|---|
-| infrastructure/amap/planning_provider.py | 2450 | **>1500** | F-4.1 第一优先级 |
+| infrastructure/amap/planning_provider.py | 861 | **>800** | ✅ F-4.1 已拆分（83f62c0）：Facade + 6 协作者（poi_recall/opening_hours/anchor_resolution/route_resolution/day_emitter/repair_policy，总计 2759） |
 | worker/contracts.py | 1747 | **>1500** | 消息模型聚合（F-4 规划 §四.2 已列拆分子目标） |
 | dialog/service.py | 1187 | >800 | 对话服务 |
 | planning/daily_schedule.py | 1075 | >800 | 确定性日排程（收敛计划 §四 明示"不拆"） |
@@ -133,7 +133,7 @@
 
 ## E. F-4 修改范围建议（供 F-4.1~F-4.5 排序）
 
-1. **F-4.1**：`planning_provider.py`（2450）——按职责拆（候选边界见下节）；`ItineraryService.java`（2038）——编辑引擎/版本工厂分离（收敛计划 §四.3）
+1. **F-4.1**：`planning_provider.py`（2450）——按职责拆（候选边界见下节）——✅ 已完成（83f62c0，Facade 861 + 6 协作者）；`ItineraryService.java`（2038）——编辑引擎/版本工厂分离（收敛计划 §四.3）
 2. **F-4.2**：`agent/itinerary_builder.py` 的 DemoPlanningProvider 硬编码 → 组合根注入（D-13 新发现）；worker/processor.py 对 planning 的 3 处 import 边界评估
 3. **F-4.3**：D-3（ConstraintPanel.vue）、D-5（死状态，谨慎）、D-7（budget_per_person）、D-8（终态双源）、D-11（unused variable）
 4. **F-4.4**：D-9/D-10（过时 docstring）、统一风格

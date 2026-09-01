@@ -118,3 +118,64 @@ main。
 自动删除 → 修复装饰器后出现 `NameError: name 'dataclass' is not defined`。
 两个错误叠加导致两轮失败。教训：**改完立即跑 ruff + 最小测试集**，
 不要在修复中间态上继续叠加操作。
+
+---
+
+## F-3c 事件代际终结（`224520a`）
+
+### 范围（收敛计划 §6.1 清单，`docs/execution/Phase-F0/01-system-inventory.md` L127-133）
+
+**Python 侧删除 8 个旧代事件类**（`worker/contracts.py`）：
+
+| 删除类 | 代际 | 说明 |
+|---|---|---|
+| `PlanningCompletedPayload` | v6/8 | 双分支（amap/demo）payload 根类 |
+| `PlanningCompletedEvent` | v6/8 | 双分支事件 |
+| `PlanningCompletedPayloadV9` | v9 | V9 payload 基类 |
+| `PlanningCompletedEventV9` | v9 | V9 事件 |
+| `PlanningCompletedEventV10` | v10 | 事件壳（V10 payload 复用，壳本身死代码） |
+| `PlanningReviewRequiredEvent` | v1 | 无权威报告时代 |
+| `PlanningFailedPayloadV1` | v1 | 扁平失败 payload |
+| `PlanningFailedEventV1` | v1 | 扁平失败事件 |
+
+**契约侧**：`contracts/messaging/` 下 v4–v8 五个 schema `git mv` 入 `legacy/`；
+两份 README 同步（v1–v8 全部标注为 legacy，Java runtime fail closed）。
+
+### 关键设计决策
+
+1. **V10 payload 内联重构而非再继承**：`PlanningCompletedPayloadV10`
+   原本继承 `PlanningCompletedPayloadV9`，删除基类后将 7 字段
+   （provider/itinerary/knowledge/fact_impacts/provider_provenance/evaluation/
+   feasibility_report/has_blocker）+ 3 校验器（_normalize_evaluation /
+   validate_activity_sources / validate_report_fingerprint / blocker_consistent）
+   全部内联，去继承。
+2. **replan-command v1/v2 的 `$ref` 迁移**（F-3c 迁移暴露的隐藏依赖）：
+   v4–v8 移入 legacy 后，`_local_schema_registry` 只扫 messaging 顶层，
+   replan v1/v2 对 v5 `$defs` 的引用全部断裂（Unresolvable）。
+   比对确认 v9+ 的 knowledgeEvidence/money 与 v5 逐字节一致，其余
+   amapActivity/demoActivity/transitLeg 为 v5 超集（新增 Java 快照字段）
+   ——改指 v11 只放宽不收紧，v1/v2 共 7 处 `$ref` 统一改指 v11
+   （v2 本已引用 v11 的其余 $defs，此次补齐漏改的 2 处）。
+3. **v11 fixture 数据漂移修复**（F-3c 重验模型时暴露的存量问题）：
+   - `summary` 计数陈旧：声称 passCount=4，实际 ruleResults 8 条
+     NOT_APPLICABLE + 3 条 UNKNOWN → 修正为 0/3/8（模型校验
+     "summary counts must match rule results and missing rules"）
+   - `itineraryFingerprint` 陈旧：stored `e8e68b07...` 是 v10 时代的
+     序列化级指纹，v11 itinerary（TRANSIT leg）复制后未重算。回填为
+     序列化级 `82a79af4...`——与 v9/v10 fixture 既有口径一致
+     （stored = raw itinerary canonical JSON 的 SHA-256，Java
+     `ItineraryFingerprintVerifier.matches` 即校验 raw wire tree）。
+     v10 的 stored 指纹经核对与其序列化级输出一致（未动）。
+4. **跨语言消费点复核**：Java 测试只读 `contracts/fixtures/`（不读 messaging
+   schema 路径），schema 移动零影响；`PlanningCompletedEventParser` 门只
+   放行 9/10/11（v1–v8 死分支早已清空），无 Java 改动需求。
+
+### 验收
+
+- 针对性 3 文件：**69 passed**
+- 全量 pytest：**2051 passed / 42 skipped**
+- ruff：全绿（8 处未使用 import 经 --fix 清理）
+- Java `mvn test`：**626 passed / 0 failures / 0 errors**
+  （本机 mvn 需绕过 Git Bash 路径转换：用 Windows 路径 + LibericaJDK-21
+   手工启动 classworlds；`MAVEN_HOME` 指向 mvnd 的旧配置会干扰 wrapper）
+- 提交：`224520a`（14 文件，+115/−399），跨语言单 commit，无半绿窗口

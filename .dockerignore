@@ -1,8 +1,17 @@
 .git
+.gitignore
 .env
 **/.venv
 **/node_modules
 **/target
 **/dist
 **/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/__pycache__
+**/*.pyc
 **/.coverage
+**/*.log
+docs/
+test-results/
+output/

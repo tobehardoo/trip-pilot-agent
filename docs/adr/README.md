@@ -19,7 +19,7 @@
 | ADR-002 | MyBatis 而非 JPA | 2026-07 | 复杂查询、Flyway 迁移和 PostgreSQL 特性使用显式 SQL |
 | ADR-003 | Transactional Outbox | 2026-07 | 业务写入和消息发布必须通过 Outbox 保持最终一致 |
 | ADR-004 | RabbitMQ 而非 Kafka | 2026-07 | 当前是任务队列和命令/事件拓扑，不引入流式平台 |
-| ADR-005 | Python 规划 Worker | 2026-07 | OR-Tools、Provider 调用、文本处理和向量检索继续在 Python 侧演进 |
+| ADR-005 | Python 规划 Worker | 2026-07 | 确定性规划内核、Provider 调用、文本处理和向量检索继续在 Python 侧演进 |
 | ADR-006 | 行程版本不可变 | 2026-07 | 规划、编辑、局部重规划和回滚都创建新版本，不覆盖历史 |
 | ADR-007 | Demo 模式是正式模式 | 2026-07 | 无 Key 环境和 CI 必须可完整运行，但结果需明确标记 Demo/估算 |
 | ADR-008 | pgvector 而非独立向量数据库 | 2026-07 | 当前知识规模由 PostgreSQL + pgvector 承担 |

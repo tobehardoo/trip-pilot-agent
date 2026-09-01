@@ -108,7 +108,7 @@
 | D-1 | 死路由 trip-versions | router/index.ts | 3.0 审计 §1.5；本次 grep `versions` 0 命中 | ✅ **已清理** | 无需动作 |
 | D-2 | Java 空壳层 | application/* | 3.0 审计 §1.3 | ✅ **已清理** | 无需动作 |
 | D-3 | ConstraintPanel.vue 0 引用 | apps/web/src/components/agent-workspace/ConstraintPanel.vue | 3.0 审计 §1.4；本次 src+tests grep 仅文件自身 | ✅ **已清理**（236d4de F-1b；F-4.0 快照过时） | 无需动作 |
-| D-4 | ortools 死依赖 | pyproject.toml | 3.0 §1.7 / 4.0 复验：pyproject 已无 ortools；本次全仓 grep 0 命中 | ✅ **依赖已移除** | README 失实声明待 F-4.5 修 |
+| D-4 | ortools 死依赖 | pyproject.toml | 3.0 §1.7 / 4.0 复验：pyproject 已无 ortools；本次全仓 grep 0 命中 | ✅ **依赖已移除** | ✅ README 失实声明已修（F-4.5）：README ×5 + 系统架构.md ×4 + adr README ADR-005 摘要 ×1；历史设计/审计文档（时间胶囊）保留 |
 | D-5 | planning_task 死状态 CREATED/RETRYING/CANCELLING | V4 migration + PlanningTaskMapper | SQL CHECK 允许 9 值（V4__create_planning_and_outbox_tables.sql:17-22）；Java 实际写入点仅 QUEUED/RUNNING/WAITING_USER（Mapper:145,156-157）+ SUCCEEDED/FAILED/CANCELLED；CREATED/RETRYING/CANCELLING 仅出现在查询条件（Mapper:170,199）与注释（PlanningTaskService.java:663） | ⚠️ **判定保留**：RETRYING/CANCELLING 为状态机预留中间态（查询条件 + 语义注释仍引用），收紧 CHECK 需新 migration 且对存量库不可逆；F-4.3 实扫无写入点属实，但收紧迫使查询条件变死条件 | F-5 审计复查（非死状态，F-4 不动） |
 | D-6 | REPLAN 声明可达性 | agent/graph.py | 3.0 §1.8：REPLAN 在 DECISION_SCHEMA（graph.py:574,594）为合法策略，tools.py 无 replan 工具；但 graph.py:776-784 有 E-1 有界反射预算守卫"neither decider may REPLAN without end" | ⚠️ **语义已变，需 F-5.2 专项核验** | 不在 F-4 删（可能是设计：REPLAN 由外部 replan command 触发），F-5 审计判断 |
 | D-7 | MealDemand.budget_per_person 死参数 | daily_schedule.py:212,431,451,464,541,605,694,715 | 3.0 §2.3："定义+透传但调用点不传 → 恒 None" | ✅ **已激活（非死代码）**：V3 P2-1 预算感知餐饮落地——test_meal_budget.py 专项测试（soft envelope first-match-wins）+ anchor_resolution.py:157 生产读取 meal.budget_per_person + daily_schedule.py:478-481 包络分支 | 无需动作（F-4.0 快照过时） |
@@ -137,7 +137,7 @@
 2. **F-4.2**：`agent/itinerary_builder.py` 的 DemoPlanningProvider 硬编码 → 组合根注入（D-13 新发现）——✅ 已完成（下一 commit：注解改 `PlanningBackend` 结构协议，默认值保留 demo 语义；组合根 `_itinerary_builder_for_mode` 本已按 mode 注入）；worker/processor.py 对 planning 的 3 处 import 边界评估——✅ 方向健康（worker→domain/planning 纯函数），无需改动
 3. **F-4.3**：D-3（ConstraintPanel.vue）——✅ 已清理（236d4de F-1b，快照过时）；D-5（死状态）——✅ 判定保留（状态机预留中间态，F-5 复查）；D-7（budget_per_person）——✅ 判定已激活（V3 P2-1 软包络）；D-8（终态双源）——✅ 判定已合并（单一来源）；D-11（unused variable）——✅ 2/7 已清理（current_kind/missed），5/7 判定 Protocol 契约参数保留
 4. **F-4.4**：D-9/D-10（过时 docstring）——✅ 已修正（下一 commit）；统一风格——✅ ruff 全绿（D-11 已在 F-4.3 顺手清理）
-5. **F-4.5**：README OR-Tools 失实声明（D-4 关联）、过期文档清理
+5. **F-4.5**：README OR-Tools 失实声明（D-4 关联）——✅ 已修正（下一 commit：README ×5 / 系统架构.md ×4 / adr README ADR-005 ×1，共 10 处）；过期文档清理——✅ docs 入口无失实；历史 audit/architecture/ADR 正文为时间胶囊保留
 
 ### E.1 planning_provider.py 职责地图（F-4.1 前置）
 

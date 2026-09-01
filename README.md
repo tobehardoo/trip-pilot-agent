@@ -36,7 +36,7 @@ flowchart LR
 
     MQ --> Agent[Python Agent Service]
     Agent --> Provider[AMap / External Providers]
-    Agent --> Planner[Planning & OR-Tools]
+    Agent --> Planner[Planning & Optimization]
 
     Planner --> MQ
     MQ --> API
@@ -73,7 +73,7 @@ Hard Validation
 Itinerary Persistence
 ```
 
-LLM/Agent 组件用于语义推理场景；硬约束与可执行调度由确定性规则与优化（OR-Tools）负责——各做各自擅长的事情。
+LLM/Agent 组件用于语义推理场景；硬约束与可执行调度由确定性规则与优化（贪心/启发式确定性内核）负责——各做各自擅长的事情。
 
 ## 技术栈
 
@@ -81,7 +81,7 @@ LLM/Agent 组件用于语义推理场景；硬约束与可执行调度由确定�
 |---|---|---|
 | Frontend | Vue 3, TypeScript, Vite | Trip creation, editing, progress, itinerary UI |
 | Backend | Java 21, Spring Boot, MyBatis | API, domain logic, persistence, versions, SSE |
-| Planning | Python 3.12, FastAPI, OR-Tools | Planning workflow, feasibility, optimization |
+| Planning | Python 3.12, FastAPI, LangGraph | Planning workflow, feasibility, optimization |
 | Messaging | RabbitMQ | Async planning and completion events |
 | Data | PostgreSQL, PostGIS, pgvector | Business, spatial and vector data |
 | Cache | Redis | Runtime/cache support |
@@ -186,12 +186,12 @@ docker compose -f compose.prod.yaml --env-file .env up -d --build --wait --wait-
 
 ## Roadmap
 
-**当前主线：Agent 化改造（v1.1）** —— 在确定性内核之上叠加有界的 LangGraph Agent 编排层：LLM 负责意图理解、约束收集、策略选择与澄清，OR-Tools 求解、可行性校验与终态生成由确定性系统守门（`validate_itinerary` 一票否决）。详见 [Agent化路线图](docs/product/Agent化路线图.md) 与 [ADR-015](docs/adr/Agent编排层与记忆系统.md)。
+**当前主线：Agent 化改造（v1.1）** —— 在确定性内核之上叠加有界的 LangGraph Agent 编排层：LLM 负责意图理解、约束收集、策略选择与澄清，求解、可行性校验与终态生成由确定性系统守门（`validate_itinerary` 一票否决）。详见 [Agent化路线图](docs/product/Agent化路线图.md) 与 [ADR-015](docs/adr/Agent编排层与记忆系统.md)。
 
 - Richer preference modeling（用户交通偏好、行程节奏）
 - Advanced multimodal transport planning（manual-edit TRANSIT 真实化、跨城 TRANSIT）
 - Weather-aware planning（天气与行李输入）
-- Stronger global itinerary optimization（OR-Tools 级跨 leg 联合优化）
+- Stronger global itinerary optimization（跨 leg 联合优化的确定性内核升级）
 - Broader multi-city planning（多城市联程）
 
 详细路线图见 [项目路线图](docs/product/项目路线图.md)。

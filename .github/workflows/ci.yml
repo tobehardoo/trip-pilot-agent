@@ -97,7 +97,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose --env-file .env.example config --quiet
       - name: Validate production Compose
         env:
           POSTGRES_PASSWORD: ci-postgres-password

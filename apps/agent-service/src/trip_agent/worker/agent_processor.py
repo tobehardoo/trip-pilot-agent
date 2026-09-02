@@ -26,7 +26,9 @@ from trip_agent.agent import (
     AgentRunRecorder,
     AgentRunResult,
     AgentState,
+    ConstraintSlots,
     PsycopgAgentRunRepository,
+    SlotState,
     ToolRegistry,
     ToolRuntime,
     build_decision_maker,
@@ -46,7 +48,6 @@ from trip_agent.worker.contracts import (
     AgentRunFinishedEvent,
     AgentStartCommand,
     AgentStepEvent,
-    Itinerary,
 )
 
 logger = logging.getLogger("trip_agent.worker")
@@ -163,7 +164,13 @@ def default_loop_factory() -> AgentLoop:
     upgrade through the same seams.
     """
     registry = _default_loop_registry()
-    return AgentLoop(decider=build_decision_maker(tools=registry), tools=registry)
+    decider = build_decision_maker(tools=registry)
+    # AUDIT-03：decider 语义透明化 —— 启动即标注实际决策器，避免把确定性
+    # 降级（DETERMINISTIC）误当完整 LLM Agent 运维。
+    from trip_agent.agent.factory import resolve_decider_kind
+
+    logger.info("agent decider in use: %s", resolve_decider_kind())
+    return AgentLoop(decider=decider, tools=registry)
 
 
 class AgentDialogProcessor:
@@ -206,7 +213,20 @@ class AgentDialogProcessor:
             # A redelivered AGENT_START must not spawn a second run.
             logger.info("agent_start_deduplicated run_id=%s", started.run_id)
             return None
+        slots = ConstraintSlots.empty()
+        trip_context = command.payload.trip_context
+        if trip_context is not None:
+            for name, value in (
+                ("destination", trip_context.get("destination")),
+                ("start_date", trip_context.get("start_date")),
+                ("end_date", trip_context.get("end_date")),
+            ):
+                if value:
+                    slots = slots.fill(
+                        name, value, state=SlotState.CONFIRMED, evidence="trip_context"
+                    )
         state = AgentState(
+            slots=slots,
             user_message=command.payload.message,
             trip_id=str(command.trip_id),
             user_id=str(command.user_id) if command.user_id else None,
@@ -429,9 +449,9 @@ class AgentDialogProcessor:
             occurred_at=datetime.now(UTC),
             payload={
                 "summary": f"行程已生成：{result.itinerary.get('title', '未命名')}",
-                "itinerary": Itinerary.model_validate(result.itinerary),
-                # Confirmed-slot projection (P2.8b apply flow): the frontend
-                # writes these onto the trip and triggers the pipeline.
+                # AUDIT-01（归边 A）：不再携带完整 itinerary —— Agent 对话框链
+                # 只声明对话语义；权威行程由 Planner 管线生成并落库，避免两套
+                # 权威行程（预览 vs 持久化）分叉。前端仅消费 summary + slots。
                 "slots": {
                     name: {"value": slot.value, "state": slot.state.value}
                     for name, slot in result.slots.slots.items()

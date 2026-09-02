@@ -50,9 +50,13 @@ public class AgentCompletedEventParser {
             }
         }
         JsonNode payload = event.path("payload");
-        if (!payload.isObject() || !payload.path("summary").isTextual()
-                || !payload.path("itinerary").isObject()) {
+        if (!payload.isObject() || !payload.path("summary").isTextual()) {
             throw invalid("payload field types do not match the JSON Schema");
+        }
+        // AUDIT-01（归边 A）：payload 不再要求/接受 itinerary —— Agent 对话框
+        // 链只携带 summary + slots；行程由 Planner 管线负责。
+        if (payload.has("itinerary")) {
+            throw invalid("payload must not carry an itinerary (AUDIT-01)");
         }
         JsonNode slots = payload.path("slots");
         if (!slots.isMissingNode() && !slots.isNull() && !slots.isObject()) {

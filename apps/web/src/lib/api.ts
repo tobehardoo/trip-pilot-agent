@@ -633,6 +633,7 @@ export type ItineraryEditOperation =
   | 'LOCK_ACTIVITY'
   | 'UNLOCK_ACTIVITY'
   | 'MOVE_ACTIVITY'
+  | 'REPLACE_ACTIVITY'
   | 'UPDATE_TRANSIT_LEG'
 
 export interface ItineraryEditInput {
@@ -646,6 +647,14 @@ export interface ItineraryEditInput {
   targetEndTime?: string
   transitMode?: 'AUTO' | 'WALKING' | 'TRANSIT' | 'TAXI'
   transitLocked?: boolean
+  // 功能① REPLACE_ACTIVITY：新地点（真实 POI 搜索结果）
+  newTitle?: string
+  newPoiId?: string
+  newLongitude?: number | null
+  newLatitude?: number | null
+  newAddress?: string | null
+  newTypeName?: string | null
+  newKind?: string | null
   /** Client-generated UUID for idempotency.  Reused on retry, regenerated on re-edit. */
   idempotencyKey?: string
 }
@@ -806,14 +815,6 @@ export function searchTrips(accessToken: string, search: TripSearch = {}): Promi
   return request(`/api/trips/search?${query}`, {}, accessToken)
 }
 
-export function archiveTrip(accessToken: string, tripId: string): Promise<void> {
-  return request(`/api/trips/${encodeURIComponent(tripId)}/archive`, { method: 'POST' }, accessToken)
-}
-
-export function restoreTrip(accessToken: string, tripId: string): Promise<void> {
-  return request(`/api/trips/${encodeURIComponent(tripId)}/restore`, { method: 'POST' }, accessToken)
-}
-
 export function getTrip(accessToken: string, tripId: string): Promise<Trip> {
   return request(`/api/trips/${encodeURIComponent(tripId)}`, {}, accessToken)
 }
@@ -883,10 +884,21 @@ export interface AgentDialogReply {
   slots: Record<string, AgentDialogSlotView>
 }
 
+/** 创建模式首轮种子：目的地 + 日期作为 TRIP 事实注入对话（服务端锁定，Agent 不再询问）。 */
+export interface AgentDialogTripContext {
+  destination: string
+  startDate?: string | null
+  endDate?: string | null
+  /** Composer 右下出行设置：人数/预算随每轮 tripContext 提交（服务端按 USER_EXPLICIT 种入）。 */
+  travelers?: number | null
+  budgetAmount?: number | null
+}
+
 export interface AgentDialogInput {
   message?: string
   option?: AgentDialogOption
   reset?: boolean
+  tripContext?: AgentDialogTripContext
 }
 
 export function sendAgentDialogue(
@@ -991,7 +1003,7 @@ export interface AgentCommandQueued {
 
 /**
  * Stream the trip's agent dialog events (SSE with Bearer auth; the server
- * replays history after `lastMessageId`).  Mirrors streamPlanningTaskEvents.
+ * replays history after `lastMessageId`).  Uses the shared SSE client.
  */
 export function streamAgentDialogEvents(
   accessToken: string,
@@ -1000,7 +1012,7 @@ export function streamAgentDialogEvents(
   options: AgentEventStreamOptions = {},
 ): Promise<number> {
   const url = `/api/trips/${encodeURIComponent(tripId)}/agent-dialogue/events`
-  return streamPlanningTaskEvents(
+  return streamSseEvents(
     accessToken,
     url,
     (event) => onEvent(event as unknown as AgentDialogEventView, event.eventId),
@@ -1103,21 +1115,8 @@ export function createPlanningTask(
   }, accessToken)
 }
 
-export function cancelPlanningTask(accessToken: string, taskId: string): Promise<PlanningTask> {
-  return request(`/api/planning-tasks/${encodeURIComponent(taskId)}`, {
-    method: 'DELETE',
-  }, accessToken)
-}
-
 export function getPlanningTask(accessToken: string, taskId: string): Promise<PlanningTask> {
   return request(`/api/planning-tasks/${encodeURIComponent(taskId)}`, {}, accessToken)
-}
-
-export function getLatestPlanningTask(
-  accessToken: string,
-  tripId: string,
-): Promise<PlanningTask> {
-  return request(`/api/trips/${encodeURIComponent(tripId)}/planning-tasks/latest`, {}, accessToken)
 }
 
 export function getCurrentItinerary(accessToken: string, tripId: string): Promise<Itinerary> {
@@ -1276,7 +1275,7 @@ export async function downloadItineraryExport(
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0)
 }
 
-export async function streamPlanningTaskEvents(
+export async function streamSseEvents(
   accessToken: string,
   eventStreamUrl: string,
   onEvent: (event: PlanningTaskEvent) => void,

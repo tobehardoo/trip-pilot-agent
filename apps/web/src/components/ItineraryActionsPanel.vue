@@ -86,11 +86,11 @@ async function copyUrl() {
 </script>
 
 <template>
-  <section class="border-t border-surface-200 pt-5" aria-label="行程分享与导出">
+  <section class="space-y-4" aria-label="行程分享与导出">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h3 class="m-0 text-base font-semibold text-surface-900">分享与导出</h3>
-        <p class="mt-1 text-sm text-surface-500">分享固定版本，导出当前选择的行程版本。</p>
+        <h3 class="m-0 text-[13px] font-medium leading-5 text-tp-ink">分享与导出</h3>
+        <p class="mt-1 text-xs leading-5 text-tp-sub">分享固定版本，导出当前选择的行程版本。</p>
       </div>
       <div class="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" :loading="busyAction === 'ics'" data-testid="export-ics" @click="exportItinerary('ics')">
@@ -105,17 +105,17 @@ async function copyUrl() {
       </div>
     </div>
 
-    <p v-if="error" class="mt-3 text-sm text-red-600" role="alert">{{ error }}</p>
+    <p v-if="error" class="mt-3 text-xs leading-5 text-tp-warn" role="alert">{{ error }}</p>
 
-    <div v-if="latestShareUrl" class="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-primary-50 px-3 py-2 text-sm">
-      <a :href="latestShareUrl" target="_blank" rel="noreferrer" class="min-w-0 flex-1 break-all text-primary-700 underline" data-testid="share-url">
+    <div v-if="latestShareUrl" class="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-tp-panel px-3 py-2 text-xs">
+      <a :href="latestShareUrl" target="_blank" rel="noreferrer" class="min-w-0 flex-1 break-all text-tp-ink underline" data-testid="share-url">
         {{ latestShareUrl }}
       </a>
       <Button size="sm" variant="ghost" aria-label="复制分享链接" title="复制分享链接" @click="copyUrl">复制</Button>
     </div>
 
     <ul v-if="activeShares.length" class="mt-3 space-y-2 p-0" aria-label="活跃分享链接">
-      <li v-for="share in activeShares" :key="share.id" class="flex items-center justify-between gap-3 text-sm text-surface-600">
+      <li v-for="share in activeShares" :key="share.id" class="flex items-center justify-between gap-3 text-xs leading-5 text-tp-body">
         <span>创建于 {{ new Date(share.createdAt).toLocaleString('zh-CN') }}</span>
         <Button
           size="sm"

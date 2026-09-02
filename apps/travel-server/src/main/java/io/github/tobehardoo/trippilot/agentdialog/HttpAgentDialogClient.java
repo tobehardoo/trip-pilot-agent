@@ -49,9 +49,7 @@ public class HttpAgentDialogClient {
     /** Creation-mode chat: no trip scope, keyed by a client-generated session. */
     public AgentDialogReply createDialogue(AgentCreateDialogCommand command) {
         return post(command, AgentDialogReply.class);
-    }
-
-    /** Confirmed-slot projection the trip will be created from. */
+    }    /** Confirmed-slot projection the trip will be created from. */
     public AgentConfirmedSlots confirmedCreation(String sessionId) {
         try {
             AgentConfirmedSlots slots = restClient.get()
@@ -106,11 +104,17 @@ public class HttpAgentDialogClient {
     ) {
     }
 
+    /**
+     * Creation-mode dialog command. {@code tripContext} carries the composer's
+     * Required Context (destination + dates) so the dialog seeds them as
+     * read-only TRIP facts instead of re-asking; null starts a blank slate.
+     */
     public record AgentCreateDialogCommand(
             String sessionId,
             String message,
             CardOption option,
-            boolean reset
+            boolean reset,
+            TripContext tripContext
     ) {
     }
 

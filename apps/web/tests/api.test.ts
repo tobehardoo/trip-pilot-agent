@@ -3,8 +3,6 @@ import { afterEach, expect, test, vi } from 'vitest'
 import {
   ApiError,
   applyItineraryEdit,
-  archiveTrip,
-  cancelPlanningTask,
   createGuideImport,
   createItineraryReplan,
   createPlanningTask,
@@ -15,10 +13,9 @@ import {
   listGuideImports,
   logoutSession,
   refreshSession,
-  restoreTrip,
   searchTrips,
   previewItineraryEdit,
-  streamPlanningTaskEvents,
+  streamSseEvents,
   updateGuideImportEnabled,
   type CreateTripInput,
   type PlanningTaskEvent,
@@ -51,34 +48,19 @@ test('releases an export blob only after triggering the browser download', async
   expect(revokeObjectUrl).toHaveBeenCalledWith('blob:trip-pilot-export')
 })
 
-test('searches, archives, and restores trips with bearer authentication', async () => {
-  const fetchMock = vi.fn()
-    .mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      json: async () => ({ items: [], page: 0, size: 100, totalElements: 0, totalPages: 0 }),
-    } as Response)
-    .mockResolvedValue({ ok: true, status: 204, json: async () => ({}) } as Response)
+test('searches trips with bearer authentication', async () => {
+  const fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    json: async () => ({ items: [], page: 0, size: 100, totalElements: 0, totalPages: 0 }),
+  } as Response)
   vi.stubGlobal('fetch', fetchMock)
 
   await searchTrips('access-token', { destination: 'Guangzhou', includeArchived: true, size: 100 })
-  await archiveTrip('access-token', 'trip-1')
-  await restoreTrip('access-token', 'trip-1')
 
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    1,
+  expect(fetchMock).toHaveBeenCalledWith(
     '/api/trips/search?destination=Guangzhou&includeArchived=true&page=0&size=100',
     expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer access-token' }) }),
-  )
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    2,
-    '/api/trips/trip-1/archive',
-    expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer access-token' }) }),
-  )
-  expect(fetchMock).toHaveBeenNthCalledWith(
-    3,
-    '/api/trips/trip-1/restore',
-    expect.objectContaining({ method: 'POST', headers: expect.objectContaining({ Authorization: 'Bearer access-token' }) }),
   )
 })
 
@@ -177,25 +159,6 @@ test('creates a planning task with bearer authentication and an idempotency key'
         Authorization: 'Bearer access-token',
         'Idempotency-Key': '44444444-4444-4444-8444-444444444444',
       }),
-    }),
-  )
-})
-
-test('cancels a planning task with bearer authentication', async () => {
-  const fetchMock = vi.fn(async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ status: 'CANCELLED' }),
-  } as Response))
-  vi.stubGlobal('fetch', fetchMock)
-
-  await cancelPlanningTask('access-token', '33333333-3333-3333-3333-333333333333')
-
-  expect(fetchMock).toHaveBeenCalledWith(
-    '/api/planning-tasks/33333333-3333-3333-3333-333333333333',
-    expect.objectContaining({
-      method: 'DELETE',
-      headers: expect.objectContaining({ Authorization: 'Bearer access-token' }),
     }),
   )
 })
@@ -350,7 +313,7 @@ test('parses chunked multiline SSE data, ignores heartbeats, and sends the last 
   vi.stubGlobal('fetch', fetchMock)
   const received: string[] = []
 
-  const lastEventId = await streamPlanningTaskEvents(
+  const lastEventId = await streamSseEvents(
     'access-token',
     '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
     (event) => received.push(event.eventType),
@@ -493,7 +456,7 @@ test('streams a PLANNING_REVIEW_REQUIRED event with report and candidate payload
   vi.stubGlobal('fetch', fetchMock)
   const received: PlanningTaskEvent[] = []
 
-  await streamPlanningTaskEvents(
+  await streamSseEvents(
     'access-token',
     '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
     (event) => received.push(event),
@@ -527,7 +490,7 @@ test('streams a PLANNING_COMPLETED event with report and evaluation payload', as
   vi.stubGlobal('fetch', fetchMock)
   const received: PlanningTaskEvent[] = []
 
-  await streamPlanningTaskEvents(
+  await streamSseEvents(
     'access-token',
     '/api/planning-tasks/33333333-3333-3333-3333-333333333333/events',
     (event) => received.push(event),

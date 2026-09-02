@@ -14,6 +14,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string]
   'update:region': [region: { provinceCode: string; cityCode: string } | null]
+  // 功能④：用户明确选择「其他」自定义目的地
+  'update:custom': [value: boolean]
 }>()
 
 const query = ref('')
@@ -79,6 +81,16 @@ function select(entry: CityEntry) {
   })
 }
 
+/** 功能④：选择「其他」→ 用自由文本作为自定义目的地（region=null）。 */
+function selectCustom() {
+  const name = query.value.trim()
+  if (!name) return
+  open.value = false
+  emit('update:modelValue', name)
+  emit('update:region', null)
+  emit('update:custom', true)
+}
+
 function onInput(e: Event) {
   const value = (e.target as HTMLInputElement).value
   query.value = value
@@ -133,7 +145,7 @@ function onKeydown(e: KeyboardEvent) {
 
     <!-- 下拉选项 -->
     <ul
-      v-if="open && filtered.length > 0"
+      v-if="open && (filtered.length > 0 || query.trim().length > 0)"
       class="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-md border border-tp-line bg-white py-1 shadow-sm"
       role="listbox"
     >
@@ -149,6 +161,16 @@ function onKeydown(e: KeyboardEvent) {
         <MapPin :size="12" class="shrink-0 text-tp-mute" aria-hidden="true" />
         <span class="min-w-0 flex-1 truncate">{{ entry.cityName }}</span>
         <span class="shrink-0 text-[10px] text-tp-faint">{{ entry.provinceName }}</span>
+      </li>
+      <!-- 功能④：其他 → 自定义目的地 -->
+      <li
+        v-if="query.trim().length > 0 && !filtered.some((e) => e.cityName === query.trim())"
+        class="mt-0.5 flex cursor-pointer items-center gap-2 border-t border-tp-div px-2.5 py-1.5 text-xs text-tp-sub transition-colors hover:bg-tp-hover"
+        role="option"
+        @mousedown.prevent="selectCustom"
+      >
+        <MapPin :size="12" class="shrink-0 text-tp-faint" aria-hidden="true" />
+        <span class="min-w-0 flex-1 truncate">其他：使用「{{ query.trim() }}」作为自定义目的地</span>
       </li>
     </ul>
   </div>

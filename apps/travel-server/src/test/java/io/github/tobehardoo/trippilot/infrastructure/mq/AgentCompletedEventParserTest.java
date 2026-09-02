@@ -22,8 +22,8 @@ class AgentCompletedEventParserTest {
         assertThat(event.eventType()).isEqualTo("AGENT_COMPLETED");
         assertThat(event.schemaVersion()).isEqualTo(1);
         assertThat(event.payload().summary()).isEqualTo("行程已生成：测试行程");
-        assertThat(event.payload().itinerary().path("title").asText()).isEqualTo("测试行程");
-        assertThat(event.payload().itinerary().path("days").isArray()).isTrue();
+        assertThat(event.payload().slots().path("destination").path("value").asText())
+                .isEqualTo("成都");
     }
 
     @Test
@@ -32,7 +32,7 @@ class AgentCompletedEventParserTest {
                 AgentEventFixtures.load("agent-completed-event-v1", "valid.json")
                         .getBytes(StandardCharsets.UTF_8)
         );
-        assertThat(event.payload().itinerary().path("title").asText()).isEqualTo("测试行程");
+        assertThat(event.payload().summary()).isEqualTo("行程已生成：测试行程");
         // P2.8b: the confirmed-slot projection rides the completed event.
         assertThat(event.payload().slots().path("destination").path("value").asText())
                 .isEqualTo("成都");
@@ -55,12 +55,15 @@ class AgentCompletedEventParserTest {
     }
 
     @Test
-    void rejectsAnItineraryThatIsNotAnObject() {
-        String body = validBody().replaceFirst(
-                "(?s)\"itinerary\": \\{.*", "\"itinerary\": \"not-an-object\" } }"
+    void rejectsAPayloadThatCarriesAnItinerary() {
+        // AUDIT-01（归边 A）：Agent 对话框链不得携带完整 itinerary。
+        String body = validBody().replace(
+                "\"payload\": {",
+                "\"payload\": {\n    \"itinerary\": {\"title\": \"测试行程\"},"
         );
         assertThatThrownBy(() -> parser.parse(body.getBytes(StandardCharsets.UTF_8)))
-                .isInstanceOf(EventContractException.class);
+                .isInstanceOf(EventContractException.class)
+                .hasMessageContaining("AUDIT-01");
     }
 
     @Test
@@ -85,24 +88,8 @@ class AgentCompletedEventParserTest {
                   "occurredAt": "2026-08-29T08:31:00Z",
                   "payload": {
                     "summary": "行程已生成：测试行程",
-                    "itinerary": {
-                      "title": "测试行程",
-                      "days": [
-                        {
-                          "date": "2026-10-01",
-                          "activities": [
-                            {
-                              "title": "武侯祠",
-                              "startTime": "2026-10-01T09:00:00+00:00",
-                              "endTime": "2026-10-01T11:00:00+00:00",
-                              "estimatedCost": 0,
-                              "source": "DEMO"
-                            }
-                          ],
-                          "transitLegs": []
-                        }
-                      ],
-                      "estimatedTotalCost": 0
+                    "slots": {
+                      "destination": {"value": "成都", "state": "CONFIRMED"}
                     }
                   }
                 }

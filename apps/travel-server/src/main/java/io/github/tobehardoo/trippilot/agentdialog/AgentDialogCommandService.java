@@ -50,13 +50,22 @@ public class AgentDialogCommandService {
     public record CommandQueued(UUID eventId, String status) {
     }
 
+    /**
+     * Start a dialog run.  {@code tripContext} (destination/dates from the trip
+     * entity) is included in the payload so the agent worker can seed the dialog
+     * with read-only TRIP facts instead of re-asking what the user already set.
+     */
     @Transactional
-    public CommandQueued startRun(UUID ownerId, UUID tripId, UUID eventId, String message) {
+    public CommandQueued startRun(
+            UUID ownerId, UUID tripId, UUID eventId, String message,
+            HttpAgentDialogClient.TripContext tripContext
+    ) {
         requireTripOwnership(ownerId, tripId);
         requireText(message, "message");
         Map<String, Object> envelope = envelope(
                 START_COMMAND_TYPE, eventId, tripId, null, ownerId, message
         );
+        addTripContextToPayload(envelope, tripContext);
         writeCommand(envelope, START_COMMAND_TYPE, START_ROUTING_KEY, tripId, eventId);
         return new CommandQueued(eventId, "QUEUED");
     }
@@ -149,5 +158,16 @@ public class AgentDialogCommandService {
                     field + " must be 1.." + MAX_TEXT_LENGTH + " non-blank characters"
             );
         }
+    }
+
+    private void addTripContextToPayload(
+            Map<String, Object> envelope,
+            HttpAgentDialogClient.TripContext tripContext
+    ) {
+        Map<String, String> contextPayload = new LinkedHashMap<>();
+        contextPayload.put("destination", tripContext.destination());
+        contextPayload.put("start_date", tripContext.startDate());
+        contextPayload.put("end_date", tripContext.endDate());
+        ((Map<String, Object>) envelope.get("payload")).put("tripContext", contextPayload);
     }
 }

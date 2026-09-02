@@ -465,7 +465,9 @@ def test_successful_retry_clears_failure_memory_in_the_checkpoint() -> None:
     assert final.failure_signature is None
     assert final.failure_attempts == 0, "no EMITTED with a stale TRANSIENT memory"
     completed = [e for e in processor.published if isinstance(e, AgentCompletedEvent)]
-    assert completed and completed[0].payload.itinerary is not None
+    # AUDIT-01（归边 A）：completed 事件只带摘要 + 槽位，不再携带 itinerary。
+    assert completed and completed[0].payload.summary
+    assert completed[0].payload.slots is not None
 
 
 # ── Test F: a changed failure kind takes over the decision ──────────────────

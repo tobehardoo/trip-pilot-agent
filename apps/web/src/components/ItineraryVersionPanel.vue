@@ -112,32 +112,32 @@ async function confirmRollback() {
 
 <template>
   <section
-    class="rounded-2xl border border-surface-200 bg-white p-6 shadow-card sm:p-7"
+    class="space-y-4"
     aria-labelledby="itinerary-version-title"
   >
     <div class="mb-5 flex items-start justify-between gap-4">
       <div>
-        <p class="mb-1 text-xs font-bold tracking-widest text-primary-500">行程管理</p>
-        <h2 id="itinerary-version-title" class="m-0 flex items-center gap-2 text-xl font-bold text-surface-800">
+        <p class="mb-1 text-xs font-bold tracking-widest text-tp-mute">行程管理</p>
+        <h2 id="itinerary-version-title" class="m-0 flex items-center gap-2 text-xl font-bold tp-ink">
           <History :size="19" aria-hidden="true" />行程版本
         </h2>
       </div>
-      <LoaderCircle v-if="busy || actionBusy" class="animate-spin text-primary-500" :size="20" aria-label="正在处理版本" />
+      <LoaderCircle v-if="busy || actionBusy" class="animate-spin text-tp-mute" :size="20" aria-label="正在处理版本" />
     </div>
 
-    <p v-if="error || actionError" class="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+    <p v-if="error || actionError" class="rounded-xl bg-tp-warn/10 px-4 py-3 text-sm text-tp-warn" role="alert">
       {{ actionError ?? error }}
     </p>
 
     <!-- 主面板：只展示当前版本摘要（B 类），历史版本默认收进 Drawer（C 类） -->
-    <p v-if="!busy && versions.length === 0" class="rounded-xl border border-dashed border-surface-200 p-5 text-center text-sm text-surface-400">
+    <p v-if="!busy && versions.length === 0" class="rounded-xl border border-dashed border-tp-line p-5 text-center text-sm text-tp-sub">
       生成行程后，这里会保留可比较、可回滚的历史版本。
     </p>
 
     <div v-else-if="currentVersion" class="flex flex-wrap items-center justify-between gap-4">
       <div class="flex min-w-0 flex-wrap items-center gap-2.5">
-        <span class="text-sm text-surface-500">当前版本</span>
-        <strong class="text-base text-surface-800">V{{ currentVersion.versionNumber }}</strong>
+        <span class="text-sm text-tp-sub">当前版本</span>
+        <strong class="text-base tp-ink">V{{ currentVersion.versionNumber }}</strong>
         <Badge variant="success">当前</Badge>
         <template v-for="meta in [feasibilityMetaOf(currentVersion)]" :key="meta.kind">
           <Badge v-if="meta.kind === 'status'" :variant="FEASIBILITY_BADGE_VARIANT[meta.status]">
@@ -146,7 +146,7 @@ async function confirmRollback() {
           <Badge v-else-if="meta.kind === 'none'" variant="secondary">无历史验证</Badge>
           <Badge v-else variant="secondary">验证信息无法读取</Badge>
         </template>
-        <p class="m-0 w-full text-xs text-surface-500 sm:w-auto">
+        <p class="m-0 w-full text-xs text-tp-sub sm:w-auto">
           {{ formatDateTime(currentVersion.createdAt) }} · {{ sourceLabels[currentVersion.versionSource] }}
         </p>
       </div>
@@ -173,12 +173,12 @@ async function confirmRollback() {
         <li
           v-for="version in versions"
           :key="version.versionId"
-          class="rounded-xl border border-surface-200 bg-surface-50 px-4 py-3"
+          class="rounded-xl border border-tp-line bg-tp-panel px-4 py-3"
         >
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div class="flex items-center gap-2">
-                <strong class="text-sm text-surface-800">版本 {{ version.versionNumber }}</strong>
+                <strong class="text-sm tp-ink">版本 {{ version.versionNumber }}</strong>
                 <Badge v-if="version.current" variant="success">当前</Badge>
                 <Badge>{{ sourceLabels[version.versionSource] }}</Badge>
                 <template v-for="meta in [feasibilityMetaOf(version)]" :key="meta.kind">
@@ -189,7 +189,7 @@ async function confirmRollback() {
                   <Badge v-else variant="secondary">验证信息无法读取</Badge>
                 </template>
               </div>
-              <p class="mb-0 mt-1 text-xs text-surface-500">
+              <p class="mb-0 mt-1 text-xs text-tp-sub">
                 {{ formatDateTime(version.createdAt) }} · 预算 ¥{{ version.estimatedTotalCost }}
               </p>
             </div>
@@ -207,7 +207,7 @@ async function confirmRollback() {
                 type="button"
                 :aria-label="`回滚到版本 ${version.versionNumber}`"
                 :disabled="busy || actionBusy"
-                class="inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-2 text-xs font-semibold text-amber-800 disabled:opacity-50"
+                class="inline-flex items-center gap-1.5 rounded-lg bg-tp-warn/10 px-3 py-2 text-xs font-semibold text-tp-warn disabled:opacity-50"
                 @click="pendingRollback = version"
               >
                 <RotateCcw :size="14" aria-hidden="true" />回滚
@@ -217,12 +217,12 @@ async function confirmRollback() {
         </li>
       </ol>
 
-      <div v-if="selectedDiff" class="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-4">
-        <h3 class="m-0 text-sm font-bold text-primary-900">与当前版本的差异</h3>
-        <p class="mb-2 mt-1 text-xs font-semibold text-primary-700">
+      <div v-if="selectedDiff" class="mt-4 rounded-xl border border-tp-line bg-tp-panel p-4">
+        <h3 class="m-0 text-sm font-bold tp-ink">与当前版本的差异</h3>
+        <p class="mb-2 mt-1 text-xs font-semibold tp-ink">
           预算变化 {{ formatBudgetChange(selectedDiff.budgetChange) }}
         </p>
-        <ul class="m-0 space-y-1 pl-5 text-xs leading-relaxed text-surface-700">
+        <ul class="m-0 space-y-1 pl-5 text-xs leading-relaxed text-tp-body">
           <li v-for="activity in selectedDiff.addedActivities" :key="`added-${activity.key}`">
             新增：{{ activity.title }}
           </li>
@@ -267,8 +267,8 @@ async function confirmRollback() {
         </ul>
       </div>
 
-      <div v-if="pendingRollback" class="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4" role="alertdialog" aria-label="确认版本回滚">
-        <p class="m-0 text-sm font-semibold text-amber-900">
+      <div v-if="pendingRollback" class="mt-4 rounded-xl border border-tp-warn/25 bg-tp-warn/10 p-4" role="alertdialog" aria-label="确认版本回滚">
+        <p class="m-0 text-sm font-semibold text-tp-warn">
           将基于版本 {{ pendingRollback.versionNumber }} 创建一个新版本；现有历史不会被删除。
         </p>
         <div class="mt-3 flex gap-2">
@@ -276,7 +276,7 @@ async function confirmRollback() {
             type="button"
             :aria-label="`确认回滚到版本 ${pendingRollback.versionNumber}`"
             :disabled="actionBusy"
-            class="rounded-lg bg-amber-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+            class="rounded-lg bg-tp-warn px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
             @click="confirmRollback"
           >
             确认回滚

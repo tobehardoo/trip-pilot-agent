@@ -260,7 +260,8 @@ def test_budget_adjustment_resume_replans_and_emits() -> None:
     # success resets the failure memory
     assert final.failure_kind is None
     completed = [e for e in processor.published if isinstance(e, AgentCompletedEvent)]
-    assert completed and completed[0].payload.itinerary is not None
+    # AUDIT-01（归边 A）：completed 事件只带摘要 + 槽位，不再携带 itinerary。
+    assert completed and completed[0].payload.summary
 
 
 # ── Test C / D: unusable or unrelated replies never mutate constraints ───────

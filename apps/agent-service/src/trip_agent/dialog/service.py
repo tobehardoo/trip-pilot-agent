@@ -146,6 +146,9 @@ TIER0_SLOTS: Final = tuple(s.name for s in SLOT_SPECS if s.tier == 0)
 TIER1_SLOTS: Final = tuple(s.name for s in SLOT_SPECS if s.tier == 1)
 MANAGED_SLOTS: Final = SLOT_ORDER
 REQUIRED_FOR_CREATION: Final = ("destination", "start_date", "end_date")
+# 出行设置（人数/预算）改由 Composer 右下组件 + 自由文本提供，不再由 wizard 表单强问；
+# 但创建行程仍要求其已确认（与目的地/日期同级的「必填」门槛）。
+EXTERNAL_SLOTS: Final = ("travelers", "budget")
 
 _CHINESE_DIGITS: Final[dict[str, int]] = {
     "一": 1, "两": 2, "二": 2, "三": 3, "四": 4,
@@ -446,6 +449,25 @@ def _scan_free_text(text: str) -> dict[str, Any]:
         checked = _check_value("budget", int(raw)) if raw else _INVALID
         if checked is not _INVALID:
             found["budget"] = checked
+
+    # Extract pace from free text (轻松 → RELAXED, 紧凑 → INTENSIVE, etc.)
+    for alias, value in PACE_ALIASES.items():
+        if alias in text:
+            checked = _check_value("pace", value)
+            if checked is not _INVALID:
+                found["pace"] = checked
+                break
+
+    # Extract preference keywords from free text
+    _PREFERENCE_KEYWORDS: Final = [
+        "美食", "历史", "文化", "自然", "风景", "城市", "购物",
+        "摄影", "亲子", "休闲", "遗迹", "古迹", "博物馆",
+        "艺术", "建筑", "公园", "海滩", "夜景", "温泉",
+    ]
+    matched_prefs = [kw for kw in _PREFERENCE_KEYWORDS if kw in text]
+    if matched_prefs:
+        found["preferences"] = matched_prefs
+
     return found
 
 
@@ -479,6 +501,14 @@ def _new_state(context: TripContext | None) -> _DialogState:
     ):
         if value:
             slots[name] = SlotView(value=value, state=SlotState.CONFIRMED, source=SlotSource.TRIP)
+    # Composer 右下出行设置：人数/预算由前端组件明确提供，种入为已确认。
+    # source=USER_EXPLICIT（而非 TRIP），保证后续仍能被自然语言或组件更新。
+    for name, value in (
+        ("travelers", context.travelers if context else None),
+        ("budget", context.budget_amount if context else None),
+    ):
+        if value is not None:
+            slots[name] = SlotView(value=value, state=SlotState.CONFIRMED, source=SlotSource.USER_EXPLICIT)
     return _DialogState(run_id=uuid.uuid4().hex[:12], slots=slots)
 
 
@@ -541,32 +571,46 @@ class AgentDialogService:
         raw = None if request.reset else await self._store.load(scope_key)
         if request.reset:
             state = _new_state(context)
+            self._apply_context(state, context)
             self._reply(state, "好的，我们重新开始。")
         elif raw is None:
             state = _new_state(context)
+            self._apply_context(state, context)
             self._reply(state, "你好！我是行程规划助手。可以直接告诉我你的需求，我会逐项和你确认。")
         else:
             state = _DialogState.model_validate(raw)
+            # Composer 右下出行设置随每轮 tripContext 同步（组件是权威入口），
+            # 避免首轮未填、后续轮次又无法把数值带进 wizard。
+            self._apply_context(state, context)
 
         if raw is None and request.message and request.message.strip():
-            # a fresh run asks its opening question first, so the user's very
-            # first message answers it instead of falling through to the
-            # post-ready heuristics
-            self._advance(state)
+            # 首条消息路由到开场问题。创建模式因 travelers/budget 已从 wizard
+            # 移除，开场问题就是目的地（而非"选择出行人数"），首条消息由此被真正解读。
+            self._advance(state, creation=scope_key.startswith("create:"))
         if request.option is not None:
             await self._apply_option(state, request.option)
         elif request.message and request.message.strip():
             self._reply(state, request.message.strip(), role="user")
             await self._apply_message(state, request.message.strip())
 
-        self._advance(state)
-        ready = self._is_ready(state)
+        self._advance(state, creation=scope_key.startswith("create:"))
+        ready = self._is_ready(state, require_external=scope_key.startswith("create:"))
         if ready:
             # re-send the summary whenever its content changed (e.g. after a
             # post-ready addition) so the latest card always reflects reality
             summary = self._summary_text(state)
             if state.last_summary != summary:
                 self._reply(state, summary, kind="SUMMARY")
+                # Add a "start planning" confirmation option in the chat
+                self._reply(
+                    state,
+                    "所有信息已确认，是否开始规划行程？",
+                    kind="CLARIFY",
+                    options=[
+                        CardOption(action="CONFIRM", label="开始规划", value="START_PLANNING"),
+                        CardOption(action="SKIP", label="再补充一下"),
+                    ],
+                )
                 state.last_summary = summary
         await self._store.save(scope_key, state.model_dump(mode="json"))
         return DialogueResponse(
@@ -576,10 +620,34 @@ class AgentDialogService:
             slots=state.slots,
         )
 
+    def _apply_context(self, state: _DialogState, context: TripContext | None) -> None:
+        """同步 Composer 右下出行设置（人数/预算）到槽位（每轮，组件优先）。
+
+        source=USER_EXPLICIT 而非 TRIP：组件是用户明确输入，后续可被再次组件/文本更新。
+        """
+        if context is None:
+            return
+        for slot, value in (
+            ("travelers", context.travelers),
+            ("budget", context.budget_amount),
+        ):
+            if value is not None:
+                state.slots[slot] = SlotView(
+                    value=value, state=SlotState.CONFIRMED, source=SlotSource.USER_EXPLICIT,
+                )
+
     # ── input application ────────────────────────────────────────────
 
     async def _apply_option(self, state: _DialogState, option: CardOption) -> None:
         self._reply(state, f"[点选] {option.label}", role="user")
+
+        # START_PLANNING is a chat-level confirmation — the frontend
+        # intercepts it and calls createTripFromAgent; the server just
+        # acknowledges and stays ready.
+        if option.action == "CONFIRM" and option.value == "START_PLANNING":
+            self._reply(state, "好的，开始创建行程！")
+            return
+
         pending = state.pending
         if pending is not None:
             if pending.mode == "edit":
@@ -761,7 +829,7 @@ class AgentDialogService:
 
     # ── loop advance ─────────────────────────────────────────────────
 
-    def _advance(self, state: _DialogState) -> None:
+    def _advance(self, state: _DialogState, *, creation: bool = False) -> None:
         pending = state.pending
         if pending is not None:
             if pending.mode == "confirm":
@@ -788,6 +856,11 @@ class AgentDialogService:
             spec = SLOT_SPECS_BY_NAME[slot]
             if spec.tier == 2:
                 continue  # tier-2 slots are never auto-asked
+            if creation and slot in EXTERNAL_SLOTS:
+                # 创建模式的出行设置（人数/预算）：由 Composer 右下组件 + 自由文本
+                # 提取提供，绝不用 wizard 表单强问（否则第一发消息会被吞成
+                # "选择出行人数"）。旅行模式保持原 wizard 行为。
+                continue
             view = state.slots.get(slot)
             if view is not None and view.state is SlotState.CONFIRMED:
                 state.asked.add(slot)
@@ -1005,13 +1078,26 @@ class AgentDialogService:
             for hit in hits
         ]
 
-    def _is_ready(self, state: _DialogState) -> bool:
+    def _is_ready(self, state: _DialogState, *, require_external: bool = False) -> bool:
         if state.pending is not None or state.current_question is not None:
             return False
         if any(view.state is SlotState.INFERRED for view in state.slots.values()):
             return False
-        # tier-2 slots never block readiness — they are optional by design
-        return all(slot in state.asked for slot in TIER0_SLOTS + TIER1_SLOTS)
+        # tier-2 slots never block readiness — they are optional by design.
+        # 创建模式下 EXTERNAL_SLOTS（人数/预算）不参与 wizard 的 asked 标记，
+        # 改由外部组件提供并通过值门槛判定；旅行模式仍走原 asked 判定。
+        if not all(
+            slot in state.asked
+            for slot in TIER0_SLOTS + TIER1_SLOTS
+            if not (require_external and slot in EXTERNAL_SLOTS)
+        ):
+            return False
+        if require_external and not all(
+            (state.slots.get(slot) is not None and state.slots[slot].value is not None)
+            for slot in EXTERNAL_SLOTS
+        ):
+            return False
+        return True
 
     def _date_range_error(
         self,
@@ -1081,16 +1167,47 @@ class AgentDialogService:
         if not stripped or stripped in _STOP_WORDS:
             return False
 
-        if "位" in text or "个人" in text:
-            value = _parse_free_value("travelers", text)
-            if value is not _INVALID and not self._locked(state, "travelers"):
-                self._propose(state, "travelers", value)
+        # 人数/预算/节奏用正则扫描（_scan_free_text 能同时parse"2个人，预算5500元"；
+        # _parse_free_value 会把"2位"的"2"误当成预算，故此处复用扫描）。
+        scanned = _scan_free_text(text)
+        noted: list[str] = []
+        for slot in EXTERNAL_SLOTS + ("pace",):
+            value = scanned.get(slot)
+            if value is not None and not self._locked(state, slot):
+                self._propose(state, slot, value)
+                noted.append(f"{SLOT_LABELS.get(slot, slot)}：{_render(slot, value)}")
+        if noted:
+            self._reply(state, "我从你的描述里注意到：" + "；".join(noted) + "。逐项和你确认一下。")
+            return True
+
+        # Handle preference keywords (历史, 文化, 美食, etc.)
+        _PREFERENCE_KEYWORDS = [
+            "美食", "历史", "文化", "自然", "风景", "城市", "购物",
+            "摄影", "亲子", "休闲", "遗迹", "古迹", "博物馆",
+            "艺术", "建筑", "公园", "海滩", "夜景", "温泉",
+        ]
+        matched_prefs = [kw for kw in _PREFERENCE_KEYWORDS if kw in text]
+        if matched_prefs and not self._locked(state, "preferences"):
+            current = state.slots.get("preferences")
+            existing = (
+                list(current.value)
+                if current is not None and isinstance(current.value, list)
+                else []
+            )
+            new_prefs = [p for p in matched_prefs if p not in existing]
+            if new_prefs:
+                restore = (
+                    current
+                    if current is not None and current.state is SlotState.CONFIRMED
+                    else None
+                )
+                self._propose(
+                    state, "preferences",
+                    [*existing, *new_prefs] if existing else new_prefs,
+                    restore=restore,
+                )
                 return True
-        if "元" in text or "预算" in text or "花费" in text:
-            value = _parse_free_value("budget", text)
-            if value is not _INVALID and not self._locked(state, "budget"):
-                self._propose(state, "budget", value)
-                return True
+
         if "住" in text or "酒店" in text or "民宿" in text:
             value = _parse_free_value("accommodation", text)
             if value is not _INVALID and not self._locked(state, "accommodation"):
@@ -1150,6 +1267,8 @@ class AgentDialogService:
             confirmed[slot] = view.value
         ready = (
             all(name in confirmed for name in REQUIRED_FOR_CREATION)
+            # 出行设置门槛：人数/预算任一缺失都不可开始规划（与目的地/日期同级）。
+            and all(name in confirmed for name in EXTERNAL_SLOTS)
             and state.pending is None
             and state.current_question is None
             and not any(view.state is SlotState.INFERRED for view in state.slots.values())
@@ -1162,8 +1281,7 @@ class AgentDialogService:
             view = state.slots.get(slot)
             if view is not None and view.state is SlotState.CONFIRMED and view.value is not None:
                 parts.append(f"{SLOT_LABELS[slot]} {_render(slot, view.value)}")
-        closing = "。点击「创建行程并开始规划」继续，也可以继续补充或修改。"
-        return "约束已确认：" + "；".join(parts) + closing
+        return "约束已确认：" + "；".join(parts) + "。"
 
     # ── helpers ──────────────────────────────────────────────────────
 

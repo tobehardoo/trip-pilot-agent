@@ -20,6 +20,12 @@ export function formatChinaDate(value: string): string {
   return sameYear ? md : `${date.getFullYear()}年${md}`
 }
 
+/** "2026-09-12" → "2026/09/12"（功能④：具体日期，含年份） */
+export function formatSlashDate(value: string): string {
+  const parts = value.slice(0, 10).split('-')
+  return parts.length === 3 ? `${parts[0]}/${parts[1]}/${parts[2]}` : (value ?? '')
+}
+
 /** "2026-09-12".."2026-09-14" → "9月12日 — 9月14日"（跨年自动带年份） */
 export function formatDateRange(startDate: string, endDate: string): string {
   if (!startDate || !endDate) return '待定'

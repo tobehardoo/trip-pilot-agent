@@ -190,20 +190,27 @@ def test_completed_fixture_validates_against_the_schema() -> None:
 def test_completed_model_round_trips_to_the_wire() -> None:
     event = AgentCompletedEvent.model_validate(_load_fixture(COMPLETED_FIXTURE))
     assert event.payload.summary == "行程已生成：测试行程"
-    assert event.payload.itinerary.title == "测试行程"
-    assert event.payload.itinerary.days[0].activities[0].title == "武侯祠"
+    assert event.payload.slots["destination"].value == "成都"
+    assert event.payload.slots["destination"].state == "CONFIRMED"
+
+    # AUDIT-01（归边 A）防回归：序列化后的 wire 载荷绝不能携带 itinerary。
+    serialized = event.model_dump(mode="json", by_alias=True, exclude_none=True)
+    assert "itinerary" not in serialized["payload"]
 
     schema = _load_schema("agent-completed-event-v1.schema.json")
-    Draft202012Validator(schema).validate(
-        event.model_dump(mode="json", by_alias=True, exclude_none=True)
-    )
+    Draft202012Validator(schema).validate(serialized)
 
 
-def test_completed_rejects_an_itinerary_violating_the_wire() -> None:
+def test_completed_rejects_a_payload_carrying_an_itinerary() -> None:
+    # AUDIT-01（归边 A）：Agent 对话框链不得携带完整 itinerary ——
+    # 一旦 serializer 或 handler 重新把 itinerary 塞回 payload，schema
+    # （additionalProperties:false）与模型都必须拒绝。
     wire = _load_fixture(COMPLETED_FIXTURE)
-    del wire["payload"]["itinerary"]["days"]
+    wire["payload"]["itinerary"] = {"title": "测试行程", "days": []}
     with pytest.raises(ValidationError):
         AgentCompletedEvent.model_validate(wire)
+    with pytest.raises(Exception):
+        Draft202012Validator(_load_schema("agent-completed-event-v1.schema.json")).validate(wire)
 
 
 # ── AGENT_RUN_FINISHED ──────────────────────────────────────────────

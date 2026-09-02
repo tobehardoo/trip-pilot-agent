@@ -226,4 +226,80 @@ describe('tripStore（真实 API 驱动）', () => {
     expect(store.listStatus).toBe('error')
     expect(store.listError).toBe('获取列表失败')
   })
+
+  test('adoptTrip → 收编 Agent 创建的旅行：选中 + 置顶，不调创建 API', async () => {
+    const store = useTripStore()
+    await store.loadTrips()
+    const created: api.Trip = {
+      id: 'trip-agent-1',
+      title: '广州 · AI 行程',
+      destination: '广州',
+      startDate: '2026-09-10',
+      endDate: '2026-09-13',
+      status: 'draft',
+      version: 1,
+      constraints: { schemaVersion: 1, travelers: 2, travelerType: 'COUPLE', budgetAmount: 3000, preferences: ['历史文化'], mustVisitPlaces: ['陈家祠'], transitModes: [], accommodationPreference: null, pace: 'MODERATE', mealBudget: null },
+      createdAt: '2026-09-02T10:00:00Z',
+      updatedAt: '2026-09-02T10:00:00Z',
+      archivedAt: null,
+    }
+    vi.mocked(api.createTrip).mockRejectedValue(new Error('不应调用创建 API'))
+
+    store.adoptTrip(created)
+
+    expect(api.createTrip).not.toHaveBeenCalled()
+    expect(store.currentTripId).toBe('trip-agent-1')
+    expect(store.currentTrip?.title).toBe('广州 · AI 行程')
+    expect(store.trips[0]?.id).toBe('trip-agent-1')
+  })
+
+  test('clearCurrentTrip → 回到创建模式：当前旅行与行程内容清空', async () => {
+    const store = useTripStore()
+    const created: api.Trip = {
+      id: 'trip-agent-2',
+      title: '上海三日旅行',
+      destination: '上海',
+      startDate: '2026-09-12',
+      endDate: '2026-09-14',
+      status: 'draft',
+      version: 1,
+      constraints: { schemaVersion: 1, travelers: 2, travelerType: 'COUPLE', budgetAmount: null, preferences: [], mustVisitPlaces: [], transitModes: [], accommodationPreference: null, pace: 'MODERATE', mealBudget: null },
+      createdAt: '2026-09-01T10:00:00Z',
+      updatedAt: '2026-09-01T10:00:00Z',
+      archivedAt: null,
+    }
+    store.adoptTrip(created)
+    expect(store.currentTripId).toBe('trip-agent-2')
+
+    store.clearCurrentTrip()
+
+    expect(store.currentTripId).toBeNull()
+    expect(store.currentTrip).toBeNull()
+    expect(store.currentPhase).toBeNull()
+  })
+
+  test('refreshCurrentTrip → run 终态后重取旅行实体（status 流转上屏）', async () => {
+    const store = useTripStore()
+    const draft: api.Trip = {
+      id: 'trip-agent-3',
+      title: '成都五日旅行',
+      destination: '成都',
+      startDate: '2026-10-01',
+      endDate: '2026-10-05',
+      status: 'draft',
+      version: 2,
+      constraints: { schemaVersion: 1, travelers: 2, travelerType: 'COUPLE', budgetAmount: null, preferences: [], mustVisitPlaces: [], transitModes: [], accommodationPreference: null, pace: 'MODERATE', mealBudget: null },
+      createdAt: '2026-09-01T10:00:00Z',
+      updatedAt: '2026-09-01T10:00:00Z',
+      archivedAt: null,
+    }
+    store.adoptTrip(draft)
+    vi.mocked(api.getTrip).mockResolvedValue({ ...draft, status: 'planning', version: 3 })
+
+    await store.refreshCurrentTrip()
+
+    expect(api.getTrip).toHaveBeenCalledWith('test-token', 'trip-agent-3')
+    expect(store.currentTrip?.status).toBe('planning')
+    expect(store.currentPhase).toBe('planning')
+  })
 })

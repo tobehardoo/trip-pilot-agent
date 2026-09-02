@@ -202,9 +202,12 @@ def test_skip_drops_proposal_and_reaches_ready() -> None:
     assert result.ready is False  # tier-1 suggestion card comes next
     result = _handle(service, option=_skip_t1())
     assert result.ready is True
-    summary = result.messages[-1]
+    # ready 后：SUMMARY 摘要卡在前，紧接着是「是否开始规划」CLARIFY 确认卡。
+    summary = result.messages[-2]
     assert summary.kind == "SUMMARY"
     assert "成都" in summary.text and "总预算 5,500 元" in summary.text
+    assert result.messages[-1].kind == "CLARIFY"
+    assert "开始规划" in result.messages[-1].text
 
 
 def test_reset_clears_state_but_keeps_trip_context() -> None:
@@ -270,8 +273,10 @@ def test_creation_full_flow_reaches_ready_with_projection() -> None:
     _create(service, message="2026-10-01到2026-10-04")
     _create(service, option=_confirm())
     _create(service, option=_confirm())
-    _create(service, option=_chip("2 位", 2))
-    _create(service, option=_chip("3000-8000", 5500))
+    # 人数/预算不再走 wizard 表单，改由自由文本提取（创建模式的右侧出行设置）
+    _create(service, message="一行2位，总预算5500元")
+    _create(service, option=_confirm())  # 确认出行人数
+    _create(service, option=_confirm())  # 确认总预算
     _create(service, option=_ask("accommodation"))
     _create(service, message="春熙路附近")
     _create(service, option=_confirm())

@@ -111,3 +111,47 @@ export function slotRows(slots: Record<string, SlotViewLike>): SlotRowView[] {
   }
   return rows
 }
+
+/** 创建对话中向导会主动询问的槽位（tier-0 + tier-1；tier-2 永不主动问，不进"待确认"）。 */
+const CREATION_AUTO_ASKED = [
+  'travelers',
+  'budget',
+  'pace',
+  'must_visit',
+  'accommodation',
+  'arrival',
+  'departure',
+] as const
+
+export interface CreationSummary {
+  /** 已了解：CONFIRMED 且非 TRIP 来源（目的地/日期由 Required Context 展示）。 */
+  known: SlotRowView[]
+  /** 待确认：向导会问但还没确认的槽位标签。 */
+  pending: string[]
+}
+
+/** 创建对话 slots 投影 → 右侧"旅行需求"摘要（纯投影，不持有状态）。 */
+export function creationSummary(slots: Record<string, SlotViewLike> | null | undefined): CreationSummary {
+  const known: SlotRowView[] = []
+  const confirmed = new Set<string>()
+  for (const name of SLOT_ORDER) {
+    const slot = slots?.[name]
+    if (!slot) continue
+    const filled = slot.value !== null && slot.value !== undefined && slot.value !== ''
+    if (slotTone(slot.state) === 'confirmed' && filled) {
+      confirmed.add(name)
+      if (slot.source === 'TRIP') continue
+      known.push({
+        name,
+        label: constraintLabel(name),
+        display: formatSlotValue(name, slot.value),
+        state: slot.state,
+        tone: 'confirmed',
+        stateLabel: '已确认',
+        source: slot.source,
+      })
+    }
+  }
+  const pending = CREATION_AUTO_ASKED.filter((name) => !confirmed.has(name)).map((name) => constraintLabel(name))
+  return { known, pending }
+}

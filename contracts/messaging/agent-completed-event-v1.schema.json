@@ -34,10 +34,9 @@
     "payload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["summary", "itinerary"],
+      "required": ["summary"],
       "properties": {
         "summary": {"$ref": "#/$defs/summary"},
-        "itinerary": {"type": "object"},
         "slots": {
           "type": "object",
           "description": "Confirmed-slot projection for the apply flow (name -> {value, state}).",

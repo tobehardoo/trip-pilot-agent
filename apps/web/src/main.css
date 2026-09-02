@@ -27,10 +27,14 @@
     letter-spacing: 0;
   }
 
-  button:focus-visible,
+  button:focus-visible {
+    @apply outline-2 outline-tp-faint outline-offset-2;
+  }
+
+  /* 输入框聚焦不显示任何提醒色（无色） */
   input:focus-visible,
   select:focus-visible {
-    @apply outline-2 outline-primary-500 outline-offset-2;
+    outline: none;
   }
 
   /* Smooth scrolling for the whole page */

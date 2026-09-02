@@ -15,6 +15,8 @@ public record AgentCompletedEvent(
         OffsetDateTime occurredAt,
         Payload payload
 ) {
-    public record Payload(String summary, JsonNode itinerary, JsonNode slots) {
+    // AUDIT-01（归边 A）：Agent 对话框链不再携带完整 itinerary ——
+    // 权威行程由 Planner 管线生成并通过 PLANNING_COMPLETED 落库。
+    public record Payload(String summary, JsonNode slots) {
     }
 }

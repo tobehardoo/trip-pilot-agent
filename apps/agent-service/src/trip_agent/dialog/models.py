@@ -56,6 +56,9 @@ class TripContext(BaseModel):
     destination: str
     start_date: str | None = Field(default=None, alias="startDate")
     end_date: str | None = Field(default=None, alias="endDate")
+    # Composer 右侧出行设置（创建模式种入，travelers/budget 不再由 wizard 表单强问）
+    travelers: int | None = Field(default=None, ge=1, le=20)
+    budget_amount: int | None = Field(default=None, alias="budgetAmount", ge=100, le=1_000_000)
 
 
 class DialogueRequest(BaseModel):

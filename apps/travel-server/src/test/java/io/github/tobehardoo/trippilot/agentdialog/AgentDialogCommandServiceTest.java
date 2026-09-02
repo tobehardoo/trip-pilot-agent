@@ -34,6 +34,9 @@ class AgentDialogCommandServiceTest {
     private final UUID tripId = UUID.randomUUID();
     private final UUID eventId = UUID.randomUUID();
 
+    private static final HttpAgentDialogClient.TripContext TEST_TRIP_CONTEXT =
+            new HttpAgentDialogClient.TripContext("成都", "2026-10-01", "2026-10-04");
+
     @BeforeEach
     void setUp() {
         outboxMapper.written.clear();
@@ -45,7 +48,7 @@ class AgentDialogCommandServiceTest {
     @Test
     void startRunWritesAnAgentStartCommandThroughTheOutbox() throws Exception {
         AgentDialogCommandService.CommandQueued queued =
-                service.startRun(ownerId, tripId, eventId, "十一想去成都玩");
+                service.startRun(ownerId, tripId, eventId, "十一想去成都玩", TEST_TRIP_CONTEXT);
 
         assertThat(queued.eventId()).isEqualTo(eventId);
         assertThat(queued.status()).isEqualTo("QUEUED");
@@ -61,6 +64,13 @@ class AgentDialogCommandServiceTest {
         assertThat(envelope.path("userId").asText()).isEqualTo(ownerId.toString());
         assertThat(envelope.path("runId").isMissingNode()).isTrue();
         assertThat(envelope.path("payload").path("message").asText()).isEqualTo("十一想去成都玩");
+
+        // trip_context is injected into the AGENT_START payload
+        JsonNode tripContext = envelope.path("payload").path("tripContext");
+        assertThat(tripContext.isMissingNode()).isFalse();
+        assertThat(tripContext.path("destination").asText()).isEqualTo("成都");
+        assertThat(tripContext.path("start_date").asText()).isEqualTo("2026-10-01");
+        assertThat(tripContext.path("end_date").asText()).isEqualTo("2026-10-04");
     }
 
     @Test
@@ -83,14 +93,14 @@ class AgentDialogCommandServiceTest {
                 HttpStatus.NOT_FOUND, "TRIP_NOT_FOUND", "no trip"
         );
 
-        assertThatThrownBy(() -> service.startRun(ownerId, tripId, eventId, "十一想去成都玩"))
+        assertThatThrownBy(() -> service.startRun(ownerId, tripId, eventId, "十一想去成都玩", TEST_TRIP_CONTEXT))
                 .isInstanceOf(ApiException.class);
         assertThat(outboxMapper.written).isEmpty();
     }
 
     @Test
     void aBlankMessageIsRejectedWithoutWriting() {
-        assertThatThrownBy(() -> service.startRun(ownerId, tripId, eventId, "   "))
+        assertThatThrownBy(() -> service.startRun(ownerId, tripId, eventId, "   ", TEST_TRIP_CONTEXT))
                 .isInstanceOf(ApiException.class)
                 .extracting("status")
                 .isEqualTo(HttpStatus.BAD_REQUEST);
@@ -102,7 +112,7 @@ class AgentDialogCommandServiceTest {
         outboxMapper.duplicate = true;
 
         AgentDialogCommandService.CommandQueued queued =
-                service.startRun(ownerId, tripId, eventId, "十一想去成都玩");
+                service.startRun(ownerId, tripId, eventId, "十一想去成都玩", TEST_TRIP_CONTEXT);
 
         assertThat(queued.status()).isEqualTo("QUEUED");
     }
@@ -111,7 +121,7 @@ class AgentDialogCommandServiceTest {
     void aFailingOutboxInsertSurfacesAsIllegalState() {
         outboxMapper.rowsWritten = 0;
 
-        assertThatThrownBy(() -> service.startRun(ownerId, tripId, eventId, "十一想去成都玩"))
+        assertThatThrownBy(() -> service.startRun(ownerId, tripId, eventId, "十一想去成都玩", TEST_TRIP_CONTEXT))
                 .isInstanceOf(IllegalStateException.class);
     }
 

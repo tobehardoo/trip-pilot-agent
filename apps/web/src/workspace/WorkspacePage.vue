@@ -1,9 +1,14 @@
 <script setup lang="ts">
 // TripPilot Planning Intelligence — Workspace Shell 顶层装配。
 //
-// F-UI-11 Phase 2：真实 Agent + Planning + SSE 接入。
-// useAgentWorkspace 实例化于页面级别，CommandBar 调用其 send()。
-import { computed, onMounted, ref, watch } from 'vue'
+// Composer 交互重构（2026-09-02 design §1）：双模式。
+//   创建模式（无选中旅行）：中央悬浮 Composer + 创建对话（trip-less Plan C 通道），
+//     Required Context（目的地+日期）= 最小必填上下文，其余需求对话式补全；
+//     [开始规划] → createTripFromAgent → adoptTrip → 进入旅行模式并自动发起 kickoff run。
+//   旅行模式：现有三视图（draft/planning/completed）+ 底部 docked Composer
+//     （原 WorkspaceCommandBar 被 docked 形态吸收，同一组件不维护两套聊天框）。
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 
 import AuthView, { type AuthSubmission } from '../components/AuthView.vue'
@@ -13,27 +18,29 @@ import { useAgentWorkspace } from '../components/agent-workspace/useAgentWorkspa
 import WorkspaceHeader from './layout/WorkspaceHeader.vue'
 import WorkspaceSidebar from './layout/WorkspaceSidebar.vue'
 import WorkspaceContextPanel from './layout/WorkspaceContextPanel.vue'
-import WorkspaceCommandBar from './layout/WorkspaceCommandBar.vue'
-import ConstraintEditDrawer from './layout/ConstraintEditDrawer.vue'
 import ItineraryWorkspace from './plan/ItineraryWorkspace.vue'
-import TripDraftView from './plan/TripDraftView.vue'
+import TripLoadingState from './plan/TripLoadingState.vue'
 import TripOverview from './plan/TripOverview.vue'
 import TripRouteMap from './plan/TripRouteMap.vue'
-import NewTripDrawer from './layout/NewTripDrawer.vue'
-import EmptyState from '../components/ui/EmptyState.vue'
 import AgentDialog from './execution/AgentDialog.vue'
+import WorkspaceComposer from './composer/WorkspaceComposer.vue'
+import CreationTranscript from './composer/CreationTranscript.vue'
+import { useCreationSession } from './composer/useCreationSession'
 
 import { useTripStore } from './stores/tripStore'
-import type { CreateTripInput } from '../lib/api'
+import { createTripFromAgent } from '../lib/api'
+import { presentableError } from './lib/errors'
 
 const tripStore = useTripStore()
-const { trips, itinerary, selectTrip, createTrip, loadTrips, updateConstraints } = tripStore
+// setup store 的 ref 状态必须经 storeToRefs 解构才能保持响应式（直接解构拿到的是初始快照）
+const { trips } = storeToRefs(tripStore)
+const { itinerary, selectTrip, loadTrips, updateConstraints } = tripStore
 const session = useWorkspaceSession()
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-// ── Agent Workspace（Phase 2） ──────────────────────────────────
+// ── Agent Workspace（旅行模式对话，Phase 2 既有通道） ────────────
 const agent = useAgentWorkspace({
   tripId: () => tripStore.currentTripId ?? '',
   getToken: () => auth.accessToken,
@@ -42,6 +49,8 @@ const agent = useAgentWorkspace({
   applyConstraints: async (input) => {
     await updateConstraints(input)
   },
+  refreshTrip: () => tripStore.refreshCurrentTrip(),
+  tripStatus: () => tripStore.currentTrip?.status,
 })
 
 // F-UI-11 Phase 0：冷启动恢复会话；guest → AuthView。
@@ -57,11 +66,80 @@ const xlUp = window.matchMedia('(min-width: 1280px)')
 const drawerMode = ref(!lgUp.matches)
 const sidebarOpen = ref(lgUp.matches)
 const contextOpen = ref(xlUp.matches)
-const newTripOpen = ref(false)
-const editConstraintsOpen = ref(false)
+
+// ── 双模式 ──────────────────────────────────────────────────────
+const creationMode = computed(() => tripStore.currentTripId === null)
 
 /** 中间区渲染由当前旅行阶段推导（数据驱动，不再有"演示"切换） */
 const mainView = computed(() => tripStore.currentPhase ?? 'draft')
+
+// P0「假成功」门控：trip.status=COMPLETED 本身不足以渲染"已完成"视图。
+// 必须同时拿到**非空**的 itinerary.days，才呈现真实方案；否则显示加载/重试态，
+// 绝不展示"旅行方案已经完成，共 0 天"这种空结果完成的假成功。
+const completedItineraryReady = computed(() =>
+  tripStore.currentPhase === 'completed'
+  && Boolean(tripStore.itinerary)
+  && tripStore.itinerary!.days.length > 0,
+)
+const tripCompletedNoData = computed(() =>
+  tripStore.currentPhase === 'completed' && !completedItineraryReady.value,
+)
+
+function reloadItinerary(): void {
+  const id = tripStore.currentTripId
+  if (id) void tripStore.loadItinerary(id)
+}
+
+// ── 创建会话（Composer 前置对话）+ Required Context ─────────────
+const creation = useCreationSession()
+
+const requiredContext = ref<{
+  destination: string | null
+  region: { provinceCode: string; cityCode: string } | null
+  startDate: string | null
+  endDate: string | null
+}>({ destination: null, region: null, startDate: null, endDate: null })
+
+// Composer 右下出行设置：人数/预算（随每轮 tripContext 提交；null=未填）
+const travelers = ref<number | null>(null)
+const budget = ref<number | null>(null)
+
+const creationStarted = computed(() => creation.reply.value !== null)
+const chipsLocked = computed(() => creationStarted.value)
+const requiredOk = computed(() =>
+  Boolean(requiredContext.value.destination)
+  && Boolean(requiredContext.value.startDate && requiredContext.value.endDate),
+)
+const creationReady = computed(() => creation.reply.value?.ready === true && requiredOk.value)
+const creatingTrip = ref(false)
+const startError = ref<string | null>(null)
+
+const creationHint = computed(() => {
+  if (startError.value) return startError.value
+  if (creatingTrip.value) return '正在创建旅行……'
+  if (!requiredOk.value && !creationStarted.value) return '先填写目的地和日期，就可以开始和 TripPilot 聊。'
+  if (requiredOk.value && creationStarted.value && (travelers.value == null || budget.value == null))
+    return '还要填一下右下角的出行人数和预算，就可以开始规划。'
+  return null
+})
+
+const taskTitle = computed(() => {
+  if (tripStore.currentTrip) return tripStore.currentTrip.title
+  const dest = requiredContext.value.destination
+  return dest ? `${dest} · 新旅行` : '新旅行'
+})
+
+function shortDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const parts = iso.split('-')
+  return parts.length === 3 ? `${parts[1]}/${parts[2]}` : (iso ?? '')
+}
+
+const dockContextLabel = computed(() => {
+  const trip = tripStore.currentTrip
+  if (!trip) return ''
+  return `${trip.destination} · ${shortDate(trip.startDate)} → ${shortDate(trip.endDate)}`
+})
 
 // URL → 选中旅行（刷新/直链恢复）
 watch(
@@ -98,6 +176,34 @@ xlUp.addEventListener('change', (event) => {
   if (!drawerMode.value) contextOpen.value = event.matches
 })
 
+// ── 规划阶段轮询 ──────────────────────────────────────────────────
+// AGENT_COMPLETED（SSE）与后端 itinerary 落库（RabbitMQ 异步消费）存在时差：
+// run 终态事件先到时 trip.status 可能还是 PLANNING，且此后不再有事件触发
+// 刷新。planning 阶段轮询重取 trip，确保状态流转后视图切到 completed。
+let planningPollTimer: number | null = null
+
+function stopPlanningPoll(): void {
+  if (planningPollTimer !== null) {
+    clearInterval(planningPollTimer)
+    planningPollTimer = null
+  }
+}
+
+watch(
+  () => tripStore.currentPhase,
+  (phase) => {
+    stopPlanningPoll()
+    if (phase === 'planning') {
+      planningPollTimer = window.setInterval(() => {
+        void tripStore.refreshCurrentTrip()
+      }, 4000)
+    }
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(stopPlanningPoll)
+
 function toggleSidebar() {
   if (drawerMode.value && !sidebarOpen.value) contextOpen.value = false
   sidebarOpen.value = !sidebarOpen.value
@@ -122,24 +228,77 @@ function handleSelectTrip(id: string) {
   closeDrawersOnNavigate()
 }
 
-/** 新建旅行：创建（store 自动追加并选中）+ URL 同步 */
-async function handleTripCreated(input: CreateTripInput) {
-  const created = await createTrip(input)
-  router.push(`/workspace/trips/${created.id}`)
-  newTripOpen.value = false
-  closeDrawersOnNavigate()
+/** [+ 新建旅行]：切换到创建模式（中央 Composer），不再打开 Drawer。 */
+function handleNewTrip() {
+  if (tripStore.currentTripId !== null) {
+    tripStore.clearCurrentTrip()
+    if (route.params.tripId) router.push('/workspace')
+  }
 }
 
-/** 编辑约束保存后关闭抽屉 */
-function handleConstraintsSaved() {
-  editConstraintsOpen.value = false
-  closeDrawersOnNavigate()
+function handleUpdateDestination(name: string, region: { provinceCode: string; cityCode: string } | null) {
+  requiredContext.value.destination = name
+  requiredContext.value.region = region
 }
 
-/** 打开编辑约束抽屉 */
-function openEditConstraints() {
-  if (!tripStore.currentTrip) return
-  editConstraintsOpen.value = true
+function handleUpdateDates(start: string, end: string) {
+  requiredContext.value.startDate = start
+  requiredContext.value.endDate = end
+}
+
+async function handleCreationSend(text: string) {
+  if (!requiredOk.value || creation.sending.value) return
+  startError.value = null
+  await creation.send(text, {
+    destination: requiredContext.value.destination as string,
+    startDate: requiredContext.value.startDate,
+    endDate: requiredContext.value.endDate,
+    travelers: travelers.value,
+    budgetAmount: budget.value,
+  })
+}
+
+function handleUpdateTravelers(value: number | null) {
+  travelers.value = value
+}
+function handleUpdateBudget(value: number | null) {
+  budget.value = value
+}
+
+/** [重新开始]：新会话；chips 解锁但保留已填内容。 */
+function handleResetCreation() {
+  creation.reset()
+  startError.value = null
+}
+
+/** 处理创建对话中的选项点击，拦截「开始规划」直接触发创建流程 */
+function handleCreationOption(option: { action: string; label: string; value?: unknown }) {
+  if (option.value === 'START_PLANNING') {
+    handleStartPlanning()
+    return
+  }
+  creation.choose(option as any)
+}
+
+/**
+ * [开始规划]：从已确认槽位建旅行，然后直接启动规划，不显示 draft 页面。
+ */
+async function handleStartPlanning() {
+  if (!creationReady.value || creatingTrip.value || !creation.sessionId.value) return
+  creatingTrip.value = true
+  startError.value = null
+  try {
+    const sessionId = creation.sessionId.value
+    const created = await session.withAccessToken((token) => createTripFromAgent(token, sessionId))
+    creation.reset()
+    tripStore.adoptTrip(created)
+    // 立即启动规划，让视图直接进入 planning 状态
+    await agent.send('开始规划这次旅行')
+  } catch (cause) {
+    startError.value = presentableError(cause)
+  } finally {
+    creatingTrip.value = false
+  }
 }
 </script>
 
@@ -169,7 +328,7 @@ function openEditConstraints() {
   <!-- 已登录：Workspace 四区壳 -->
   <div v-else class="flex h-screen min-h-0 flex-col overflow-hidden bg-tp-bg" data-testid="workspace-shell">
     <WorkspaceHeader
-      :task-title="tripStore.currentTrip?.title ?? '未选择旅行'"
+      :task-title="taskTitle"
       :sidebar-visible="sidebarOpen"
       :context-visible="contextOpen"
       :phase="tripStore.currentPhase"
@@ -198,43 +357,120 @@ function openEditConstraints() {
           :loading="tripStore.listStatus === 'loading'"
           :error="tripStore.listError"
           @select-trip="handleSelectTrip"
-          @new-trip="newTripOpen = true"
+          @new-trip="handleNewTrip"
           @retry="loadTrips"
         />
       </div>
 
       <!-- 中：工作区 -->
       <main class="min-w-0 flex-1 overflow-y-auto bg-tp-bg" data-testid="workspace-main">
-        <!-- 规划中 -->
-        <div v-if="mainView === 'planning' && tripStore.currentTrip" class="mx-auto w-full max-w-3xl px-6 py-5">
-          <TripOverview :trip="tripStore.currentTrip" />
-          <p class="m-0 mt-2 flex items-center gap-1.5 text-xs leading-4 text-tp-sub" data-testid="planning-status-line">
-            <span class="inline-block h-1.5 w-1.5 rounded-full bg-tp-run animate-pulse" aria-hidden="true" />
-            TripPilot 正在规划你的旅行
-          </p>
-          <div class="mt-4 border-t border-tp-div" role="separator" />
-          <TripRouteMap :trip="tripStore.currentTrip" :generating="true" />
-          <div class="mt-4 border-t border-tp-div" role="separator" />
-          <!-- 真实 Agent 对话 -->
-          <div class="mt-4">
-            <AgentDialog :agent="agent" />
+        <!-- ── 创建模式：中央悬浮 Composer + 创建对话 ─────────────── -->
+        <div v-if="creationMode" class="flex min-h-full flex-col" data-testid="workspace-creation">
+          <div class="min-h-0 flex-1">
+            <!-- 空会话：视觉核心 = 引导 + Composer 大量留白 -->
+            <div v-if="!creationStarted" class="mx-auto w-full max-w-2xl px-6 pb-2 pt-[16vh] text-center">
+              <p class="m-0 mb-2 flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.12em] text-tp-faint">
+                <span class="inline-block h-px w-5 bg-tp-line" aria-hidden="true" />
+                TripPilot
+                <span class="inline-block h-px w-5 bg-tp-line" aria-hidden="true" />
+              </p>
+              <h1 class="m-0 text-xl font-semibold tracking-tight text-tp-ink">开始规划一次旅行</h1>
+              <p class="m-0 mt-2 text-xs leading-4 text-tp-mute">先告诉我目的地和日期，其余想法直接说出来就好。</p>
+            </div>
+            <!-- 创建对话流 -->
+            <div v-else class="mx-auto w-full max-w-2xl px-6 pb-3 pt-5">
+              <CreationTranscript
+                :messages="creation.reply.value?.messages ?? []"
+                :sending="creation.sending.value"
+                @option="handleCreationOption"
+              />
+            </div>
+          </div>
+          <!-- 悬浮 Composer（sticky：内容增长时锚定底部） -->
+          <div class="sticky bottom-0 bg-tp-bg">
+            <div class="mx-auto w-full max-w-2xl px-6 pb-5 pt-2">
+              <WorkspaceComposer
+                variant="floating"
+                :destination="requiredContext.destination"
+                :start-date="requiredContext.startDate"
+                :end-date="requiredContext.endDate"
+                :chips-locked="chipsLocked"
+                :ready="creationReady"
+                :sending="creation.sending.value || creatingTrip"
+                :travelers="travelers"
+                :budget="budget"
+                @send="handleCreationSend"
+                @start-planning="handleStartPlanning"
+                @reset-creation="handleResetCreation"
+                @update-destination="handleUpdateDestination"
+                @update-dates="handleUpdateDates"
+                @update-travelers="handleUpdateTravelers"
+                @update-budget="handleUpdateBudget"
+              />
+              <p
+                v-if="creationHint"
+                class="m-0 mt-2 text-[11px] leading-4 text-tp-mute"
+                data-testid="composer-hint"
+              >
+                {{ creationHint }}
+              </p>
+            </div>
           </div>
         </div>
 
-        <!-- 已完成 -->
-        <ItineraryWorkspace v-else-if="mainView === 'completed' && tripStore.currentTrip" :trip="tripStore.currentTrip" :itinerary="itinerary" />
+        <!-- ── 旅行模式视图 ─────────────── -->
+        <template v-else>
+          <!-- 规划中 / 刚创建（draft 也走规划视图，不显示单独的 draft 页面） -->
+          <div v-if="(mainView === 'planning' || mainView === 'draft') && tripStore.currentTrip" class="mx-auto w-full max-w-3xl px-6 py-5">
+            <TripOverview :trip="tripStore.currentTrip" />
+            <p class="m-0 mt-2 flex items-center gap-1.5 text-xs leading-4 text-tp-sub" data-testid="planning-status-line">
+              <span class="inline-block h-1.5 w-1.5 rounded-full bg-tp-run animate-pulse" aria-hidden="true" />
+              TripPilot 正在规划你的旅行
+            </p>
+            <div class="mt-4 border-t border-tp-div" role="separator" />
+            <TripRouteMap :trip="tripStore.currentTrip" :generating="true" />
+            <div class="mt-4 border-t border-tp-div" role="separator" />
+            <!-- 真实 Agent 对话 -->
+            <div class="mt-4">
+              <AgentDialog :agent="agent" />
+            </div>
+          </div>
 
-        <!-- 未规划 draft -->
-        <TripDraftView
-          v-else-if="mainView === 'draft' && tripStore.currentTrip"
-          :trip="tripStore.currentTrip"
-          @edit-constraints="openEditConstraints"
-        />
+          <!-- 已完成（仅当方案数据真实就绪的非空行程；否则见下方加载/重试态） -->
+          <ItineraryWorkspace
+            v-else-if="completedItineraryReady && tripStore.currentTrip"
+            :trip="tripStore.currentTrip"
+            :itinerary="tripStore.itinerary"
+          />
 
-        <!-- 兜底 -->
-        <div v-else class="mx-auto w-full max-w-2xl px-6 py-10">
-          <EmptyState title="未选择旅行" description="从左侧选择一个旅行，或新建一个旅行开始。" />
-        </div>
+          <!-- COMPLETED 但方案未就绪：不展示"已完成共0天"假成功，改为加载/重试 -->
+          <div v-else-if="tripCompletedNoData && tripStore.currentTrip" class="mx-auto w-full max-w-2xl px-6 py-10">
+            <TripLoadingState
+              :loading="tripStore.itineraryStatus === 'loading'"
+              :error="tripStore.itineraryError"
+              @retry="reloadItinerary"
+            />
+          </div>
+
+          <!-- 旅行加载中 / 出错（原兜底空态细分） -->
+          <div v-else-if="tripStore.detailStatus === 'loading'" class="mx-auto w-full max-w-2xl px-6 py-10">
+            <p class="m-0 flex items-center gap-2 text-xs leading-4 text-tp-sub" data-testid="workspace-trip-loading">
+              <span class="inline-block h-1.5 w-1.5 rounded-full bg-tp-dot animate-pulse" aria-hidden="true" />
+              正在加载旅行……
+            </p>
+          </div>
+          <div v-else-if="tripStore.detailError" class="mx-auto w-full max-w-2xl px-6 py-10">
+            <p class="m-0 text-xs leading-4 text-tp-mute" data-testid="workspace-trip-error">{{ tripStore.detailError }}</p>
+            <button
+              type="button"
+              class="mt-2 flex h-7 items-center rounded-md border border-tp-line bg-white px-3 text-xs text-tp-sub transition-colors hover:bg-tp-hover hover:text-tp-ink"
+              data-testid="workspace-trip-retry"
+              @click="selectTrip(tripStore.currentTripId as string)"
+            >
+              重试
+            </button>
+          </div>
+        </template>
       </main>
 
       <!-- 右：Context Inspector -->
@@ -242,21 +478,29 @@ function openEditConstraints() {
         v-if="contextOpen"
         class="absolute inset-y-0 right-0 z-30 border-l border-tp-line xl:static xl:z-auto xl:border-l-0"
       >
-        <WorkspaceContextPanel :trip="tripStore.currentTrip" @edit-constraints="openEditConstraints" />
+        <WorkspaceContextPanel
+          :trip="tripStore.currentTrip"
+          :creation="creationMode ? {
+            destination: requiredContext.destination,
+            startDate: requiredContext.startDate,
+            endDate: requiredContext.endDate,
+            started: creationStarted,
+            slots: creation.reply.value?.slots ?? null,
+          } : null"
+        />
       </div>
     </div>
 
-    <!-- 底：Agent Command Bar（接入真实 Agent） -->
-    <WorkspaceCommandBar :disabled="agent.inputDisabled.value" @submit="agent.send" />
-
-    <!-- 新建旅行抽屉 -->
-    <NewTripDrawer :open="newTripOpen" @close="newTripOpen = false" @created="handleTripCreated" />
-
-    <!-- 编辑约束抽屉 -->
-    <ConstraintEditDrawer
-      :open="editConstraintsOpen"
-      :trip="tripStore.currentTrip"
-      @close="editConstraintsOpen = false"
-    />
+    <!-- 底：旅行模式 docked Composer（创建模式由中央悬浮 Composer 接管） -->
+    <footer v-if="!creationMode" class="shrink-0 border-t border-tp-line bg-tp-panel px-4 py-2 shadow-[0_-6px_16px_-10px_rgb(0_0_0/0.12)]">
+      <div class="mx-auto w-full max-w-2xl">
+        <WorkspaceComposer
+          variant="docked"
+          :disabled="agent.inputDisabled.value"
+          :context-label="dockContextLabel"
+          @send="agent.send"
+        />
+      </div>
+    </footer>
   </div>
 </template>

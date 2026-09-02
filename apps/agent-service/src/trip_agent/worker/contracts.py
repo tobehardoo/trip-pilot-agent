@@ -267,7 +267,10 @@ class GuideFactEvidence(InboundMessageModel):
         "PASTED_TEXT",
         "TEXT_FILE",
         "XIAOHONGSHU_SHARED_TEXT",
+        "IMAGE_OCR",
         "CITY_INTELLIGENCE",
+        "OFFICIAL_ATTRACTION",
+        "OFFICIAL_TOURISM",
     ] = "PUBLIC_GUIDE_URL"
     source_url: AnyHttpUrl
     source_host: Annotated[
@@ -1606,9 +1609,15 @@ AgentMessageText = Annotated[
 
 
 class AgentStartPayload(InboundMessageModel):
-    """The user's opening utterance — the loop's evidence source."""
+    """The user's opening utterance — the loop's evidence source.
+
+    ``trip_context`` carries the trip entity's destination/dates as read-only
+    TRIP facts so the worker seeds the dialog instead of re-asking what the
+    user already set during the creation flow.
+    """
 
     message: AgentMessageText
+    trip_context: dict[str, str] | None = Field(default=None, alias="tripContext")
 
 
 class AgentStartCommand(InboundMessageModel):
@@ -1685,10 +1694,14 @@ class AgentSlotView(MessageModel):
 
 
 class AgentCompletedPayload(MessageModel):
-    """The emitted itinerary plus a human-readable summary."""
+    """AGENT_COMPLETED 事件载荷（AUDIT-01 归边后，不再携带完整 itinerary）。
+
+    Agent 对话框链只声明「对话语义」：一段人类可读摘要 + 已确认槽位投影。
+    权威行程由 Planner 管线生成并通过 PLANNING_COMPLETED 落库；此事件若再
+    携带 itinerary.days 会与管线形成两套权威行程，属审计发现的冗余/分叉。
+    """
 
     summary: AgentSummaryText
-    itinerary: Itinerary
     slots: dict[str, AgentSlotView] | None = None
 
 

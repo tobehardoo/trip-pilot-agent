@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 登录/注册页（F-UI-11：Workspace 风格，tp-* 设计令牌）。
 // 极简居中卡片，无渐变、无大圆角、无彩色强调。
-import { Compass, LoaderCircle, LockKeyhole, LogIn, Mail, UserPlus } from 'lucide-vue-next'
+import { Compass, Eye, EyeOff, LoaderCircle, LockKeyhole, LogIn, Mail, UserPlus } from 'lucide-vue-next'
 import { ref } from 'vue'
 
 export interface AuthSubmission {
@@ -24,6 +24,7 @@ const mode = ref<'login' | 'register'>('login')
 const email = ref('')
 const password = ref('')
 const displayName = ref('')
+const showPassword = ref(false)
 
 function switchMode(nextMode: 'login' | 'register') {
   mode.value = nextMode
@@ -91,13 +92,22 @@ function submit() {
             <input
               id="password"
               v-model="password"
-              type="password"
+              :type="showPassword ? 'text' : 'password'"
               :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
               minlength="10"
               maxlength="72"
               required
               class="h-8 min-w-0 flex-1 border-0 bg-transparent text-xs text-tp-ink outline-0 placeholder:text-tp-faint"
             />
+            <button
+              type="button"
+              class="flex shrink-0 cursor-pointer items-center border-0 bg-transparent p-0.5 text-tp-mute transition-colors hover:text-tp-ink"
+              :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+              @click="showPassword = !showPassword"
+            >
+              <EyeOff v-if="showPassword" :size="14" aria-hidden="true" />
+              <Eye v-else :size="14" aria-hidden="true" />
+            </button>
           </div>
           <span v-if="mode === 'register'" class="mt-1 block text-[11px] leading-4 text-tp-mute">至少 10 个字符</span>
         </div>

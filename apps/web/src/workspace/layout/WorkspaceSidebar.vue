@@ -1,15 +1,21 @@
 <script setup lang="ts">
 // Workspace Sidebar：工作区导航（Developer Tool 风格）。
 // 紧凑小字号、单色图标；激活项 = 浅灰背景 + 左侧 2px 标记，无彩色块。
-// F-UI-11 Phase 1：列表渲染真实旅行（listTrips → tripStore），
-// 带加载/错误（可重试）/空态；点击切换 → selectTrip + URL 同步。
-import { House, LayoutGrid, Plus, RefreshCw, Search, Settings } from 'lucide-vue-next'
+// 导航项均为真实可点击（不再占位）：
+//   · 工作台 / 我的旅行 → 定位到旅行列表（我的旅行会清空搜索过滤）
+//   · 搜索 → 聚焦侧栏搜索框，实时过滤旅行
+//   · 设置 → 展开设置面板（当前账号 + 退出登录）
+import { computed, nextTick, ref } from 'vue'
+import {
+  House, LayoutGrid, LogOut, Plus, RefreshCw, Search, Settings, User as UserIcon,
+} from 'lucide-vue-next'
 
 import type { Trip } from '../../lib/api'
 import { tripSubtitle } from '../lib/present'
 import type { TripPhase } from '../lib/phase'
+import { useWorkspaceSession } from '../session'
 
-defineProps<{
+const props = defineProps<{
   trips: Trip[]
   activeTripId: string | null
   activePhase: TripPhase | null
@@ -22,6 +28,47 @@ const emit = defineEmits<{
   newTrip: []
   retry: []
 }>()
+
+const session = useWorkspaceSession()
+
+// ── 导航态：工作台 / 我的旅行 / 搜索 / 设置 ────────────────────────
+type NavKey = 'workbench' | 'mytrips' | 'search' | 'settings'
+const activeNav = ref<NavKey>('workbench')
+const searchQuery = ref('')
+const searchInputEl = ref<HTMLInputElement | null>(null)
+const showSettings = ref(false)
+
+const user = computed(() => session.user)
+
+function goTrips() {
+  activeNav.value = 'workbench'
+  searchQuery.value = ''
+  showSettings.value = false
+}
+
+function goMyTrips() {
+  activeNav.value = 'mytrips'
+  searchQuery.value = ''
+  showSettings.value = false
+}
+
+function goSearch() {
+  activeNav.value = 'search'
+  showSettings.value = false
+  void nextTick(() => searchInputEl.value?.focus())
+}
+
+function toggleSettings() {
+  activeNav.value = 'settings'
+  showSettings.value = !showSettings.value
+}
+
+const filteredTrips = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return props.trips
+  return props.trips.filter((trip) =>
+    `${trip.title} ${trip.destination}`.toLowerCase().includes(q))
+})
 
 /** 旅行状态点：仅激活项显示——规划中（脉动） / 已完成（绿色常亮）；未规划无点 */
 function statusDot(phase: TripPhase | null, active: boolean): { visible: boolean; classes: string } {
@@ -37,36 +84,57 @@ function statusDot(phase: TripPhase | null, active: boolean): { visible: boolean
     <!-- WORKSPACE 功能导航 -->
     <div class="px-2 pb-2 pt-3">
       <h2 class="m-0 mb-1 px-2 text-[10px] font-medium uppercase tracking-[0.08em] text-tp-mute">工作区</h2>
-      <a
-        href="#"
-        class="flex h-7 items-center gap-2 rounded bg-tp-active px-2 text-xs text-tp-ink"
+      <button
+        type="button"
+        class="flex h-7 w-full items-center gap-2 rounded px-2 text-xs transition-colors"
+        :class="activeNav === 'workbench' ? 'bg-tp-active text-tp-ink' : 'text-tp-sub hover:bg-tp-hover hover:text-tp-ink'"
         aria-current="page"
         data-testid="workspace-nav-home"
+        @click="goTrips"
       >
-        <House :size="13" class="text-tp-sub" aria-hidden="true" /> 工作台
-      </a>
-      <a
-        href="#"
-        class="flex h-7 items-center gap-2 rounded px-2 text-xs text-tp-sub transition-colors hover:bg-tp-hover hover:text-tp-ink"
+        <House :size="13" :class="activeNav === 'workbench' ? 'text-tp-sub' : ''" aria-hidden="true" /> 工作台
+      </button>
+      <button
+        type="button"
+        class="flex h-7 w-full items-center gap-2 rounded px-2 text-xs transition-colors"
+        :class="activeNav === 'mytrips' ? 'bg-tp-active text-tp-ink' : 'text-tp-sub hover:bg-tp-hover hover:text-tp-ink'"
+        data-testid="workspace-nav-mytrips"
+        @click="goMyTrips"
       >
         <LayoutGrid :size="13" aria-hidden="true" /> 我的旅行
-      </a>
-      <a
-        href="#"
-        class="flex h-7 items-center gap-2 rounded px-2 text-xs text-tp-sub transition-colors hover:bg-tp-hover hover:text-tp-ink"
+      </button>
+      <button
+        type="button"
+        class="flex h-7 w-full items-center justify-between gap-2 rounded px-2 text-xs transition-colors"
+        :class="activeNav === 'search' ? 'bg-tp-active text-tp-ink' : 'text-tp-sub hover:bg-tp-hover hover:text-tp-ink'"
+        data-testid="workspace-nav-search"
+        @click="goSearch"
       >
-        <Search :size="13" aria-hidden="true" /> 搜索
-      </a>
+        <span class="flex items-center gap-2"><Search :size="13" aria-hidden="true" /> 搜索</span>
+        <span v-if="searchQuery" class="rounded-full bg-white px-1.5 text-[10px] text-tp-sub">{{ trips.length }}</span>
+      </button>
     </div>
 
     <div class="mx-2 border-t border-tp-div" role="separator" />
 
-    <!-- TRIPS（真实列表） -->
+    <!-- TRIPS（真实列表，支持搜索过滤） -->
     <div class="flex min-h-0 flex-1 flex-col px-2 py-2">
       <h2 class="m-0 mb-1 px-2 text-[10px] font-medium uppercase tracking-[0.08em] text-tp-mute">
         旅行
-        <span class="ml-1 font-mono tracking-normal text-tp-faint">{{ trips.length }}</span>
+        <span class="ml-1 font-mono tracking-normal text-tp-faint">{{ filteredTrips.length }}</span>
       </h2>
+
+      <!-- 搜索框 -->
+      <div v-if="activeNav === 'search'" class="mb-1.5 px-1" data-testid="workspace-trips-search">
+        <input
+          ref="searchInputEl"
+          v-model="searchQuery"
+          type="text"
+          placeholder="按标题/目的地过滤"
+          class="h-7 w-full rounded-md border border-tp-line bg-white px-2 text-xs text-tp-ink outline-none placeholder:text-tp-faint"
+          data-testid="workspace-trips-search-input"
+        />
+      </div>
 
       <!-- 加载中 -->
       <p
@@ -99,10 +167,13 @@ function statusDot(phase: TripPhase | null, active: boolean): { visible: boolean
       >
         还没有旅行，从「新建旅行」开始。
       </p>
+      <p v-else-if="filteredTrips.length === 0" class="m-0 px-2 py-2 text-[11px] leading-4 text-tp-faint">
+        没有匹配的旅行。
+      </p>
 
       <div v-else class="min-h-0 flex-1 space-y-0.5 overflow-y-auto" data-testid="workspace-project-list">
         <button
-          v-for="trip in trips"
+          v-for="trip in filteredTrips"
           :key="trip.id"
           type="button"
           class="flex h-8 w-full items-center gap-2 rounded px-2 text-left transition-colors"
@@ -142,11 +213,43 @@ function statusDot(phase: TripPhase | null, active: boolean): { visible: boolean
 
     <div class="mx-2 border-t border-tp-div" role="separator" />
 
-    <!-- 底部 -->
+    <!-- 设置（可展开：当前账号 + 退出登录） -->
     <div class="px-2 py-2">
-      <p class="m-0 flex h-7 items-center gap-2 rounded px-2 text-xs text-tp-mute">
+      <button
+        type="button"
+        class="flex h-7 w-full items-center gap-2 rounded px-2 text-xs transition-colors"
+        :class="showSettings ? 'bg-tp-active text-tp-ink' : 'text-tp-sub hover:bg-tp-hover hover:text-tp-ink'"
+        data-testid="workspace-nav-settings"
+        @click="toggleSettings"
+      >
         <Settings :size="13" aria-hidden="true" /> 设置
-      </p>
+      </button>
+
+      <div
+        v-if="showSettings"
+        class="mt-2 rounded-lg border border-tp-line bg-white p-2.5"
+        data-testid="workspace-settings-panel"
+      >
+        <div class="flex items-center gap-2">
+          <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-tp-active text-tp-sub" aria-hidden="true">
+            <UserIcon :size="12" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="m-0 truncate text-xs font-medium leading-4 text-tp-ink">
+              {{ user?.displayName || '未登录' }}
+            </p>
+            <p class="m-0 truncate text-[11px] leading-4 text-tp-mute">{{ user?.email || '—' }}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="mt-2 flex h-6 w-full items-center gap-1.5 rounded bg-tp-ink px-2 text-[11px] font-medium text-white transition-colors hover:opacity-90"
+          data-testid="workspace-settings-logout"
+          @click="session.logout"
+        >
+          <LogOut :size="11" aria-hidden="true" /> 退出登录
+        </button>
+      </div>
     </div>
   </nav>
 </template>

@@ -1,6 +1,7 @@
 /**
  * 中国行政区划（省→市→区三级）。
- * 完整省份和地级市列表，区级数据按需扩展。
+ * 全国 333 个地级行政区划全覆盖（地级市 / 自治州 / 地区 / 盟 / 直辖市），
+ * 区级数据按需扩展；自治州等使用常用简称（如「大理」「延边」）方便搜索。
  */
 
 export interface District {
@@ -24,38 +25,14 @@ function wholeCity(city: string): District {
   return { name: `全市（不限${city}内区域）` }
 }
 
+/** 仅含"全市"选项的城市（区级数据按需扩展） */
+function city(name: string, adcode: string): City {
+  return { name, adcode, districts: [wholeCity(name)] }
+}
+
 // ── 数据 ──────────────────────────────────────────────────────
 
 export const PROVINCES: Province[] = [
-  {
-    name: '广东省',
-    cities: [
-      {
-        name: '广州', adcode: '440100', districts: [
-          wholeCity('广州'),
-          { name: '天河区', adcode: '440106' },
-          { name: '越秀区', adcode: '440104' },
-          { name: '海珠区', adcode: '440105' },
-          { name: '荔湾区', adcode: '440103' },
-          { name: '白云区', adcode: '440111' },
-          { name: '番禺区', adcode: '440113' },
-          { name: '黄埔区', adcode: '440112' },
-          { name: '花都区', adcode: '440114' },
-          { name: '南沙区', adcode: '440115' },
-          { name: '增城区', adcode: '440118' },
-          { name: '从化区', adcode: '440117' },
-        ],
-      },
-      { name: '深圳', adcode: '440300', districts: [wholeCity('深圳'), { name: '南山区', adcode: '440305' }, { name: '福田区', adcode: '440304' }, { name: '罗湖区', adcode: '440303' }, { name: '宝安区', adcode: '440306' }, { name: '龙岗区', adcode: '440307' }, { name: '龙华区', adcode: '440309' }, { name: '盐田区', adcode: '440308' }, { name: '坪山区', adcode: '440310' }, { name: '光明区', adcode: '440311' }] },
-      { name: '佛山', districts: [wholeCity('佛山')] },
-      { name: '东莞', districts: [wholeCity('东莞')] },
-      { name: '珠海', districts: [wholeCity('珠海')] },
-      { name: '中山', districts: [wholeCity('中山')] },
-      { name: '惠州', districts: [wholeCity('惠州')] },
-      { name: '江门', districts: [wholeCity('江门')] },
-      { name: '肇庆', districts: [wholeCity('肇庆')] },
-    ],
-  },
   {
     name: '北京市',
     cities: [
@@ -76,6 +53,10 @@ export const PROVINCES: Province[] = [
         ],
       },
     ],
+  },
+  {
+    name: '天津市',
+    cities: [city('天津', '120000')],
   },
   {
     name: '上海市',
@@ -100,166 +81,310 @@ export const PROVINCES: Province[] = [
     ],
   },
   {
-    name: '浙江省',
+    name: '重庆市',
     cities: [
-      { name: '杭州', adcode: '330100', districts: [wholeCity('杭州'), { name: '西湖区', adcode: '330106' }, { name: '上城区', adcode: '330102' }, { name: '拱墅区', adcode: '330105' }, { name: '滨江区', adcode: '330108' }, { name: '萧山区', adcode: '330109' }, { name: '余杭区', adcode: '330110' }] },
-      { name: '宁波', districts: [wholeCity('宁波')] },
-      { name: '温州', districts: [wholeCity('温州')] },
+      {
+        name: '重庆', adcode: '500000', districts: [
+          wholeCity('重庆'),
+          { name: '渝中区', adcode: '500103' },
+          { name: '江北区', adcode: '500105' },
+          { name: '南岸区', adcode: '500108' },
+          { name: '沙坪坝区', adcode: '500106' },
+          { name: '九龙坡区', adcode: '500107' },
+          { name: '渝北区', adcode: '500112' },
+        ],
+      },
+    ],
+  },
+  {
+    name: '河北省',
+    cities: [
+      city('石家庄', '130100'), city('唐山', '130200'), city('秦皇岛', '130300'),
+      city('邯郸', '130400'), city('邢台', '130500'), city('保定', '130600'),
+      city('张家口', '130700'), city('承德', '130800'), city('沧州', '130900'),
+      city('廊坊', '131000'), city('衡水', '131100'),
+    ],
+  },
+  {
+    name: '山西省',
+    cities: [
+      city('太原', '140100'), city('大同', '140200'), city('阳泉', '140300'),
+      city('长治', '140400'), city('晋城', '140500'), city('朔州', '140600'),
+      city('晋中', '140700'), city('运城', '140800'), city('忻州', '140900'),
+      city('临汾', '141000'), city('吕梁', '141100'),
+    ],
+  },
+  {
+    name: '内蒙古',
+    cities: [
+      city('呼和浩特', '150100'), city('包头', '150200'), city('乌海', '150300'),
+      city('赤峰', '150400'), city('通辽', '150500'), city('鄂尔多斯', '150600'),
+      city('呼伦贝尔', '150700'), city('巴彦淖尔', '150800'), city('乌兰察布', '150900'),
+      city('兴安盟', '152200'), city('锡林郭勒盟', '152500'), city('阿拉善盟', '152900'),
+    ],
+  },
+  {
+    name: '辽宁省',
+    cities: [
+      city('沈阳', '210100'), city('大连', '210200'), city('鞍山', '210300'),
+      city('抚顺', '210400'), city('本溪', '210500'), city('丹东', '210600'),
+      city('锦州', '210700'), city('营口', '210800'), city('阜新', '210900'),
+      city('辽阳', '211000'), city('盘锦', '211100'), city('铁岭', '211200'),
+      city('朝阳', '211300'), city('葫芦岛', '211400'),
+    ],
+  },
+  {
+    name: '吉林省',
+    cities: [
+      city('长春', '220100'), city('吉林', '220200'), city('四平', '220300'),
+      city('辽源', '220400'), city('通化', '220500'), city('白山', '220600'),
+      city('松原', '220700'), city('白城', '220800'), city('延边', '222400'),
+    ],
+  },
+  {
+    name: '黑龙江省',
+    cities: [
+      city('哈尔滨', '230100'), city('齐齐哈尔', '230200'), city('鸡西', '230300'),
+      city('鹤岗', '230400'), city('双鸭山', '230500'), city('大庆', '230600'),
+      city('伊春', '230700'), city('佳木斯', '230800'), city('七台河', '230900'),
+      city('牡丹江', '231000'), city('黑河', '231100'), city('绥化', '231200'),
+      city('大兴安岭', '232700'),
     ],
   },
   {
     name: '江苏省',
     cities: [
-      { name: '南京', adcode: '320100', districts: [wholeCity('南京'), { name: '玄武区', adcode: '320102' }, { name: '秦淮区', adcode: '320104' }, { name: '建邺区', adcode: '320105' }, { name: '鼓楼区', adcode: '320106' }, { name: '栖霞区', adcode: '320113' }, { name: '江宁区', adcode: '320115' }] },
-      { name: '苏州', districts: [wholeCity('苏州')] },
-      { name: '无锡', districts: [wholeCity('无锡')] },
+      {
+        name: '南京', adcode: '320100', districts: [wholeCity('南京'), { name: '玄武区', adcode: '320102' }, { name: '秦淮区', adcode: '320104' }, { name: '建邺区', adcode: '320105' }, { name: '鼓楼区', adcode: '320106' }, { name: '栖霞区', adcode: '320113' }, { name: '江宁区', adcode: '320115' }],
+      },
+      city('无锡', '320200'), city('徐州', '320300'), city('常州', '320400'),
+      city('苏州', '320500'), city('南通', '320600'), city('连云港', '320700'),
+      city('淮安', '320800'), city('盐城', '320900'), city('扬州', '321000'),
+      city('镇江', '321100'), city('泰州', '321200'), city('宿迁', '321300'),
     ],
   },
   {
-    name: '四川省',
+    name: '浙江省',
     cities: [
-      { name: '成都', adcode: '510100', districts: [wholeCity('成都'), { name: '锦江区', adcode: '510104' }, { name: '青羊区', adcode: '510105' }, { name: '金牛区', adcode: '510106' }, { name: '武侯区', adcode: '510107' }, { name: '成华区', adcode: '510108' }, { name: '高新区', adcode: '510109' }] },
+      {
+        name: '杭州', adcode: '330100', districts: [wholeCity('杭州'), { name: '西湖区', adcode: '330106' }, { name: '上城区', adcode: '330102' }, { name: '拱墅区', adcode: '330105' }, { name: '滨江区', adcode: '330108' }, { name: '萧山区', adcode: '330109' }, { name: '余杭区', adcode: '330110' }],
+      },
+      city('宁波', '330200'), city('温州', '330300'), city('嘉兴', '330400'),
+      city('湖州', '330500'), city('绍兴', '330600'), city('金华', '330700'),
+      city('衢州', '330800'), city('舟山', '330900'), city('台州', '331000'),
+      city('丽水', '331100'),
     ],
   },
   {
-    name: '重庆市',
+    name: '安徽省',
     cities: [
-      { name: '重庆', adcode: '500000', districts: [wholeCity('重庆'), { name: '渝中区', adcode: '500103' }, { name: '江北区', adcode: '500105' }, { name: '南岸区', adcode: '500108' }, { name: '沙坪坝区', adcode: '500106' }, { name: '九龙坡区', adcode: '500107' }, { name: '渝北区', adcode: '500112' }] },
-    ],
-  },
-  {
-    name: '湖北省',
-    cities: [
-      { name: '武汉', adcode: '420100', districts: [wholeCity('武汉'), { name: '武昌区', adcode: '420106' }, { name: '洪山区', adcode: '420111' }, { name: '江岸区', adcode: '420102' }, { name: '江汉区', adcode: '420103' }, { name: '汉阳区', adcode: '420105' }] },
-    ],
-  },
-  {
-    name: '陕西省',
-    cities: [
-      { name: '西安', adcode: '610100', districts: [wholeCity('西安'), { name: '碑林区', adcode: '610103' }, { name: '雁塔区', adcode: '610113' }, { name: '未央区', adcode: '610112' }, { name: '莲湖区', adcode: '610104' }, { name: '新城区', adcode: '610102' }, { name: '临潼区', adcode: '610115' }] },
-    ],
-  },
-  {
-    name: '湖南省',
-    cities: [
-      { name: '长沙', districts: [wholeCity('长沙')] },
-      { name: '张家界', districts: [wholeCity('张家界')] },
+      city('合肥', '340100'), city('芜湖', '340200'), city('蚌埠', '340300'),
+      city('淮南', '340400'), city('马鞍山', '340500'), city('淮北', '340600'),
+      city('铜陵', '340700'), city('安庆', '340800'), city('黄山', '341000'),
+      city('滁州', '341100'), city('阜阳', '341200'), city('宿州', '341300'),
+      city('六安', '341500'), city('亳州', '341600'), city('池州', '341700'),
+      city('宣城', '341800'),
     ],
   },
   {
     name: '福建省',
     cities: [
-      { name: '厦门', districts: [wholeCity('厦门')] },
-      { name: '福州', districts: [wholeCity('福州')] },
+      city('福州', '350100'), city('厦门', '350200'), city('莆田', '350300'),
+      city('三明', '350400'), city('泉州', '350500'), city('漳州', '350600'),
+      city('南平', '350700'), city('龙岩', '350800'), city('宁德', '350900'),
     ],
   },
   {
-    name: '云南省',
+    name: '江西省',
     cities: [
-      { name: '昆明', districts: [wholeCity('昆明')] },
-      { name: '大理', districts: [wholeCity('大理')] },
-      { name: '丽江', districts: [wholeCity('丽江')] },
+      city('南昌', '360100'), city('景德镇', '360200'), city('萍乡', '360300'),
+      city('九江', '360400'), city('新余', '360500'), city('鹰潭', '360600'),
+      city('赣州', '360700'), city('吉安', '360800'), city('宜春', '360900'),
+      city('抚州', '361000'), city('上饶', '361100'),
     ],
   },
   {
     name: '山东省',
     cities: [
-      { name: '青岛', districts: [wholeCity('青岛')] },
-      { name: '济南', districts: [wholeCity('济南')] },
-      { name: '烟台', districts: [wholeCity('烟台')] },
+      city('济南', '370100'), city('青岛', '370200'), city('淄博', '370300'),
+      city('枣庄', '370400'), city('东营', '370500'), city('烟台', '370600'),
+      city('潍坊', '370700'), city('济宁', '370800'), city('泰安', '370900'),
+      city('威海', '371000'), city('日照', '371100'), city('临沂', '371300'),
+      city('德州', '371400'), city('聊城', '371500'), city('滨州', '371600'),
+      city('菏泽', '371700'),
     ],
   },
   {
     name: '河南省',
-    cities: [{ name: '郑州', districts: [wholeCity('郑州')] }, { name: '洛阳', districts: [wholeCity('洛阳')] }],
+    cities: [
+      city('郑州', '410100'), city('开封', '410200'), city('洛阳', '410300'),
+      city('平顶山', '410400'), city('安阳', '410500'), city('鹤壁', '410600'),
+      city('新乡', '410700'), city('焦作', '410800'), city('濮阳', '410900'),
+      city('许昌', '411000'), city('漯河', '411100'), city('三门峡', '411200'),
+      city('南阳', '411300'), city('商丘', '411400'), city('信阳', '411500'),
+      city('周口', '411600'), city('驻马店', '411700'),
+    ],
   },
   {
-    name: '安徽省',
-    cities: [{ name: '合肥', districts: [wholeCity('合肥')] }, { name: '黄山', districts: [wholeCity('黄山')] }],
+    name: '湖北省',
+    cities: [
+      {
+        name: '武汉', adcode: '420100', districts: [wholeCity('武汉'), { name: '武昌区', adcode: '420106' }, { name: '洪山区', adcode: '420111' }, { name: '江岸区', adcode: '420102' }, { name: '江汉区', adcode: '420103' }, { name: '汉阳区', adcode: '420105' }],
+      },
+      city('黄石', '420200'), city('十堰', '420300'), city('宜昌', '420500'),
+      city('襄阳', '420600'), city('鄂州', '420700'), city('荆门', '420800'),
+      city('孝感', '420900'), city('荆州', '421000'), city('黄冈', '421100'),
+      city('咸宁', '421200'), city('随州', '421300'), city('恩施', '422800'),
+    ],
   },
   {
-    name: '江西省',
-    cities: [{ name: '南昌', districts: [wholeCity('南昌')] }, { name: '九江', districts: [wholeCity('九江')] }],
+    name: '湖南省',
+    cities: [
+      city('长沙', '430100'), city('株洲', '430200'), city('湘潭', '430300'),
+      city('衡阳', '430400'), city('邵阳', '430500'), city('岳阳', '430600'),
+      city('常德', '430700'), city('张家界', '430800'), city('益阳', '430900'),
+      city('郴州', '431000'), city('永州', '431100'), city('怀化', '431200'),
+      city('娄底', '431300'), city('湘西', '433100'),
+    ],
+  },
+  {
+    name: '广东省',
+    cities: [
+      {
+        name: '广州', adcode: '440100', districts: [
+          wholeCity('广州'),
+          { name: '天河区', adcode: '440106' },
+          { name: '越秀区', adcode: '440104' },
+          { name: '海珠区', adcode: '440105' },
+          { name: '荔湾区', adcode: '440103' },
+          { name: '白云区', adcode: '440111' },
+          { name: '番禺区', adcode: '440113' },
+          { name: '黄埔区', adcode: '440112' },
+          { name: '花都区', adcode: '440114' },
+          { name: '南沙区', adcode: '440115' },
+          { name: '增城区', adcode: '440118' },
+          { name: '从化区', adcode: '440117' },
+        ],
+      },
+      { name: '深圳', adcode: '440300', districts: [wholeCity('深圳'), { name: '南山区', adcode: '440305' }, { name: '福田区', adcode: '440304' }, { name: '罗湖区', adcode: '440303' }, { name: '宝安区', adcode: '440306' }, { name: '龙岗区', adcode: '440307' }, { name: '龙华区', adcode: '440309' }, { name: '盐田区', adcode: '440308' }, { name: '坪山区', adcode: '440310' }, { name: '光明区', adcode: '440311' }] },
+      city('韶关', '440200'), city('珠海', '440400'), city('汕头', '440500'),
+      city('佛山', '440600'), city('江门', '440700'), city('湛江', '440800'),
+      city('茂名', '440900'), city('肇庆', '441200'), city('惠州', '441300'),
+      city('梅州', '441400'), city('汕尾', '441500'), city('河源', '441600'),
+      city('阳江', '441700'), city('清远', '441800'), city('东莞', '441900'),
+      city('中山', '442000'), city('潮州', '445100'), city('揭阳', '445200'),
+      city('云浮', '445300'),
+    ],
   },
   {
     name: '广西',
-    cities: [{ name: '桂林', districts: [wholeCity('桂林')] }, { name: '南宁', districts: [wholeCity('南宁')] }],
-  },
-  {
-    name: '贵州省',
-    cities: [{ name: '贵阳', districts: [wholeCity('贵阳')] }],
+    cities: [
+      city('南宁', '450100'), city('柳州', '450200'), city('桂林', '450300'),
+      city('梧州', '450400'), city('北海', '450500'), city('防城港', '450600'),
+      city('钦州', '450700'), city('贵港', '450800'), city('玉林', '450900'),
+      city('百色', '451000'), city('贺州', '451100'), city('河池', '451200'),
+      city('来宾', '451300'), city('崇左', '451400'),
+    ],
   },
   {
     name: '海南省',
-    cities: [{ name: '三亚', districts: [wholeCity('三亚')] }, { name: '海口', districts: [wholeCity('海口')] }],
+    cities: [
+      city('海口', '460100'), city('三亚', '460200'), city('三沙', '460300'),
+      city('儋州', '460400'),
+    ],
   },
   {
-    name: '辽宁省',
-    cities: [{ name: '大连', districts: [wholeCity('大连')] }, { name: '沈阳', districts: [wholeCity('沈阳')] }],
+    name: '四川省',
+    cities: [
+      {
+        name: '成都', adcode: '510100', districts: [wholeCity('成都'), { name: '锦江区', adcode: '510104' }, { name: '青羊区', adcode: '510105' }, { name: '金牛区', adcode: '510106' }, { name: '武侯区', adcode: '510107' }, { name: '成华区', adcode: '510108' }],
+      },
+      city('自贡', '510300'), city('攀枝花', '510400'), city('泸州', '510500'),
+      city('德阳', '510600'), city('绵阳', '510700'), city('广元', '510800'),
+      city('遂宁', '510900'), city('内江', '511000'), city('乐山', '511100'),
+      city('南充', '511300'), city('眉山', '511400'), city('宜宾', '511500'),
+      city('广安', '511600'), city('达州', '511700'), city('雅安', '511800'),
+      city('巴中', '511900'), city('资阳', '512000'), city('阿坝', '513200'),
+      city('甘孜', '513300'), city('凉山', '513400'),
+    ],
   },
   {
-    name: '吉林省',
-    cities: [{ name: '长春', districts: [wholeCity('长春')] }],
+    name: '贵州省',
+    cities: [
+      city('贵阳', '520100'), city('六盘水', '520200'), city('遵义', '520300'),
+      city('安顺', '520400'), city('毕节', '520500'), city('铜仁', '520600'),
+      city('黔西南', '522300'), city('黔东南', '522600'), city('黔南', '522700'),
+    ],
   },
   {
-    name: '黑龙江省',
-    cities: [{ name: '哈尔滨', districts: [wholeCity('哈尔滨')] }],
-  },
-  {
-    name: '天津市',
-    cities: [{ name: '天津', districts: [wholeCity('天津')] }],
-  },
-  {
-    name: '河北省',
-    cities: [{ name: '石家庄', districts: [wholeCity('石家庄')] }, { name: '秦皇岛', districts: [wholeCity('秦皇岛')] }],
-  },
-  {
-    name: '山西省',
-    cities: [{ name: '太原', districts: [wholeCity('太原')] }],
-  },
-  {
-    name: '内蒙古',
-    cities: [{ name: '呼和浩特', districts: [wholeCity('呼和浩特')] }],
-  },
-  {
-    name: '甘肃省',
-    cities: [{ name: '兰州', districts: [wholeCity('兰州')] }],
-  },
-  {
-    name: '青海省',
-    cities: [{ name: '西宁', districts: [wholeCity('西宁')] }],
-  },
-  {
-    name: '宁夏',
-    cities: [{ name: '银川', districts: [wholeCity('银川')] }],
-  },
-  {
-    name: '新疆',
-    cities: [{ name: '乌鲁木齐', districts: [wholeCity('乌鲁木齐')] }],
+    name: '云南省',
+    cities: [
+      city('昆明', '530100'), city('曲靖', '530300'), city('玉溪', '530400'),
+      city('保山', '530500'), city('昭通', '530600'), city('丽江', '530700'),
+      city('普洱', '530800'), city('临沧', '530900'), city('楚雄', '532300'),
+      city('红河', '532500'), city('文山', '532600'), city('西双版纳', '532800'),
+      city('大理', '532900'), city('德宏', '533100'), city('怒江', '533300'),
+      city('迪庆', '533400'),
+    ],
   },
   {
     name: '西藏',
-    cities: [{ name: '拉萨', districts: [wholeCity('拉萨')] }],
+    cities: [
+      city('拉萨', '540100'), city('日喀则', '540200'), city('昌都', '540300'),
+      city('林芝', '540400'), city('山南', '540500'), city('那曲', '540600'),
+      city('阿里', '542500'),
+    ],
+  },
+  {
+    name: '陕西省',
+    cities: [
+      {
+        name: '西安', adcode: '610100', districts: [wholeCity('西安'), { name: '碑林区', adcode: '610103' }, { name: '雁塔区', adcode: '610113' }, { name: '未央区', adcode: '610112' }, { name: '莲湖区', adcode: '610104' }, { name: '新城区', adcode: '610102' }, { name: '临潼区', adcode: '610115' }],
+      },
+      city('铜川', '610200'), city('宝鸡', '610300'), city('咸阳', '610400'),
+      city('渭南', '610500'), city('延安', '610600'), city('汉中', '610700'),
+      city('榆林', '610800'), city('安康', '610900'), city('商洛', '611000'),
+    ],
+  },
+  {
+    name: '甘肃省',
+    cities: [
+      city('兰州', '620100'), city('嘉峪关', '620200'), city('金昌', '620300'),
+      city('白银', '620400'), city('天水', '620500'), city('武威', '620600'),
+      city('张掖', '620700'), city('平凉', '620800'), city('酒泉', '620900'),
+      city('庆阳', '621000'), city('定西', '621100'), city('陇南', '621200'),
+      city('临夏', '622900'), city('甘南', '623000'),
+    ],
+  },
+  {
+    name: '青海省',
+    cities: [
+      city('西宁', '630100'), city('海东', '630200'), city('海北', '632200'),
+      city('黄南', '632300'), city('海南州', '632500'), city('果洛', '632600'),
+      city('玉树', '632700'), city('海西', '632800'),
+    ],
+  },
+  {
+    name: '宁夏',
+    cities: [
+      city('银川', '640100'), city('石嘴山', '640200'), city('吴忠', '640300'),
+      city('固原', '640400'), city('中卫', '640500'),
+    ],
+  },
+  {
+    name: '新疆',
+    cities: [
+      city('乌鲁木齐', '650100'), city('克拉玛依', '650200'), city('吐鲁番', '650400'),
+      city('哈密', '650500'), city('昌吉', '652300'), city('博尔塔拉', '652700'),
+      city('巴音郭楞', '652800'), city('阿克苏', '652900'), city('克孜勒苏', '653000'),
+      city('喀什', '653100'), city('和田', '653200'), city('伊犁', '654000'),
+      city('塔城', '654200'), city('阿勒泰', '654300'),
+    ],
   },
 ]
 
-// City-level adcodes for the versioned picker entries that only expose a whole-city district.
-// The registry remains versioned so future administrative changes do not silently rewrite trips.
-const CITY_ADCODE_FALLBACKS: Record<string, string> = {
-  佛山: '440600', 东莞: '441900', 珠海: '440400', 中山: '442000', 惠州: '441300',
-  江门: '440700', 肇庆: '441200', 宁波: '330200', 温州: '330300', 苏州: '320500',
-  无锡: '320200', 长沙: '430100', 张家界: '430800', 厦门: '350200', 福州: '350100',
-  昆明: '530100', 大理: '532900', 丽江: '530700', 青岛: '370200', 济南: '370100',
-  烟台: '370600', 郑州: '410100', 洛阳: '410300', 合肥: '340100', 黄山: '341000',
-  南昌: '360100', 九江: '360400', 桂林: '450300', 南宁: '450100', 贵阳: '520100',
-  三亚: '460200', 海口: '460100', 大连: '210200', 沈阳: '210100', 长春: '220100',
-  哈尔滨: '230100', 天津: '120000', 石家庄: '130100', 秦皇岛: '130300', 太原: '140100',
-  呼和浩特: '150100', 兰州: '620100', 西宁: '630100', 银川: '640100', 乌鲁木齐: '650100',
-  拉萨: '540100',
-}
-
 export function cityAdcode(city: City): string | undefined {
-  return city.adcode ?? CITY_ADCODE_FALLBACKS[city.name]
+  return city.adcode
 }
 
 // ── 查找辅助 ──────────────────────────────────────────────────

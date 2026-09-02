@@ -24,6 +24,8 @@ export function presentableError(cause: unknown): string {
     if (cause.code === 'INVALID_MESSAGE' || cause.code === 'INVALID_ANSWER') {
       return '请输入 1 到 2000 个字符后重试'
     }
+    if (cause.code === 'INVALID_CREDENTIALS') return '邮箱或密码不正确'
+    if (cause.code === 'UNAUTHORIZED') return '登录状态已失效，请重新登录'
     if (cause.status === 409 && cause.code === 'TRIP_VERSION_CONFLICT') {
       return '旅行信息已被更新，请刷新后再修改。'
     }

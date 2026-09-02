@@ -68,11 +68,20 @@ public class TripAgentCreateController {
             @AuthenticationPrincipal Jwt jwt,
             @Valid @RequestBody CreateDialogRequest request
     ) {
+        // Composer Required Context 种子（嵌套 tripContext，与 web/Python 契约一致）：
+        // 目的地 + 日期在服务端以 TRIP 事实锁定（agent 侧只读），Agent 不再重复询问；
+        // 缺省或目的地为空则从空白开始。
+        HttpAgentDialogClient.TripContext context = request.tripContext();
+        if (context != null
+                && (context.destination() == null || context.destination().isBlank())) {
+            context = null;
+        }
         return client.createDialogue(new HttpAgentDialogClient.AgentCreateDialogCommand(
                 request.sessionId(),
                 request.message(),
                 request.option(),
-                Boolean.TRUE.equals(request.reset())
+                Boolean.TRUE.equals(request.reset()),
+                context
         ));
     }
 
@@ -253,7 +262,8 @@ public class TripAgentCreateController {
             @NotBlank String sessionId,
             String message,
             HttpAgentDialogClient.CardOption option,
-            Boolean reset
+            Boolean reset,
+            HttpAgentDialogClient.TripContext tripContext
     ) {
     }
 

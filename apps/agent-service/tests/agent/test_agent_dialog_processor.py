@@ -358,7 +358,9 @@ def test_three_turn_conversation_completes_through_checkpoints() -> None:
         ]
         completed = processor.published[-1]
         assert isinstance(completed, AgentCompletedEvent)
-        assert completed.payload.itinerary.title == "测试行程"
+        # AUDIT-01（归边 A）：completed 事件不再携带完整 itinerary，仅摘要 + 槽位。
+        assert completed.payload.summary.startswith("行程已生成：")
+        assert completed.payload.slots["destination"].value == "成都"
         assert processor.repository.runs[run_id]["status"] == "COMPLETED"
         assert third.slots.get("destination").state is SlotState.CONFIRMED
         assert third.slots.get("start_date").state is SlotState.CONFIRMED
@@ -589,7 +591,9 @@ def test_full_conversation_routes_reach_their_exchanges() -> None:
             for outgoing, _, _ in exchange.published
         ]
         assert wires[0]["payload"]["question"] == "你想去哪个城市？"
-        assert wires[-1]["payload"]["itinerary"]["title"] == "测试行程"
+        # AUDIT-01（归边 A）防回归：序列化 wire 的 completed 事件绝不含 itinerary。
+        assert wires[-1]["payload"]["summary"].startswith("行程已生成：")
+        assert "itinerary" not in wires[-1]["payload"]
 
     run_async(scenario())
 

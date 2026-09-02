@@ -26,9 +26,12 @@ async def agent_dialogue(
     service = _service(request)
     if payload.session_id:
         # creation mode: no trip exists yet; the client-scoped session holds
-        # the conversation until an itinerary is created from it
+        # the conversation until an itinerary is created from it.  The
+        # composer's Required Context (destination + dates) rides along as
+        # read-only TRIP facts so the wizard skips those slots instead of
+        # re-asking what the user already filled in.
         scope_key = f"create:{payload.session_id}"
-        context = None
+        context = payload.trip_context
     elif payload.trip_id:
         if payload.trip_context is None or not payload.trip_context.destination.strip():
             raise HTTPException(

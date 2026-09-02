@@ -122,7 +122,8 @@ def test_scenario_a_transient_failure_retries_once_then_completes() -> None:
     assert checkpoint.candidate_itinerary is not None
 
     completed = [e for e in processor.published if isinstance(e, AgentCompletedEvent)]
-    assert len(completed) == 1 and completed[0].payload.itinerary is not None
+    # AUDIT-01（归边 A）：completed 事件不再携带 itinerary，仅摘要 + 槽位。
+    assert len(completed) == 1 and completed[0].payload.summary
     # the retry was a declared decision, not a silent re-run
     steps = [e for e in processor.published if isinstance(e, AgentStepEvent)]
     assert [s.payload.tool for s in steps] == [

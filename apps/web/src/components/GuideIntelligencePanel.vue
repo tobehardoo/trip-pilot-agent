@@ -418,9 +418,9 @@ function formatDateTime(value: string) {
 }
 
 function qualityBadgeClass(score: number) {
-  if (score >= 80) return 'bg-emerald-100 text-emerald-700'
-  if (score >= 60) return 'bg-amber-100 text-amber-700'
-  return 'bg-surface-100 text-surface-500'
+  if (score >= 80) return 'bg-tp-ok/15 text-tp-ok'
+  if (score >= 60) return 'bg-tp-warn/10 text-tp-warn'
+  return 'bg-tp-panel text-tp-sub'
 }
 
 function qualityTooltip(q: { overall: number; label: string; dimensions: { factDensity: number; categoryCoverage: number; strongFactRatio: number; conflictRate: number; freshnessHealth: number } }) {
@@ -441,30 +441,30 @@ function displayStatement(statement: string) {
 </script>
 
 <template>
-  <section class="rounded-2xl border border-surface-200 bg-white shadow-card p-6 sm:p-7" aria-labelledby="guide-intelligence-title">
+  <section class="space-y-4" aria-labelledby="guide-intelligence-title">
     <div class="flex justify-between gap-6 mb-5">
       <div>
-        <p class="text-xs font-bold tracking-widest text-primary-500 mb-1">实时攻略信息</p>
-        <h2 id="guide-intelligence-title" class="flex items-center gap-2.5 mt-0.5 mb-2 text-xl font-bold text-surface-800">
-          <Radar :size="19" class="text-primary-500" aria-hidden="true" />攻略情报
+        <p class="text-xs font-bold tracking-widest text-tp-mute mb-1">实时攻略信息</p>
+        <h2 id="guide-intelligence-title" class="flex items-center gap-2.5 mt-0.5 mb-2 text-xl font-bold text-tp-ink">
+          <Radar :size="19" class="text-tp-mute" aria-hidden="true" />攻略情报
         </h2>
-        <p class="max-w-[650px] text-sm text-surface-500 m-0 leading-relaxed">
+        <p class="max-w-[650px] text-sm text-tp-sub m-0 leading-relaxed">
           导入公开链接、粘贴正文、TXT/Markdown、小红书分享文本或攻略截图，提取带原句证据的旅行事实。
         </p>
       </div>
-      <span class="shrink-0 inline-flex items-center gap-1.5 self-start rounded-full bg-primary-50 px-3 py-1.5 text-xs font-semibold text-primary-700">
+      <span class="shrink-0 inline-flex items-center gap-1.5 self-start rounded-full bg-tp-panel px-3 py-1.5 text-xs font-semibold text-tp-sub">
         <ShieldCheck :size="13" aria-hidden="true" />仅当前行程
       </span>
     </div>
 
-    <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
-      <p class="m-0 text-xs leading-relaxed text-sky-800">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-tp-line bg-tp-active px-4 py-3">
+      <p class="m-0 text-xs leading-relaxed text-tp-ink">
         同步 {{ destination }} 当前天气、行程日期预报、营业与预约信息；同步结果会进入下一次 Agent 规划快照。
       </p>
       <button
         type="button"
         :disabled="busy || submitting"
-        class="shrink-0 rounded-lg bg-sky-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+        class="shrink-0 rounded-lg bg-tp-ink px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
         @click="syncCityIntelligence"
       >
         {{ busy || submitting ? '同步中…' : '同步城市情报' }}
@@ -473,13 +473,13 @@ function displayStatement(statement: string) {
 
     <section
       v-if="latestCityIntelligenceImport"
-      class="mb-5 rounded-xl border border-primary-100 bg-primary-50/50 px-4 py-3"
+      class="mb-5 rounded-xl border border-tp-line bg-tp-panel px-4 py-3"
       aria-labelledby="city-intelligence-summary-title"
     >
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p class="m-0 text-xs font-semibold text-primary-600">出行提醒</p>
-          <h3 id="city-intelligence-summary-title" class="mt-1 text-sm font-bold text-surface-800">
+          <p class="m-0 text-xs font-semibold text-tp-ink">出行提醒</p>
+          <h3 id="city-intelligence-summary-title" class="mt-1 text-sm font-bold text-tp-ink">
             {{ latestCityIntelligenceImport.enabled
               ? `${destination} 已整理 ${displayPlaceCards.length} 个地点的出行资料`
               : `${destination} 城市情报已停用` }}
@@ -489,13 +489,13 @@ function displayStatement(statement: string) {
             {{ cityWeather ? displayStatement(cityWeather.statement) : `${destination} 已同步 ${cityDisplayFacts.length} 条实时资料` }}
           </h3>
           -->
-          <p v-if="false" class="m-0 text-xs text-surface-500">
+          <p v-if="false" class="m-0 text-xs text-tp-sub">
             已整理 {{ cityDisplayFacts.length }} 条天气、营业与地点动态，仅在需要时查看详情。
           </p>
         </div>
         <button
           type="button"
-          class="inline-flex shrink-0 items-center gap-1 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-primary-700 shadow-sm ring-1 ring-primary-200"
+          class="inline-flex shrink-0 items-center gap-1 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-tp-ink shadow-sm ring-1 ring-tp-line"
           aria-label="查看实时情报"
           @click="cityDetailsOpen = true"
         >
@@ -504,12 +504,12 @@ function displayStatement(statement: string) {
       </div>
     </section>
 
-    <form class="rounded-xl bg-surface-50 border border-surface-200 p-4 mb-5" @submit.prevent="submit">
+    <form class="rounded-xl bg-tp-panel border border-tp-line p-4 mb-5" @submit.prevent="submit">
       <div class="flex gap-2 mb-4" role="group" aria-label="攻略导入方式">
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-xs font-semibold"
-          :class="importMode === 'url' ? 'bg-primary-600 text-white' : 'bg-white text-surface-600 border border-surface-200'"
+          :class="importMode === 'url' ? 'bg-tp-ink text-white' : 'bg-white text-tp-body border border-tp-line'"
           @click="importMode = 'url'"
         >
           公开链接
@@ -517,7 +517,7 @@ function displayStatement(statement: string) {
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-xs font-semibold"
-          :class="importMode === 'text' ? 'bg-primary-600 text-white' : 'bg-white text-surface-600 border border-surface-200'"
+          :class="importMode === 'text' ? 'bg-tp-ink text-white' : 'bg-white text-tp-body border border-tp-line'"
           @click="importMode = 'text'"
         >
           粘贴正文 / TXT
@@ -525,7 +525,7 @@ function displayStatement(statement: string) {
         <button
           type="button"
           class="rounded-lg px-3 py-1.5 text-xs font-semibold"
-          :class="importMode === 'image' ? 'bg-primary-600 text-white' : 'bg-white text-surface-600 border border-surface-200'"
+          :class="importMode === 'image' ? 'bg-tp-ink text-white' : 'bg-white text-tp-body border border-tp-line'"
           @click="importMode = 'image'"
         >
           图片截图
@@ -533,7 +533,7 @@ function displayStatement(statement: string) {
       </div>
 
       <template v-if="importMode === 'url'">
-        <label for="guide-source-url" class="block text-xs font-semibold text-surface-700 mb-2">公开攻略链接</label>
+        <label for="guide-source-url" class="block text-xs font-semibold text-tp-body mb-2">公开攻略链接</label>
         <div class="flex gap-2">
           <input
             id="guide-source-url"
@@ -544,19 +544,19 @@ function displayStatement(statement: string) {
             maxlength="2048"
             placeholder="https://example.com/travel-guide"
             required
-            class="flex-1 min-w-0 h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm text-surface-800 outline-0 focus:ring-2 focus:ring-primary-400/40 focus:border-primary-400"
+            class="flex-1 min-w-0 h-10 rounded-xl border border-tp-line bg-white px-3 text-sm text-tp-ink outline-0 focus:border-tp-sub"
           />
           <button
             type="submit"
             :disabled="busy || submitting"
-            class="inline-flex items-center justify-center gap-2 min-w-[110px] px-4 rounded-xl bg-primary-600 text-white text-sm font-semibold disabled:opacity-50"
+            class="inline-flex items-center justify-center gap-2 min-w-[110px] px-4 rounded-xl bg-tp-ink text-white text-sm font-semibold disabled:opacity-50"
           >
             <LoaderCircle v-if="busy || submitting" class="animate-spin" :size="15" aria-hidden="true" />
             <BookOpen v-else :size="15" aria-hidden="true" />
             导入攻略
           </button>
         </div>
-        <small class="block mt-2 text-[10px] text-surface-400">
+        <small class="block mt-2 text-[10px] text-tp-sub">
           仅支持无需登录即可访问的 HTTPS 静态页面；动态渲染、登录墙或反爬限制的页面（如小红书、公众号正文）无法直接抓取，建议复制正文粘贴，或在“图片截图”页上传页面截图。
         </small>
       </template>
@@ -565,8 +565,8 @@ function displayStatement(statement: string) {
         <div
           class="rounded-xl border-2 border-dashed px-4 py-6 text-center cursor-pointer transition-colors"
           :class="draggingOver
-            ? 'border-primary-400 bg-primary-50'
-            : 'border-surface-300 bg-white hover:border-primary-300'"
+            ? 'border-tp-active bg-tp-panel'
+            : 'border-tp-line bg-white hover:border-tp-line'"
           role="button"
           tabindex="0"
           aria-label="添加攻略截图：点击选择、拖拽图片到此处，或聚焦后按 Ctrl+V 粘贴剪贴板截图"
@@ -578,11 +578,11 @@ function displayStatement(statement: string) {
           @drop.prevent="onDrop"
           @paste="onPaste"
         >
-          <ImageIcon :size="22" class="mx-auto text-surface-400" aria-hidden="true" />
-          <p class="mt-2 mb-0 text-sm font-semibold text-surface-700">
+          <ImageIcon :size="22" class="mx-auto text-tp-mute" aria-hidden="true" />
+          <p class="mt-2 mb-0 text-sm font-semibold text-tp-body">
             拖拽攻略截图到这里，点击选择，或粘贴剪贴板截图
           </p>
-          <small class="mt-1 block text-[10px] text-surface-400">
+          <small class="mt-1 block text-[10px] text-tp-sub">
             支持 PNG / JPEG / WEBP；最多 {{ MAX_IMAGE_FILES }} 张，单张不超过
             {{ MAX_IMAGE_BYTES / 1_000_000 }} MB。
           </small>
@@ -605,17 +605,17 @@ function displayStatement(statement: string) {
           <li
             v-for="image in pendingImages"
             :key="image.id"
-            class="relative rounded-xl border border-surface-200 bg-white overflow-hidden w-[104px]"
+            class="relative rounded-xl border border-tp-line bg-white overflow-hidden w-[104px]"
           >
             <img
               :src="image.dataUrl"
               :alt="`预览：${image.fileName}`"
               class="h-[72px] w-full object-cover"
             />
-            <p class="m-0 px-2 py-1 text-[9px] text-surface-500 truncate">{{ image.fileName }}</p>
+            <p class="m-0 px-2 py-1 text-[9px] text-tp-sub truncate">{{ image.fileName }}</p>
             <button
               type="button"
-              class="absolute top-1 right-1 rounded-full bg-surface-950/60 p-1 text-white hover:bg-surface-950/80"
+              class="absolute top-1 right-1 rounded-full bg-tp-ink/60 p-1 text-white hover:bg-tp-ink/80"
               :aria-label="`删除图片 ${image.fileName}`"
               @click.stop="removeImage(image.id)"
             >
@@ -626,18 +626,18 @@ function displayStatement(statement: string) {
 
         <p
           v-if="imageNotice"
-          class="mt-3 mb-0 text-xs text-red-600"
+          class="mt-3 mb-0 text-xs text-tp-warn"
           role="alert"
         >{{ imageNotice }}</p>
 
         <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <small class="text-[10px] text-surface-400 max-w-[420px] leading-relaxed">
+          <small class="text-[10px] text-tp-sub max-w-[420px] leading-relaxed">
             图片仅用于识别文字，原图不会被保存；识别结果与粘贴正文走同一事实校验链路。服务端未配置视觉模型时会明确提示。
           </small>
           <button
             type="submit"
             :disabled="busy || submitting || pendingImages.length === 0"
-            class="inline-flex min-w-[110px] items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            class="inline-flex min-w-[110px] items-center justify-center gap-2 rounded-xl bg-tp-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
             <LoaderCircle v-if="busy || submitting" class="animate-spin" :size="15" aria-hidden="true" />
             <BookOpen v-else :size="15" aria-hidden="true" />
@@ -649,22 +649,22 @@ function displayStatement(statement: string) {
       <template v-else>
         <div class="grid gap-3 sm:grid-cols-2">
           <div>
-            <label for="guide-text-title" class="block text-xs font-semibold text-surface-700 mb-1.5">正文标题</label>
+            <label for="guide-text-title" class="block text-xs font-semibold text-tp-body mb-1.5">正文标题</label>
             <input
               id="guide-text-title"
               v-model="textTitle"
               maxlength="300"
               required
-              class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm"
+              class="w-full h-10 rounded-xl border border-tp-line bg-white px-3 text-sm"
               placeholder="例如：广州两日游攻略"
             />
           </div>
           <div>
-            <label for="guide-text-source" class="block text-xs font-semibold text-surface-700 mb-1.5">正文来源</label>
+            <label for="guide-text-source" class="block text-xs font-semibold text-tp-body mb-1.5">正文来源</label>
             <select
               id="guide-text-source"
               v-model="textSourceType"
-              class="w-full h-10 rounded-xl border border-surface-200 bg-white px-3 text-sm"
+              class="w-full h-10 rounded-xl border border-tp-line bg-white px-3 text-sm"
             >
               <option value="PASTED_TEXT">普通粘贴文本</option>
               <option value="XIAOHONGSHU_SHARED_TEXT">小红书分享文本</option>
@@ -672,18 +672,18 @@ function displayStatement(statement: string) {
             </select>
           </div>
         </div>
-        <label for="guide-text-content" class="block text-xs font-semibold text-surface-700 mt-3 mb-1.5">攻略正文</label>
+        <label for="guide-text-content" class="block text-xs font-semibold text-tp-body mt-3 mb-1.5">攻略正文</label>
         <textarea
           id="guide-text-content"
           v-model="textContent"
           maxlength="100000"
           rows="6"
           required
-          class="w-full rounded-xl border border-surface-200 bg-white px-3 py-2 text-sm leading-relaxed"
+          class="w-full rounded-xl border border-tp-line bg-white px-3 py-2 text-sm leading-relaxed"
           placeholder="粘贴包含景点、地址、门票、开放时间、交通、预约或天气等内容的正文…"
         />
         <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <label for="guide-text-file" class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-surface-200 bg-white px-3 py-2 text-xs font-semibold text-surface-600">
+          <label for="guide-text-file" class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-tp-line bg-white px-3 py-2 text-xs font-semibold text-tp-body">
             <Upload :size="14" aria-hidden="true" />导入 TXT 或 Markdown
           </label>
           <input
@@ -696,45 +696,45 @@ function displayStatement(statement: string) {
           <button
             type="submit"
             :disabled="busy || submitting"
-            class="inline-flex min-w-[110px] items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            class="inline-flex min-w-[110px] items-center justify-center gap-2 rounded-xl bg-tp-ink px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           >
             <LoaderCircle v-if="busy || submitting" class="animate-spin" :size="15" aria-hidden="true" />
             <BookOpen v-else :size="15" aria-hidden="true" />
             识别正文
           </button>
         </div>
-        <small class="mt-2 block text-[10px] text-surface-400">
+        <small class="mt-2 block text-[10px] text-tp-sub">
           小红书仅处理你主动提供的分享正文或导出文本，不读取登录 Cookie，也不绕过平台限制。
         </small>
       </template>
-      <p v-if="formError" class="mt-3 text-xs text-red-600" role="alert">{{ formError }}</p>
+      <p v-if="formError" class="mt-3 text-xs text-tp-warn" role="alert">{{ formError }}</p>
     </form>
 
-    <p v-if="error" class="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 mb-4" role="alert">{{ error }}</p>
+    <p v-if="error" class="rounded-xl bg-tp-warn/10 px-4 py-3 text-sm text-tp-warn mb-4" role="alert">{{ error }}</p>
 
-    <p v-if="busy && guideImports.length === 0" class="text-sm text-surface-500 mb-4" role="status">正在读取攻略情报…</p>
-    <div v-else-if="guideImports.length === 0" class="flex flex-col items-center gap-2 py-8 rounded-xl border-2 border-dashed border-surface-200 text-surface-400 text-center">
+    <p v-if="busy && guideImports.length === 0" class="text-sm text-tp-sub mb-4" role="status">正在读取攻略情报…</p>
+    <div v-else-if="guideImports.length === 0" class="flex flex-col items-center gap-2 py-8 rounded-xl border-2 border-dashed border-tp-line text-tp-sub text-center">
       <BookOpen :size="24" aria-hidden="true" />
-      <strong class="text-sm text-surface-500">还没有导入攻略</strong>
-      <span class="text-xs text-surface-400">导入链接或正文，系统会保留来源、原句证据和事实有效期。</span>
-      <p class="mt-2 max-w-xs rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+      <strong class="text-sm text-tp-sub">还没有导入攻略</strong>
+      <span class="text-xs text-tp-sub">导入链接或正文，系统会保留来源、原句证据和事实有效期。</span>
+      <p class="mt-2 max-w-xs rounded-lg bg-tp-warn/10 px-3 py-2 text-[11px] text-tp-warn">
         当前城市「{{ destination }}」尚无攻略数据，行程推荐完全基于地图 POI 数据。建议导入官方文旅网站链接或旅行攻略文本。
       </p>
     </div>
 
     <p
       v-if="guideCoverage === 'THIN' && guideImports.length > 0"
-      class="mb-4 rounded-lg bg-amber-50 px-4 py-2.5 text-xs text-amber-700"
+      class="mb-4 rounded-lg bg-tp-warn/10 px-4 py-2.5 text-xs text-tp-warn"
       role="status"
     >
       当前城市「{{ destination }}」攻略数据较少（{{ guideImports.filter(g => g.enabled).length }} 个来源），部分推荐基于地图 POI 数据。
     </p>
 
-    <article v-for="guide in userGuideImports" :key="guide.id" class="mt-4 rounded-xl border border-surface-200 border-l-[3px] border-l-primary-500 bg-white p-5">
+    <article v-for="guide in userGuideImports" :key="guide.id" class="mt-4 rounded-xl border border-tp-line border-l-[3px] border-l-tp-ink bg-white p-5">
       <div class="flex justify-between gap-4">
         <div>
-          <h3 class="text-base font-bold text-surface-800 m-0">{{ guide.title }}</h3>
-          <span class="text-[10px] text-surface-400">
+          <h3 class="text-base font-bold text-tp-ink m-0">{{ guide.title }}</h3>
+          <span class="text-[10px] text-tp-sub">
             {{ guide.sourceHost }} · 采集于 {{ formatDateTime(guide.fetchedAt) }}
             <span
               v-if="guide.quality"
@@ -749,7 +749,7 @@ function displayStatement(statement: string) {
             v-if="setGuideEnabled"
             type="button"
             :disabled="busy"
-            class="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-[10px] font-semibold text-amber-700 disabled:opacity-50"
+            class="rounded-lg bg-tp-warn/10 border border-tp-warn/25 px-2.5 py-1.5 text-[10px] font-semibold text-tp-warn disabled:opacity-50"
             @click="setGuideEnabled(guide.id, !guide.enabled)"
           >
             {{ guide.enabled ? '停用来源' : '启用来源' }}
@@ -759,33 +759,33 @@ function displayStatement(statement: string) {
             :href="guide.finalUrl"
             target="_blank"
             rel="noopener noreferrer"
-            class="inline-flex items-center gap-1 text-xs font-semibold text-primary-600 hover:underline whitespace-nowrap"
+            class="inline-flex items-center gap-1 text-xs font-semibold text-tp-ink hover:underline whitespace-nowrap"
           >
             {{ guide.sourceType === 'CITY_INTELLIGENCE' ? '数据说明' : '查看原文' }}<ExternalLink :size="12" aria-hidden="true" />
           </a>
-          <span v-else class="rounded-lg bg-surface-100 px-2.5 py-1.5 text-[10px] font-semibold text-surface-500">用户提供正文</span>
+          <span v-else class="rounded-lg bg-tp-panel px-2.5 py-1.5 text-[10px] font-semibold text-tp-sub">用户提供正文</span>
         </div>
       </div>
-      <p class="my-3 text-sm text-surface-600 leading-relaxed">{{ guide.excerpt }}</p>
+      <p class="my-3 text-sm text-tp-body leading-relaxed">{{ guide.excerpt }}</p>
 
       <ul v-if="guide.facts.length" class="space-y-2 m-0 p-0 list-none">
-        <li v-for="fact in guide.facts" :key="fact.id" class="rounded-lg bg-surface-50 px-3 py-2.5">
+        <li v-for="fact in guide.facts" :key="fact.id" class="rounded-lg bg-tp-panel px-3 py-2.5">
           <div class="flex gap-1.5 mb-1.5">
-            <span class="rounded-full bg-sky-100 px-2 py-0.5 text-[9px] font-extrabold text-sky-700">{{ categoryLabels[fact.category] }}</span>
+            <span class="rounded-full bg-tp-active px-2 py-0.5 text-[9px] font-extrabold text-tp-ink">{{ categoryLabels[fact.category] }}</span>
             <span
               class="rounded-full px-2 py-0.5 text-[9px] font-extrabold"
-              :class="isFresh(fact.expiresAt) ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'"
+              :class="isFresh(fact.expiresAt) ? 'bg-tp-ok/15 text-tp-ok' : 'bg-tp-warn/10 text-tp-warn'"
             >
               {{ isFresh(fact.expiresAt) ? '有效' : '待复核' }}
             </span>
           </div>
-          <p class="text-xs text-surface-700 leading-relaxed m-0 mb-1">{{ displayStatement(fact.statement) }}</p>
-          <small class="text-[10px] text-surface-400">
+          <p class="text-xs text-tp-body leading-relaxed m-0 mb-1">{{ displayStatement(fact.statement) }}</p>
+          <small class="text-[10px] text-tp-sub">
             置信度 {{ Math.round(fact.confidence * 100) }}% · 有效至 {{ formatDateTime(fact.expiresAt) }}
           </small>
         </li>
       </ul>
-      <p v-else class="text-[10px] text-amber-700 mt-3 m-0">
+      <p v-else class="text-[10px] text-tp-warn mt-3 m-0">
         正文已保存，但没有检测到门票、地址、开放时间、交通、预约、天气等明确表达；请粘贴更完整的正文或检查文件编码。
       </p>
     </article>
@@ -799,13 +799,13 @@ function displayStatement(statement: string) {
     >
       <div v-if="latestCityIntelligenceImport">
         <div class="flex items-center justify-between gap-3">
-          <p class="m-0 text-xs text-surface-400">采集于 {{ formatDateTime(latestCityIntelligenceImport.fetchedAt) }}</p>
+          <p class="m-0 text-xs text-tp-sub">采集于 {{ formatDateTime(latestCityIntelligenceImport.fetchedAt) }}</p>
           <div class="flex items-center gap-2">
             <button
               v-if="setGuideEnabled"
               type="button"
               :disabled="busy"
-              class="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 disabled:opacity-50"
+              class="rounded-lg border border-tp-warn/25 bg-tp-warn/10 px-2.5 py-1.5 text-xs font-semibold text-tp-warn disabled:opacity-50"
               :aria-label="latestCityIntelligenceImport.enabled ? '停用城市情报' : '启用城市情报'"
               @click="setGuideEnabled(latestCityIntelligenceImport.id, !latestCityIntelligenceImport.enabled)"
             >{{ latestCityIntelligenceImport.enabled ? '停用' : '启用' }}</button>
@@ -813,7 +813,7 @@ function displayStatement(statement: string) {
               :href="latestCityIntelligenceImport.finalUrl"
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex items-center gap-1 text-xs font-semibold text-primary-600 hover:underline"
+              class="inline-flex items-center gap-1 text-xs font-semibold text-tp-ink hover:underline"
             >数据来源 <ExternalLink :size="12" aria-hidden="true" /></a>
           </div>
         </div>
@@ -822,49 +822,49 @@ function displayStatement(statement: string) {
             v-for="place in displayPlaceCards"
             :key="place.name"
             :aria-label="place.name"
-            class="rounded-2xl border border-surface-200 bg-surface-50 p-4"
+            class="rounded-2xl border border-tp-line bg-tp-panel p-4"
           >
             <div class="flex items-start justify-between gap-3">
               <div>
-                <h3 class="m-0 text-base font-bold text-surface-800">{{ place.name }}</h3>
-                <p class="mt-1 mb-0 text-[10px] text-surface-400">更新时间：{{ formatDateTime(place.updatedAt) }}</p>
+                <h3 class="m-0 text-base font-bold text-tp-ink">{{ place.name }}</h3>
+                <p class="mt-1 mb-0 text-[10px] text-tp-sub">更新时间：{{ formatDateTime(place.updatedAt) }}</p>
               </div>
               <span
                 class="rounded-full px-2 py-1 text-[10px] font-semibold"
-                :class="place.inItinerary ? 'bg-primary-50 text-primary-700' : 'bg-emerald-50 text-emerald-700'"
+                :class="place.inItinerary ? 'bg-tp-panel text-tp-ink' : 'bg-tp-ok/15 text-tp-ok'"
               >{{ place.inItinerary ? '行程中' : '已整理' }}</span>
             </div>
 
             <dl class="mt-4 grid gap-x-4 gap-y-3 text-sm sm:grid-cols-[82px_1fr]">
               <template v-if="place.itineraryDates.length">
-                <dt class="font-semibold text-surface-500">行程日期</dt>
-                <dd class="m-0 text-surface-700">{{ place.itineraryDates.join('、') }}</dd>
+                <dt class="font-semibold text-tp-sub">行程日期</dt>
+                <dd class="m-0 text-tp-body">{{ place.itineraryDates.join('、') }}</dd>
               </template>
               <template v-if="place.address">
-                <dt class="font-semibold text-surface-500">地点位置</dt>
-                <dd class="m-0 text-surface-700">{{ place.address }}</dd>
+                <dt class="font-semibold text-tp-sub">地点位置</dt>
+                <dd class="m-0 text-tp-body">{{ place.address }}</dd>
               </template>
               <template v-if="place.openingHours">
-                <dt class="font-semibold text-surface-500">营业时间</dt>
-                <dd class="m-0 text-surface-700">{{ place.openingHours }}</dd>
+                <dt class="font-semibold text-tp-sub">营业时间</dt>
+                <dd class="m-0 text-tp-body">{{ place.openingHours }}</dd>
               </template>
               <template v-if="place.ticket">
-                <dt class="font-semibold text-surface-500">门票</dt>
-                <dd class="m-0 text-surface-700">{{ place.ticket }}</dd>
+                <dt class="font-semibold text-tp-sub">门票</dt>
+                <dd class="m-0 text-tp-body">{{ place.ticket }}</dd>
               </template>
               <template v-if="place.reservation">
-                <dt class="font-semibold text-surface-500">预约</dt>
-                <dd class="m-0 text-surface-700">{{ place.reservation }}</dd>
+                <dt class="font-semibold text-tp-sub">预约</dt>
+                <dd class="m-0 text-tp-body">{{ place.reservation }}</dd>
               </template>
             </dl>
 
-            <div v-if="place.notices.length" class="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5">
-              <p class="m-0 text-xs font-semibold text-amber-800">出行提示</p>
-              <p class="mt-1 mb-0 text-xs leading-relaxed text-amber-900">{{ place.notices.join('；') }}</p>
+            <div v-if="place.notices.length" class="mt-4 rounded-xl border border-tp-warn/25 bg-tp-warn/10 px-3 py-2.5">
+              <p class="m-0 text-xs font-semibold text-tp-warn">出行提示</p>
+              <p class="mt-1 mb-0 text-xs leading-relaxed text-tp-warn">{{ place.notices.join('；') }}</p>
             </div>
           </article>
         </div>
-        <p v-else class="mt-4 rounded-xl bg-surface-50 px-4 py-3 text-sm text-surface-500">
+        <p v-else class="mt-4 rounded-xl bg-tp-panel px-4 py-3 text-sm text-tp-sub">
           暂无可整理的地点资料；天气已移至地图上方展示。
         </p>
       </div>

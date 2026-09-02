@@ -45,8 +45,10 @@ class AgentDialogEventListenerTest {
     void dispatchesACompletedEventToTheHandler() {
         listener.consume(eventBody("AGENT_COMPLETED").getBytes(StandardCharsets.UTF_8));
         assertThat(handler.completed).isNotNull();
-        assertThat(handler.completed.payload().itinerary().path("title").asText())
-                .isEqualTo("测试行程");
+        assertThat(handler.completed.payload().summary()).isEqualTo("行程已生成：测试行程");
+        // AUDIT-01（归边 A）：completed 事件不再携带 itinerary，仅摘要 + 槽位。
+        assertThat(handler.completed.payload().slots().path("destination").path("value").asText())
+                .isEqualTo("成都");
     }
 
     @Test

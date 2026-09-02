@@ -17,6 +17,7 @@ import {
   ApiError,
   createTrip as createTripApi,
   getCurrentItinerary,
+  getPlanningTask,
   getTrip,
   listTrips,
   updateTripConstraints as updateTripConstraintsApi,
@@ -190,6 +191,47 @@ export const useTripStore = defineStore('workspace-trips', () => {
     }
   }
 
+  /** 收编 Agent 创建对话已建好的旅行（Composer [开始规划] 闭环）；不重复调创建 API。 */
+  function adoptTrip(trip: Trip): void {
+    trips.value = [trip, ...trips.value.filter((item) => item.id !== trip.id)]
+    currentTripId.value = trip.id
+    currentTrip.value = trip
+    detailStatus.value = 'ready'
+    detailError.value = null
+    resetCurrentContent()
+    try {
+      localStorage.setItem(LAST_TRIP_KEY, trip.id)
+    } catch { /* UI 偏好不可用时静默降级 */ }
+  }
+
+  /** 回到创建模式：清空当前选中（URL 由页面侧同步到 /workspace）。 */
+  function clearCurrentTrip(): void {
+    currentTripId.value = null
+    currentTrip.value = null
+    detailStatus.value = 'idle'
+    detailError.value = null
+    resetCurrentContent()
+  }
+
+  /** Agent run 终态后刷新当前旅行（status 由后端流转，前端需重取才能切视图）。 */
+  async function refreshCurrentTrip(): Promise<void> {
+    const id = currentTripId.value
+    if (!id || detailStatus.value !== 'ready') return
+    try {
+      const loaded = await session.withAccessToken((token) => getTrip(token, id))
+      if (currentTripId.value !== id) return
+      currentTrip.value = loaded
+      syncTripInList(loaded)
+      // 规划完成首达：装载行程方案（completed 视图数据源），
+      // 否则状态切到 completed 但方案为空。
+      if (loaded.status?.toLowerCase() === 'completed' && itinerary.value === null) {
+        void loadItinerary(id)
+      }
+    } catch {
+      // 静默：刷新失败保持现状态（下一次 run 终态会再试）
+    }
+  }
+
   // ── 元数据 / 约束（乐观锁） ────────────────────────────────────────
   async function renameTrip(title: string): Promise<void> {
     const trip = currentTrip.value
@@ -327,16 +369,46 @@ export const useTripStore = defineStore('workspace-trips', () => {
     return session.withAccessToken((token) => previewItineraryEditApi(token, trip.id, input))
   }
 
+  /**
+   * 编辑（含删除）是异步 planning task：applyItineraryEdit 只创建任务。
+   * 必须轮询任务直至 SUCCEEDED，成功后再重新加载行程并刷新地图；
+   * FAILED/CANCELLED/超时则抛出可读错误（不再静默吞掉）。
+   */
+  async function waitForEditTask(
+    taskId: string,
+    deadlineMs: number = 90_000,
+  ): Promise<void> {
+    const deadline = Date.now() + deadlineMs
+    while (Date.now() < deadline) {
+      const task = await session.withAccessToken((token) => getPlanningTask(token, taskId))
+      if (task.status === 'SUCCEEDED') return
+      if (task.status === 'FAILED' || task.status === 'CANCELLED') {
+        throw new Error(
+          task.safeMessage
+            ?? `行程编辑失败：${task.errorCode ?? 'UNKNOWN'}`,
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+    }
+    throw new Error('行程编辑处理超时，请稍后在「行程版本」中查看结果')
+  }
+
   async function applyEdit(input: ItineraryEditInput, idempotencyKey: string): Promise<void> {
     const trip = currentTrip.value
     if (!trip) throw new Error('No trip is selected')
-    await session.withAccessToken((token) => applyItineraryEditApi(token, trip.id, input, idempotencyKey))
-    // 编辑后重新加载行程
-    void loadItinerary(trip.id)
+    const task = await session.withAccessToken((token) =>
+      applyItineraryEditApi(token, trip.id, input, idempotencyKey))
+    await waitForEditTask(task.taskId)
+    // 编辑任务成功后重新加载行程（地图随 itinerary 数据刷新）
+    await loadItinerary(trip.id)
   }
+
+  /** 首次进入已认证态时自动装载旅行列表 */
+  let loaded = false
 
   /** 登出/会话失效时清空全部内存态（业务数据绝不落地）。 */
   function resetAll(): void {
+    loaded = false
     listRequestSequence += 1
     detailRequestSequence += 1
     itineraryRequestSequence += 1
@@ -367,8 +439,6 @@ export const useTripStore = defineStore('workspace-trips', () => {
     return null
   })
 
-  /** 首次进入已认证态时自动装载旅行列表 */
-  let loaded = false
   watch(() => session.phase, (phase) => {
     if (phase === 'authenticated' && !loaded) {
       loaded = true
@@ -398,6 +468,9 @@ export const useTripStore = defineStore('workspace-trips', () => {
     loadTrips,
     selectTrip,
     createTrip,
+    adoptTrip,
+    clearCurrentTrip,
+    refreshCurrentTrip,
     renameTrip,
     updateConstraints,
     loadItinerary,

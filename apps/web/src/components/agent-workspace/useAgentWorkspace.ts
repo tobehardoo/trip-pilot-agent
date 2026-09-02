@@ -6,6 +6,7 @@ import { computed, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import {
   answerAgentRun,
   ApiError,
+  createPlanningTask,
   startAgentRun,
   streamAgentDialogEvents,
   type AgentDialogEventView,
@@ -40,6 +41,10 @@ export interface AgentWorkspaceOptions {
   tripVersion: () => number
   tripConstraints: () => TripConstraints | null
   applyConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
+  /** run 终态（完成/失败/答复）后刷新旅行实体（status 由后端流转，需重取才能切视图）。 */
+  refreshTrip?: () => Promise<void>
+  /** 当前旅行 status（DRAFT/PLANNING/COMPLETED…），用于判定 AGENT_COMPLETED 后是否触发规划管线。 */
+  tripStatus?: () => string | undefined
 }
 
 export function useAgentWorkspace(options: AgentWorkspaceOptions) {
@@ -98,6 +103,54 @@ export function useAgentWorkspace(options: AgentWorkspaceOptions) {
     hydrated.value = true
     reducer.applyEvent(event)
     syncTurns()
+    // run 到终态：旅行 status 可能已被后端流转（draft → planning → completed），
+    // 刷新实体让 mainView 不刷新页面也能切换。
+    if (event.eventType === 'AGENT_COMPLETED'
+      || event.eventType === 'AGENT_RUN_FINISHED') {
+      void options.refreshTrip?.()
+    }
+    // Agent 对话产出的行程只是预览（存于对话消息）；真正的方案落库由
+    // planning pipeline 完成——这里把确认槽位写回旅行后触发管线。
+    if (event.eventType === 'AGENT_COMPLETED') {
+      void finalizeCompletedRun(event)
+    }
+  }
+
+  /** 已触发过规划管线的 run（SSE 断线重连会重放事件，进程内去重）。 */
+  const pipelineTriggeredRuns = new Set<string>()
+
+  async function finalizeCompletedRun(
+    event: Extract<AgentDialogEventView, { eventType: 'AGENT_COMPLETED' }>,
+  ): Promise<void> {
+    const runId = event.runId
+    if (pipelineTriggeredRuns.has(runId)) return
+    const tripId = options.tripId()
+    if (!tripId) return
+    // 旅行仍处于 DRAFT 才触发首次规划；PLANNING（任务已在途）或 COMPLETED
+    // （重放历史事件）时跳过，避免刷新页面后重复开任务。
+    const status = options.tripStatus?.()
+    if (status && status.toLowerCase() !== 'draft') return
+    pipelineTriggeredRuns.add(runId)
+    // 1) 把对话确认的槽位应用到旅行约束（管线从旅行实体读取约束快照）。
+    const slots = event.payload.slots
+    if (slots) await applyCompleted(slots)
+    // 2) 触发规划管线；runId 同时作为 Idempotency-Key，跨会话重放不重复建任务。
+    try {
+      await createPlanningTask(options.getToken(), tripId, runId)
+    } catch (cause) {
+      // 409 = 幂等重放或已有进行中任务，视为成功；其余错误提示用户。
+      if (cause instanceof ApiError && cause.status === 409) {
+        await options.refreshTrip?.()
+        return
+      }
+      commandError.value = {
+        title: '方案生成失败',
+        detail: agentErrorCopy(cause).detail,
+      }
+      return
+    }
+    // 3) 任务已入队：trip.status → PLANNING，planning 阶段轮询接管后续流转。
+    await options.refreshTrip?.()
   }
 
   function disarmFirstEventTimer(): void {
@@ -128,6 +181,11 @@ export function useAgentWorkspace(options: AgentWorkspaceOptions) {
 
   async function streamLoop(): Promise<void> {
     while (!stopped) {
+      // 创建模式（尚未选中旅行）时空转等待，不发无效 SSE 请求
+      if (!options.tripId()) {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        continue
+      }
       try {
         await streamAgentDialogEvents(
           options.getToken(),
@@ -177,6 +235,7 @@ export function useAgentWorkspace(options: AgentWorkspaceOptions) {
   async function send(text: string): Promise<void> {
     const trimmed = text.trim()
     if (!trimmed || sending.value || trimmed.length > MAX_TEXT_LENGTH) return
+    if (!options.tripId()) return // 创建模式无旅行上下文，运行通道不可用
     sending.value = true
     commandError.value = null
     lastSentText.value = trimmed

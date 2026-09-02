@@ -120,7 +120,10 @@ def test_v11_worker_wire_fingerprint_covers_injected_transit_costs() -> None:
             return make_result()
 
     event = asyncio.run(
-        process_planning_create(make_command(), ProviderWithTransitCosts())
+        process_planning_create(
+            make_command(start_date="2026-08-01", end_date="2026-08-01"),
+            ProviderWithTransitCosts(),
+        )
     )
 
     wire = event.model_dump(mode="json", by_alias=True, exclude_none=False)

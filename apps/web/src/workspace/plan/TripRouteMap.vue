@@ -14,11 +14,13 @@ const props = withDefaults(
     trip: Trip
     itinerary?: Itinerary | null
     selectedActivityId?: string | null
+    selectedDate?: string | null
     generating?: boolean
   }>(),
   {
     itinerary: null,
     selectedActivityId: null,
+    selectedDate: null,
     generating: false,
   },
 )
@@ -44,6 +46,7 @@ const hasItinerary = computed(() => props.itinerary && props.itinerary.days.leng
         v-if="hasItinerary && itinerary"
         :itinerary="itinerary"
         :selected-activity-id="selectedActivityId"
+        :selected-date="selectedDate"
         :allow-empty-selection="true"
         @select-activity="emit('selectActivity', $event)"
       />

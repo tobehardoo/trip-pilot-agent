@@ -8,25 +8,6 @@
   "occurredAt": "2026-08-29T08:31:00Z",
   "payload": {
     "summary": "行程已生成：测试行程",
-    "itinerary": {
-      "title": "测试行程",
-      "days": [
-        {
-          "date": "2026-10-01",
-          "activities": [
-            {
-              "title": "武侯祠",
-              "startTime": "2026-10-01T09:00:00+00:00",
-              "endTime": "2026-10-01T11:00:00+00:00",
-              "estimatedCost": 0,
-              "source": "DEMO"
-            }
-          ],
-          "transitLegs": []
-        }
-      ],
-      "estimatedTotalCost": 0
-    },
     "slots": {
       "destination": {"value": "成都", "state": "CONFIRMED"},
       "start_date": {"value": "10月1日", "state": "CONFIRMED"},

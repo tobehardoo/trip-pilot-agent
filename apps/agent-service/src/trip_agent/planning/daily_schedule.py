@@ -485,6 +485,48 @@ def build_meal_demands(
     return tuple(demands)
 
 
+def _fill_slots_dispatch(
+    candidates: tuple[CandidateActivity, ...],
+    slots: tuple[tuple[int, int], ...],
+    *,
+    day_type: DayType,
+    pace: Pace,
+    mobility_reduced: bool,
+    primary_region: str | None,
+) -> tuple[PlacedActivity, ...]:
+    """Route the free-slot fill through the configured day scheduler.
+
+    ``PLANNING_DAY_SCHEDULER`` (see ``cpsat_schedule``) selects GREEDY (the
+    historical behavior), CPSAT (exact selection, greedy fallback), or SHADOW
+    (greedy authoritative, CP-SAT comparison logged).  The import stays lazy so
+    the default path never pulls in ortools.
+    """
+    from trip_agent.planning.cpsat_schedule import (
+        choose_activities_cpsat,
+        choose_activities_shadow,
+        resolve_day_scheduler,
+    )
+
+    scheduler = resolve_day_scheduler()
+    if scheduler == "GREEDY":
+        return _fill_slots(
+            candidates,
+            slots,
+            pace=pace,
+            mobility_reduced=mobility_reduced,
+            primary_region=primary_region,
+        )
+    handler = choose_activities_shadow if scheduler == "SHADOW" else choose_activities_cpsat
+    return handler(
+        candidates,
+        slots,
+        day_type=day_type,
+        pace=pace,
+        mobility_reduced=mobility_reduced,
+        primary_region=primary_region,
+    )
+
+
 def choose_activities(
     candidates: tuple[CandidateActivity, ...],
     slots: tuple[tuple[int, int], ...],
@@ -504,9 +546,10 @@ def choose_activities(
     if day_type == "SPECIAL_ACTIVITY_DAY":
         special_candidate = _choose_special_day(movable)
         if special_candidate is None or not slots:
-            return _fill_slots(
+            return _fill_slots_dispatch(
                 movable,
                 slots,
+                day_type=day_type,
                 pace=pace,
                 mobility_reduced=mobility_reduced,
                 primary_region=primary_region,
@@ -522,18 +565,20 @@ def choose_activities(
             )
             if high - low >= MIN_SLOT_MINUTES
         )
-        extras = _fill_slots(
+        extras = _fill_slots_dispatch(
             tuple(c for c in movable if c is not special_candidate),
             remaining_slots,
+            day_type=day_type,
             pace=pace,
             mobility_reduced=mobility_reduced,
             primary_region=primary_region,
         )
         return (*special, *extras)
 
-    return _fill_slots(
+    return _fill_slots_dispatch(
         movable,
         slots,
+        day_type=day_type,
         pace=pace,
         mobility_reduced=mobility_reduced,
         primary_region=primary_region,

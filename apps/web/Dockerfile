@@ -1,6 +1,6 @@
 FROM node:24-alpine AS build
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@10.30.3 --activate
+RUN npm install -g pnpm@10.30.3
 COPY apps/web/package.json apps/web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY apps/web ./

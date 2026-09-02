@@ -31,6 +31,9 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [vue()],
     server: {
+      // 绑定 IPv6 双栈（:: 同时接受 ::1 与 IPv4-mapped 连接），避免 Windows 上
+      // localhost 优先解析到 ::1 时无人监听、每个新连接白等 ~200ms 回退到 IPv4。
+      host: '::',
       proxy: {
         '/api': env.TRAVEL_SERVER_URL || 'http://localhost:8080',
       },

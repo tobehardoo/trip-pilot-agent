@@ -51,3 +51,8 @@ output/
 .serena/
 .workbuddy/
 .zcode/
+
+# local scratch (repro/eval artifacts)
+.tmp-eval/
+.tmp-repro/
+.e2e-trip-id.txt

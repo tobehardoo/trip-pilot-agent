@@ -45,7 +45,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Mapping
-from typing import Literal
+from typing import Any, Literal
 
 from ortools.sat.python import cp_model
 
@@ -73,6 +73,19 @@ DEFAULT_CPSAT_TIME_LIMIT_SECONDS = 5.0
 # score sort; as a soft bonus this keeps coherence without overriding the
 # capacity-optimal selection.
 REGION_COHERENCE_BONUS = 40
+
+# Per-selected-item reward.  Mirrors the greedy path's capacity-driven fill:
+# candidates with score 0 are still placed when they fit (the evaluator scores
+# them downstream), so an empty selection must never beat a filled slot.
+PLACEMENT_REWARD = 1
+
+# Objective layering: score terms are scaled so that any 1-point score
+# difference outweighs the entire earliest-first tie-break spread (a full
+# day of minutes is <= 1440 << _SCORE_WEIGHT), and the tie-break in turn
+# never affects which candidates are selected.  This keeps the exact
+# scheduler's "don't idle the morning, cram the afternoon" habit aligned
+# with the greedy earliest-first placement without touching optimality.
+_SCORE_WEIGHT = 100_000
 
 
 def resolve_day_scheduler(env: Mapping[str, str] | None = None) -> DayScheduler:
@@ -338,16 +351,26 @@ def _solve(
                     starts[(i, low)] >= starts[(j, low)] + durations[j] + buffer
                 ).OnlyEnforceIf([xi, xj, before.Not()])
 
-    # Objective: maximize selected score with a primary-region coherence bonus.
+    # Objective, layered: (1) selection — score + region bonus + placement
+    # reward, scaled by _SCORE_WEIGHT; (2) earliest-first tie-break — later
+    # start minutes subtract a tiny amount so equal-score selections prefer
+    # morning placements, mirroring the greedy cursor's earliest-first habit.
     def weight(index: int) -> int:
         bonus = (
             REGION_COHERENCE_BONUS
             if primary_region is not None and candidates[index].region == primary_region
             else 0
         )
-        return candidates[index].score + bonus
+        return candidates[index].score + bonus + PLACEMENT_REWARD
 
-    model.Maximize(sum(weight(index) * x for (index, _), x in booleans.items()))
+    objective_terms: list[Any] = []
+    for (index, low), x in booleans.items():
+        objective_terms.append(_SCORE_WEIGHT * weight(index) * x)
+        effective_start = model.NewIntVar(0, 1440, f"estart_{index}_{low}")
+        model.Add(effective_start == starts[(index, low)]).OnlyEnforceIf(x)
+        model.Add(effective_start == 0).OnlyEnforceIf(x.Not())
+        objective_terms.append(-effective_start)
+    model.Maximize(sum(objective_terms))
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = _cpsat_time_limit_seconds()

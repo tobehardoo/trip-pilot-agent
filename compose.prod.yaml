@@ -98,6 +98,11 @@ services:
       # authentication/permission provider errors never fall back to Demo.
       PROVIDER_MODE: ${PROVIDER_MODE:-DEMO_ONLY}
       AMAP_WEB_SERVICE_KEY: ${AMAP_WEB_SERVICE_KEY:-}
+      # Day scheduler (planning worker only): GREEDY default / CPSAT exact
+      # selection with greedy fallback / SHADOW greedy-authoritative comparison.
+      # See apps/agent-service/benchmarks/scheduler/README.md.
+      PLANNING_DAY_SCHEDULER: ${PLANNING_DAY_SCHEDULER:-GREEDY}
+      PLANNING_CPSAT_TIME_LIMIT_SECONDS: ${PLANNING_CPSAT_TIME_LIMIT_SECONDS:-5}
       AMAP_TIMEOUT_SECONDS: ${AMAP_TIMEOUT_SECONDS:-5}
       PROVIDER_MAX_ATTEMPTS: ${PROVIDER_MAX_ATTEMPTS:-3}
       PROVIDER_RETRY_BASE_DELAY_SECONDS: ${PROVIDER_RETRY_BASE_DELAY_SECONDS:-0.2}

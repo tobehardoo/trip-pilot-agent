@@ -73,7 +73,7 @@ Hard Validation
 Itinerary Persistence
 ```
 
-LLM/Agent 组件用于语义推理场景；硬约束与可执行调度由确定性规则与优化（贪心/启发式确定性内核）负责——各做各自擅长的事情。
+LLM/Agent 组件用于语义推理场景；硬约束与可执行调度由确定性规则与优化负责——默认贪心/启发式内核，可选 OR-Tools CP-SAT 精确调度（`PLANNING_DAY_SCHEDULER=CPSAT`，失败自动回退贪心；`SHADOW` 模式对照采样，见调度器基准）——各做各自擅长的事情。
 
 ## 技术栈
 

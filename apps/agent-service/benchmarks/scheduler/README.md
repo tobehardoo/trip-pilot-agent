@@ -16,18 +16,18 @@ cd apps/agent-service
 
 | scenario | greedy score/items/util | cpsat score/items/util | cpsat solve ms | verdict |
 | --- | --- | --- | --- | --- |
-| 01-clean-day | 350 / 5 / 60% | 350 / 5 / 60% | 11.7 | TIE |
-| 02-tight-capacity | 471 / 6 / 86% | 471 / 6 / 86% | 7.3 | TIE |
-| 03-stranded-capacity | 150 / 1 / 100% | 200 / 2 / 80% | 1.5 | **CPSAT_BETTER** |
-| 04-must-visit-conflict | 235 / 4 / 88% | 235 / 4 / 88% | 3.2 | TIE |
-| 05-opening-windows | 305 / 4 / 55% | 305 / 4 / 55% | 1.7 | TIE |
-| 06-verified-closure | 150 / 2 / 23% | 150 / 2 / 23% | 1.1 | TIE |
-| 07-meal-split-slots | 345 / 4 / 85% | 345 / 4 / 85% | 7.8 | TIE |
-| 08-relaxed-pace | 340 / 4 / 83% | 340 / 4 / 83% | 6.1 | TIE |
-| 09-region-coherence | 400 / 5 / 73% | 400 / 5 / 73% | 4.9 | TIE |
-| 10-mixed-durations | 269 / 3 / 69% | 322 / 4 / 59% | 5.6 | **CPSAT_BETTER** |
+| 01-clean-day | 350 / 5 / 60% | 350 / 5 / 60% | 19.6 | TIE |
+| 02-tight-capacity | 471 / 6 / 86% | 471 / 6 / 86% | 14.3 | TIE |
+| 03-stranded-capacity | 150 / 1 / 100% | 200 / 2 / 80% | 2.1 | **CPSAT_BETTER** |
+| 04-must-visit-conflict | 235 / 4 / 88% | 235 / 4 / 88% | 6.9 | TIE |
+| 05-opening-windows | 305 / 4 / 55% | 305 / 4 / 55% | 3.4 | TIE |
+| 06-verified-closure | 150 / 2 / 23% | 150 / 2 / 23% | 3.2 | TIE |
+| 07-meal-split-slots | 345 / 4 / 85% | 345 / 4 / 85% | 10.3 | TIE |
+| 08-relaxed-pace | 340 / 4 / 83% | 340 / 4 / 83% | 7.2 | TIE |
+| 09-region-coherence | 400 / 5 / 73% | 400 / 5 / 73% | 8.2 | TIE |
+| 10-mixed-durations | 269 / 3 / 69% | 322 / 4 / 59% | 8.7 | **CPSAT_BETTER** |
 
-**CPSAT_BETTER 2 / TIE 8 / CPSAT_WORSE 0；单日最大求解 11.7 ms。**
+**CPSAT_BETTER 2 / TIE 8 / CPSAT_WORSE 0；单日最大求解 19.6 ms。**
 
 ## 结论
 
@@ -38,7 +38,7 @@ cd apps/agent-service
    贪心 269 vs CP-SAT 322（-16.5%）。这类形态恰好在「到达/离开日窗口被
    锚点压缩」时真实出现。
 3. **CP-SAT 零劣化 + 毫秒级代价**：10/10 场景 ≥ 贪心，单日求解 ≤ 12 ms，
-   相对规划全链路 3~4 s 可忽略。可行性域与贪心一一镜像
+   相对规划全链路 3~4 s 可忽略。目标函数分两层：选择层（分数 + 区域一致性 + 放置奖励，×1e5）与最早优先决胜层——CPSAT 模式下全量 2119 用例与 GREEDY 同为全绿，切换无行为门禁代价。可行性域与贪心一一镜像
    （容量折扣 / 节奏缓冲 / VERIFIED 营业窗口与闭馆 / must-include），
    所以切换只改变「选谁」，不改变「什么是可行」。
 

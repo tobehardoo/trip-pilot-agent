@@ -13,7 +13,7 @@
 
 ### 1.1 已具备
 
-- **v1.0 完整收口**（2026-08-21）：约束驱动异步规划、OR-Tools 调度、Hard Validation 11/11、不可变版本、编辑/回滚、分享导出、城市情报；Python 1716 / Java 558 / Web 446 测试基线。
+- **v1.0 完整收口**（2026-08-21）：约束驱动异步规划、确定性调度与修复循环（`daily_schedule` 贪心 + Hard Validation 11/11 + 3 次预算修复）、不可变版本、编辑/回滚、分享导出、城市情报；Python 1716 / Java 558 / Web 446 测试基线。（OR-Tools 为声明依赖但彼时未进入主路径；CP-SAT 求解作为独立算法批次另行立项。）
 - **Agent 编排层骨架**（`trip_agent/agent/`，已落地）：
   - 约束槽位五态（UNKNOWN / INFERRED / CONFIRMED / REJECTED / USER_OVERRIDE，含 verified_by / override_of / updated_at 出处元数据），INFERRED / REJECTED 禁作硬约束
   - 8 个声明式工具 + 能力注入 runtime + fail-closed 错误语义

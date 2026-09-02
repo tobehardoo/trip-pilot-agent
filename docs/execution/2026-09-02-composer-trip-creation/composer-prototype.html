@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TripPilot Composer 原型 — 创建旅行交互（静态演示）</title>
+<!--
+  静态交互原型 · 2026-09-02 · 对应 docs/execution/2026-09-02-composer-trip-creation/design.md
+  —— 仅用于视觉/交互评审，数据全部为前端模拟；真实实现将接
+     POST /api/agent/dialogue（tripContext 种子）与 POST /api/agent/trips。
+  取色与字号对齐 apps/web/tailwind.config.js 的 tp-* 令牌与 DESIGN-BASELINE。
+-->
+<style>
+  :root {
+    --tp-bg: #F7F7F5;
+    --tp-panel: #FCFCFB;
+    --tp-line: #E5E5E5;
+    --tp-div: #EBEBE9;
+    --tp-active: #EFEFED;
+    --tp-hover: #F2F2F0;
+    --tp-ink: #1F1F1F;
+    --tp-body: #3D3D3B;
+    --tp-sub: #6B6B6B;
+    --tp-mute: #999999;
+    --tp-faint: #C9C9C6;
+    --tp-ok: #4A7C59;
+    --tp-run: #8A8A86;
+    --tp-warn: #A65D57;
+    --tp-dot: #B7B7B3;
+    --shadow-float: 0 8px 24px -4px rgb(0 0 0 / 0.08), 0 2px 8px -2px rgb(0 0 0 / 0.04);
+    --font-sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--tp-bg);
+    color: var(--tp-ink);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+  button { font-family: inherit; letter-spacing: 0; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--tp-mute); outline-offset: 2px;
+  }
+
+  /* ───────────────────────── 壳：三栏 ───────────────────────── */
+  .shell { display: flex; flex-direction: column; height: 100vh; }
+  .body-row { display: flex; flex: 1; min-height: 0; position: relative; }
+
+  /* Header */
+  .appbar {
+    height: 40px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 0 12px;
+    background: var(--tp-panel);
+    border-bottom: 1px solid var(--tp-line);
+  }
+  .appbar .side { display: flex; align-items: center; gap: 2px; min-width: 0; }
+  .icon-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px; border: 0; border-radius: 6px;
+    background: transparent; color: var(--tp-sub); cursor: pointer;
+    transition: background .15s, color .15s; font-size: 12px;
+  }
+  .icon-btn:hover { background: var(--tp-active); color: var(--tp-ink); }
+  .icon-btn[disabled] { color: var(--tp-faint); cursor: default; }
+  .icon-btn[disabled]:hover { background: transparent; color: var(--tp-faint); }
+  .appbar-title {
+    flex: 1; text-align: center; min-width: 0;
+    font-size: 12px; color: var(--tp-body);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .appbar-title .sep { color: var(--tp-faint); margin: 0 6px; }
+  .phase-chip { display: inline-flex; align-items: center; gap: 6px; color: var(--tp-sub); font-size: 12px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tp-dot); display: inline-block; }
+  .dot.pulse { animation: pulse 1.4s ease-in-out infinite; }
+  .dot.ok { background: var(--tp-ok); animation: none; }
+  @keyframes pulse { 0%,100% { opacity: .4; transform: scale(.8);} 50% { opacity: 1; transform: scale(1.2);} }
+  .avatar {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--tp-active); color: var(--tp-sub);
+    display: flex; align-items: center; justify-content: center; font-size: 11px;
+    border: 1px solid var(--tp-line);
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 224px; flex-shrink: 0;
+    background: var(--tp-panel);
+    border-right: 1px solid var(--tp-line);
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .sidebar.hidden-panel { display: none; }
+  .sb-group { padding: 12px 8px 8px; }
+  .sb-label {
+    margin: 0 0 4px; padding: 0 8px;
+    font-size: 10px; font-weight: 500; letter-spacing: .08em;
+    color: var(--tp-mute); text-transform: uppercase;
+  }
+  .sb-label .count { font-family: "JetBrains Mono", monospace; color: var(--tp-faint); letter-spacing: 0; margin-left: 4px; }
+  .sb-item {
+    display: flex; align-items: center; gap: 8px;
+    height: 28px; padding: 0 8px; width: 100%;
+    border: 0; border-radius: 6px; background: transparent;
+    color: var(--tp-sub); font-size: 12px; text-align: left; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .sb-item:hover { background: var(--tp-hover); color: var(--tp-ink); }
+  .sb-item.active { background: var(--tp-active); color: var(--tp-ink); box-shadow: inset 2px 0 0 var(--tp-ink); }
+  .sb-item.active .t { font-weight: 500; }
+  .sb-item .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb-item .s { display: block; font-size: 11px; color: var(--tp-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sb-sep { height: 1px; background: var(--tp-div); margin: 4px 8px; }
+  .sb-trips { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 8px; }
+  .sb-trips .stack { display: flex; flex-direction: column; gap: 2px; }
+  .sb-foot { padding: 8px; }
+  .sb-hint { margin: 0; padding: 4px 8px 8px; font-size: 11px; color: var(--tp-faint); }
+
+  /* Center */
+  .center { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--tp-bg); }
+
+  /* ───────────────────────── 创建模式 ───────────────────────── */
+  .creation-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+  .creation-inner { max-width: 672px; margin: 0 auto; padding: 0 16px; }
+  .hero { text-align: center; padding: 20vh 0 24px; }
+  .creation-scroll.has-transcript .hero { padding: 0; }
+  .hero h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; color: var(--tp-ink); }
+  .hero .brand { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 10px;
+    font-size: 12px; letter-spacing: .12em; color: var(--tp-mute); text-transform: uppercase; }
+  .hero .brand::before, .hero .brand::after { content: ""; width: 20px; height: 1px; background: var(--tp-line); }
+  .hero p { margin: 8px 0 0; font-size: 12px; color: var(--tp-mute); }
+  .composer-slot { padding-bottom: 40px; }
+  .composer-slot.with-transcript { padding: 16px 0 28px; }
+
+  /* 对话流 */
+  .msg { display: flex; flex-direction: column; margin: 0 0 14px; animation: rise .25s ease-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px);} to { opacity: 1; transform: none;} }
+  .msg .role {
+    font-size: 10px; letter-spacing: .08em; color: var(--tp-faint);
+    text-transform: uppercase; margin-bottom: 4px;
+  }
+  .msg.agent .role { color: var(--tp-mute); }
+  .msg .bubble { max-width: 92%; white-space: pre-wrap; }
+  .msg.agent .bubble { color: var(--tp-body); font-size: 12.5px; }
+  .msg.user { align-items: flex-end; }
+  .msg.user .bubble {
+    background: var(--tp-active); color: var(--tp-ink);
+    border-radius: 8px; padding: 7px 10px; font-size: 12.5px;
+  }
+  .msg.summary .bubble {
+    border: 1px solid var(--tp-line); background: var(--tp-panel);
+    border-radius: 8px; padding: 10px 12px; color: var(--tp-body);
+  }
+  .chips-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .opt-chip {
+    border: 1px solid var(--tp-line); background: var(--tp-panel);
+    color: var(--tp-body); border-radius: 6px;
+    height: 26px; padding: 0 10px; font-size: 12px; cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .opt-chip:hover { background: var(--tp-hover); color: var(--tp-ink); border-color: var(--tp-faint); }
+  .typing { display: inline-flex; align-items: center; gap: 6px; color: var(--tp-mute); font-size: 12px; }
+  .typing .dot { background: var(--tp-dot); }
+
+  /* ───────────────────────── Composer 三层 ───────────────────────── */
+  .composer {
+    background: #FFFFFF;
+    border: 1px solid var(--tp-line);
+    border-radius: 10px;
+    box-shadow: var(--shadow-float);
+    overflow: visible;
+  }
+  .composer.docked { border-radius: 8px; box-shadow: none; }
+  .l1 { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; position: relative; }
+  .l1.readonly { padding: 10px 12px 0; }
+  .ctx-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 26px; padding: 0 10px;
+    border: 1px solid var(--tp-line); border-radius: 6px;
+    background: var(--tp-panel); color: var(--tp-sub);
+    font-size: 12px; cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+  }
+  .ctx-chip:hover { border-color: var(--tp-faint); color: var(--tp-ink); background: var(--tp-hover); }
+  .ctx-chip.filled { color: var(--tp-ink); background: #FFF; }
+  .ctx-chip.missing { border-style: dashed; color: var(--tp-mute); }
+  .ctx-chip.locked { cursor: default; color: var(--tp-ink); }
+  .ctx-chip.locked:hover { background: var(--tp-panel); border-color: var(--tp-line); }
+  .ctx-chip .flag { font-size: 11px; }
+  .ctx-chip .lock-tag { font-size: 10px; color: var(--tp-faint); }
+  .l2 { padding: 6px 12px 4px; }
+  .composer textarea {
+    width: 100%; border: 0; outline: none; resize: none;
+    font-family: inherit; font-size: 13px; line-height: 1.55; color: var(--tp-ink);
+    background: transparent; min-height: 44px; max-height: 200px;
+    padding: 4px 0; display: block;
+  }
+  .composer textarea::placeholder { color: var(--tp-faint); }
+  .l3 {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px 10px 12px;
+  }
+  .l3 .spacer { flex: 1; }
+  .brand-mark { font-size: 11px; color: var(--tp-faint); letter-spacing: .04em; }
+  .ghost-btn {
+    border: 0; background: transparent; color: var(--tp-sub);
+    font-size: 11px; height: 24px; padding: 0 6px; border-radius: 5px; cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .ghost-btn:hover { background: var(--tp-hover); color: var(--tp-ink); }
+  .send-btn {
+    width: 28px; height: 28px; border: 0; border-radius: 6px;
+    background: var(--tp-ink); color: #FFF; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity .15s, background .15s;
+  }
+  .send-btn:hover { background: #3D3D3B; }
+  .send-btn[disabled] { opacity: .3; cursor: not-allowed; }
+  .primary-btn {
+    height: 28px; border: 0; border-radius: 6px; padding: 0 12px;
+    background: var(--tp-ink); color: #FFF; font-size: 12px; font-weight: 500; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: background .15s;
+  }
+  .primary-btn:hover { background: #3D3D3B; }
+  .primary-btn[disabled] { opacity: .35; cursor: not-allowed; }
+  .composer-hint {
+    max-width: 672px; margin: 8px auto 0; padding: 0 4px;
+    font-size: 11px; color: var(--tp-warn);
+    min-height: 16px; text-align: left;
+  }
+  .composer-hint.quiet { color: var(--tp-mute); }
+
+  /* Layer1 弹层（城市 / 日期） */
+  .popover {
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
+    width: 240px; background: #FFF;
+    border: 1px solid var(--tp-line); border-radius: 8px;
+    box-shadow: var(--shadow-float); padding: 8px;
+  }
+  .popover.right { left: auto; right: 0; }
+  .popover input[type="text"], .popover input[type="date"] {
+    width: 100%; height: 28px; border: 1px solid var(--tp-line); border-radius: 6px;
+    padding: 0 8px; font-family: inherit; font-size: 12px; color: var(--tp-ink);
+    background: #FFF; outline: none;
+  }
+  .popover input:focus { border-color: var(--tp-faint); }
+  .city-list { margin: 6px 0 0; padding: 0; list-style: none; max-height: 180px; overflow-y: auto; }
+  .city-list li {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 8px; border-radius: 5px; cursor: pointer; font-size: 12px; color: var(--tp-body);
+  }
+  .city-list li:hover { background: var(--tp-hover); color: var(--tp-ink); }
+  .city-list li .prov { font-size: 10px; color: var(--tp-faint); }
+  .date-row { display: flex; align-items: center; gap: 6px; }
+  .date-row .dash { color: var(--tp-faint); }
+  .date-err { margin: 6px 0 0; font-size: 11px; color: var(--tp-warn); min-height: 14px; }
+
+  /* ───────────────────────── 旅行模式中央区（规划视图 mock） ───────────────────────── */
+  .trip-main { flex: 1; min-height: 0; overflow-y: auto; }
+  .trip-inner { max-width: 768px; margin: 0 auto; padding: 24px 24px 12px; }
+  .trip-head h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
+  .trip-head .sub { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--tp-sub); font-size: 12px; }
+  .hr { height: 1px; background: var(--tp-div); margin: 16px 0; border: 0; }
+  .pipeline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .pipe-node { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--tp-faint); }
+  .pipe-node .pdot { width: 6px; height: 6px; border-radius: 50%; background: var(--tp-line); }
+  .pipe-node.done { color: var(--tp-ok); } .pipe-node.done .pdot { background: var(--tp-ok); }
+  .pipe-node.run { color: var(--tp-run); } .pipe-node.run .pdot { background: var(--tp-run); animation: pulse 1.4s infinite; }
+  .pipe-arrow { color: var(--tp-line); font-size: 10px; }
+  .day-row {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 8px 0; border-bottom: 1px solid var(--tp-div);
+  }
+  .day-row:last-child { border-bottom: 0; }
+  .day-row .d { flex-shrink: 0; width: 44px; font-size: 11px; color: var(--tp-mute); }
+  .day-row .v { color: var(--tp-body); font-size: 12.5px; }
+  .skeleton-line { height: 10px; border-radius: 4px; background: var(--tp-div); margin: 10px 0; animation: pulse 1.6s infinite; }
+  .skeleton-line.w60 { width: 60%; } .skeleton-line.w85 { width: 85%; } .skeleton-line.w40 { width: 40%; }
+
+  /* docked composer 区 */
+  .dock { flex-shrink: 0; padding: 8px 16px 12px; background: var(--tp-panel); border-top: 1px solid var(--tp-line); }
+  .dock-inner { max-width: 672px; margin: 0 auto; }
+
+  /* ───────────────────────── 右侧 Context Panel ───────────────────────── */
+  .context {
+    width: 256px; flex-shrink: 0;
+    background: var(--tp-panel);
+    border-left: 1px solid var(--tp-line);
+    overflow-y: auto; padding: 12px;
+  }
+  .context.hidden-panel { display: none; }
+  .cx-sec { margin-bottom: 14px; }
+  .cx-sec h3 {
+    margin: 0 0 6px; font-size: 10px; font-weight: 500;
+    letter-spacing: .08em; color: var(--tp-mute); text-transform: uppercase;
+  }
+  .cx-weak { margin: 8px 0 0; font-size: 11px; color: var(--tp-faint); line-height: 1.6; }
+  .req-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--tp-body); padding: 2px 0; }
+  .req-item .mark { color: var(--tp-faint); font-size: 11px; }
+  .req-item.done .mark { color: var(--tp-ok); }
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+  .kv .k { color: var(--tp-mute); font-size: 11px; flex-shrink: 0; }
+  .kv .v { color: var(--tp-body); font-size: 12px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .todo { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--tp-mute); padding: 2px 0; }
+  .todo .ring { width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--tp-faint); flex-shrink: 0; }
+
+  /* ───────────────────────── 演示控制 & 响应式 ───────────────────────── */
+  .demo-fab {
+    position: fixed; left: 12px; bottom: 12px; z-index: 60;
+    display: flex; align-items: center; gap: 8px;
+    background: var(--tp-panel); border: 1px solid var(--tp-line); border-radius: 8px;
+    box-shadow: var(--shadow-float); padding: 6px 10px;
+    font-size: 11px; color: var(--tp-mute);
+  }
+  .demo-fab button {
+    border: 1px solid var(--tp-line); background: #FFF; border-radius: 5px;
+    height: 22px; padding: 0 8px; font-size: 11px; color: var(--tp-sub); cursor: pointer;
+  }
+  .demo-fab button:hover { color: var(--tp-ink); background: var(--tp-hover); }
+  @media (max-width: 1279px) { .context { display: none; } }
+  @media (max-width: 1023px) { .sidebar { position: absolute; inset: 0 auto 0 0; z-index: 40; box-shadow: var(--shadow-float); } .sidebar.hide { display: none; } }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Application Bar ─────────────────────────────────────────── -->
+  <header class="appbar">
+    <div class="side">
+      <button class="icon-btn" id="btn-sidebar" title="切换工作区导航">☰</button>
+      <button class="icon-btn" disabled title="后退">←</button>
+      <button class="icon-btn" disabled title="前进">→</button>
+    </div>
+    <div class="appbar-title"><span id="crumb-mode">工作台</span><span class="sep">/</span><span id="crumb-title">新旅行</span></div>
+    <div class="side">
+      <span class="phase-chip" id="phase-chip"><span class="dot" id="phase-dot"></span><span id="phase-text">未选择旅行</span></span>
+      <button class="icon-btn" id="btn-context" title="切换上下文面板">▭</button>
+      <div class="avatar">未</div>
+    </div>
+  </header>
+
+  <div class="body-row">
+
+    <!-- ── 左：Sidebar ──────────────────────────────────────────── -->
+    <nav class="sidebar" id="sidebar" aria-label="工作区导航">
+      <div class="sb-group">
+        <h2 class="sb-label">工作区</h2>
+        <button class="sb-item active">⌂ <span class="t">工作台</span></button>
+        <button class="sb-item">▦ <span class="t">我的旅行</span></button>
+        <button class="sb-item">⌕ <span class="t">搜索</span></button>
+      </div>
+      <div class="sb-sep"></div>
+      <div class="sb-trips">
+        <h2 class="sb-label">旅行<span class="count" id="trip-count">2</span></h2>
+        <div class="stack" id="trip-list">
+          <button class="sb-item" data-trip="上海三日旅行"><span class="t">上海三日旅行<br><span class="s">上海 · 9/12 → 9/14</span></span></button>
+          <button class="sb-item" data-trip="成都五日旅行"><span class="t">成都五日旅行<br><span class="s">成都 · 10/1 → 10/5</span></span></button>
+        </div>
+      </div>
+      <div class="sb-sep"></div>
+      <div class="sb-foot">
+        <button class="sb-item" id="btn-new-trip">＋ <span class="t">新建旅行</span></button>
+      </div>
+    </nav>
+
+    <!-- ── 中：工作区 ───────────────────────────────────────────── -->
+    <main class="center" id="center">
+
+      <!-- 创建模式 -->
+      <section id="creation-view" style="display:flex; flex-direction:column; flex:1; min-height:0;">
+        <div class="creation-scroll" id="creation-scroll">
+          <div class="creation-inner">
+            <div class="hero" id="hero">
+              <div class="brand">TripPilot</div>
+              <h1>开始规划一次旅行</h1>
+              <p>先告诉我目的地和日期，其余想法直接说出来就好。</p>
+            </div>
+            <div id="transcript"></div>
+          </div>
+        </div>
+        <div class="creation-inner composer-slot" id="composer-slot">
+          <div class="composer" id="composer">
+            <div class="l1" id="l1">
+              <button class="ctx-chip missing" id="chip-dest">📍 目的地：未设置</button>
+              <button class="ctx-chip missing" id="chip-date">📅 日期：未设置</button>
+              <!-- 城市弹层 -->
+              <div class="popover" id="pop-dest" style="display:none;">
+                <input type="text" id="city-search" placeholder="搜索城市，如：广州、上海、成都" />
+                <ul class="city-list" id="city-list"></ul>
+              </div>
+              <!-- 日期弹层 -->
+              <div class="popover right" id="pop-date" style="display:none;">
+                <div class="date-row">
+                  <input type="date" id="date-start" />
+                  <span class="dash">—</span>
+                  <input type="date" id="date-end" />
+                </div>
+                <p class="date-err" id="date-err"></p>
+              </div>
+            </div>
+            <div class="l2">
+              <textarea id="composer-input" rows="2"
+                placeholder="告诉我你想怎么旅行，比如：想轻松一点，多看看历史文化……"></textarea>
+            </div>
+            <div class="l3">
+              <button class="ghost-btn" id="btn-reset" style="display:none;">↺ 重新开始</button>
+              <span class="spacer"></span>
+              <span class="brand-mark">TripPilot</span>
+              <button class="primary-btn" id="btn-start" style="display:none;">开始规划 →</button>
+              <button class="send-btn" id="btn-send" disabled>↑</button>
+            </div>
+          </div>
+          <p class="composer-hint" id="composer-hint"></p>
+        </div>
+      </section>
+
+      <!-- 旅行模式（规划视图 mock） -->
+      <section id="trip-view" style="display:none; flex-direction:column; flex:1; min-height:0;">
+        <div class="trip-main">
+          <div class="trip-inner">
+            <div class="trip-head">
+              <h1 id="trip-title">广州 · AI 行程</h1>
+              <p class="sub"><span class="dot" id="trip-dot"></span><span id="trip-status">TripPilot 正在规划你的旅行</span></p>
+            </div>
+            <hr class="hr" />
+            <div class="pipeline" id="pipeline"></div>
+            <hr class="hr" />
+            <div id="trip-body">
+              <div id="trip-days"></div>
+            </div>
+          </div>
+        </div>
+        <div class="dock">
+          <div class="dock-inner">
+            <div class="composer docked">
+              <div class="l1 readonly">
+                <span class="ctx-chip locked filled" id="dock-ctx">📍 广州 · 2026/09/10 → 09/13</span>
+              </div>
+              <div class="l2">
+                <textarea id="dock-input" rows="1" placeholder="继续告诉 TripPilot 你想如何调整旅行…"></textarea>
+              </div>
+              <div class="l3">
+                <span class="spacer"></span>
+                <span class="brand-mark">TripPilot</span>
+                <button class="send-btn" id="dock-send" disabled>↑</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ── 右：Context Panel ────────────────────────────────────── -->
+    <aside class="context" id="context" aria-label="旅行上下文">
+      <!-- 三态由 JS 渲染 -->
+      <div id="context-body"></div>
+    </aside>
+  </div>
+</div>
+
+<!-- 演示控制 -->
+<div class="demo-fab">
+  <span>静态原型 · 模拟数据</span>
+  <button id="btn-replay">重置演示</button>
+</div>
+
+<script>
+/* ═══════════════ 状态（对应设计 §3.1：chips + sessionId 对话投影） ═══════════════ */
+const CITIES = [
+  { name: '广州', prov: '广东省' }, { name: '深圳', prov: '广东省' }, { name: '上海', prov: '上海市' },
+  { name: '成都', prov: '四川省' }, { name: '杭州', prov: '浙江省' }, { name: '北京', prov: '北京市' },
+  { name: '西安', prov: '陕西省' }, { name: '长沙', prov: '湖南省' },
+];
+const TRAVELER_OPTS = ['1 位', '2 位', '3 位', '4 位', '5 位', '6 位及以上'];
+const BUDGET_OPTS = [['3000 以内', 2500], ['3000-8000', 5500], ['8000-15000', 11500], ['15000 以上', 20000]];
+
+const S = {
+  mode: 'create',            // create | trip
+  dest: null, startDate: null, endDate: null,
+  locked: false,             // 首条消息后 chips 锁定（设计 D3）
+  started: false,            // 对话是否已开始
+  messages: [],              // {role, text, kind, options?[]}
+  slots: {},                 // 槽位投影：{label: {value, state, locked?}}
+  ready: false,
+  stage: 'ask-travelers',    // 内部脚本推进指针
+  tripTitle: '广州 · AI 行程',
+};
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+const fmtDate = (iso) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${m}/${d}`; };
+const fmtMoney = (n) => n == null ? null : `¥${Number(n).toLocaleString()}`;
+
+/* ═══════════════ 渲染 ═══════════════ */
+function renderChips() {
+  const cd = $('chip-dest'), ct = $('chip-date');
+  const dFilled = !!S.dest, dFilled2 = !!(S.startDate && S.endDate);
+  cd.className = 'ctx-chip ' + (dFilled ? (S.locked ? 'locked filled' : 'filled') : 'missing');
+  cd.innerHTML = dFilled ? `📍 ${S.dest}${S.locked ? ' <span class="lock-tag">已锁定</span>' : ''}` : '📍 目的地：未设置';
+  ct.className = 'ctx-chip ' + (dFilled2 ? (S.locked ? 'locked filled' : 'filled') : 'missing');
+  ct.innerHTML = dFilled2 ? `📅 ${fmtDate(S.startDate)} → ${fmtDate(S.endDate)}${S.locked ? ' <span class="lock-tag">已锁定</span>' : ''}` : '📅 日期：未设置';
+  const ok = dFilled && dFilled2;
+  $('btn-send').disabled = !ok || S.sending;
+  $('btn-start').style.display = S.ready ? '' : 'none';
+  $('btn-reset').style.display = S.started ? '' : 'none';
+  const hint = $('composer-hint');
+  if (!ok && !S.started) { hint.textContent = '先填写目的地和日期，就可以开始和 TripPilot 聊。'; hint.className = 'composer-hint quiet'; }
+  else if (S.sending) { hint.textContent = ''; }
+  else { hint.textContent = ''; }
+  $('crumb-title').textContent = S.mode === 'trip' ? S.tripTitle : (S.dest ? `${S.dest} · 新旅行` : '新旅行');
+}
+
+function renderTranscript() {
+  const t = $('transcript'); t.innerHTML = '';
+  for (const m of S.messages) {
+    const w = el('div', `msg ${m.role}${m.kind === 'SUMMARY' ? ' summary' : ''}`);
+    w.appendChild(el('div', 'role', m.role === 'user' ? '你' : 'TripPilot'));
+    w.appendChild(el('div', 'bubble', m.text));
+    if (m.options && m.options.length) {
+      const row = el('div', 'chips-row');
+      for (const o of m.options) {
+        const b = el('button', 'opt-chip', o.label);
+        if (o.used) b.disabled = true, b.style.opacity = .45;
+        else b.onclick = () => { o.used = true; pickOption(o); };
+        row.appendChild(b);
+      }
+      w.appendChild(row);
+    }
+    t.appendChild(w);
+  }
+  $('hero').style.display = S.messages.length ? 'none' : '';
+  $('creation-scroll').classList.toggle('has-transcript', S.messages.length > 0);
+  $('composer-slot').classList.toggle('with-transcript', S.messages.length > 0);
+  const sc = $('creation-scroll'); sc.scrollTop = sc.scrollHeight;
+}
+
+function renderContext() {
+  const box = $('context-body'); box.innerHTML = '';
+  if (S.mode === 'trip') {
+    const days = Math.round((new Date(S.endDate) - new Date(S.startDate)) / 86400000) + 1;
+    box.appendChild(sec('旅行', `<div class="kv"><span class="k">目的地</span><span class="v">${S.dest} · ${days}天${days - 1}晚</span></div>
+      <div class="kv"><span class="k">日期</span><span class="v">${fmtDate(S.startDate)} — ${fmtDate(S.endDate)}</span></div>`));
+    const rows = [];
+    if (S.slots['出行人数']?.value) rows.push(['人数', S.slots['出行人数'].value]);
+    if (S.slots['总预算']?.value) rows.push(['预算', fmtMoney(S.slots['总预算'].value)]);
+    if (S.slots['节奏']?.value) rows.push(['节奏', S.slots['节奏'].value]);
+    if (S.slots['偏好']?.value) rows.push(['偏好', S.slots['偏好'].value]);
+    if (S.slots['必去地点']?.value) rows.push(['必去', S.slots['必去地点'].value]);
+    box.appendChild(sec('需求摘要', rows.map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')));
+    box.appendChild(sec('规划状态', `<div class="req-item done"><span class="mark">✓</span> 旅行需求已确认</div>
+      <div class="req-item"><span class="mark" id="cx-plan-mark">${S.phaseDone ? '✓' : '○'}</span> ${S.phaseDone ? '行程方案已生成' : '方案生成中'}</div>`));
+    return;
+  }
+  if (!S.started) {
+    box.appendChild(sec('旅行需求', `<p class="cx-weak">描述你的旅行想法开始。<br>已了解的需求会汇总在这里。</p>`));
+    return;
+  }
+  const req = [];
+  if (S.dest) req.push(['✓', S.dest]); else req.push(['○', '目的地']);
+  if (S.startDate) req.push(['✓', `${fmtDate(S.startDate)} → ${fmtDate(S.endDate)}`]); else req.push(['○', '日期']);
+  box.appendChild(sec('旅行需求', req.map(([m, v]) => `<div class="req-item ${m === '✓' ? 'done' : ''}"><span class="mark">${m}</span> ${v}</div>`).join('')));
+  const known = [], todo = [];
+  for (const [label, s] of Object.entries(S.slots)) {
+    if (s.value != null) known.push([label, label === '总预算' ? fmtMoney(s.value) : s.value]); else todo.push(label);
+  }
+  box.appendChild(sec('已了解', known.length
+    ? known.map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')
+    : '<p class="cx-weak">还没有，继续聊就行。</p>'));
+  if (todo.length) box.appendChild(sec('待确认', todo.map((k) => `<div class="todo"><span class="ring"></span> ${k}</div>`).join('')));
+}
+function sec(title, html) { const d = el('div', 'cx-sec'); d.appendChild(el('h3', null, title)); d.appendChild(el('div', null, html)); return d; }
+
+function renderHeader() {
+  const chip = $('phase-chip');
+  if (S.mode === 'trip') {
+    $('phase-dot').className = 'dot' + (S.phaseDone ? ' ok' : ' pulse');
+    $('phase-text').textContent = S.phaseDone ? '已完成' : '规划中';
+    $('crumb-mode').textContent = '工作台';
+  } else {
+    $('phase-dot').className = 'dot';
+    $('phase-text').textContent = S.started ? '创建旅行' : '未选择旅行';
+    $('crumb-mode').textContent = '工作台';
+  }
+}
+
+function renderPipeline() {
+  const nodes = ['理解需求', '查询信息', '生成方案', '验证方案', '完成'];
+  const doneCount = S.phaseDone ? 5 : 3;
+  $('pipeline').innerHTML = nodes.map((n, i) => {
+    const cls = i < doneCount ? 'done' : i === doneCount ? 'run' : '';
+    const arrow = i < nodes.length - 1 ? '<span class="pipe-arrow">→</span>' : '';
+    return `<span class="pipe-node ${cls}"><span class="pdot"></span>${n}</span>${arrow}`;
+  }).join('');
+}
+
+function renderAll() { renderChips(); renderTranscript(); renderContext(); renderHeader(); }
+
+/* ═══════════════ 模拟 Agent 对话（脚本引擎，对应后端 understand→confirm→ready） ═══════════════ */
+function push(role, text, kind, options) {
+  // 新回合到达后，旧卡片选项全部失效（避免陈旧卡可点）
+  for (const m of S.messages) if (m.options) m.options.forEach((o) => (o.used = true));
+  S.messages.push({ role, text, kind, options });
+  renderTranscript();
+}
+function setSlot(label, value) { S.slots[label] = { value, state: value == null ? 'UNKNOWN' : 'CONFIRMED' }; renderContext(); }
+
+function firstMessage() {
+  S.started = true; S.locked = true;
+  for (const k of ['出行人数', '总预算', '节奏', '偏好', '必去地点', '住宿锚点', '第一天到达']) {
+    if (S.slots[k] == null) S.slots[k] = { value: null, state: 'UNKNOWN' };
+  }
+  renderAll();
+  askTravelers();
+}
+function askTravelers() {
+  S.stage = 'ask-travelers';
+  push('agent', `收到，目前是 ${S.dest} ${fmtDate(S.startDate)}–${fmtDate(S.endDate)}${prefNote()}。\n还有一个信息想确认：这次大概几个人一起去？`, 'CLARIFY',
+    TRAVELER_OPTS.map((o) => ({ label: o, value: o })));
+}
+function prefNote() {
+  const parts = [];
+  if (S.slots['节奏']?.value) parts.push('节奏' + S.slots['节奏'].value);
+  if (S.slots['偏好']?.value) parts.push('偏好' + S.slots['偏好'].value);
+  return parts.length ? '，' + parts.join('、') : '';
+}
+function askBudget() {
+  S.stage = 'ask-budget';
+  push('agent', `收到。${S.slots['出行人数'].value}。总预算大概多少（人民币）？点选或直接输入数字。`, 'CLARIFY',
+    BUDGET_OPTS.map(([label, v]) => ({ label, value: v })));
+}
+function askT1() {
+  const missing = ['必去地点', '住宿锚点', '第一天到达'].filter((k) => S.slots[k]?.value == null && !S.slots[k]?.skipped);
+  if (!missing.length) return becomeReady();
+  S.stage = 't1-card';
+  const opts = missing.map((k) => ({ label: k, value: k }));
+  opts.push({ label: '先跳过，直接创建', value: 'SKIP_T1' });
+  push('agent', '基础信息齐了！补充这些会明显提升路线质量：' + missing.join('；') + '。', 'CLARIFY', opts);
+}
+function becomeReady() {
+  S.ready = true;
+  const parts = [`目的地 ${S.dest}`, `开始日期 ${S.startDate}`, `结束日期 ${S.endDate}`];
+  for (const [k, s] of Object.entries(S.slots)) if (s.value != null) parts.push(`${k} ${k === '总预算' ? fmtMoney(s.value) : s.value}`);
+  push('agent', '约束已确认：' + parts.join('；') + '。\n我已经了解你的需求，可以开始规划了。也可以继续补充或修改。', 'SUMMARY');
+  renderChips();
+}
+function confirmCard(label, value) {
+  S.stage = 'confirm';
+  S.pending = { label, value };
+  push('agent', `${label}：${value}，这样安排可以吗？`, 'CLARIFY',
+    [{ label: '可以', value: 'OK' }, { label: '改一下', value: 'EDIT' }, { label: '不用管这个', value: 'NO' }]);
+}
+
+/* 从自由文本中抽取（模拟后端 _scan_free_text 的确定式子集） */
+function scan(text) {
+  const found = {};
+  const tm = text.match(/(\d{1,2})\s*个?人|(\d{1,2})\s*位/);
+  if (tm) found.travelers = (tm[1] || tm[2]) + ' 位';
+  const bm = text.match(/预算[^\d]{0,3}([0-9]{3,7})|([0-9]{3,7})\s*元/);
+  if (bm) found.budget = Number(bm[1] || bm[2]);
+  if (/轻松|悠闲|慢/.test(text)) found.pace = '轻松悠闲';
+  if (/历史文化|人文|博物馆/.test(text)) found.pref = '历史文化';
+  if (/美食|吃/.test(text)) found.pref2 = '美食';
+  if (/亲子|带娃/.test(text)) found.pref2 = found.pref2 || '亲子';
+  return found;
+}
+
+function handleUserText(text) {
+  push('user', text);
+  const f = scan(text);
+  if (f.pace) setSlot('节奏', f.pace);
+  const prefs = [f.pref, f.pref2].filter(Boolean);
+  if (prefs.length) setSlot('偏好', [...new Set([...(S.slots['偏好']?.value ? S.slots['偏好'].value.split('、') : []), ...prefs])].join('、'));
+
+  if (S.stage === 'confirm') {
+    if (/可以|好|对|行|嗯/.test(text)) {
+      setSlot(S.pending.label, S.pending.value);
+      S.stage = 't1-card'; askT1(); return;
+    }
+    push('agent', '好的，请直接输入新的' + S.pending.label + '。'); return;
+  }
+  if (S.stage === 'must-visit') {
+    const items = text.split(/[、，,和跟与\s]+/).map((s) => s.trim()).filter(Boolean).slice(0, 8);
+    if (items.length) {
+      setSlot('必去地点', items.join('、'));
+      push('agent', '已定位：' + items.map((i) => i + '（' + (S.dest === '广州' ? '荔湾区' : '市区') + '）').join('、'));
+      askT1(); return;
+    }
+  }
+  if (S.stage === 'accommodation') {
+    const m = text.match(/(?:住|酒店|民宿)[^\u4e00-\u9fa5]*([\u4e00-\u9fa5A-Za-z0-9]{2,20})|(?:北京路|上下九|珠江新城|天河)[^\s]*/);
+    if (m) { setSlot('住宿锚点', (m[1] || m[0]).replace(/住在?/, '')); askT1(); return; }
+  }
+  if (S.stage === 'arrival') {
+    const m = text.match(/(\d{1,2})[点:：](\d{1,2})?分?到?(.+)/);
+    if (m) { setSlot('第一天到达', `${m[3].trim()} ${String(m[1]).padStart(2, '0')}:${m[2] || '00'}`); askT1(); return; }
+  }
+  if (S.stage === 't1-card') {
+    if (f.travelers && S.slots['出行人数']?.value == null) { setSlot('出行人数', f.travelers); }
+    if (f.budget != null && S.slots['总预算']?.value == null) {
+      confirmCard('总预算', f.budget); return;
+    }
+    if (f.travelers || f.pace || prefs.length) { push('agent', '收到，我记下了。'); askT1(); return; }
+    // 没有人数/预算/节奏信号 → 按地名理解，视为必去地点补充
+    const items = text.split(/[、，,和跟与\s]+/).map((s) => s.trim()).filter(Boolean).slice(0, 8);
+    if (items.length) {
+      const base = S.slots['必去地点']?.value ? S.slots['必去地点'].value.split('、') : [];
+      setSlot('必去地点', [...base, ...items].join('、'));
+      push('agent', '已定位：' + items.map((i) => i + '（' + (S.dest === '广州' ? '荔湾区' : '市区') + '）').join('、'));
+      askT1(); return;
+    }
+    push('agent', '可以从下方点选，或直接说想补充的内容。'); return;
+  }
+  if (S.stage === 'ask-travelers') {
+    if (f.travelers) { setSlot('出行人数', f.travelers); f.budget != null ? (setSlot('总预算', f.budget), askT1()) : askBudget(); return; }
+    push('agent', '没太看懂，可以直接点选下方选项，或换个说法（如"2 个人"）。'); return;
+  }
+  if (S.stage === 'ask-budget') {
+    if (f.budget != null) { setSlot('总预算', f.budget); askT1(); return; }
+    push('agent', '没太看懂，可以直接点选下方选项，或换个说法（如"预算3000"）。'); return;
+  }
+  if (S.ready) { /* ready 后的继续补充 */
+    if (f.budget != null) { confirmCard('总预算', f.budget); return; }
+    push('agent', '收到。可以直接说想改的地方，比如"预算改成5000""必去沙面"。'); return;
+  }
+  push('agent', '收到！我记下了，继续补充就行。');
+}
+function missingT1Hint() { const m = ['必去地点', '住宿锚点', '第一天到达'].filter((k) => S.slots[k]?.value == null && !S.slots[k]?.skipped); return m.length ? '' : ''; }
+function pickOption(o) {
+  if (o.value === 'SKIP_T1') {
+    for (const k of ['必去地点', '住宿锚点', '第一天到达']) if (S.slots[k]?.value == null) S.slots[k].skipped = true;
+    push('user', '[点选] 先跳过，直接创建');
+    becomeReady(); return;
+  }
+  if (S.stage === 'ask-travelers') {
+    push('user', '[点选] ' + o.label);
+    setSlot('出行人数', o.label);
+    askBudget(); return;
+  }
+  if (S.stage === 'ask-budget') {
+    push('user', '[点选] ' + o.label);
+    setSlot('总预算', typeof o.value === 'number' ? o.value : null);
+    askT1(); return;
+  }
+  if (S.stage === 't1-card') {
+    push('user', '[点选] ' + o.label);
+    if (o.value === '必去地点') { S.stage = 'must-visit'; push('agent', '有必去的地方吗？直接输入地名（多个用顿号分隔）。'); }
+    else if (o.value === '住宿锚点') { S.stage = 'accommodation'; push('agent', '住哪儿？直接说酒店名或大概区域（如"北京路附近"）。'); }
+    else if (o.value === '第一天到达') { S.stage = 'arrival'; push('agent', '第一天几点到哪儿？如"14点到广州南站"。'); }
+    return;
+  }
+  if (S.stage === 'confirm') {
+    push('user', '[点选] ' + o.label);
+    if (o.value === 'OK') { setSlot(S.pending.label, S.pending.value); S.stage = 't1-card'; askT1(); }
+    else if (o.value === 'EDIT') push('agent', '请直接输入新的' + S.pending.label + '。');
+    else { setSlot(S.pending.label, null); S.stage = 't1-card'; askT1(); }
+    return;
+  }
+  if (S.ready) { push('user', '[点选] ' + o.label); }
+}
+
+/* ═══════════════ 创建闭环（模拟 createTripFromAgent → adopt → kickoff） ═══════════════ */
+$('btn-start').onclick = () => {
+  if (!S.ready) return;
+  push('agent', '正在创建旅行「' + S.dest + ' · AI 行程」……');
+  S.sending = true; renderChips();
+  setTimeout(() => { enterTripMode(); }, 900);
+};
+
+function enterTripMode() {
+  S.mode = 'trip'; S.sending = false; S.phaseDone = false;
+  $('creation-view').style.display = 'none';
+  $('trip-view').style.display = 'flex';
+  $('trip-title').textContent = S.tripTitle;
+  $('trip-status').textContent = 'TripPilot 正在规划你的旅行';
+  $('trip-dot').className = 'dot pulse';
+  $('trip-days').innerHTML = '<div class="skeleton-line w85"></div><div class="skeleton-line w60"></div><div class="skeleton-line w40"></div>';
+  $('dock-ctx').textContent = `📍 ${S.dest} · ${S.startDate} → ${S.endDate}`;
+  // adoptTrip 效果：新旅行进入侧栏列表并置顶
+  const list = $('trip-list');
+  const item = el('button', 'sb-item active',
+    `<span class="t">${S.tripTitle}<br><span class="s">${S.dest} · ${fmtDate(S.startDate)} → ${fmtDate(S.endDate)}</span></span>`);
+  item.onclick = () => {
+    document.querySelectorAll('#trip-list .sb-item').forEach((x) => x.classList.remove('active'));
+    item.classList.add('active');
+  };
+  list.querySelectorAll('.sb-item').forEach((x) => x.classList.remove('active'));
+  list.prepend(item);
+  $('trip-count').textContent = list.children.length;
+  renderPipeline(); renderContext(); renderHeader(); renderChips();
+  const days = Math.round((new Date(S.endDate) - new Date(S.startDate)) / 86400000) + 1;
+  setTimeout(() => {
+    S.phaseDone = true;
+    $('trip-dot').className = 'dot ok';
+    $('trip-status').textContent = '行程方案已生成';
+    $('trip-days').innerHTML = [
+      ['Day 1', '到达广州南站 → 北京路步行街 → 夜游珠江'],
+      ['Day 2', '陈家祠 → 上下九 → 沙面岛漫步（节奏轻松）'],
+      ['Day 3', '广东省博物馆 → 花城广场 → 珠江新城'],
+      ['Day 4', '永庆坊 → 返程'],
+    ].slice(0, days).map(([d, v]) => `<div class="day-row"><span class="d">${d}</span><span class="v">${v}</span></div>`).join('');
+    renderPipeline(); renderContext(); renderHeader();
+  }, 2600);
+}
+
+/* ═══════════════ 输入与弹层交互 ═══════════════ */
+$('composer-input').addEventListener('input', function () {
+  this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+});
+$('composer-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendComposer(); }
+});
+$('btn-send').onclick = sendComposer;
+function sendComposer() {
+  const input = $('composer-input');
+  const text = input.value.trim();
+  if (!text || S.sending) return;
+  if (!S.dest || !S.startDate || !S.endDate) return; // Required Context 守卫
+  input.value = ''; input.style.height = 'auto';
+  if (!S.started) {
+    push('user', text);
+    // 首条消息：先抽取节奏/偏好，再产出含确认语的提问（对应对话种子的第一轮）
+    const f = scan(text);
+    if (f.pace) setSlot('节奏', f.pace);
+    const prefs = [f.pref, f.pref2].filter(Boolean);
+    if (prefs.length) setSlot('偏好', [...new Set(prefs)].join('、'));
+    firstMessage();
+    return;
+  }
+  handleUserText(text);
+}
+
+/* 城市弹层 */
+function closePops() { $('pop-dest').style.display = 'none'; $('pop-date').style.display = 'none'; }
+$('chip-dest').onclick = (e) => {
+  if (S.locked) return;
+  e.stopPropagation();
+  const p = $('pop-dest'); const show = p.style.display === 'none';
+  closePops(); if (show) { p.style.display = ''; $('city-search').value = ''; renderCities(''); $('city-search').focus(); }
+};
+$('city-search').addEventListener('input', (e) => renderCities(e.target.value));
+function renderCities(q) {
+  const list = $('city-list'); list.innerHTML = '';
+  const hits = CITIES.filter((c) => !q || c.name.includes(q) || c.prov.includes(q));
+  for (const c of hits.slice(0, 8)) {
+    const li = el('li', null, `<span>${c.name}</span><span class="prov">${c.prov}</span>`);
+    li.onclick = () => { S.dest = c.name; closePops(); renderAll(); };
+    list.appendChild(li);
+  }
+  if (!hits.length) list.appendChild(el('li', null, '<span class="prov">没有匹配的城市</span>'));
+}
+/* 日期弹层 */
+$('chip-date').onclick = (e) => {
+  if (S.locked) return;
+  e.stopPropagation();
+  const p = $('pop-date'); const show = p.style.display === 'none';
+  closePops(); if (show) {
+    p.style.display = '';
+    $('date-start').value = S.startDate || ''; $('date-end').value = S.endDate || '';
+    $('date-err').textContent = '';
+  }
+};
+function onDateChange() {
+  const s = $('date-start').value, e = $('date-end').value;
+  if (s && e && s > e) { $('date-err').textContent = '结束日期不能早于开始日期'; return; }
+  $('date-err').textContent = '';
+  S.startDate = s || null; S.endDate = e || null;
+  if (s && e) closePops();
+  renderAll();
+}
+$('date-start').addEventListener('change', onDateChange);
+$('date-end').addEventListener('change', onDateChange);
+document.addEventListener('click', (e) => { if (!e.target.closest('.popover') && !e.target.closest('.ctx-chip')) closePops(); });
+
+/* 重新开始（新会话） */
+$('btn-reset').onclick = () => {
+  S.started = false; S.ready = false; S.locked = false;
+  S.messages = []; S.slots = {}; S.stage = 'ask-travelers'; S.pending = null;
+  renderAll();
+};
+
+/* 旅行模式 docked 输入 */
+$('dock-input').addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 120) + 'px'; });
+$('dock-input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDock(); } });
+$('dock-input').addEventListener('input', function () { $('dock-send').disabled = !this.value.trim(); });
+$('dock-send').onclick = sendDock;
+function sendDock() {
+  const input = $('dock-input'); const text = input.value.trim();
+  if (!text) return;
+  input.value = ''; input.style.height = 'auto'; $('dock-send').disabled = true;
+  // 旅行模式的就地应答：用户行在上，TripPilot 回复在其下
+  const wrap = el('div');
+  const line = el('div', 'msg user', '<div class="bubble" style="margin-left:auto;max-width:70%;">' + text + '</div>');
+  wrap.appendChild(line);
+  const rep = el('div', 'msg agent', '<div class="role">TripPilot</div><div class="bubble">收到。我会把这一段调整得更轻松，并重新校验路线可行性——新方案生成后会在这里更新。</div>');
+  wrap.appendChild(rep);
+  $('trip-body').prepend(wrap);
+}
+
+/* 侧栏 / 面板开关（响应式验证用） */
+$('btn-sidebar').onclick = () => { $('sidebar').classList.toggle('hide'); $('sidebar').classList.toggle('hidden-panel'); };
+$('btn-context').onclick = () => $('context').classList.toggle('hidden-panel');
+$('btn-new-trip').onclick = () => {
+  if (S.mode === 'trip') resetDemo();
+  $('sidebar').classList.remove('hide');
+  $('composer-input').focus();
+  window.scrollTo(0, 0);
+};
+document.querySelectorAll('#trip-list .sb-item').forEach((b) => {
+  b.onclick = () => {
+    // 原型：既有旅行仅作高亮演示；若正在创建会话，切走即放弃（真实实现会保留会话）
+    document.querySelectorAll('#trip-list .sb-item').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+  };
+});
+function initTripList() {
+  $('trip-list').innerHTML = `
+    <button class="sb-item"><span class="t">上海三日旅行<br><span class="s">上海 · 9/12 → 9/14</span></span></button>
+    <button class="sb-item"><span class="t">成都五日旅行<br><span class="s">成都 · 10/1 → 10/5</span></span></button>`;
+  $('trip-count').textContent = '2';
+  document.querySelectorAll('#trip-list .sb-item').forEach((b) => {
+    b.onclick = () => {
+      // 原型：既有旅行仅作高亮演示；若正在创建会话，切走即放弃（真实实现会保留会话）
+      document.querySelectorAll('#trip-list .sb-item').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+    };
+  });
+}
+
+function resetDemo() {
+  Object.assign(S, {
+    mode: 'create', dest: null, startDate: null, endDate: null, locked: false,
+    started: false, messages: [], slots: {}, ready: false, stage: 'ask-travelers',
+    pending: null, sending: false, phaseDone: false,
+  });
+  $('creation-view').style.display = 'flex';
+  $('trip-view').style.display = 'none';
+  $('composer-input').value = ''; $('dock-input').value = ''; $('dock-send').disabled = true;
+  initTripList();
+  closePops(); renderAll();
+}
+$('btn-replay').onclick = resetDemo;
+
+initTripList();
+renderAll();
+</script>
+</body>
+</html>

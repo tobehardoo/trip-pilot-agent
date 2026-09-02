@@ -76,7 +76,7 @@ SSE 层（`AgentDialogEventHub.java`）：per-trip 订阅、30 分钟超时、**
 1. **Trip 持久约束**（权威）：`business` 库 Trip + TripConstraint（`TripConstraintRecord`：预算/人数/类型/节奏/偏好/固定安排/抵离锚点/住宿/必去/排除/三餐窗/行动能力），经 `PUT /api/trips/{id}/constraints`（乐观锁 version）修改。
 2. **Agent 槽位**（对话态）：通道 A 的 `SlotView{value,state,source}`（state∈UNKNOWN/INFERRED/CONFIRMED，source 含 TRIP 锁定态）；通道 B 的五态 `SlotState`（+REJECTED/USER_OVERRIDE）。`update_constraints` 工具的 provenance 由代码裁定（`rule:evidence-match`：证据文本包含该值才 CONFIRMED，否则 INFERRED；改已定值→USER_OVERRIDE；被拒值再提议被拒收）。
 
-两者的桥接：`AGENT_COMPLETED.slots` → 前端映射（CONFIRMED only）→ `PUT constraints` → `POST planning-tasks`（确定性管线）。规划管线的约束求解由 OR-Tools 内核完成，其结果经 `PLANNING_COMPLETED`（v11，含 feasibility_report + evaluation）或 `PLANNING_REVIEW_REQUIRED`（v2）回传——**这条流有完备的 SSE + 进度 UI**。
+两者的桥接：`AGENT_COMPLETED.slots` → 前端映射（CONFIRMED only）→ `PUT constraints` → `POST planning-tasks`（确定性管线）。规划管线的约束求解由确定性调度内核完成，其结果经 `PLANNING_COMPLETED`（v11，含 feasibility_report + evaluation）或 `PLANNING_REVIEW_REQUIRED`（v2）回传——**这条流有完备的 SSE + 进度 UI**。
 
 ### 1.5 现状结构图
 
@@ -163,7 +163,7 @@ flowchart LR
 > **AI Travel Agent Workspace**：一个让用户始终能回答六个问题的旅行规划工作台——
 > 我的旅行需求是什么？Agent 已经理解了什么？还缺什么？Agent 现在在做什么？下一步需要我做什么？方案生成了吗？
 
-**为什么不是 Chatbot**：本系统的价值主张是"复杂约束驱动的可执行行程"（OR-Tools 内核 + Hard Validation），不是对话流畅度。聊天只是**输入方式之一**（其余还有：点选澄清卡片、直接编辑约束区、快捷选项）；Agent 的主体输出是**结构化状态**（约束槽位、执行步骤、行程候选），必须以结构化 UI 呈现。对话气泡流把结构化状态降维成了文本，这正是当前 UI 与 Runtime 不匹配的根源。
+**为什么不是 Chatbot**：本系统的价值主张是"复杂约束驱动的可执行行程"（确定性调度内核 + Hard Validation），不是对话流畅度。聊天只是**输入方式之一**（其余还有：点选澄清卡片、直接编辑约束区、快捷选项）；Agent 的主体输出是**结构化状态**（约束槽位、执行步骤、行程候选），必须以结构化 UI 呈现。对话气泡流把结构化状态降维成了文本，这正是当前 UI 与 Runtime 不匹配的根源。
 
 **双通道的现实约束**（不做运行时统一的理由）：`AGENT_START` 契约要求 `trip_id` 必填，"先有 trip 才能有 run"。因此创建阶段继续由 HTTP 向导（通道 A）驱动，Workspace 外壳在创建模式下渲染向导的 slots/卡片（它的 slots 模型反而最丰富）；行程内由 MQ run（通道 B）驱动。**同一外壳、两套驱动**，收敛为 P3 的运行时统一方向（见 §14），本期不做协议层合并。
 

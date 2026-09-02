@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | 创建模式 | HTTP 槽位向导（`dialog/`，Redis 存 7 天） | 同步 HTTP 全量转录（`POST /api/agent/dialogue`） | `AgentDialogPanel.vue`（TripDashboard「AI 帮我规划」入口抽屉） | **未迁移**，仍是逐句确认式聊天抽屉 |
 | 行程内 | LangGraph 有界循环（`agent/graph.py`）+ worker（`worker/agent_processor.py`） | Outbox → MQ → 事件落库 → SSE | `AgentWorkspace.vue`（TripDetail 头部「AI 助手」按钮抽屉，max-w-3xl） | 已工作台化，但载体仍是抽屉 |
-| 确定性规划管线 | `worker/processor.py`（OR-Tools 内核 + Hard Validation + 评估） | 独立 SSE（`/api/planning-tasks/{id}/events`，12 阶段） | `PlanningProgress.vue` + TripDetail 规划条 | 与 Agent 工作台**完全分离**，两套进度心智 |
+| 确定性规划管线 | `worker/processor.py`（确定性调度内核 + Hard Validation + 评估） | 独立 SSE（`/api/planning-tasks/{id}/events`，12 阶段） | `PlanningProgress.vue` + TripDetail 规划条 | 与 Agent 工作台**完全分离**，两套进度心智 |
 
 ### 2.2 关键代码事实（逐条核验）
 

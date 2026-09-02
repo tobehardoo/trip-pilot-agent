@@ -157,7 +157,11 @@ class _DemoProvider:
 
 
 def test_verified_create_emits_v10_completion() -> None:
-    command = make_command(must_visit_places=("陈家祠", "光孝寺"))
+    command = make_command(
+        must_visit_places=("陈家祠", "光孝寺"),
+        start_date="2026-08-01",
+        end_date="2026-08-01",
+    )
 
     event = asyncio.run(process_planning_create(command, _VerifiedProvider(), occurred_at=_TS))
 
@@ -185,7 +189,11 @@ def test_unverified_create_emits_savable_v10_completion() -> None:
 
 
 def test_report_id_is_stable_across_retries() -> None:
-    command = make_command(must_visit_places=("陈家祠", "光孝寺"))
+    command = make_command(
+        must_visit_places=("陈家祠", "光孝寺"),
+        start_date="2026-08-01",
+        end_date="2026-08-01",
+    )
 
     first = asyncio.run(process_planning_create(command, _VerifiedProvider(), occurred_at=_TS))
     second = asyncio.run(process_planning_create(command, _VerifiedProvider(), occurred_at=_TS))
@@ -294,7 +302,11 @@ def test_one_local_repair_revalidates_to_verified_completion() -> None:
 
     event = asyncio.run(
         process_planning_create(
-            make_command(must_visit_places=("陈家祠", "光孝寺")),
+            make_command(
+                must_visit_places=("陈家祠", "光孝寺"),
+                start_date="2026-08-01",
+                end_date="2026-08-01",
+            ),
             provider,
             occurred_at=_TS,
         )
@@ -317,7 +329,7 @@ def test_no_progress_stops_after_one_attempt_and_reviews() -> None:
 
     event = asyncio.run(
         process_planning_create(
-            make_command(),
+            make_command(start_date="2026-08-01", end_date="2026-08-01"),
             provider,
             occurred_at=_TS,
         )
@@ -335,7 +347,11 @@ def test_repair_runtime_stops_at_three_attempts_and_preserves_history() -> None:
     provider = _ThreeRoundProvider()
 
     event = asyncio.run(
-        process_planning_create(make_command(), provider, occurred_at=_TS)
+        process_planning_create(
+            make_command(start_date="2026-08-01", end_date="2026-08-01"),
+            provider,
+            occurred_at=_TS,
+        )
     )
 
     assert isinstance(event, PlanningReviewRequiredEventV2)
@@ -350,14 +366,20 @@ def test_provider_failure_during_repair_is_not_hidden_as_review() -> None:
     provider = _ProviderFailureDuringRepair()
 
     with pytest.raises(PlanningProviderError) as captured:
-        asyncio.run(process_planning_create(make_command(), provider, occurred_at=_TS))
+        asyncio.run(
+            process_planning_create(
+                make_command(start_date="2026-08-01", end_date="2026-08-01"),
+                provider,
+                occurred_at=_TS,
+            )
+        )
 
     assert captured.value.details.error_code == "PROVIDER_UNAVAILABLE"
     assert provider.repair_calls == 1
 
 
 def test_hard_fail_emits_needs_repair_review() -> None:
-    command = make_command()
+    command = make_command(start_date="2026-08-01", end_date="2026-08-01")
 
     event = asyncio.run(process_planning_create(command, _FailingProvider(), occurred_at=_TS))
 
@@ -381,7 +403,11 @@ def test_evaluator_called_for_savable_outcomes_only(monkeypatch) -> None:
 
     verified = asyncio.run(
         process_planning_create(
-            make_command(must_visit_places=("陈家祠", "光孝寺")),
+            make_command(
+                must_visit_places=("陈家祠", "光孝寺"),
+                start_date="2026-08-01",
+                end_date="2026-08-01",
+            ),
             _VerifiedProvider(),
             occurred_at=_TS,
         )
@@ -399,7 +425,11 @@ def test_evaluator_called_for_savable_outcomes_only(monkeypatch) -> None:
     calls.clear()
     # A blocker report (FAIL present) routes to review and is never evaluated.
     repair = asyncio.run(
-        process_planning_create(make_command(), _FailingProvider(), occurred_at=_TS)
+        process_planning_create(
+            make_command(start_date="2026-08-01", end_date="2026-08-01"),
+            _FailingProvider(),
+            occurred_at=_TS,
+        )
     )
     assert isinstance(repair, PlanningReviewRequiredEventV2)
     assert repair.payload.feasibility_report.has_blocker is True
@@ -411,7 +441,11 @@ def test_worker_report_fingerprint_matches_payload_itinerary() -> None:
 
     verified = asyncio.run(
         process_planning_create(
-            make_command(must_visit_places=("陈家祠", "光孝寺")),
+            make_command(
+                must_visit_places=("陈家祠", "光孝寺"),
+                start_date="2026-08-01",
+                end_date="2026-08-01",
+            ),
             _VerifiedProvider(),
             occurred_at=_TS,
         )

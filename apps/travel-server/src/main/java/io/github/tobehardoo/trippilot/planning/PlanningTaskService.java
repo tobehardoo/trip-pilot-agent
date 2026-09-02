@@ -50,8 +50,8 @@ public class PlanningTaskService {
     private static final String CANDIDATE_COMMAND_TYPE =
             "PLANNING_CANDIDATE_VALIDATION_REQUESTED";
     private static final String CANDIDATE_ROUTING_KEY = "planning.candidate-validation";
-    private static final String CANCEL_COMMAND_TYPE = "PLANNING_CANCEL_REQUESTED";
-    private static final String CANCEL_ROUTING_KEY = "planning.cancel";
+    /** Trip phase value while a planning task is running. */
+    private static final String TRIP_STATUS_PLANNING = "PLANNING";
     private static final long MAX_TRIP_DAYS = 7;
     /** B13_FIX R1: boundary instants are re-anchored to the trip's home
      *  offset (+08:00) so outbox bodies match the contract fixtures and the
@@ -64,6 +64,7 @@ public class PlanningTaskService {
     private final PlanningTaskEventMapper planningTaskEventMapper;
     private final OutboxMapper outboxMapper;
     private final TripService tripService;
+    private final io.github.tobehardoo.trippilot.trip.TripMapper tripMapper;
     private final CityIntelligencePlanningPreflightService cityIntelligencePlanningPreflightService;
     private final GuideImportService guideImportService;
     private final PlanningContextSnapshotService planningContextSnapshotService;
@@ -79,6 +80,7 @@ public class PlanningTaskService {
                                PlanningTaskEventMapper planningTaskEventMapper,
                                OutboxMapper outboxMapper,
                                TripService tripService,
+                               io.github.tobehardoo.trippilot.trip.TripMapper tripMapper,
                                CityIntelligencePlanningPreflightService
                                        cityIntelligencePlanningPreflightService,
                                GuideImportService guideImportService,
@@ -94,6 +96,7 @@ public class PlanningTaskService {
         this.planningTaskEventMapper = planningTaskEventMapper;
         this.outboxMapper = outboxMapper;
         this.tripService = tripService;
+        this.tripMapper = tripMapper;
         this.cityIntelligencePlanningPreflightService =
                 cityIntelligencePlanningPreflightService;
         this.guideImportService = guideImportService;
@@ -127,23 +130,6 @@ public class PlanningTaskService {
     @Transactional(readOnly = true)
     public PlanningTaskResponse get(UUID ownerId, UUID taskId) {
         return planningTaskMapper.findOwnedById(taskId, ownerId)
-                .map(this::toResponse)
-                .orElseThrow(() -> new ApiException(
-                        HttpStatus.NOT_FOUND,
-                        "PLANNING_TASK_NOT_FOUND",
-                        "Planning task was not found"
-                ));
-    }
-
-    /**
-     * Returns the newest planning task owned by the caller for the trip, or
-     * 404 when the trip has no task (or the trip does not exist / is not
-     * owned by the caller).  Read-only: never mutates task state and never
-     * produces task events.  Ordering is {@code created_at DESC, id DESC}.
-     */
-    @Transactional(readOnly = true)
-    public PlanningTaskResponse latest(UUID ownerId, UUID tripId) {
-        return planningTaskMapper.findLatestOwnedByTripId(tripId, ownerId)
                 .map(this::toResponse)
                 .orElseThrow(() -> new ApiException(
                         HttpStatus.NOT_FOUND,
@@ -200,6 +186,9 @@ public class PlanningTaskService {
                     ));
         }
         metrics.taskCreated(task.taskType());
+        // Trip phase transition: DRAFT → PLANNING so the workspace can render
+        // the planning view from trip.status instead of a UI-side guess.
+        tripMapper.updateStatus(tripId, TRIP_STATUS_PLANNING);
         PlanningContextSnapshot planningContext = planningContextSnapshotService.freeze(
                 ownerId,
                 task.id(),
@@ -300,6 +289,8 @@ public class PlanningTaskService {
                     ));
         }
         metrics.taskCreated(task.taskType());
+        // Replanning re-enters the planning phase (COMPLETED → PLANNING).
+        tripMapper.updateStatus(tripId, TRIP_STATUS_PLANNING);
         if (planningTaskEventMapper.insert(new PlanningTaskEventRecord(
                 null, UUID.randomUUID(), task.id(), "PLANNING_QUEUED", 1,
                 writeJson(new TaskStatusPayload(TASK_STATUS)), now
@@ -646,63 +637,6 @@ public class PlanningTaskService {
         return itinerary.provider();
     }
 
-    @Transactional
-    public PlanningTaskResponse cancel(UUID ownerId, UUID taskId) {
-        PlanningTaskRecord existing = planningTaskMapper.findOwnedById(taskId, ownerId)
-                .orElseThrow(() -> new ApiException(
-                        HttpStatus.NOT_FOUND, "PLANNING_TASK_NOT_FOUND", "Planning task was not found"
-                ));
-        if ("CANCELLED".equals(existing.status())) {
-            return toResponse(existing);
-        }
-        // B12: WAITING_USER review candidates are abandoned locally.  The
-        // review outcome is already complete on the Python side, so the
-        // abandonment only transitions the task, writes one terminal event
-        // and notifies SSE subscribers — no cancel-command outbox, no
-        // itinerary version, no feasibility report, no current-version
-        // change.  QUEUED/RUNNING/CANCELLING keep the original cancel
-        // semantics (with cancel-command outbox).
-        boolean cancelledQueuedOrRunning = planningTaskMapper.cancelOwned(taskId, ownerId) == 1;
-        boolean abandonedReview = false;
-        if (!cancelledQueuedOrRunning) {
-            abandonedReview = planningTaskMapper.abandonWaitingUserOwned(taskId, ownerId) == 1;
-        }
-        if (!cancelledQueuedOrRunning && !abandonedReview) {
-            throw new ApiException(
-                    HttpStatus.CONFLICT,
-                    "PLANNING_TASK_TERMINAL",
-                    "Completed or failed planning tasks cannot be cancelled"
-            );
-        }
-        Instant now = Instant.now();
-        metrics.taskFinished(existing.taskType(), "CANCELLED", java.time.Duration.between(existing.createdAt(), now));
-        PlanningTaskEventRecord event = new PlanningTaskEventRecord(
-                null, UUID.randomUUID(), taskId, "PLANNING_CANCELLED", 1,
-                writeJson(new TaskStatusPayload("CANCELLED")), now
-        );
-        if (planningTaskEventMapper.insert(event) != 1) {
-            throw new IllegalStateException("Could not persist planning cancelled event");
-        }
-        if (!abandonedReview) {
-            UUID cancelEventId = UUID.randomUUID();
-            PlanningCancelCommand cancelCommand = new PlanningCancelCommand(
-                    CANCEL_COMMAND_TYPE, 1, cancelEventId, existing.traceId(), taskId,
-                    existing.tripId(), now
-            );
-            outboxMapper.insert(new OutboxEventRecord(
-                    cancelEventId, "PLANNING_TASK", taskId, CANCEL_COMMAND_TYPE,
-                    CANCEL_ROUTING_KEY, writeJson(cancelCommand), "PENDING", 0,
-                    now, null, now, null
-            ));
-        }
-        PlanningTaskEventRecord stored = planningTaskEventMapper.findByEventId(event.eventId())
-                .orElseThrow(() -> new IllegalStateException("Cancelled event could not be read"));
-        eventPublisher.publishEvent(new PlanningTaskEventCreated(stored));
-        return planningTaskMapper.findOwnedById(taskId, ownerId)
-                .map(this::toResponse)
-                .orElseThrow(() -> new IllegalStateException("Cancelled task could not be read"));
-    }
-
     private PlanningTaskResponse toResponse(PlanningTaskRecord task) {
         TerminalMetadata metadata = terminalMetadata(task);
         return new PlanningTaskResponse(
@@ -973,17 +907,6 @@ public class PlanningTaskService {
             boolean locked,
             java.math.BigDecimal estimatedCost,
             String costSource
-    ) {
-    }
-
-    private record PlanningCancelCommand(
-            String eventType,
-            int schemaVersion,
-            UUID eventId,
-            UUID traceId,
-            UUID taskId,
-            UUID tripId,
-            Instant occurredAt
     ) {
     }
 

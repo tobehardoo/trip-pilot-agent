@@ -20,6 +20,8 @@ public class PlanningFailureService {
 
     private final PlanningTaskMapper taskMapper;
     private final PlanningTaskEventMapper eventMapper;
+    private final io.github.tobehardoo.trippilot.trip.TripMapper tripMapper;
+    private final io.github.tobehardoo.trippilot.itinerary.ItineraryMapper itineraryMapper;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final ApplicationEventPublisher eventPublisher;
@@ -27,12 +29,16 @@ public class PlanningFailureService {
 
     public PlanningFailureService(PlanningTaskMapper taskMapper,
                                   PlanningTaskEventMapper eventMapper,
+                                  io.github.tobehardoo.trippilot.trip.TripMapper tripMapper,
+                                  io.github.tobehardoo.trippilot.itinerary.ItineraryMapper itineraryMapper,
                                   ObjectMapper objectMapper,
                                   Clock clock,
                                   ApplicationEventPublisher eventPublisher,
                                   PlanningMetrics metrics) {
         this.taskMapper = taskMapper;
         this.eventMapper = eventMapper;
+        this.tripMapper = tripMapper;
+        this.itineraryMapper = itineraryMapper;
         this.objectMapper = objectMapper;
         this.clock = clock;
         this.eventPublisher = eventPublisher;
@@ -76,6 +82,13 @@ public class PlanningFailureService {
                 task.id(), task.taskVersion(), "FAILED",
                 payload.errorCode(), payload.displayMessage()
         ), "planning task status");
+        // Trip phase rollback: a trip that already has an itinerary (replan /
+        // candidate validation) stays COMPLETED; a first attempt falls back
+        // to DRAFT so the workspace can leave the planning view.
+        boolean hasItinerary = itineraryMapper.findStateForUpdate(task.tripId())
+                .map(state -> state.currentVersionId() != null)
+                .orElse(false);
+        tripMapper.updateStatus(task.tripId(), hasItinerary ? "COMPLETED" : "DRAFT");
         eventMapper.findLatestProgress(task.id()).ifPresent(progress -> metrics.stageDuration(
                 progress.stage(), java.time.Duration.between(progress.createdAt(), now)
         ));

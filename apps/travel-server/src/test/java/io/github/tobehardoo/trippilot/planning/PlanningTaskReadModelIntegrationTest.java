@@ -305,145 +305,6 @@ class PlanningTaskReadModelIntegrationTest extends PostgresIntegrationTest {
         assertOutcomeInvalid("FAILED", "PLANNING_FAILED", "[]");
     }
 
-    // ── B6W FIX: latest planning task discovery ────────────────────────────
-
-    @Test
-    void latestReturnsTheNewestTaskForTheOwner() throws Exception {
-        PlanningContext context = createPlanningContext("latest-newest@example.com");
-        setTaskState(context, "FAILED", "PLANNING_FAILED", """
-                {"status":"FAILED","errorCode":"STALE_TRIP_VERSION","message":"boom"}
-                """);
-        UUID secondTaskId = createTask(context);
-
-        JsonNode latest = getLatestTask(context);
-
-        assertThat(latest.path("taskId").asText()).isEqualTo(secondTaskId.toString());
-    }
-
-    @Test
-    void latestTieBreaksByTaskIdWhenCreatedAtMatches() throws Exception {
-        PlanningContext context = createPlanningContext("latest-tiebreak@example.com");
-        UUID firstTaskId = context.taskId();
-        setTaskState(context, "FAILED", "PLANNING_FAILED", """
-                {"status":"FAILED","errorCode":"STALE_TRIP_VERSION","message":"boom"}
-                """);
-        UUID secondTaskId = createTask(context);
-        jdbcTemplate.update(
-                "UPDATE business.planning_task SET created_at = ? WHERE id IN (?, ?)",
-                java.sql.Timestamp.from(java.time.Instant.now()), firstTaskId, secondTaskId);
-
-        JsonNode latest = getLatestTask(context);
-
-        // PostgreSQL orders uuid values as unsigned 16-byte big-endian, which
-        // can disagree with Java UUID.compareTo (signed longs) once the most
-        // significant byte crosses 0x80.  The production SQL is correct;
-        // the expected value must use the database ordering semantics.
-        UUID expected = compareAsPostgresUuid(firstTaskId, secondTaskId) > 0
-                ? firstTaskId
-                : secondTaskId;
-        assertThat(latest.path("taskId").asText()).isEqualTo(expected.toString());
-    }
-
-    @Test
-    void postgresUuidOrderingTreatsBothHalvesAsUnsigned() {
-        // Most-significant end: Java compareTo sees 7fff... as positive and
-        // 8000... as negative, so it orders 8000... first; PostgreSQL orders
-        // 8000... after 7fff... (unsigned).  The helper must match the
-        // database, not Java.
-        UUID signedPositiveMost = UUID.fromString("7fffffff-ffff-ffff-ffff-ffffffffffff");
-        UUID signedNegativeMost = UUID.fromString("80000000-0000-0000-0000-000000000000");
-        assertThat(signedNegativeMost.compareTo(signedPositiveMost)).isLessThan(0);
-        assertThat(compareAsPostgresUuid(signedNegativeMost, signedPositiveMost)).isGreaterThan(0);
-        assertThat(compareAsPostgresUuid(signedPositiveMost, signedNegativeMost)).isLessThan(0);
-
-        // Least-significant end: same unsigned-vs-signed disagreement once the
-        // least significant long crosses 0x80.
-        UUID signedPositiveLeast = UUID.fromString("00000000-0000-0000-7fff-ffffffffffff");
-        UUID signedNegativeLeast = UUID.fromString("00000000-0000-0000-8000-000000000000");
-        assertThat(signedNegativeLeast.compareTo(signedPositiveLeast)).isLessThan(0);
-        assertThat(compareAsPostgresUuid(signedNegativeLeast, signedPositiveLeast)).isGreaterThan(0);
-        assertThat(compareAsPostgresUuid(signedPositiveLeast, signedNegativeLeast)).isLessThan(0);
-    }
-
-    @Test
-    void latestReturnsWaitingUserReviewOutcome() throws Exception {
-        PlanningContext context = createPlanningContext("latest-review@example.com");
-        reviewService.handle(reviewEvent(context, "review-v1-needs-repair-demo.json"));
-
-        JsonNode latest = getLatestTask(context);
-
-        assertThat(latest.path("status").asText()).isEqualTo("WAITING_USER");
-        assertThat(latest.path("feasibilityReport").path("status").asText())
-                .isEqualTo("NEEDS_REPAIR");
-        assertThat(latest.path("candidateItinerary").path("title").asText())
-                .isEqualTo("Benchmark itinerary");
-        assertThat(latest.path("evaluation").isMissingNode()
-                || latest.path("evaluation").isNull()).isTrue();
-    }
-
-    @Test
-    void latestReturnsSucceededVerifiedOutcome() throws Exception {
-        PlanningContext context = createPlanningContext("latest-succeeded@example.com");
-        completionService.handle(completedEvent(context));
-
-        JsonNode latest = getLatestTask(context);
-
-        assertThat(latest.path("status").asText()).isEqualTo("SUCCEEDED");
-        assertThat(latest.path("feasibilityReport").path("status").asText())
-                .isEqualTo("VERIFIED");
-        assertThat(latest.path("evaluation").isMissingNode()).isFalse();
-        assertThat(latest.path("candidateItinerary").isMissingNode()
-                || latest.path("candidateItinerary").isNull()).isTrue();
-    }
-
-    @Test
-    void latestReturnsFailedState() throws Exception {
-        PlanningContext context = createPlanningContext("latest-failed@example.com");
-        setTaskState(context, "FAILED", "PLANNING_FAILED", """
-                {"status":"FAILED","errorCode":"STALE_TRIP_VERSION","message":"boom"}
-                """);
-
-        JsonNode latest = getLatestTask(context);
-
-        assertThat(latest.path("status").asText()).isEqualTo("FAILED");
-        assertNoOutcomeFields(latest);
-    }
-
-    @Test
-    void latestIsReadOnlyAndDoesNotCreateEvents() throws Exception {
-        PlanningContext context = createPlanningContext("latest-readonly@example.com");
-        Integer before = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM business.planning_task_event WHERE task_id = ?",
-                Integer.class, context.taskId());
-
-        getLatestTask(context);
-
-        Integer after = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM business.planning_task_event WHERE task_id = ?",
-                Integer.class, context.taskId());
-        assertThat(after).isEqualTo(before);
-    }
-
-    @Test
-    void latestReturns404ForAnotherOwnersTrip() throws Exception {
-        PlanningContext context = createPlanningContext("latest-owner-a@example.com");
-        String otherAccessToken = registerAndGetAccessToken("latest-owner-b@example.com");
-
-        mockMvc.perform(get("/api/trips/{tripId}/planning-tasks/latest", context.tripId())
-                        .header("Authorization", bearer(otherAccessToken)))
-                .andExpect(status().isNotFound());
-    }
-
-    @Test
-    void latestReturns404WhenNoTaskExists() throws Exception {
-        String accessToken = registerAndGetAccessToken("latest-no-task@example.com");
-        UUID tripId = createTrip(accessToken);
-
-        mockMvc.perform(get("/api/trips/{tripId}/planning-tasks/latest", tripId)
-                        .header("Authorization", bearer(accessToken)))
-                .andExpect(status().isNotFound());
-    }
-
     // ── helpers ───────────────────────────────────────────────────────────
 
     private void assertNoOutcomeFields(JsonNode task) {
@@ -478,24 +339,6 @@ class PlanningTaskReadModelIntegrationTest extends PostgresIntegrationTest {
     private JsonNode getTask(PlanningContext context) throws Exception {
         MvcResult result = mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
                         .header("Authorization", bearer(context.accessToken())))
-                .andExpect(status().isOk())
-                .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString());
-    }
-
-    private UUID createTask(PlanningContext context) throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/trips/{tripId}/planning-tasks", context.tripId())
-                        .header("Authorization", bearer(context.accessToken()))
-                        .header("Idempotency-Key", UUID.randomUUID()))
-                .andExpect(status().isAccepted())
-                .andReturn();
-        return UUID.fromString(json(result).get("taskId").asText());
-    }
-
-    private JsonNode getLatestTask(PlanningContext context) throws Exception {
-        MvcResult result = mockMvc.perform(
-                        get("/api/trips/{tripId}/planning-tasks/latest", context.tripId())
-                                .header("Authorization", bearer(context.accessToken())))
                 .andExpect(status().isOk())
                 .andReturn();
         return objectMapper.readTree(result.getResponse().getContentAsString());
@@ -603,25 +446,5 @@ class PlanningTaskReadModelIntegrationTest extends PostgresIntegrationTest {
 
     private String bearer(String token) {
         return "Bearer " + token;
-    }
-
-    /**
-     * Orders two UUIDs the way PostgreSQL orders uuid values: unsigned
-     * big-endian comparison of the 16 bytes.  Java's {@link UUID#compareTo}
-     * uses signed longs, which reverses the order whenever the most
-     * significant byte crosses 0x80.
-     */
-    private static int compareAsPostgresUuid(UUID left, UUID right) {
-        int mostSignificant = Long.compareUnsigned(
-                left.getMostSignificantBits(),
-                right.getMostSignificantBits()
-        );
-        if (mostSignificant != 0) {
-            return mostSignificant;
-        }
-        return Long.compareUnsigned(
-                left.getLeastSignificantBits(),
-                right.getLeastSignificantBits()
-        );
     }
 }

@@ -31,6 +31,11 @@ DEFAULT_MAX_INPUT_CHARACTERS = 30_000
 
 DECISION_SCHEMA_NAME = "trip_pilot_agent_decision"
 
+# AUDIT-03：decider 语义透明化 —— 运行环境的实际决策器必须可被
+# health/metrics 观测，避免「未接模型却表现成完整 LLM Agent」。
+DECIDER_KIND_STRUCTURED = "STRUCTURED"
+DECIDER_KIND_DETERMINISTIC = "DETERMINISTIC"
+
 _DECISION_SYSTEM_PROMPT = (
     "你是 TripPilot 的旅行规划决策器。"
     "只输出符合给定 JSON Schema 的 JSON，不要输出任何其他内容。"
@@ -130,6 +135,20 @@ class HttpDecisionTransport:
         response.raise_for_status()
         body = response.json()
         return body["choices"][0]["message"]["content"]
+
+
+def resolve_decider_kind(*, env: Mapping[str, str] | None = None) -> str:
+    """报告当前部署实际使用的决策器（AUDIT-03）。
+
+    ``STRUCTURED`` = 已配置共享模型，决策由 LLM 基于 State 产生；
+    ``DETERMINISTIC`` = 无模型配置，决策退回确定性 AskingDecider（仅 Level 2
+    Workflow 行为）。生产 Agent 闭环要求 STRUCTURED。
+    """
+    return (
+        DECIDER_KIND_STRUCTURED
+        if DecisionModelConfig.from_env(env) is not None
+        else DECIDER_KIND_DETERMINISTIC
+    )
 
 
 def build_decision_maker(

@@ -470,8 +470,32 @@ public class ItineraryService {
                     operation, impacted(location.day(), List.of(location.activity().id()), false)
             );
             case MOVE_ACTIVITY -> evaluateMove(itinerary, request, location);
+            case REPLACE_ACTIVITY -> evaluateReplace(itinerary, request, location);
             case UPDATE_TRANSIT_LEG -> throw new IllegalStateException("Transit leg edits are evaluated separately");
         };
+    }
+
+    private EditEvaluation evaluateReplace(
+            EditableItinerary itinerary, ItineraryEditRequest request, ActivityLocation source) {
+        // 功能①：替换真实地点。校验请求字段；时间的可行性校验由编辑任务
+        // （EDIT_VALIDATE → local replan）对替换后的行程统一执行。
+        if (source.activity().locked()) {
+            return EditEvaluation.blocked("ITINERARY_ACTIVITY_LOCKED", "A locked activity cannot be replaced");
+        }
+        boolean hasTitle = request.newTitle() != null && !request.newTitle().isBlank();
+        boolean hasPoi = request.newPoiId() != null && !request.newPoiId().isBlank();
+        if (!hasTitle && !hasPoi) {
+            return EditEvaluation.blocked("ITINERARY_EDIT_INVALID",
+                    "Replacing an activity requires a new place title or POI id");
+        }
+        if ((request.newLongitude() == null) != (request.newLatitude() == null)) {
+            return EditEvaluation.blocked("ITINERARY_EDIT_INVALID",
+                    "A new place must carry both longitude and latitude or neither");
+        }
+        return EditEvaluation.allowed(
+                EditOperation.REPLACE_ACTIVITY,
+                impacted(source.day(), List.of(source.activity().id()), true)
+        );
     }
 
     private EditEvaluation evaluateTransitLeg(
@@ -613,6 +637,15 @@ public class ItineraryService {
         }
         switch (operation) {
             case DELETE_ACTIVITY -> {
+                // AUDIT-FIX：删除活动必须先清理引用它的 transit legs ——
+                // Python 端 ReplanItineraryDay 校验 transit 必须连接相邻活动，
+                // 残留的孤儿 transit（from/to 指向被删活动）会让编辑任务命令
+                // 解析失败（COMMAND_VALIDATION_FAILED），导致删除不生效。
+                UUID deletedActivityId = source.activity().id();
+                source.day().transitLegs().removeIf(
+                        leg -> deletedActivityId.equals(leg.fromActivityId())
+                                || deletedActivityId.equals(leg.toActivityId())
+                );
                 source.day().activities().remove(source.index());
                 source.day().transitNeedsRefresh = true;
             }
@@ -624,6 +657,16 @@ public class ItineraryService {
             );
             case MOVE_ACTIVITY -> {
                 EditableDay target = itinerary.findDay(request.targetDate());
+                // AUDIT-FIX：仅跨天移动时，原天残留引用被移走活动的 transit 会形成
+                // 孤儿（Python 端要求 transit 连接相邻活动），需一并清理；同一天内
+                // 重排时活动仍在原天，transit 仍连接相邻活动，交由下游 replan 重算。
+                if (!target.date().equals(source.day().date())) {
+                    UUID movedActivityId = source.activity().id();
+                    source.day().transitLegs().removeIf(
+                            leg -> movedActivityId.equals(leg.fromActivityId())
+                                    || movedActivityId.equals(leg.toActivityId())
+                    );
+                }
                 source.day().activities().remove(source.index());
                 EditableActivity moved = source.activity().withSchedule(
                         request.targetStartTime(), request.targetEndTime()
@@ -631,6 +674,19 @@ public class ItineraryService {
                 target.activities().add(request.targetOrder(), moved);
                 source.day().transitNeedsRefresh = true;
                 target.transitNeedsRefresh = true;
+            }
+            case REPLACE_ACTIVITY -> {
+                // 功能①：替换为真实地点（保留 id/时间/费用/来源），
+                // transit 由下游编辑任务（local replan）重新计算。
+                source.day().activities().set(
+                        source.index(),
+                        source.activity().withPlace(
+                                request.newTitle(), request.newPoiId(),
+                                request.newLongitude(), request.newLatitude(),
+                                request.newAddress(), request.newTypeName(), request.newKind()
+                        )
+                );
+                source.day().transitNeedsRefresh = true;
             }
         }
     }
@@ -873,7 +929,15 @@ public class ItineraryService {
             OffsetDateTime targetStartTime,
             OffsetDateTime targetEndTime,
             String transitMode,
-            Boolean transitLocked
+            Boolean transitLocked,
+            // 功能① REPLACE_ACTIVITY：新地点信息（真实 POI 搜索结果）
+            String newTitle,
+            String newPoiId,
+            BigDecimal newLongitude,
+            BigDecimal newLatitude,
+            String newAddress,
+            String newTypeName,
+            String newKind
     ) {
     }
 
@@ -1024,6 +1088,7 @@ public class ItineraryService {
             LOCK_ACTIVITY,
             UNLOCK_ACTIVITY,
         MOVE_ACTIVITY,
+        REPLACE_ACTIVITY,
         UPDATE_TRANSIT_LEG;
 
         static EditOperation from(String value) {
@@ -1210,6 +1275,19 @@ public class ItineraryService {
             return new EditableActivity(
                     id, title, start, end, estimatedCost, source, providerPoiId,
                     longitude, latitude, address, locked, typeCode, typeName, kind, timeFixed
+            );
+        }
+
+        /** 功能①：替换活动地点（保留 id/时间/费用/来源/锁定），供 REPLACE_ACTIVITY。 */
+        EditableActivity withPlace(
+                String newTitle, String newPoiId, BigDecimal newLng, BigDecimal newLat,
+                String newAddress, String newTypeName, String newKind
+        ) {
+            return new EditableActivity(
+                    id, newTitle, startTime, endTime, estimatedCost, source, newPoiId,
+                    newLng, newLat, newAddress, locked,
+                    typeCode, newTypeName != null ? newTypeName : typeName,
+                    newKind != null ? newKind : kind, timeFixed
             );
         }
     }

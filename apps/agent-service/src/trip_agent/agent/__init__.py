@@ -3,35 +3,17 @@
 The orchestration layer decides *what to do*; the deterministic planner,
 feasibility gate and providers below it decide *what is true*.  Nothing here
 may invent a hard fact.
+
+Heavy imports (factory, graph, etc.) are deferred so that consumers who only
+need ``SlotState`` from ``trip_agent.agent.state`` don't trigger the full
+langgraph dependency chain at import time.
 """
 
-from trip_agent.agent.factory import DecisionModelConfig, build_decision_maker
-from trip_agent.agent.feasibility_gate import StructuralFeasibilityGate
-from trip_agent.agent.graph import (
-    MAX_LLM_CALLS,
-    MAX_STEPS,
-    MAX_TOOL_CALLS,
-    AgentLoop,
-    AgentRunResult,
-    AskingDecider,
-    Decision,
-    StructuredOutputDecider,
-    run_agent,
-)
-from trip_agent.agent.itinerary_builder import (
-    BuiltItinerary,
-    DemoItineraryBuilder,
-    RealItineraryBuilder,
-    build_demo_command,
-    normalize_trip_date,
-)
-from trip_agent.agent.persistence import (
-    AgentRunRecord,
-    AgentRunRecorder,
-    AgentRunStarted,
-    PsycopgAgentRunRepository,
-    status_for_stop_reason,
-)
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+# Lightweight exports — always available
 from trip_agent.agent.state import (
     REQUIRED_SLOTS,
     SLOT_NAMES,
@@ -47,13 +29,49 @@ from trip_agent.agent.state import (
     to_constraint_patch,
     to_trip_fields,
 )
-from trip_agent.agent.tools import (
-    ToolCall,
-    ToolRegistry,
-    ToolResult,
-    ToolRuntime,
-    ToolSpec,
-)
+
+# Heavy exports — lazy-loaded on first access via __getattr__
+_LAZY_MODULES: dict[str, str] = {
+    "DecisionModelConfig": "trip_agent.agent.factory",
+    "build_decision_maker": "trip_agent.agent.factory",
+    "StructuralFeasibilityGate": "trip_agent.agent.feasibility_gate",
+    "AgentLoop": "trip_agent.agent.graph",
+    "AgentRunResult": "trip_agent.agent.graph",
+    "AskingDecider": "trip_agent.agent.graph",
+    "Decision": "trip_agent.agent.graph",
+    "StructuredOutputDecider": "trip_agent.agent.graph",
+    "run_agent": "trip_agent.agent.graph",
+    "MAX_LLM_CALLS": "trip_agent.agent.graph",
+    "MAX_STEPS": "trip_agent.agent.graph",
+    "MAX_TOOL_CALLS": "trip_agent.agent.graph",
+    "BuiltItinerary": "trip_agent.agent.itinerary_builder",
+    "DemoItineraryBuilder": "trip_agent.agent.itinerary_builder",
+    "RealItineraryBuilder": "trip_agent.agent.itinerary_builder",
+    "build_demo_command": "trip_agent.agent.itinerary_builder",
+    "normalize_trip_date": "trip_agent.agent.itinerary_builder",
+    "AgentRunRecord": "trip_agent.agent.persistence",
+    "AgentRunRecorder": "trip_agent.agent.persistence",
+    "AgentRunStarted": "trip_agent.agent.persistence",
+    "PsycopgAgentRunRepository": "trip_agent.agent.persistence",
+    "status_for_stop_reason": "trip_agent.agent.persistence",
+    "ToolCall": "trip_agent.agent.tools",
+    "ToolRegistry": "trip_agent.agent.tools",
+    "ToolResult": "trip_agent.agent.tools",
+    "ToolRuntime": "trip_agent.agent.tools",
+    "ToolSpec": "trip_agent.agent.tools",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_MODULES:
+        import importlib
+        mod = importlib.import_module(_LAZY_MODULES[name])
+        attr = getattr(mod, name)
+        # Cache on the module so subsequent accesses are fast
+        globals()[name] = attr
+        return attr
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "MAX_LLM_CALLS",

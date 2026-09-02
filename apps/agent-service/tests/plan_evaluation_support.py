@@ -29,10 +29,15 @@ def make_command(
     fixed_schedules: tuple[dict[str, object], ...] = (),
     must_visit_places: tuple[str, ...] = (),
     meal_windows: tuple[dict[str, object], ...] = (),
+    start_date: str = "2026-08-01",
+    end_date: str = "2026-08-04",
 ) -> PlanningCreateCommand:
     raw = deepcopy(COMMAND)
     raw["schemaVersion"] = 2
-    constraints = raw["payload"]["trip"]["constraints"]
+    trip = raw["payload"]["trip"]
+    trip["startDate"] = start_date
+    trip["endDate"] = end_date
+    constraints = trip["constraints"]
     constraints.update(
         {
             "budgetAmount": budget_amount,

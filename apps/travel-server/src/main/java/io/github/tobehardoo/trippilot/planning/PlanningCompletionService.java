@@ -26,10 +26,13 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
 
     private static final String SUCCEEDED = "SUCCEEDED";
     private static final String FAILED = "FAILED";
+    private static final String TRIP_STATUS_COMPLETED = "COMPLETED";
+    private static final String TRIP_STATUS_DRAFT = "DRAFT";
 
     private final PlanningTaskMapper taskMapper;
     private final PlanningTaskEventMapper taskEventMapper;
     private final ItineraryService itineraryService;
+    private final io.github.tobehardoo.trippilot.trip.TripMapper tripMapper;
     private final PlanningFactImpactMapper factImpactMapper;
     private final io.github.tobehardoo.trippilot.itinerary.ItineraryFeasibilityReportMapper
             feasibilityReportMapper;
@@ -43,6 +46,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     public PlanningCompletionService(PlanningTaskMapper taskMapper,
                                      PlanningTaskEventMapper taskEventMapper,
                                      ItineraryService itineraryService,
+                                     io.github.tobehardoo.trippilot.trip.TripMapper tripMapper,
                                      PlanningFactImpactMapper factImpactMapper,
                                      io.github.tobehardoo.trippilot.itinerary.ItineraryFeasibilityReportMapper
                                              feasibilityReportMapper,
@@ -56,6 +60,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         this.taskMapper = taskMapper;
         this.taskEventMapper = taskEventMapper;
         this.itineraryService = itineraryService;
+        this.tripMapper = tripMapper;
         this.factImpactMapper = factImpactMapper;
         this.feasibilityReportMapper = feasibilityReportMapper;
         this.entityRefMapper = entityRefMapper;
@@ -103,6 +108,12 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         }
         if (event.payload().evaluation() == null) {
             throw rejected("A v9/v10/v11 completion requires an evaluation");
+        }
+        // P0 finalize gate: an empty/missing itinerary must never be able to
+        // reach COMPLETED.  This is the denominator check — a "completed" plan
+        // without any itinerary is a false success, not a completion.
+        if (event.payload().itinerary() == null) {
+            throw rejected("A v9/v10/v11 completion requires an itinerary");
         }
         PlanningTaskCompletionRecord task = taskMapper.findCompletionContextForUpdate(event.taskId())
                 .orElseThrow(() -> rejected("Planning task was not found"));
@@ -447,6 +458,12 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         requireOne(taskMapper.updateTerminalStatus(
                 task.id(), task.taskVersion(), SUCCEEDED, null, null
         ), "planning task status");
+        // Trip phase transition: PLANNING → COMPLETED so the workspace can
+        // render the itinerary view from trip.status.  Candidate validation
+        // tasks run against an already-completed trip and must not touch it.
+        if (!isCandidateTask(task)) {
+            tripMapper.updateStatus(task.tripId(), TRIP_STATUS_COMPLETED);
+        }
         recordFinalStageDuration(task.id(), now);
         metrics.taskFinished(task.taskType(), SUCCEEDED, java.time.Duration.between(task.createdAt(), now));
         publishAfterCommit(insertTaskEvent(new PlanningTaskEventRecord(
@@ -454,6 +471,16 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         )));
         log.info("task completed: taskType={} versionNumber={}",
                 task.taskType(), version.versionNumber());
+    }
+
+    /**
+     * A terminal failure returns the trip to its pre-planning phase: a trip
+     * that already has an itinerary (replan / candidate validation) stays
+     * COMPLETED; a first planning attempt falls back to DRAFT.
+     */
+    private void revertTripStatusAfterTerminalFailure(UUID tripId) {
+        boolean hasItinerary = itineraryService.getCurrentVersionForTask(tripId) != null;
+        tripMapper.updateStatus(tripId, hasItinerary ? TRIP_STATUS_COMPLETED : TRIP_STATUS_DRAFT);
     }
 
     private void persistStaleFailure(PlanningCompletedEvent event,
@@ -464,6 +491,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         requireOne(taskMapper.updateTerminalStatus(
                 task.id(), task.taskVersion(), FAILED, errorCode, message
         ), "planning task status");
+        revertTripStatusAfterTerminalFailure(task.tripId());
         recordFinalStageDuration(task.id(), now);
         metrics.taskFinished(task.taskType(), FAILED, java.time.Duration.between(task.createdAt(), now));
         publishAfterCommit(insertTaskEvent(new PlanningTaskEventRecord(

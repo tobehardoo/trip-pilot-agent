@@ -69,6 +69,34 @@ def test_clear_sky_produces_no_mode_traces() -> None:
     assert _traces_with_code(clear_result, "TRANSIT_MODE") == ()
 
 
+def test_every_trace_maintains_one_reason_per_reason_code() -> None:
+    """Regression: the INTEREST_MATCH trace previously emitted 2 reasons for
+    1 code (偏好命中 + 导览推荐命中), which blew up DecisionExplanation's
+    ``len(reasons) == len(reason_codes)`` invariant and aborted the whole
+    planning pipeline (INTERNAL_PLANNING_FAILED).  This pins that invariant
+    for every trace the provider emits AND for the evaluator conversions."""
+    from test_planning_intelligence_v1 import _single_day_payload
+
+    # Clone the standard command with preferences that the ranker can match.
+    payload = _single_day_payload("8 月 1 日晴天，26℃。")
+    payload["payload"]["trip"]["constraints"]["preferences"] = ["美食", "夜景"]
+    result = _planned(PlanningCreateCommand.model_validate(payload))
+
+    for trace in result.decision_traces:
+        assert len(trace.reason_codes) == len(trace.reasons), (
+            f"trace {trace.reason_codes} has {len(trace.reasons)} reasons"
+        )
+
+    # Every emitted trace must survive conversion into a validated
+    # DecisionExplanation (the very step that crashed for mismatch).
+    from trip_agent.evaluation.evaluator import PlanEvaluator
+    evaluation = PlanEvaluator().evaluate(
+        PlanningCreateCommand.model_validate(payload), result
+    )
+    for decision in evaluation.decisions:
+        assert len(decision.reason_codes) == len(decision.reasons)
+
+
 def test_rain_walk_within_tightened_threshold_is_traced_as_walking() -> None:
     """A 500s walk still fits the rain threshold (600s): the plan walks, but
     the choice was made under a tightened threshold — the trace must say so."""

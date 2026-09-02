@@ -896,4 +896,41 @@ assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
         PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
         assertThat(parsed.payload().itinerary().accommodation()).isNull();
     }
+
+    @Test
+    void acceptsInterestMatchAndPacePolicyDecisionReasonCodes() throws Exception {
+        // Regression: the Java evaluation reason-code whitelist was missing
+        // INTEREST_MATCH (偏好命中) and PACE_POLICY (RELAXED 节奏) that the
+        // agent-service legitimately emits.  Any trip carrying one of these
+        // decisions had its whole PLANNING_COMPLETED event rejected, leaving
+        // the planning task stuck RUNNING forever and the itinerary never
+        // surfacing.  These codes must parse so the contract stays in sync.
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        event.put("schemaVersion", 11);
+        ArrayNode decisions = (ArrayNode) event.at("/payload/evaluation").withArray("decisions");
+        ObjectNode interest = decisions.addObject();
+        interest.put("subjectType", "PLAN");
+        interest.put("summary", "候选排序匹配了你的兴趣偏好与导览推荐");
+        ArrayNode interestCodes = interest.putArray("reasonCodes");
+        interestCodes.add("INTEREST_MATCH");
+        ArrayNode interestReasons = interest.putArray("reasons");
+        interestReasons.add("偏好命中：某餐厅；导览推荐命中：无");
+        interest.putArray("evidence");
+        ObjectNode pace = decisions.addObject();
+        pace.put("subjectType", "PLAN");
+        pace.put("summary", "节奏为 RELAXED：每日负载相应降低");
+        ArrayNode paceCodes = pace.putArray("reasonCodes");
+        paceCodes.add("PACE_POLICY");
+        ArrayNode paceReasons = pace.putArray("reasons");
+        paceReasons.add("每个观光时段预留休整余量");
+        pace.putArray("evidence");
+
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+        assertThat(parsed.payload().evaluation().decisions()).hasSize(2);
+    }
 }

@@ -482,6 +482,8 @@ class AmapPlanningProvider:
         interest_titles = _titles_with_reason(ranking.selected, "PREFERENCE_MATCH:")
         guide_titles = _titles_with_reason(ranking.selected, "GUIDE_FACT_MATCH")
         if interest_titles or guide_titles:
+            # reasons 必须与 reason_codes 一一对应（DecisionExplanation 校验）；
+            # 偏好命中与导览推荐命中合并为同一条 INTEREST_MATCH 理由。
             decision_traces.append(
                 DecisionTrace(
                     subject_type="PLAN",
@@ -489,10 +491,8 @@ class AmapPlanningProvider:
                     summary="候选排序匹配了你的兴趣偏好与导览推荐",
                     reason_codes=("INTEREST_MATCH",),
                     reasons=(
-                        *(
-                            f"偏好命中：{'、'.join(interest_titles) if interest_titles else '无'}",
-                            f"导览推荐命中：{'、'.join(guide_titles) if guide_titles else '无'}",
-                        ),
+                        f"偏好命中：{'、'.join(interest_titles) if interest_titles else '无'}；"
+                        f"导览推荐命中：{'、'.join(guide_titles) if guide_titles else '无'}",
                     ),
                     evidence=(
                         DecisionEvidence(

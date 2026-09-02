@@ -199,18 +199,6 @@ public class TripService {
         return get(ownerId, tripId);
     }
 
-    @Transactional
-    public void archive(UUID ownerId, UUID tripId) {
-        findOwned(ownerId, tripId);
-        tripMapper.archiveOwned(tripId, ownerId);
-    }
-
-    @Transactional
-    public void restore(UUID ownerId, UUID tripId) {
-        findOwned(ownerId, tripId);
-        tripMapper.restoreOwned(tripId, ownerId);
-    }
-
     private TripRecord findOwned(UUID ownerId, UUID tripId) {
         return tripMapper.findOwnedById(tripId, ownerId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "TRIP_NOT_FOUND", "Trip was not found"));

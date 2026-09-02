@@ -25,7 +25,7 @@ class TripArchiveAndSearchIntegrationTest extends PostgresIntegrationTest {
     private ObjectMapper objectMapper;
 
     @Test
-    void searchesPagedTripsAndHidesArchivedTripsUnlessRequested() throws Exception {
+    void searchesPagedTrips() throws Exception {
         String token = registerAndGetAccessToken("trip-search@example.com");
         UUID shanghaiId = createTrip(token, "Shanghai weekend", "Shanghai", "2026-08-01", "2026-08-02");
         createTrip(token, "Beijing week", "Beijing", "2026-08-05", "2026-08-07");
@@ -40,27 +40,15 @@ class TripArchiveAndSearchIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.items[0].id").value(shanghaiId.toString()));
 
-        mockMvc.perform(post("/api/trips/{tripId}/archive", shanghaiId)
-                        .header("Authorization", bearer(token)))
-                .andExpect(status().isNoContent());
-
-        mockMvc.perform(get("/api/trips")
-                        .header("Authorization", bearer(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].destination").value("Beijing"));
-
         mockMvc.perform(get("/api/trips/search")
                         .header("Authorization", bearer(token))
                         .param("page", "0")
                         .param("size", "10"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.items[0].destination").value("Beijing"));
+                .andExpect(jsonPath("$.totalElements").value(2));
 
         mockMvc.perform(get("/api/trips/search")
                         .header("Authorization", bearer(token))
-                        .param("includeArchived", "true")
                         .param("startDate", "2026-08-02")
                         .param("endDate", "2026-08-02")
                         .param("page", "0")

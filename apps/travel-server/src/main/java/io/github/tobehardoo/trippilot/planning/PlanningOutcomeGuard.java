@@ -43,6 +43,13 @@ public final class PlanningOutcomeGuard {
                 throw new EventRejectedException(
                         "Outcome itinerary dates must be ordered within the trip range");
             }
+            // P0 finalize gate: a structurally valid but EMPTY day is a hollower
+            // false success.  Every generated day must carry at least one activity
+            // (ARRIVAL / DEPARTURE / MEAL / ACCOMMODATION / sight) to be "real".
+            if (day.activities() == null || day.activities().isEmpty()) {
+                throw new EventRejectedException(
+                        "Outcome itinerary day " + day.date() + " must contain at least one activity");
+            }
             for (PlanningCompletedEvent.Activity activity : day.activities()) {
                 if (!day.date().equals(activity.startTime()
                         .withOffsetSameInstant(TRIP_ZONE).toLocalDate())

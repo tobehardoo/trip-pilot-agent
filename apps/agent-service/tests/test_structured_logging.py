@@ -66,7 +66,7 @@ class _VerifiedProvider:
 
 
 def test_process_planning_create_emits_structured_boundary_logs(caplog) -> None:
-    command = make_command()
+    command = make_command(start_date="2026-08-01", end_date="2026-08-01")
     result = make_result()
     provider = _VerifiedProvider(result)
 
@@ -95,7 +95,7 @@ def test_process_planning_create_emits_structured_boundary_logs(caplog) -> None:
 
 
 def test_log_messages_do_not_contain_secret_material(caplog) -> None:
-    command = make_command()
+    command = make_command(start_date="2026-08-01", end_date="2026-08-01")
     result = make_result()
     provider = _VerifiedProvider(result)
 

@@ -212,7 +212,10 @@ public class ItineraryEditRoutingCoordinator {
                 request.baseVersionId(), request.operation(), request.activityId(),
                 request.transitLegId(), request.targetDate(), request.targetOrder(),
                 request.targetStartTime(), request.targetEndTime(),
-                recommendation.selectedMode(), request.transitLocked());
+                recommendation.selectedMode(), request.transitLocked(),
+                request.newTitle(), request.newPoiId(),
+                request.newLongitude(), request.newLatitude(),
+                request.newAddress(), request.newTypeName(), request.newKind());
     }
 
     private java.util.Optional<java.time.OffsetDateTime> findActivityEndTime(

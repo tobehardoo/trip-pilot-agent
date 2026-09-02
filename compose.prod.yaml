@@ -71,6 +71,8 @@ services:
       CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT: ${CITY_INTELLIGENCE_PLANNING_WAIT_TIMEOUT:-PT2S}
       OUTBOX_PUBLISHER_ENABLED: ${OUTBOX_PUBLISHER_ENABLED:-true}
       EVENT_CONSUMER_ENABLED: ${EVENT_CONSUMER_ENABLED:-true}
+    ports:
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy

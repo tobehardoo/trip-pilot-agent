@@ -763,7 +763,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         ItineraryService.ItineraryEditRequest request = new ItineraryService.ItineraryEditRequest(
                 uuid(current, "versionId"), "LOCK_ACTIVITY",
                 uuid(current.at("/days/0/activities/0"), "id"), null,
-                null, null, null, null, null, null
+                null, null, null, null, null, null,
+                null, null, null, null, null, null, null
         );
         UUID ownerId = jdbcTemplate.queryForObject(
                 "SELECT id FROM business.user_account WHERE email = ?", UUID.class, email);
@@ -797,7 +798,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         ItineraryService.ItineraryEditRequest request = new ItineraryService.ItineraryEditRequest(
                 uuid(current, "versionId"), "LOCK_ACTIVITY",
                 uuid(current.at("/days/0/activities/0"), "id"), null,
-                null, null, null, null, null, null
+                null, null, null, null, null, null,
+                null, null, null, null, null, null, null
         );
         UUID ownerId = jdbcTemplate.queryForObject(
                 "SELECT id FROM business.user_account WHERE email = ?", UUID.class, email);
@@ -1046,17 +1048,6 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$[0].versionNumber").value(2))
                 .andExpect(jsonPath("$[0].current").value(true))
                 .andExpect(jsonPath("$[0].versionSource").value("USER_EDIT"));
-
-        mockMvc.perform(get(
-                                "/api/trips/{tripId}/itinerary/versions/{versionId}",
-                                context.tripId(),
-                                initialVersionId
-                        )
-                        .header("Authorization", bearer(context.accessToken())))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.versionId")
-                        .value(initialVersionId.toString()))
-                .andExpect(jsonPath("$.days[0].activities.length()").value(2));
 
         mockMvc.perform(get(
                                 "/api/trips/{tripId}/itinerary/versions/diff",
@@ -2111,7 +2102,8 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
         return new ItineraryService.ItineraryEditRequest(
                 uuid(itinerary, "versionId"), "LOCK_ACTIVITY",
                 uuid(itinerary.at("/days/0/activities/0"), "id"), null,
-                null, null, null, null, null, null
+                null, null, null, null, null, null,
+                null, null, null, null, null, null, null
         );
     }
 

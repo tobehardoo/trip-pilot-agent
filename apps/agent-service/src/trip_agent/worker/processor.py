@@ -16,11 +16,13 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from trip_agent.application.candidate_validation import CandidateValidationProvider
 from trip_agent.domain.planning.protocols import (
     KnowledgeEvidenceProvider,
+    OptimizationConflict,
     PlanningInfeasibleError,
     PlanningProvider,
     PlanningProviderError,
     PlanningRepairRequest,
     PlanningResult,
+    RelaxationSuggestion,
 )
 from trip_agent.evaluation import get_plan_evaluator
 from trip_agent.feasibility.repair.engine import apply_repair_plan, plan_repairs
@@ -235,6 +237,92 @@ async def _resolve_and_emit(
     )
 
 
+def _assert_plannable_outcome(
+    command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
+    result: PlanningResult,
+) -> None:
+    """AUDIT-02 fail-fast：任何进入 COMPLETED 的行程必须天数完整、每天有活动。
+
+    与 Java 接收侧 `PlanningOutcomeGuard.validateDates` 保持一致，但在 Python
+    源头就拦截，避免把非法完成结果送进事件总线。不满足即抛
+    ``PlanningInfeasibleError``（AMQP 层会转为 PLANNING_FAILED / FAILED），
+    绝不发出结构非法的 ``PlanningCompletedEventV11``。
+    """
+    itinerary = result.itinerary
+    if itinerary is None:
+        raise PlanningInfeasibleError(
+            conflicts=(
+                OptimizationConflict(
+                    code="INSUFFICIENT_DAY_CAPACITY",
+                    message="planner produced no itinerary (itinerary=None)",
+                    affected=(),
+                ),
+            ),
+            relaxations=(
+                RelaxationSuggestion(
+                    code="RETRY_REAL_PROVIDER",
+                    message="Planner 未产出行程，请重试或调整条件",
+                ),
+            ),
+        )
+    days = itinerary.days
+    if not days:
+        raise PlanningInfeasibleError(
+            conflicts=(
+                OptimizationConflict(
+                    code="INSUFFICIENT_DAY_CAPACITY",
+                    message="planner produced an itinerary with zero days",
+                    affected=(),
+                ),
+            ),
+            relaxations=(
+                RelaxationSuggestion(
+                    code="ADJUST_TRAVEL_CONTEXT",
+                    message="行程没有生成任何一天，请调整日期或预算后重试",
+                ),
+            ),
+        )
+    expected_days = (
+        command.payload.trip.end_date - command.payload.trip.start_date
+    ).days + 1
+    if len(days) != expected_days:
+        raise PlanningInfeasibleError(
+            conflicts=(
+                OptimizationConflict(
+                    code="INSUFFICIENT_DAY_CAPACITY",
+                    message=(
+                        f"itinerary day count {len(days)} != expected {expected_days} "
+                        f"for {command.payload.trip.start_date}..{command.payload.trip.end_date}"
+                    ),
+                    affected=(),
+                ),
+            ),
+            relaxations=(
+                RelaxationSuggestion(
+                    code="EXTEND_AVAILABLE_TIME",
+                    message="生成的行程天数与旅行日期不一致，请重新规划",
+                ),
+            ),
+        )
+    for day in days:
+        if not day.activities:
+            raise PlanningInfeasibleError(
+                conflicts=(
+                    OptimizationConflict(
+                        code="INSUFFICIENT_DAY_CAPACITY",
+                        message=f"itinerary day {day.date} contains no activities",
+                        affected=(),
+                    ),
+                ),
+                relaxations=(
+                    RelaxationSuggestion(
+                        code="REDUCE_OPTIONAL_ACTIVITIES",
+                        message="某一天没有任何安排，请重新规划",
+                    ),
+                ),
+            )
+
+
 def _outcome_event(
     command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
     result: PlanningResult,
@@ -252,6 +340,8 @@ def _outcome_event(
     UNVERIFIED (opening hours / visit duration unknown).  Only a blocker
     report routes to REVIEW_REQUIRED (WAITING_USER).
     """
+    # AUDIT-02 fail-fast：completed/review 事件都不得基于结构非法的行程。
+    _assert_plannable_outcome(command, result)
     common = {
         "provider": result.provider,
         "itinerary": result.itinerary,

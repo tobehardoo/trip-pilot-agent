@@ -115,7 +115,16 @@ def test_demo_success_emits_recorded_provenance() -> None:
 
 
 def test_historical_planning_result_omits_provenance_instead_of_guessing_amap() -> None:
-    command = PlanningCreateCommand.model_validate(COMMAND)
+    # _mixed_itinerary() 只生成 1 天（2026-08-01）：command 日期必须与之匹配，
+    # 否则会被 AUDIT-02 输出侧 fail-fast 拦截（4 天日期 + 1 天行程 = 非法完成）。
+    one_day_command = {
+        **COMMAND,
+        "payload": {
+            **COMMAND["payload"],
+            "trip": {**COMMAND["payload"]["trip"], "startDate": "2026-08-01", "endDate": "2026-08-01"},
+        },
+    }
+    command = PlanningCreateCommand.model_validate(one_day_command)
 
     class HistoricalProvider:
         async def plan(self, received: PlanningCreateCommand) -> PlanningResult:

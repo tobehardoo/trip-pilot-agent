@@ -74,11 +74,10 @@ class AuthenticationFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(jsonPath("$.accessToken").isNotEmpty())
                 .andReturn();
 
-        String accessToken = json(loginResult).get("accessToken").asText();
-        mockMvc.perform(get("/api/users/me")
-                        .header("Authorization", "Bearer " + accessToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.email").value("login@example.com"));
+        // /api/users/me 已删除；当前用户信息由登录响应中的 user 字段提供
+        json(loginResult).get("accessToken").asText();
+        assertThat(json(loginResult).get("user").get("email").asText())
+                .isEqualTo("login@example.com");
     }
 
     @Test

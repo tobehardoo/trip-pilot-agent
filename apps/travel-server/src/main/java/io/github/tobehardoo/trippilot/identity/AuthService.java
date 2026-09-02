@@ -91,12 +91,6 @@ public class AuthService {
                 .ifPresent(token -> refreshTokenMapper.revoke(token.id(), now, null));
     }
 
-    public UserResponse currentUser(UUID userId) {
-        return userMapper.findById(userId)
-                .map(this::toUserResponse)
-                .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "User is unavailable"));
-    }
-
     private AuthResponse issueTokenPair(UserAccount user) {
         String rawRefreshToken = tokenService.createRefreshToken();
         refreshTokenMapper.insert(new RefreshTokenRecord(

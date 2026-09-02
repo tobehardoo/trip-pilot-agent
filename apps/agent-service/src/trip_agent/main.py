@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from trip_agent.agent.factory import resolve_decider_kind
 from trip_agent.dialog.api import router as dialog_router
 from trip_agent.dialog.extractor import build_extractor
 from trip_agent.dialog.service import AgentDialogService, place_search_from_runtime
@@ -22,6 +23,8 @@ from trip_agent.routes.api import router as routes_router
 class HealthResponse(BaseModel):
     status: str
     service: str
+    # AUDIT-03：暴露当前实际决策器（STRUCTURED=模型闭环 / DETERMINISTIC=确定性降级）。
+    decider: str
 
 
 @asynccontextmanager
@@ -57,4 +60,10 @@ app.include_router(dialog_router)
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(status="UP", service="agent-service")
+    # AUDIT-03：decider 语义透明化 —— 未配置模型时如实报告 DETERMINISTIC，
+    # 不再把确定性降级当作完整 LLM Agent 对外宣称。
+    return HealthResponse(
+        status="UP",
+        service="agent-service",
+        decider=resolve_decider_kind(),
+    )

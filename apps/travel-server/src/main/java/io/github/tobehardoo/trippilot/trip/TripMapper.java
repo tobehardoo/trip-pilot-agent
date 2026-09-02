@@ -206,6 +206,19 @@ public interface TripMapper {
     int restoreOwned(@Param("id") UUID id, @Param("ownerId") UUID ownerId);
 
     /**
+     * System-driven phase transition (DRAFT → PLANNING → COMPLETED).
+     * Deliberately does NOT bump {@code version}: status changes are
+     * backend-driven, not user edits, and must not break the optimistic-lock
+     * baseline a running planning task captured.
+     */
+    @Update("""
+            UPDATE business.trip
+            SET status = #{status}, updated_at = CURRENT_TIMESTAMP
+            WHERE id = #{id} AND status <> #{status}
+            """)
+    int updateStatus(@Param("id") UUID id, @Param("status") String status);
+
+    /**
      * B13-C: version-aware title update.  Optimistic: only the expected
      * version is accepted, so concurrent metadata edits fail closed with a
      * 409 instead of silently overwriting each other.

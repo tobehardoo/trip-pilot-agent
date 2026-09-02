@@ -6,7 +6,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -30,13 +29,6 @@ public class PlanningTaskController {
         return planningTaskService.get(UUID.fromString(jwt.getSubject()), taskId);
     }
 
-    @GetMapping("/api/trips/{tripId}/planning-tasks/latest")
-    PlanningTaskService.PlanningTaskResponse latest(
-            @AuthenticationPrincipal Jwt jwt,
-            @PathVariable UUID tripId) {
-        return planningTaskService.latest(UUID.fromString(jwt.getSubject()), tripId);
-    }
-
     @PostMapping("/api/trips/{tripId}/planning-tasks")
     @ResponseStatus(HttpStatus.ACCEPTED)
     PlanningTaskService.PlanningTaskResponse create(
@@ -58,10 +50,4 @@ public class PlanningTaskController {
         );
     }
 
-    @DeleteMapping("/api/planning-tasks/{taskId}")
-    PlanningTaskService.PlanningTaskResponse cancel(
-            @AuthenticationPrincipal Jwt jwt,
-            @PathVariable UUID taskId) {
-        return planningTaskService.cancel(UUID.fromString(jwt.getSubject()), taskId);
     }
-}

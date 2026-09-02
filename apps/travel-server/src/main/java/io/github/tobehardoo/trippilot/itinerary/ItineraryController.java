@@ -65,17 +65,6 @@ public class ItineraryController {
         );
     }
 
-    @GetMapping("/versions/{versionId}")
-    ItineraryService.ItineraryResponse version(
-            @AuthenticationPrincipal Jwt jwt,
-            @PathVariable UUID tripId,
-            @PathVariable UUID versionId
-    ) {
-        return itineraryService.getVersion(
-                UUID.fromString(jwt.getSubject()), tripId, versionId
-        );
-    }
-
     @PostMapping("/rollbacks")
     @org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.ACCEPTED)
     io.github.tobehardoo.trippilot.planning.PlanningTaskService.PlanningTaskResponse rollback(

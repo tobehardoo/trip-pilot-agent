@@ -38,7 +38,11 @@ public class PlanningCompletedEventParser {
     private static final Set<String> EVALUATION_REASON_CODES = Set.of(
             "FIXED_APPOINTMENT", "NEARBY_CLUSTER", "MUST_VISIT",
             "TRANSIT_MODE", "SHORTEST_ROUTE", "PROVIDER_CONSTRAINT",
-            "TIME_OPTIMIZATION", "BUDGET_CONSTRAINT", "REGIONAL_GROUPING"
+            "TIME_OPTIMIZATION", "BUDGET_CONSTRAINT", "REGIONAL_GROUPING",
+            // 与 agent-service 的 DecisionTrace 契约对齐：偏好命中与 RELAXED
+            // 节奏这两个合法决策此前不在白名单，导致任意带偏好或轻松节奏的
+            // 行程其 PLANNING_COMPLETED 事件被整件拒绝，任务永远卡在 RUNNING。
+            "INTEREST_MATCH", "PACE_POLICY"
     );
     private static final Set<String> STRUCTURAL_KINDS = Set.of(
             "MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"

@@ -74,18 +74,6 @@ public class TripController {
         return tripService.updateMetadata(userId(jwt), tripId, request);
     }
 
-    @PostMapping("/{tripId}/archive")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    void archive(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
-        tripService.archive(userId(jwt), tripId);
-    }
-
-    @PostMapping("/{tripId}/restore")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    void restore(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
-        tripService.restore(userId(jwt), tripId);
-    }
-
     private UUID userId(Jwt jwt) {
         return UUID.fromString(jwt.getSubject());
     }

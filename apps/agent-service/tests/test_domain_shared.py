@@ -77,7 +77,7 @@ class TestAvailableMinutes:
             None,
         )
         assert start == 9 * 60
-        assert end == 18 * 60
+        assert end == 21 * 60
 
     def test_first_day_with_arrival(self) -> None:
         arrival = datetime(2026, 7, 20, 11, 30, tzinfo=CHINA_TIME_ZONE)
@@ -89,7 +89,7 @@ class TestAvailableMinutes:
             None,
         )
         assert start == 11 * 60 + 30
-        assert end == 18 * 60
+        assert end == 21 * 60
 
     def test_last_day_with_departure(self) -> None:
         departure = datetime(2026, 7, 22, 16, 0, tzinfo=CHINA_TIME_ZONE)
@@ -114,7 +114,7 @@ class TestAvailableMinutes:
             departure,
         )
         assert start == 9 * 60
-        assert end == 18 * 60
+        assert end == 21 * 60
 
     def test_arrival_later_than_default(self) -> None:
         arrival = datetime(2026, 7, 20, 14, 0, tzinfo=CHINA_TIME_ZONE)

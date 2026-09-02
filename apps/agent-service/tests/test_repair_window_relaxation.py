@@ -127,7 +127,10 @@ def _command(*, lunch: dict | None = None) -> PlanningCreateCommand:
     constraints["travelerType"] = "SOLO"
     constraints["arrival"] = {
         "placeName": "广州站",
-        "time": "2026-08-01T18:00:00+08:00",
+        # 功能③（2026-09）默认日终 21:00 后，18:00 到达日会获得晚间容量并吸走
+        # 必去景点。钉在默认日终之后的 21:00，让到达日仅剩缓冲窗，保持本文件
+        # 要验证的场景：景点被迫落在离开日，触发有界松弛。
+        "time": "2026-08-01T21:00:00+08:00",
     }
     constraints["departure"] = {
         "placeName": "广州南站",

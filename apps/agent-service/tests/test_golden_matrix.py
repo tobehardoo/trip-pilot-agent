@@ -275,7 +275,7 @@ def _rule(report, rule_id: str):
 def test_g04_confirmed_hotel_verifies_cross_day_continuity() -> None:
     event = asyncio.run(
         process_planning_create(
-            make_command(),
+            make_command(start_date="2026-08-01", end_date="2026-08-02"),
             _provider(accommodation=_confirmed()),
             occurred_at=_TS,
         )
@@ -295,7 +295,7 @@ def test_g04_confirmed_hotel_verifies_cross_day_continuity() -> None:
 def test_g05_area_estimated_hotel_is_unverified_not_verified() -> None:
     event = asyncio.run(
         process_planning_create(
-            make_command(),
+            make_command(start_date="2026-08-01", end_date="2026-08-02"),
             _provider(accommodation=_estimated()),
             occurred_at=_TS,
         )
@@ -317,7 +317,7 @@ def test_g05_area_estimated_hotel_is_unverified_not_verified() -> None:
 def test_g06_unresolved_hotel_is_unverified() -> None:
     event = asyncio.run(
         process_planning_create(
-            make_command(),
+            make_command(start_date="2026-08-01", end_date="2026-08-02"),
             _provider(accommodation=UnresolvedAccommodation()),
             occurred_at=_TS,
         )
@@ -339,7 +339,7 @@ def test_g06_unresolved_hotel_is_unverified() -> None:
 def test_g09_verified_opening_window_passes() -> None:
     event = asyncio.run(
         process_planning_create(
-            make_command(),
+            make_command(start_date="2026-08-01", end_date="2026-08-02"),
             _provider(accommodation=_confirmed()),
             occurred_at=_TS,
         )
@@ -357,7 +357,7 @@ def test_g09_verified_opening_window_passes() -> None:
 def test_g11_stale_opening_evidence_is_unverified() -> None:
     event = asyncio.run(
         process_planning_create(
-            make_command(),
+            make_command(start_date="2026-08-01", end_date="2026-08-02"),
             _provider(accommodation=_confirmed(), stale_opening=True),
             occurred_at=_TS,
         )

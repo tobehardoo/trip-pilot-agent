@@ -88,7 +88,8 @@ HIGH_DAILY_SPAN_HOURS = 12       # > 12 hours from first start to last end
 HIGH_TOTAL_ROUTE_SECONDS = 3_600 # > 1 hr total transit in a day
 
 # Late day end: activity ends after this local hour
-LATE_DAY_END_HOUR = 20  # 8 PM
+# 功能③（2026-09）：默认日终提到 21:00，阈值同步到 21:00，避免晚间行程误报。
+LATE_DAY_END_HOUR = 21  # 9 PM
 
 
 @dataclass(frozen=True, slots=True)

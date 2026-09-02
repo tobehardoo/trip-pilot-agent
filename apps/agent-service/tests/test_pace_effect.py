@@ -89,7 +89,8 @@ def test_relaxed_carries_fewer_light_activities_than_balanced() -> None:
     relaxed = _plan("RELAXED", pool)
     balanced = _plan("BALANCED", pool)
 
-    assert balanced == (3, 2), "audit baseline: BALANCED fits three 90-min visits"
+    # 功能③（2026-09）默认日终 09:00–21:00 后，BALANCED 可多排两场 90 分钟游览。
+    assert balanced == (5, 2), "baseline: BALANCED fits five 90-min visits in the 21:00 window"
     assert relaxed[0] < balanced[0], "RELAXED must lighten the day (AC-5)"
     assert relaxed[1] == balanced[1] == 2
 

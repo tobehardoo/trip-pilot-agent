@@ -189,11 +189,11 @@ def available_minutes(
 ) -> tuple[int, int]:
     """Compute the available time window (in minutes from midnight) for a trip day.
 
-    Defaults to 09:00–18:00, tightened by arrival/departure times on the first
-    and last day respectively.
+    Defaults to 09:00–21:00（功能③：默认日终提到 21:00）, tightened by
+    arrival/departure times on the first and last day respectively.
     """
     start_minute = 9 * 60
-    end_minute = 18 * 60
+    end_minute = 21 * 60
     if trip_date == start_date and arrival is not None:
         local_arrival = arrival.astimezone(CHINA_TIME_ZONE)
         start_minute = max(start_minute, local_arrival.hour * 60 + local_arrival.minute)

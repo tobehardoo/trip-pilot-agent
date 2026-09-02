@@ -45,8 +45,10 @@ from trip_agent.planning.visit_duration import VisitDurationProfile
 
 # Default daily window.  When arrival/departure are missing we do NOT fall back
 # to a fixed two-activity model — the window is filled by capacity.
+# 功能③（2026-09）：默认日终提到 21:00（RELAXED/BALANCED 可排晚间活动）；
+# INTENSIVE 保持 20:00 紧凑。DINNER 仍锚定 18:00，晚间可继续排活动。
 DEFAULT_DAY_START_MINUTE = 9 * 60
-DEFAULT_DAY_END_MINUTE = 18 * 60
+DEFAULT_DAY_END_MINUTE = 21 * 60
 INTENSIVE_DAY_END_MINUTE = 20 * 60
 
 # Representative durations by magnitude (minutes).
@@ -314,7 +316,7 @@ def day_window_minutes(
 ) -> tuple[int, int]:
     """Compute the usable minute window for a day.
 
-    Defaults to 09:00–18:00 (INTENSIVE extends to 20:00), tightened by
+    Defaults to 09:00–21:00 (INTENSIVE stays 20:00), tightened by
     arrival/departure on the first/last day.  Missing anchors keep the default
     window — the plan is still built by capacity.
 

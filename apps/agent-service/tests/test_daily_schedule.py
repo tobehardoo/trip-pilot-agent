@@ -83,8 +83,9 @@ def test_classify_single_day_mid_trip_is_full_day() -> None:
 
 # ── time window -------------------------------------------------------------
 
-def test_day_window_defaults_to_9_to_18() -> None:
-    assert day_window_minutes(MID, START, END, None, None) == (540, 1080)
+def test_day_window_defaults_to_9_to_21() -> None:
+    # 功能③：默认日终 18:00 → 21:00。
+    assert day_window_minutes(MID, START, END, None, None) == (540, 1260)
 
 
 def test_day_window_intensive_extends_to_20() -> None:
@@ -92,7 +93,7 @@ def test_day_window_intensive_extends_to_20() -> None:
 
 
 def test_day_window_arrival_tightens_start() -> None:
-    assert day_window_minutes(START, START, END, _at(1, 14), None) == (840, 1080)
+    assert day_window_minutes(START, START, END, _at(1, 14), None) == (840, 1260)
 
 
 def test_day_window_departure_tightens_end() -> None:
@@ -100,7 +101,7 @@ def test_day_window_departure_tightens_end() -> None:
 
 
 def test_day_window_keeps_default_when_anchors_missing() -> None:
-    assert day_window_minutes(START, START, END, None, None) == (540, 1080)
+    assert day_window_minutes(START, START, END, None, None) == (540, 1260)
 
 
 # ── free windows ------------------------------------------------------------
@@ -222,14 +223,14 @@ def test_arrival_day_afternoon_places_dinner_and_only_light() -> None:
     )
     plan = plan_day(
         trip_date=START, start_date=START, end_date=END,
-        arrival=_at(1, 15), departure=None, accommodation_known=True,
+        arrival=_at(1, 18), departure=None, accommodation_known=True,
         candidates=candidates,
     )
     assert plan.day_type == "ARRIVAL_DAY"
     kinds = {item.kind for item in plan.items}
     assert "ARRIVAL" in kinds
-    # 15:00 arrival leaves only 15:30–18:00 after the anchor; a NORMAL
-    # (150min) does not fit next to the 17:00 dinner reservation, only LIGHT.
+    # 18:00 arrival + 30min 缓冲后只剩 18:30–21:00（功能③日终 21:00）；
+    # 一个 NORMAL（150min）无法与 18:00 晚餐预约并存，只能排 LIGHT。
     attractions = [item for item in plan.items if item.kind == "ATTRACTION"]
     assert attractions and all(item.magnitude == "LIGHT" for item in attractions)
     assert {d.meal_type for d in plan.meal_demands} == {"DINNER"}
@@ -299,7 +300,7 @@ def test_single_day_late_arrival_plan_not_empty_but_minimal() -> None:
     )
     assert plan.day_type == "ARRIVAL_DAY"
     assert plan.window_start_minute == 1020  # 17:00
-    assert plan.window_end_minute == 1080    # 18:00 default
+    assert plan.window_end_minute == 1260    # 21:00 default（功能③）
 
 
 def test_early_departure_keeps_departure_anchor() -> None:
@@ -327,8 +328,9 @@ def test_late_arrival_keeps_arrival_anchor() -> None:
     kinds = [item.kind for item in plan.items]
     assert "ARRIVAL" in kinds
     # arrival at 20:00 (1200) plus its 30-minute buffer must be inside the window.
+    # 功能③：默认日终 21:00（1260），窗口延伸至 1260。
     assert plan.window_start_minute == 1200
-    assert plan.window_end_minute == 1230
+    assert plan.window_end_minute == 1260
 
 
 def test_fixed_schedule_overlap_is_warned() -> None:

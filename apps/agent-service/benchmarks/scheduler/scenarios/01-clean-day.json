@@ -1,0 +1,61 @@
+{
+  "id": "01-clean-day",
+  "description": "ample capacity: every candidate fits, schedulers must agree",
+  "pace": "BALANCED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      540,
+      1260
+    ]
+  ],
+  "meals": [
+    {
+      "mealType": "LUNCH",
+      "startMinute": 720,
+      "endMinute": 780
+    },
+    {
+      "mealType": "DINNER",
+      "startMinute": 1080,
+      "endMinute": 1140
+    }
+  ],
+  "candidates": [
+    {
+      "poiId": "a1",
+      "title": "a1",
+      "minutes": 90,
+      "score": 80,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "a2",
+      "title": "a2",
+      "minutes": 60,
+      "score": 70,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "a3",
+      "title": "a3",
+      "minutes": 60,
+      "score": 60,
+      "region": "海珠区"
+    },
+    {
+      "poiId": "a4",
+      "title": "a4",
+      "minutes": 90,
+      "score": 75,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "a5",
+      "title": "a5",
+      "minutes": 60,
+      "score": 65,
+      "region": "荔湾区"
+    }
+  ]
+}

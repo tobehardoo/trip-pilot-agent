@@ -1,0 +1,67 @@
+{
+  "id": "10-mixed-durations",
+  "description": "mixed durations in two slots: greedy first-fit strands slot tails",
+  "pace": "BALANCED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      540,
+      700
+    ],
+    [
+      840,
+      1000
+    ]
+  ],
+  "meals": [
+    {
+      "mealType": "LUNCH",
+      "startMinute": 700,
+      "endMinute": 840
+    }
+  ],
+  "candidates": [
+    {
+      "poiId": "m1",
+      "title": "m1",
+      "minutes": 120,
+      "score": 100,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "s1",
+      "title": "s1",
+      "minutes": 50,
+      "score": 85,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "s2",
+      "title": "s2",
+      "minutes": 50,
+      "score": 84,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "m2",
+      "title": "m2",
+      "minutes": 110,
+      "score": 95,
+      "region": "海珠区"
+    },
+    {
+      "poiId": "s3",
+      "title": "s3",
+      "minutes": 50,
+      "score": 83,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "s4",
+      "title": "s4",
+      "minutes": 40,
+      "score": 70,
+      "region": "越秀区"
+    }
+  ]
+}

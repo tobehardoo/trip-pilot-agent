@@ -1,0 +1,190 @@
+{
+  "summary": {
+    "better": 2,
+    "tie": 8,
+    "worse": 0,
+    "maxSolveMs": 11.7
+  },
+  "results": [
+    {
+      "id": "01-clean-day",
+      "description": "ample capacity: every candidate fits, schedulers must agree",
+      "greedy": {
+        "score": 350,
+        "items": 5,
+        "packedMinutes": 360,
+        "utilization": 0.6
+      },
+      "cpsat": {
+        "score": 350,
+        "items": 5,
+        "packedMinutes": 360,
+        "utilization": 0.6,
+        "solveMs": 11.7
+      },
+      "verdict": "TIE"
+    },
+    {
+      "id": "02-tight-capacity",
+      "description": "candidates exceed packable capacity by ~40%; the dropped pair decides the score",
+      "greedy": {
+        "score": 471,
+        "items": 6,
+        "packedMinutes": 570,
+        "utilization": 0.864
+      },
+      "cpsat": {
+        "score": 471,
+        "items": 6,
+        "packedMinutes": 570,
+        "utilization": 0.864,
+        "solveMs": 7.3
+      },
+      "verdict": "TIE"
+    },
+    {
+      "id": "03-stranded-capacity",
+      "description": "one 150-min slot: the long high scorer first-fit-strands two 60-min candidates",
+      "greedy": {
+        "score": 150,
+        "items": 1,
+        "packedMinutes": 150,
+        "utilization": 1.0
+      },
+      "cpsat": {
+        "score": 200,
+        "items": 2,
+        "packedMinutes": 120,
+        "utilization": 0.8,
+        "solveMs": 1.5
+      },
+      "verdict": "CPSAT_BETTER"
+    },
+    {
+      "id": "04-must-visit-conflict",
+      "description": "must-visit competes with high-score optionals inside a tight window",
+      "greedy": {
+        "score": 235,
+        "items": 4,
+        "packedMinutes": 420,
+        "utilization": 0.875
+      },
+      "cpsat": {
+        "score": 235,
+        "items": 4,
+        "packedMinutes": 420,
+        "utilization": 0.875,
+        "solveMs": 3.2
+      },
+      "verdict": "TIE"
+    },
+    {
+      "id": "05-opening-windows",
+      "description": "verified opening windows with last-entry bounds constrain two candidates",
+      "greedy": {
+        "score": 305,
+        "items": 4,
+        "packedMinutes": 360,
+        "utilization": 0.545
+      },
+      "cpsat": {
+        "score": 305,
+        "items": 4,
+        "packedMinutes": 360,
+        "utilization": 0.545,
+        "solveMs": 1.7
+      },
+      "verdict": "TIE"
+    },
+    {
+      "id": "06-verified-closure",
+      "description": "a verified-closed must-visit is excluded instead of silently moved",
+      "greedy": {
+        "score": 150,
+        "items": 2,
+        "packedMinutes": 150,
+        "utilization": 0.227
+      },
+      "cpsat": {
+        "score": 150,
+        "items": 2,
+        "packedMinutes": 150,
+        "utilization": 0.227,
+        "solveMs": 1.1
+      },
+      "verdict": "TIE"
+    },
+    {
+      "id": "07-meal-split-slots",
+      "description": "two meals split the day into three slots; cross-slot selection trade-off",
+      "greedy": {
+        "score": 345,
+        "items": 4,
+        "packedMinutes": 510,
+        "utilization": 0.85
+      },
+      "cpsat": {
+        "score": 345,
+        "items": 4,
+        "packedMinutes": 510,
+        "utilization": 0.85,
+        "solveMs": 7.8
+      },
+      "verdict": "TIE"
+    },
+    {
+      "id": "08-relaxed-pace",
+      "description": "RELAXED reserves 60 min slack per slot; fewer, higher-value items should win",
+      "greedy": {
+        "score": 340,
+        "items": 4,
+        "packedMinutes": 450,
+        "utilization": 0.833
+      },
+      "cpsat": {
+        "score": 340,
+        "items": 4,
+        "packedMinutes": 450,
+        "utilization": 0.833,
+        "solveMs": 6.1
+      },
+      "verdict": "TIE"
+    },
+    {
+      "id": "09-region-coherence",
+      "description": "cross-region candidates carry higher raw score; coherence bonus must not sink the total",
+      "greedy": {
+        "score": 400,
+        "items": 5,
+        "packedMinutes": 480,
+        "utilization": 0.727
+      },
+      "cpsat": {
+        "score": 400,
+        "items": 5,
+        "packedMinutes": 480,
+        "utilization": 0.727,
+        "solveMs": 4.9
+      },
+      "verdict": "TIE"
+    },
+    {
+      "id": "10-mixed-durations",
+      "description": "mixed durations in two slots: greedy first-fit strands slot tails",
+      "greedy": {
+        "score": 269,
+        "items": 3,
+        "packedMinutes": 220,
+        "utilization": 0.688
+      },
+      "cpsat": {
+        "score": 322,
+        "items": 4,
+        "packedMinutes": 190,
+        "utilization": 0.594,
+        "solveMs": 5.6
+      },
+      "verdict": "CPSAT_BETTER"
+    }
+  ]
+}

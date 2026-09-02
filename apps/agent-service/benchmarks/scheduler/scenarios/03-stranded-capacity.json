@@ -1,0 +1,36 @@
+{
+  "id": "03-stranded-capacity",
+  "description": "one 150-min slot: the long high scorer first-fit-strands two 60-min candidates",
+  "pace": "BALANCED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      540,
+      690
+    ]
+  ],
+  "meals": [],
+  "candidates": [
+    {
+      "poiId": "long",
+      "title": "long",
+      "minutes": 150,
+      "score": 150,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "pair-a",
+      "title": "pair-a",
+      "minutes": 60,
+      "score": 100,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "pair-b",
+      "title": "pair-b",
+      "minutes": 60,
+      "score": 100,
+      "region": "越秀区"
+    }
+  ]
+}

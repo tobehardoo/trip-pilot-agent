@@ -1,0 +1,63 @@
+{
+  "id": "02-tight-capacity",
+  "description": "candidates exceed packable capacity by ~40%; the dropped pair decides the score",
+  "pace": "BALANCED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      540,
+      1260
+    ]
+  ],
+  "meals": [
+    {
+      "mealType": "LUNCH",
+      "startMinute": 720,
+      "endMinute": 780
+    }
+  ],
+  "candidates": [
+    {
+      "poiId": "t1",
+      "title": "t1",
+      "minutes": 150,
+      "score": 90,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "t2",
+      "title": "t2",
+      "minutes": 120,
+      "score": 85,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "t3",
+      "title": "t3",
+      "minutes": 90,
+      "score": 80,
+      "region": "海珠区"
+    },
+    {
+      "poiId": "t4",
+      "title": "t4",
+      "minutes": 90,
+      "score": 78,
+      "region": "荔湾区"
+    },
+    {
+      "poiId": "t5",
+      "title": "t5",
+      "minutes": 60,
+      "score": 70,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "t6",
+      "title": "t6",
+      "minutes": 60,
+      "score": 68,
+      "region": "海珠区"
+    }
+  ]
+}

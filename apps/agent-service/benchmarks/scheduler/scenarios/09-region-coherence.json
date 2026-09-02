@@ -1,0 +1,56 @@
+{
+  "id": "09-region-coherence",
+  "description": "cross-region candidates carry higher raw score; coherence bonus must not sink the total",
+  "pace": "BALANCED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      540,
+      1260
+    ]
+  ],
+  "meals": [
+    {
+      "mealType": "LUNCH",
+      "startMinute": 720,
+      "endMinute": 780
+    }
+  ],
+  "candidates": [
+    {
+      "poiId": "near1",
+      "title": "near1",
+      "minutes": 120,
+      "score": 80,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "near2",
+      "title": "near2",
+      "minutes": 90,
+      "score": 75,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "far1",
+      "title": "far1",
+      "minutes": 120,
+      "score": 95,
+      "region": "番禺区"
+    },
+    {
+      "poiId": "far2",
+      "title": "far2",
+      "minutes": 90,
+      "score": 90,
+      "region": "番禺区"
+    },
+    {
+      "poiId": "near3",
+      "title": "near3",
+      "minutes": 60,
+      "score": 60,
+      "region": "越秀区"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "id": "08-relaxed-pace",
+  "description": "RELAXED reserves 60 min slack per slot; fewer, higher-value items should win",
+  "pace": "RELAXED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      540,
+      1260
+    ]
+  ],
+  "meals": [
+    {
+      "mealType": "LUNCH",
+      "startMinute": 720,
+      "endMinute": 780
+    }
+  ],
+  "candidates": [
+    {
+      "poiId": "r1",
+      "title": "r1",
+      "minutes": 150,
+      "score": 95,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "r2",
+      "title": "r2",
+      "minutes": 120,
+      "score": 90,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "r3",
+      "title": "r3",
+      "minutes": 90,
+      "score": 80,
+      "region": "海珠区"
+    },
+    {
+      "poiId": "r4",
+      "title": "r4",
+      "minutes": 90,
+      "score": 75,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "r5",
+      "title": "r5",
+      "minutes": 60,
+      "score": 70,
+      "region": "荔湾区"
+    }
+  ]
+}

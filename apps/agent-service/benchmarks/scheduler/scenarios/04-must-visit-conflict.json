@@ -1,0 +1,57 @@
+{
+  "id": "04-must-visit-conflict",
+  "description": "must-visit competes with high-score optionals inside a tight window",
+  "pace": "BALANCED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      600,
+      1140
+    ]
+  ],
+  "meals": [
+    {
+      "mealType": "LUNCH",
+      "startMinute": 780,
+      "endMinute": 840
+    }
+  ],
+  "candidates": [
+    {
+      "poiId": "must",
+      "title": "must",
+      "minutes": 150,
+      "score": 30,
+      "region": "越秀区",
+      "mustInclude": true
+    },
+    {
+      "poiId": "big1",
+      "title": "big1",
+      "minutes": 150,
+      "score": 95,
+      "region": "海珠区"
+    },
+    {
+      "poiId": "big2",
+      "title": "big2",
+      "minutes": 150,
+      "score": 90,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "small1",
+      "title": "small1",
+      "minutes": 60,
+      "score": 60,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "small2",
+      "title": "small2",
+      "minutes": 60,
+      "score": 55,
+      "region": "海珠区"
+    }
+  ]
+}

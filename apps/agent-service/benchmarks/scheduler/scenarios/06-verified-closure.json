@@ -1,0 +1,46 @@
+{
+  "id": "06-verified-closure",
+  "description": "a verified-closed must-visit is excluded instead of silently moved",
+  "pace": "BALANCED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      540,
+      1260
+    ]
+  ],
+  "meals": [
+    {
+      "mealType": "LUNCH",
+      "startMinute": 720,
+      "endMinute": 780
+    }
+  ],
+  "candidates": [
+    {
+      "poiId": "closed-poi",
+      "title": "closed-poi",
+      "minutes": 90,
+      "score": 200,
+      "region": "越秀区",
+      "mustInclude": true,
+      "opening": {
+        "kind": "VERIFIED_CLOSED"
+      }
+    },
+    {
+      "poiId": "open1",
+      "title": "open1",
+      "minutes": 90,
+      "score": 80,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "open2",
+      "title": "open2",
+      "minutes": 60,
+      "score": 70,
+      "region": "海珠区"
+    }
+  ]
+}

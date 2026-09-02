@@ -1,0 +1,61 @@
+{
+  "id": "07-meal-split-slots",
+  "description": "two meals split the day into three slots; cross-slot selection trade-off",
+  "pace": "BALANCED",
+  "primaryRegion": "越秀区",
+  "freeWindows": [
+    [
+      540,
+      1260
+    ]
+  ],
+  "meals": [
+    {
+      "mealType": "LUNCH",
+      "startMinute": 720,
+      "endMinute": 780
+    },
+    {
+      "mealType": "DINNER",
+      "startMinute": 1080,
+      "endMinute": 1140
+    }
+  ],
+  "candidates": [
+    {
+      "poiId": "morning",
+      "title": "morning",
+      "minutes": 150,
+      "score": 90,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "midday",
+      "title": "midday",
+      "minutes": 120,
+      "score": 85,
+      "region": "海珠区"
+    },
+    {
+      "poiId": "afternoon",
+      "title": "afternoon",
+      "minutes": 150,
+      "score": 88,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "evening",
+      "title": "evening",
+      "minutes": 90,
+      "score": 82,
+      "region": "越秀区"
+    },
+    {
+      "poiId": "extra",
+      "title": "extra",
+      "minutes": 60,
+      "score": 60,
+      "region": "荔湾区"
+    }
+  ]
+}

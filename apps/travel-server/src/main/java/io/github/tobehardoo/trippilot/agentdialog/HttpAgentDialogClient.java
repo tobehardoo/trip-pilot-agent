@@ -124,7 +124,16 @@ public class HttpAgentDialogClient {
     public record CardOption(String action, String label, Object value) {
     }
 
-    public record TripContext(String destination, String startDate, String endDate) {
+    public record TripContext(
+            String destination,
+            String startDate,
+            String endDate,
+            Integer travelers,
+            Integer budgetAmount
+    ) {
+        public TripContext(String destination, String startDate, String endDate) {
+            this(destination, startDate, endDate, null, null);
+        }
     }
 
     public record SlotView(Object value, String state, String source) {

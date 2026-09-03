@@ -70,6 +70,23 @@ class TripAgentCreateControllerTest {
     }
 
     @org.junit.jupiter.api.Test
+    void dialogueForwardsTravelersAndBudgetFromContext() {
+        var request = new TripAgentCreateController.CreateDialogRequest(
+                "session-4",
+                "两个人，预算一万",
+                null,
+                false,
+                new HttpAgentDialogClient.TripContext("广州", "2026-09-10", "2026-09-13", 2, 10000));
+
+        controller.dialogue(null, request);
+
+        assertThat(client.captured).isNotNull();
+        assertThat(client.captured.tripContext()).isNotNull();
+        assertThat(client.captured.tripContext().travelers()).isEqualTo(2);
+        assertThat(client.captured.tripContext().budgetAmount()).isEqualTo(10000);
+    }
+
+    @org.junit.jupiter.api.Test
     void dialogueWithBlankDestinationStartsFromBlankSlate() {
         var request = new TripAgentCreateController.CreateDialogRequest(
                 "session-3",

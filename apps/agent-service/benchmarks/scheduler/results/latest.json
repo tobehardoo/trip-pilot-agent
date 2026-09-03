@@ -3,7 +3,7 @@
     "better": 2,
     "tie": 8,
     "worse": 0,
-    "maxSolveMs": 11.7
+    "maxSolveMs": 19.6
   },
   "results": [
     {
@@ -20,7 +20,7 @@
         "items": 5,
         "packedMinutes": 360,
         "utilization": 0.6,
-        "solveMs": 11.7
+        "solveMs": 19.6
       },
       "verdict": "TIE"
     },
@@ -38,7 +38,7 @@
         "items": 6,
         "packedMinutes": 570,
         "utilization": 0.864,
-        "solveMs": 7.3
+        "solveMs": 14.3
       },
       "verdict": "TIE"
     },
@@ -56,7 +56,7 @@
         "items": 2,
         "packedMinutes": 120,
         "utilization": 0.8,
-        "solveMs": 1.5
+        "solveMs": 2.1
       },
       "verdict": "CPSAT_BETTER"
     },
@@ -74,7 +74,7 @@
         "items": 4,
         "packedMinutes": 420,
         "utilization": 0.875,
-        "solveMs": 3.2
+        "solveMs": 6.9
       },
       "verdict": "TIE"
     },
@@ -92,7 +92,7 @@
         "items": 4,
         "packedMinutes": 360,
         "utilization": 0.545,
-        "solveMs": 1.7
+        "solveMs": 3.4
       },
       "verdict": "TIE"
     },
@@ -110,7 +110,7 @@
         "items": 2,
         "packedMinutes": 150,
         "utilization": 0.227,
-        "solveMs": 1.1
+        "solveMs": 3.2
       },
       "verdict": "TIE"
     },
@@ -128,7 +128,7 @@
         "items": 4,
         "packedMinutes": 510,
         "utilization": 0.85,
-        "solveMs": 7.8
+        "solveMs": 10.3
       },
       "verdict": "TIE"
     },
@@ -146,7 +146,7 @@
         "items": 4,
         "packedMinutes": 450,
         "utilization": 0.833,
-        "solveMs": 6.1
+        "solveMs": 7.2
       },
       "verdict": "TIE"
     },
@@ -164,7 +164,7 @@
         "items": 5,
         "packedMinutes": 480,
         "utilization": 0.727,
-        "solveMs": 4.9
+        "solveMs": 8.2
       },
       "verdict": "TIE"
     },
@@ -182,7 +182,7 @@
         "items": 4,
         "packedMinutes": 190,
         "utilization": 0.594,
-        "solveMs": 5.6
+        "solveMs": 8.7
       },
       "verdict": "CPSAT_BETTER"
     }

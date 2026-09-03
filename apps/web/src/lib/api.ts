@@ -463,6 +463,14 @@ export interface ItineraryActivity {
   typeName: string | null
   kind: 'ATTRACTION' | 'EXPERIENCE' | 'MEAL' | 'ACCOMMODATION' | 'ARRIVAL' | 'DEPARTURE' | null
   timeFixed: boolean | null
+  /** B1 费用来源：真实价格(PROVIDER) 或估算(RULE/CATEGORY/CITY_ESTIMATE/DEMO/UNKNOWN) */
+  costSource?:
+    | 'PROVIDER'
+    | 'RULE_ESTIMATE'
+    | 'CATEGORY_ESTIMATE'
+    | 'CITY_ESTIMATE'
+    | 'DEMO'
+    | 'UNKNOWN'
   /** 活动描述（来自攻略/智能体生成） */
   description?: string | null
   /** 推荐理由 */
@@ -702,6 +710,7 @@ export interface SharedItinerary {
       endTime: string
       estimatedCost: number
       address: string | null
+      costSource?: string
     }>
     transitLegs: Array<{
       mode: string

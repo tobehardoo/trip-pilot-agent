@@ -96,8 +96,13 @@ public record PlanningCompletedEvent(
             String typeName,
             String kind,
             Boolean timeFixed,
-            Boolean locked
+            Boolean locked,
+            String costSource
     ) {
+        public Activity {
+            costSource = costSource == null || costSource.isBlank() ? "UNKNOWN" : costSource;
+        }
+
         public Activity(
                 UUID activityId,
                 String title,
@@ -112,7 +117,8 @@ public record PlanningCompletedEvent(
                 String typeName
         ) {
             this(activityId, title, startTime, endTime, estimatedCost, source,
-                    providerPoiId, coordinates, address, typeCode, typeName, null, null, null);
+                    providerPoiId, coordinates, address, typeCode, typeName,
+                    null, null, null, null);
         }
 
         public Activity(
@@ -123,7 +129,19 @@ public record PlanningCompletedEvent(
         ) {
             this(activityId, title, startTime, endTime, estimatedCost, source,
                     providerPoiId, coordinates, address, typeCode, typeName,
-                    kind, timeFixed, null);
+                    kind, timeFixed, null, null);
+        }
+
+        public Activity(
+                UUID activityId, String title, OffsetDateTime startTime,
+                OffsetDateTime endTime, BigDecimal estimatedCost, String source,
+                String providerPoiId, Coordinates coordinates, String address,
+                String typeCode, String typeName, String kind,
+                Boolean timeFixed, Boolean locked
+        ) {
+            this(activityId, title, startTime, endTime, estimatedCost, source,
+                    providerPoiId, coordinates, address, typeCode, typeName,
+                    kind, timeFixed, locked, null);
         }
     }
 

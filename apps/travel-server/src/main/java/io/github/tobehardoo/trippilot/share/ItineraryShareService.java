@@ -102,7 +102,8 @@ public class ItineraryShareService {
                 day.date(),
                 day.activities().stream().map(activity -> new PublicActivity(
                         activity.title(), activity.startTime(), activity.endTime(),
-                        activity.estimatedCost(), activity.address()
+                        activity.estimatedCost(), activity.address(),
+                        activity.costSource()
                 )).toList(),
                 day.transitLegs().stream().map(leg -> new PublicTransitLeg(
                         leg.mode(), leg.modeLabel(), leg.distanceMeters(), leg.durationSeconds(),
@@ -184,7 +185,8 @@ public class ItineraryShareService {
             OffsetDateTime startTime,
             OffsetDateTime endTime,
             BigDecimal estimatedCost,
-            String address
+            String address,
+            String costSource
     ) {
     }
 

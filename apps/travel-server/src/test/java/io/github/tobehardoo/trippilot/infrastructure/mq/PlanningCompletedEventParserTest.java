@@ -800,6 +800,66 @@ ArrayNode refs = objectMapper.createArrayNode();
     }
 
     @Test
+    void acceptsV11ActivityCostSource() throws Exception {
+        for (String source : new String[]{
+                "PROVIDER", "RULE_ESTIMATE", "CATEGORY_ESTIMATE", "CITY_ESTIMATE",
+                "DEMO", "UNKNOWN"}) {
+            ObjectNode event = (ObjectNode) objectMapper.readTree(
+                    PlanningCompletedEventFixture.completedAmapEventV10(
+                            UUID.randomUUID(), UUID.randomUUID(),
+                            UUID.randomUUID(), UUID.randomUUID()
+                    )
+            );
+            event.put("schemaVersion", 11);
+            ((ObjectNode) event.at("/payload/itinerary/days/0/activities/0"))
+                    .put("costSource", source);
+            ((ObjectNode) event.at("/payload/feasibilityReport"))
+                    .put("itineraryFingerprint",
+                            io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                                    .compute(event.at("/payload/itinerary")));
+
+            PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+
+            assertThat(parsed.payload().itinerary().days().get(0).activities().get(0)
+                    .costSource()).isEqualTo(source);
+        }
+    }
+
+    @Test
+    void defaultsActivityCostSourceToUnknownWhenAbsent() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        PlanningCompletedEvent parsed = parser.parse(objectMapper.writeValueAsBytes(event));
+        // v9/v10 events (and old v11 events) carry no costSource → UNKNOWN.
+        assertThat(parsed.payload().itinerary().days().get(0).activities().get(0)
+                .costSource()).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    void rejectsInvalidActivityCostSource() throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(
+                PlanningCompletedEventFixture.completedAmapEventV10(
+                        UUID.randomUUID(), UUID.randomUUID(),
+                        UUID.randomUUID(), UUID.randomUUID()
+                )
+        );
+        event.put("schemaVersion", 11);
+        ((ObjectNode) event.at("/payload/itinerary/days/0/activities/0"))
+                .put("costSource", "GUESSED");
+        ((ObjectNode) event.at("/payload/feasibilityReport"))
+                .put("itineraryFingerprint",
+                        io.github.tobehardoo.trippilot.feasibility.ItineraryFingerprintVerifier
+                                .compute(event.at("/payload/itinerary")));
+
+        assertThatThrownBy(() -> parser.parse(objectMapper.writeValueAsBytes(event)))
+                .isInstanceOf(io.github.tobehardoo.trippilot.common.EventContractException.class);
+    }
+
+    @Test
     void v10RejectsTransitLegsUntilTheV11Contract() throws Exception {
         ObjectNode event = (ObjectNode) objectMapper.readTree(
                 PlanningCompletedEventFixture.completedAmapEventV10(

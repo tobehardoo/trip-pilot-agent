@@ -77,12 +77,12 @@ public interface ItineraryMapper {
                 id, itinerary_day_id, activity_order, title,
                 start_time, end_time, estimated_cost, source,
                 provider_poi_id, longitude, latitude, address, locked,
-                type_code, type_name, kind, time_fixed
+                type_code, type_name, kind, time_fixed, cost_source
             ) VALUES (
                 #{id}, #{itineraryDayId}, #{activityOrder}, #{title},
                 #{startTime}, #{endTime}, #{estimatedCost}, #{source},
                 #{providerPoiId}, #{longitude}, #{latitude}, #{address}, #{locked},
-                #{typeCode}, #{typeName}, #{kind}, #{timeFixed}
+                #{typeCode}, #{typeName}, #{kind}, #{timeFixed}, #{costSource}
             )
             """)
     int insertActivity(ActivityWrite activity);
@@ -256,7 +256,7 @@ public interface ItineraryMapper {
     @Select("""
             SELECT id, activity_order, title, start_time, end_time, estimated_cost, source,
                    provider_poi_id, longitude, latitude, address, locked,
-                   type_code, type_name, kind, time_fixed
+                   type_code, type_name, kind, time_fixed, cost_source
             FROM business.activity
             WHERE itinerary_day_id = #{dayId}
             ORDER BY activity_order
@@ -345,7 +345,8 @@ public interface ItineraryMapper {
             String typeCode,
             String typeName,
             String kind,
-            boolean timeFixed
+            boolean timeFixed,
+            String costSource
     ) {
     }
 
@@ -460,7 +461,8 @@ public interface ItineraryMapper {
             String typeCode,
             String typeName,
             String kind,
-            boolean timeFixed
+            boolean timeFixed,
+            String costSource
     ) {
     }
 

@@ -456,7 +456,8 @@ public class ItineraryService {
                 activity.id(), activity.title(), activity.startTime(), activity.endTime(),
                 activity.estimatedCost(), activity.source(), activity.providerPoiId(),
                 activity.longitude(), activity.latitude(), activity.address(), activity.locked(),
-                activity.typeCode(), activity.typeName(), activity.kind(), activity.timeFixed()
+                activity.typeCode(), activity.typeName(), activity.kind(), activity.timeFixed(),
+                activity.costSource() == null ? "UNKNOWN" : activity.costSource()
         );
     }
 
@@ -856,7 +857,8 @@ public class ItineraryService {
                     newActivityId, newDayId, activityIndex, activity.title(), activity.startTime(),
                         activity.endTime(), activity.estimatedCost(), activity.source(), activity.providerPoiId(),
                         activity.longitude(), activity.latitude(), activity.address(), activity.locked(),
-                        activity.typeCode(), activity.typeName(), activity.kind(), activity.timeFixed()
+                        activity.typeCode(), activity.typeName(), activity.kind(), activity.timeFixed(),
+                        activity.costSource()
                 )), "itinerary edit activity");
             }
             if (!day.transitNeedsRefresh) {
@@ -884,7 +886,8 @@ public class ItineraryService {
                         activity.longitude() == null ? null : new CoordinatesResponse(
                                 activity.longitude(), activity.latitude()),
                         activity.address(), activity.locked(), activity.typeCode(),
-                        activity.typeName(), activity.kind(), activity.timeFixed()
+                        activity.typeName(), activity.kind(), activity.timeFixed(),
+                        activity.costSource() == null ? "UNKNOWN" : activity.costSource()
                 ));
             }
             List<TransitLegResponse> transit = day.transitNeedsRefresh
@@ -966,7 +969,8 @@ public class ItineraryService {
                         : new CoordinatesResponse(activity.longitude(), activity.latitude()),
                 activity.address(), activity.locked(),
                 activity.typeCode(), activity.typeName(),
-                activity.kind(), activity.timeFixed()
+                activity.kind(), activity.timeFixed(),
+                activity.costSource() == null ? "UNKNOWN" : activity.costSource()
         );
     }
 
@@ -1095,7 +1099,8 @@ public class ItineraryService {
             String typeCode,
             String typeName,
             String kind,
-            boolean timeFixed
+            boolean timeFixed,
+            String costSource
     ) {
     }
 
@@ -1342,19 +1347,22 @@ public class ItineraryService {
             String typeCode,
             String typeName,
             String kind,
-            boolean timeFixed
+            boolean timeFixed,
+            String costSource
     ) {
         EditableActivity withLocked(boolean value) {
             return new EditableActivity(
                     id, title, startTime, endTime, estimatedCost, source, providerPoiId,
-                    longitude, latitude, address, value, typeCode, typeName, kind, timeFixed
+                    longitude, latitude, address, value, typeCode, typeName, kind,
+                    timeFixed, costSource
             );
         }
 
         EditableActivity withSchedule(OffsetDateTime start, OffsetDateTime end) {
             return new EditableActivity(
                     id, title, start, end, estimatedCost, source, providerPoiId,
-                    longitude, latitude, address, locked, typeCode, typeName, kind, timeFixed
+                    longitude, latitude, address, locked, typeCode, typeName, kind,
+                    timeFixed, costSource
             );
         }
 
@@ -1367,7 +1375,7 @@ public class ItineraryService {
                     id, newTitle, startTime, endTime, estimatedCost, source, newPoiId,
                     newLng, newLat, newAddress, locked,
                     typeCode, newTypeName != null ? newTypeName : typeName,
-                    newKind != null ? newKind : kind, timeFixed
+                    newKind != null ? newKind : kind, timeFixed, costSource
             );
         }
     }
@@ -1673,7 +1681,8 @@ public class ItineraryService {
                                     preserveCandidateLocks && Boolean.TRUE.equals(activity.locked()),
                                     activity.typeCode(), activity.typeName(),
                                     activity.kind(),
-                                    Boolean.TRUE.equals(activity.timeFixed())
+                                    Boolean.TRUE.equals(activity.timeFixed()),
+                                    activity.costSource()
                             )
                     ),
                     "itinerary activity"
@@ -1865,7 +1874,8 @@ public class ItineraryService {
                                     activity.address(),
                                     activity.locked(),
                                     activity.typeCode(), activity.typeName(),
-                                    activity.kind(), activity.timeFixed()
+                                    activity.kind(), activity.timeFixed(),
+                                    activity.costSource()
                             )
                     ),
                     "local replan activity"

@@ -4,14 +4,23 @@
 // 统一到 tp-* 视觉语言。徽章行把天数/人数/预算/偏好做成一眼可读的密度块。
 import { computed } from 'vue'
 
-import type { Trip } from '../../lib/api'
+import type { ItineraryActivity, Trip } from '../../lib/api'
 import { formatChinaDate, formatChinaMoney, daySpanOfRange } from '../lib/present'
 
 const props = defineProps<{
   trip: Trip
+  /** B1：供预算徽标注记「含估算」费用来源 */
+  activities?: ItineraryActivity[]
 }>()
 
 const days = computed(() => daySpanOfRange(props.trip.startDate, props.trip.endDate))
+
+/** 行程中存在任一活动为非 PROVIDER（估算类）费用来源时提示用户。 */
+const hasEstimatedCost = computed(() =>
+  (props.activities ?? []).some((activity) =>
+    (activity.costSource ?? 'UNKNOWN') !== 'PROVIDER',
+  ),
+)
 
 const metaLine = computed(() =>
   [
@@ -27,11 +36,15 @@ const metaLine = computed(() =>
 // 关键数据徽章：只展示真实可用的字段，缺失自动隐藏。
 const stats = computed(() => {
   const constraints = props.trip.constraints
-  const items: Array<{ label: string; value: string }> = []
+  const items: Array<{ label: string; value: string; hint?: string }> = []
   if (days.value) items.push({ label: '天数', value: `${days.value} 天` })
   items.push({ label: '人数', value: `${constraints.travelers} 人` })
   if (constraints.budgetAmount != null && constraints.budgetAmount !== 0) {
-    items.push({ label: '预算', value: formatChinaMoney(constraints.budgetAmount) })
+    items.push({
+      label: '预算',
+      value: formatChinaMoney(constraints.budgetAmount),
+      hint: hasEstimatedCost.value ? '含估算' : undefined,
+    })
   }
   if (constraints.preferences.length > 0) {
     items.push({ label: '节奏偏好', value: constraints.preferences.join(' · ') })
@@ -53,9 +66,15 @@ const stats = computed(() => {
     <dl class="m-0 mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4" data-testid="plan-overview-stats">
       <template v-for="stat in stats" :key="stat.label">
         <div class="rounded-lg border border-tp-line bg-tp-panel px-3 py-2">
-          <dt class="m-0 text-[11px] leading-4 text-tp-mute">{{ stat.label }}</dt>
-          <dd class="m-0 mt-0.5 truncate text-[13px] font-medium leading-5 text-tp-ink" :title="stat.value">
+          <dt class="m-0 flex items-center gap-1.5 text-[11px] leading-4 text-tp-mute">{{ stat.label }}</dt>
+          <dd class="m-0 mt-0.5 flex items-center gap-1.5 truncate text-[13px] font-medium leading-5 text-tp-ink" :title="stat.value">
             {{ stat.value }}
+            <span
+              v-if="stat.hint"
+              class="shrink-0 rounded-full bg-tp-ok/10 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-tp-ok"
+              title="行程中存在按规则/品类/城市估算的费用，非真实报价"
+              data-testid="plan-overview-budget-estimated"
+            >{{ stat.hint }}</span>
           </dd>
         </div>
       </template>

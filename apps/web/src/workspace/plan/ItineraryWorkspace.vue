@@ -49,6 +49,11 @@ const tripStore = useTripStore()
 
 const itineraryDays = computed(() => props.itinerary?.days ?? [])
 
+// B1：汇总所有活动的费用来源，供概览预算徽标注记「含估算」。
+const allActivities = computed<ItineraryActivity[]>(() =>
+  itineraryDays.value.flatMap((day) => day.activities),
+)
+
 // ── 地图联动（POI ↔ 活动） ─────────────────────────────────────────
 const selectedActivityId = ref<string | null>(null)
 
@@ -411,6 +416,35 @@ function activityIcon(activity: ItineraryActivity) {
   return MapPin
 }
 
+// ── B1 费用来源徽标：真实价格 vs 估算 ─────────────────────────────
+/** 估算类来源：RULE_ESTIMATE / CATEGORY_ESTIMATE / CITY_ESTIMATE / DEMO / UNKNOWN。 */
+function isEstimatedCost(activity: ItineraryActivity) {
+  const source = activity.costSource ?? 'UNKNOWN'
+  return source !== 'PROVIDER'
+}
+
+/** 真实价格（PROVIDER）——展示「已核验」徽标。 */
+function isVerifiedCost(activity: ItineraryActivity) {
+  return (activity.costSource ?? 'UNKNOWN') === 'PROVIDER'
+}
+
+function costSourceLabel(source: ItineraryActivity['costSource']) {
+  switch (source) {
+    case 'PROVIDER':
+      return '费用来自真实提供商报价'
+    case 'RULE_ESTIMATE':
+      return '费用按规则估算'
+    case 'CATEGORY_ESTIMATE':
+      return '费用按品类估算'
+    case 'CITY_ESTIMATE':
+      return '费用按城市整体估算'
+    case 'DEMO':
+      return '演示数据，费用为演示估算'
+    default:
+      return '费用来源未知'
+  }
+}
+
 // ── 功能①：交通行（相邻活动之间的 transit leg） ───────────────────
 const editingLegId = ref<string | null>(null)
 const legModeDraft = ref<'WALKING' | 'TRANSIT' | 'DRIVING' | 'TAXI' | null>(null)
@@ -456,7 +490,7 @@ async function changeLegMode(legId: string, mode: 'AUTO' | 'WALKING' | 'TRANSIT'
 <template>
   <article class="mx-auto flex w-full max-w-3xl flex-col px-6 py-5" aria-label="旅行方案">
     <!-- ① 摘要卡 -->
-    <TripOverview :trip="trip" />
+    <TripOverview :trip="trip" :activities="allActivities" />
 
     <div class="mt-5 border-t border-tp-div" role="separator" />
 
@@ -631,6 +665,18 @@ async function changeLegMode(legId: string, mode: 'AUTO' | 'WALKING' | 'TRANSIT'
                         <span v-if="activity.typeName" class="ml-1 text-[11px] font-normal text-tp-mute">
                           {{ activity.typeName }}
                         </span>
+                        <span
+                          v-if="isEstimatedCost(activity)"
+                          class="ml-1.5 inline-flex items-center rounded-full bg-tp-ok/10 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-tp-ok"
+                          :title="costSourceLabel(activity.costSource)"
+                          data-testid="activity-estimate-badge"
+                        >估算</span>
+                        <span
+                          v-else-if="isVerifiedCost(activity)"
+                          class="ml-1.5 inline-flex items-center rounded-full bg-tp-panel px-1.5 py-0.5 text-[10px] font-medium leading-3 text-tp-mute"
+                          :title="costSourceLabel(activity.costSource)"
+                          data-testid="activity-verified-badge"
+                        >已核验</span>
                         <span v-if="activity.locked" class="ml-1.5 inline-flex items-center text-tp-mute" title="已锁定">
                           <Lock :size="10" aria-hidden="true" />
                         </span>

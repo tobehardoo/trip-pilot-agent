@@ -807,6 +807,17 @@
             "boolean",
             "null"
           ]
+        },
+        "costSource": {
+          "description": "B1: where this activity's estimatedCost came from. Optional; missing/UNKNOWN means unverifiable.",
+          "enum": [
+            "PROVIDER",
+            "RULE_ESTIMATE",
+            "CATEGORY_ESTIMATE",
+            "CITY_ESTIMATE",
+            "DEMO",
+            "UNKNOWN"
+          ]
         }
       },
       "allOf": [
@@ -932,6 +943,17 @@
           "type": [
             "boolean",
             "null"
+          ]
+        },
+        "costSource": {
+          "description": "B1: where this activity's estimatedCost came from. Optional; missing/UNKNOWN means unverifiable.",
+          "enum": [
+            "PROVIDER",
+            "RULE_ESTIMATE",
+            "CATEGORY_ESTIMATE",
+            "CITY_ESTIMATE",
+            "DEMO",
+            "UNKNOWN"
           ]
         }
       }

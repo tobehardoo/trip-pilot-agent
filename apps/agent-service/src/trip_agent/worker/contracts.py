@@ -892,6 +892,34 @@ def _forbid_raw_taxi_on_wire(value: object) -> object:
     return value
 
 
+def _inject_activity_cost_sources(
+    wire: dict[str, object],
+    itinerary: Itinerary,
+) -> dict[str, object]:
+    """Surface per-activity ``costSource`` on the wire.
+
+    ``ItineraryActivity.cost_source`` is excluded from serialization so the
+    pre-vN completion bodies stay byte-identical; mirroring the v11 transit
+    leg cost injection, we write it back onto each serialized activity so
+    consumers (Java parser, Web) can tell estimator output from real provider
+    price.  Missing values fall back to "UNKNOWN".
+    """
+    payload = wire.get("payload")
+    wire_itinerary = payload.get("itinerary") if isinstance(payload, dict) else None
+    wire_days = wire_itinerary.get("days", ()) if isinstance(wire_itinerary, dict) else ()
+    for wire_day, day in zip(wire_days, itinerary.days, strict=False):
+        if not isinstance(wire_day, dict):
+            continue
+        wire_activities = wire_day.get("activities", ())
+        for wire_activity, activity in zip(
+            wire_activities, day.activities, strict=False
+        ):
+            if not isinstance(wire_activity, dict):
+                continue
+            wire_activity["costSource"] = activity.cost_source or "UNKNOWN"
+    return wire
+
+
 def _inject_v11_transit_costs(
     wire: dict[str, object],
     itinerary: Itinerary,
@@ -1223,7 +1251,8 @@ class PlanningCompletedEventV11(MessageModel):
     def include_transit_costs(
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, object]:
-        return _inject_v11_transit_costs(handler(self), self.payload.itinerary)
+        wire = _inject_activity_cost_sources(handler(self), self.payload.itinerary)
+        return _inject_v11_transit_costs(wire, self.payload.itinerary)
 
 
 class PlanningReviewRequiredPayload(MessageModel):
@@ -1286,7 +1315,8 @@ class PlanningReviewRequiredEventV2(MessageModel):
     def include_transit_costs(
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, object]:
-        return _inject_v11_transit_costs(handler(self), self.payload.itinerary)
+        wire = _inject_activity_cost_sources(handler(self), self.payload.itinerary)
+        return _inject_v11_transit_costs(wire, self.payload.itinerary)
 
 
 class PlanningConflict(MessageModel):

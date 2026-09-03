@@ -81,6 +81,8 @@ interface CityPlaceCard {
   updatedAt: string
   address: string | null
   openingHours: string | null
+  /** 营业时间是否来自仍有效的（未过期）事实；false = 无来源或来源待复核。 */
+  openingHoursFresh: boolean
   ticket: string | null
   reservation: string | null
   notices: string[]
@@ -144,6 +146,7 @@ const cityPlaceCards = computed<CityPlaceCard[]>(() => {
         updatedAt: fact.observedAt,
         address: null,
         openingHours: null,
+        openingHoursFresh: false,
         ticket: null,
         reservation: null,
         notices: [],
@@ -156,7 +159,12 @@ const cityPlaceCards = computed<CityPlaceCard[]>(() => {
       current.address ??= normalizeAddress(
         extractValue(statement, /(?:地址|地点位置)[：:]?\s*([^；;。]+)/),
       )
-      current.openingHours ??= extractValue(statement, /(?:营业信息|营业时间|开放时间)[：:]?\s*([^；;。]+)/)
+      const opening = extractValue(statement, /(?:营业信息|营业时间|开放时间)[：:]?\s*([^；;。]+)/)
+      if (opening && current.openingHours == null) {
+        current.openingHours = opening
+        // 营业时间来源仍有效 → 视为已核验；过期 → 待复核。
+        current.openingHoursFresh = isFresh(fact.expiresAt)
+      }
       current.ticket ??= normalizeTicket(extractValue(statement, /(?:门票|票价)[：:]?\s*(?:约|为)?\s*([^；;。]+)/))
       current.reservation ??= normalizeReservation(extractValue(statement, /((?:(?:需|需要|须|建议|必须)?(?:提前)?预约)[^；;。]*)/))
       const notice = cityNotice(statement)
@@ -179,6 +187,7 @@ const displayPlaceCards = computed<CityPlaceCard[]>(() => {
         updatedAt: intelligence?.updatedAt ?? activity.startTime,
         address: intelligence?.address ?? normalizeAddress(activity.address),
         openingHours: intelligence?.openingHours ?? null,
+        openingHoursFresh: intelligence?.openingHoursFresh ?? false,
         ticket: intelligence?.ticket ?? null,
         reservation: intelligence?.reservation ?? null,
         notices: intelligence?.notices ?? [],
@@ -846,7 +855,22 @@ function displayStatement(statement: string) {
               </template>
               <template v-if="place.openingHours">
                 <dt class="font-semibold text-tp-sub">营业时间</dt>
-                <dd class="m-0 text-tp-body">{{ place.openingHours }}</dd>
+                <dd class="m-0 text-tp-body">
+                  <span>{{ place.openingHours }}</span>
+                  <span
+                    class="ml-1.5 inline-flex items-center rounded-full px-1.5 py-px text-[9px] font-bold"
+                    :class="place.openingHoursFresh
+                      ? 'bg-tp-ok/15 text-tp-ok'
+                      : 'bg-tp-warn/10 text-tp-warn'"
+                    data-testid="opening-hours-status"
+                  >{{ place.openingHoursFresh ? '已核验' : '待复核' }}</span>
+                </dd>
+              </template>
+              <template v-else-if="place.inItinerary">
+                <dt class="font-semibold text-tp-sub">营业时间</dt>
+                <dd class="m-0 text-tp-warn" data-testid="opening-hours-unverified">
+                  暂未核验，请出发前通过官方渠道确认
+                </dd>
               </template>
               <template v-if="place.ticket">
                 <dt class="font-semibold text-tp-sub">门票</dt>

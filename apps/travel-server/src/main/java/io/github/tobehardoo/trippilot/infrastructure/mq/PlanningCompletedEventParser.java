@@ -47,6 +47,10 @@ public class PlanningCompletedEventParser {
     private static final Set<String> STRUCTURAL_KINDS = Set.of(
             "MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"
     );
+    private static final Set<String> ACTIVITY_COST_SOURCES = Set.of(
+            "PROVIDER", "RULE_ESTIMATE", "CATEGORY_ESTIMATE", "CITY_ESTIMATE",
+            "DEMO", "UNKNOWN"
+    );
 
     private final ObjectReader reader;
     private final ObjectMapper objectMapper;
@@ -133,6 +137,16 @@ public class PlanningCompletedEventParser {
                 if (activity.has("locked") && !activity.path("locked").isNull()
                         && !activity.path("locked").isBoolean()) {
                     throw invalid("activity locked must be boolean or null");
+                }
+                // B1: optional activity costSource.  Absent for v9/v10 (and
+                // old v11) events → fine; when present it must be a known
+                // source.  independent from provider source, so no coupling
+                // with validateV2ActivitySource.
+                if (activity.has("costSource") && !activity.path("costSource").isNull()
+                        && (!activity.path("costSource").isTextual()
+                        || !ACTIVITY_COST_SOURCES.contains(
+                                activity.path("costSource").asText()))) {
+                    throw invalid("activity costSource is invalid");
                 }
                 validateActivityMetadataTypes(activity);
                 if (activity.has("activityId") && !activity.path("activityId").isNull()

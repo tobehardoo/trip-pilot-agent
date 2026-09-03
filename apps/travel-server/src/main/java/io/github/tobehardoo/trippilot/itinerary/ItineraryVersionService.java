@@ -220,10 +220,10 @@ public class ItineraryVersionService {
                                 activityId, dayId, activity.activityOrder(),
                                 activity.title(), activity.startTime(), activity.endTime(),
                                 activity.estimatedCost(), activity.source(),
-                                activity.providerPoiId(), activity.longitude(),
-                                activity.latitude(), activity.address(), activity.locked(),
+                                activity.providerPoiId(), activity.longitude(), activity.latitude(), activity.address(), activity.locked(),
                                 activity.typeCode(), activity.typeName(),
-                                activity.kind(), activity.timeFixed()
+                                activity.kind(), activity.timeFixed(),
+                                activity.costSource()
                         )
                 ), "rollback activity");
             }

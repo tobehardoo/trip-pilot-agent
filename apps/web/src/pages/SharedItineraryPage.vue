@@ -95,7 +95,10 @@ function transitCost(leg: SharedItinerary['days'][number]['transitLegs'][number]
             <div>
               <h3 class="m-0 text-base font-medium">{{ activity.title }}</h3>
               <p v-if="activity.address" class="mt-1 flex items-start gap-1 text-sm text-surface-500"><MapPin :size="15" class="mt-0.5 shrink-0" />{{ activity.address }}</p>
-              <p class="mt-1 text-sm text-surface-500">至 {{ timeLabel(activity.endTime) }} · ¥{{ activity.estimatedCost }}</p>
+              <p class="mt-1 text-sm text-surface-500">至 {{ timeLabel(activity.endTime) }} · ¥{{ activity.estimatedCost }}<span
+                v-if="activity.costSource && activity.costSource !== 'PROVIDER'"
+                class="ml-1.5 rounded-full bg-surface-200 px-1.5 py-0.5 text-[10px] font-medium leading-3 text-surface-500"
+              >估算</span></p>
             </div>
           </li>
         </ol>

@@ -142,6 +142,41 @@ def test_v11_worker_wire_fingerprint_covers_injected_transit_costs() -> None:
     assert wire["payload"]["feasibilityReport"]["itineraryFingerprint"] == expected
 
 
+def test_v11_worker_wire_carries_each_activity_cost_source() -> None:
+    """B1: every wired activity must surface a valid costSource.
+
+    ItineraryActivity.cost_source is excluded from serialization but is
+    injected back onto each serialized activity (mirroring the v11 transit
+    leg cost injection), so consumers can tell a provider price from an
+    estimator output.
+    """
+    class Provider:
+        async def plan(self, _command: object):
+            return make_result()
+
+    event = asyncio.run(
+        process_planning_create(
+            make_command(start_date="2026-08-01", end_date="2026-08-01"),
+            Provider(),
+        )
+    )
+
+    wire = event.model_dump(mode="json", by_alias=True, exclude_none=False)
+    valid_sources = {
+        "PROVIDER", "RULE_ESTIMATE", "CATEGORY_ESTIMATE", "CITY_ESTIMATE",
+        "DEMO", "UNKNOWN",
+    }
+    activities = [
+        activity
+        for day in wire["payload"]["itinerary"]["days"]
+        for activity in day["activities"]
+    ]
+    assert activities, "worker wire must expose at least one activity"
+    for activity in activities:
+        assert "costSource" in activity, "activity is missing costSource"
+        assert activity["costSource"] in valid_sources
+
+
 def test_fact_impact_omits_none_optional_fields_on_the_wire() -> None:
     """A fact impact must omit every optional-not-nullable field, never emit null.
 

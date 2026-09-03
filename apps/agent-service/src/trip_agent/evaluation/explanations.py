@@ -5,8 +5,9 @@ Every generated statement is backed by verifiable data from the plan.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from trip_agent.domain.planning.protocols import PlanningResult
 from trip_agent.evaluation.models import (
@@ -24,6 +25,8 @@ from trip_agent.worker.contracts import (
     PlanningCreateCommand,
     PlanningReplanCommand,
 )
+
+logger = logging.getLogger(__name__)
 
 PlanningCommand = (
     PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand
@@ -54,7 +57,18 @@ class DeterministicPlanExplanationGenerator:
         # (weather-aware mode choices, tight-budget demotion).  This wires the
         # reason-code vocabulary that existed but was never emitted (audit
         # §16.2: BUDGET_CONSTRAINT / TRANSIT_MODE had zero emitters).
+        # A trace whose codes/reasons lost parity is a producer bug — skip it
+        # rather than taking the whole plan down (explanations are feedback,
+        # never a hard gate).
         for trace in result.decision_traces:
+            if len(trace.reason_codes) != len(trace.reasons):
+                logger.warning(
+                    "skipping malformed decision trace: %s codes=%d reasons=%d",
+                    trace.subject_type,
+                    len(trace.reason_codes),
+                    len(trace.reasons),
+                )
+                continue
             decisions.append(
                 DecisionExplanation(
                     subject_type=trace.subject_type,  # type: ignore[arg-type]
@@ -139,6 +153,21 @@ class DeterministicPlanExplanationGenerator:
                         )
                     )
 
+        # The wire contract (Java PlanningCompletedEventParser) requires
+        # decisions to be unique on (subjectType, subjectId, summary).  Two
+        # transit legs under the same walking-threshold strategy produce
+        # identical trace summaries (subject_id is None on traces), which used
+        # to reject the whole event — dedupe deterministically, keeping the
+        # first occurrence.
+        seen: set[tuple[Any, ...]] = set()
+        unique: list[DecisionExplanation] = []
+        for decision in decisions:
+            key = (decision.subject_type, decision.subject_id, decision.summary)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(decision)
+        decisions = unique
         # Sort stable: plan → day_index → subject_type → subject_id
         decisions.sort(key=_decision_sort_key)
         return tuple(decisions)

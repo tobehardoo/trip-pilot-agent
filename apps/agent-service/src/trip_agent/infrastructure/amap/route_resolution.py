@@ -276,6 +276,7 @@ class RouteResolver:
         # came out of the ordered rules under the active context.  Emit a
         # TRANSIT_MODE trace with the rule outcome and its evidence.
         if strategy.reason != "DEFAULT" and decision_traces is not None:
+            deadline_strategy = strategy.reason == "FIXED_SCHEDULE_DEADLINE"
             decision_traces.append(
                 DecisionTrace(
                     subject_type="TRANSIT",
@@ -284,14 +285,27 @@ class RouteResolver:
                         f"该段步行超出策略阈值 {strategy.walking_threshold_seconds}s，"
                         f"按规则选择 {recommendation.selected_route.data.mode}"
                     ),
+                    # reason_codes/reasons must stay 1:1 — DecisionExplanation
+                    # rejects a code without its own reason (the audit's
+                    # scenario-1 anchor legs hit this and took the whole plan
+                    # down with an internal error).
                     reason_codes=(
                         ("TRANSIT_MODE", "FIXED_APPOINTMENT")
-                        if strategy.reason == "FIXED_SCHEDULE_DEADLINE"
+                        if deadline_strategy
                         else ("TRANSIT_MODE",)
                     ),
                     reasons=(
-                        f"步行不可行（阈值 {strategy.walking_threshold_seconds}s），"
-                        f"模式规则判定原因：{recommendation.reason.value}",
+                        (
+                            f"步行不可行（阈值 {strategy.walking_threshold_seconds}s），"
+                            f"模式规则判定原因：{recommendation.reason.value}",
+                            "交通策略处于固定时刻约束（FIXED_SCHEDULE_DEADLINE），"
+                            "所选模式需满足该时刻约束",
+                        )
+                        if deadline_strategy
+                        else (
+                            f"步行不可行（阈值 {strategy.walking_threshold_seconds}s），"
+                            f"模式规则判定原因：{recommendation.reason.value}",
+                        )
                     ),
                     evidence=(
                         DecisionEvidence(

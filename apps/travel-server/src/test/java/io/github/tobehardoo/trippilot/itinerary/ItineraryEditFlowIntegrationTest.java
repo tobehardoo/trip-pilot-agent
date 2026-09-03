@@ -306,12 +306,16 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .asText()).isEqualTo("TRANSIT");
         assertThat(command.at("/payload/itinerary/days/0/transitLegs/0/polyline").size())
                 .isEqualTo(2);
+        // The mode-change snapshot is refreshed against the provider route
+        // endpoint instead of persisting a speed-model estimate.
         assertThat(command.at("/payload/itinerary/days/0/transitLegs/0/provider")
-                .asText()).isEqualTo("DEMO");
+                .asText()).isEqualTo("AMAP");
         assertThat(command.at("/payload/itinerary/days/0/transitLegs/0/estimated")
-                .asBoolean()).isTrue();
+                .asBoolean()).isFalse();
         assertThat(routeClient.requests).hasSize(1);
-        assertThat(routeClient.transactionStates).containsExactly(false);
+        // The recommendation runs outside the edit transaction; the route
+        // snapshot refresh runs inside it.
+        assertThat(routeClient.transactionStates).containsExactly(false, true);
         AgentRouteDtos.RecommendRequest recommendationRequest =
                 routeClient.requests.getFirst();
         assertThat(recommendationRequest.city()).isEqualTo("Guangzhou");
@@ -1294,6 +1298,7 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     @Test
     void persistsTransitModeAndLockInANewItineraryVersion() throws Exception {
+        routeClient.reset("TRANSIT", false);
         PlanningContext context = completedItinerary("edit-transit@example.com");
         JsonNode current = currentItinerary(context);
         UUID versionId = uuid(current, "versionId");
@@ -1310,16 +1315,21 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.versionNumber").value(2))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].mode").value("TRANSIT"))
-                .andExpect(jsonPath("$.days[0].transitLegs[0].provider").value("DEMO"))
-                .andExpect(jsonPath("$.days[0].transitLegs[0].estimated").value(true))
-                .andExpect(jsonPath("$.days[0].transitLegs[0].estimatedCost").value(2))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].provider").value("AMAP"))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].estimated").value(false))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].estimatedCost").value(4))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].distanceMeters").value(4500))
+                .andExpect(jsonPath("$.days[0].transitLegs[0].durationSeconds").value(900))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].providerRouteId").isEmpty())
                 .andExpect(jsonPath("$.days[0].transitLegs[0].calculatedAt").isNotEmpty())
                 .andExpect(jsonPath("$.days[0].transitLegs[0].stale").value(false))
-                .andExpect(jsonPath("$.days[0].transitLegs[0].polyline").isEmpty())
+                .andExpect(jsonPath("$.days[0].transitLegs[0].polyline.length()").value(2))
                 .andExpect(jsonPath("$.days[0].transitLegs[0].locked").value(true))
                 .andReturn();
         UUID editedVersionId = uuid(json(transitEdit), "versionId");
+        // The mode-change snapshot is refreshed against the provider route
+        // endpoint exactly once, inside no active transaction.
+        assertThat(routeClient.routeRequests).hasSize(1);
 
         mockMvc.perform(get(
                                 "/api/trips/{tripId}/itinerary/versions/diff",
@@ -1378,6 +1388,28 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
                         .content(transitEditJson(versionId, legId, "TRANSIT", false)))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.taskType").value("EDIT_VALIDATE"));
+        assertThat(count("business.itinerary_version")).isEqualTo(1);
+    }
+
+    @Test
+    void transitModeEditFailsClosedWhenRouteProviderIsUnavailable() throws Exception {
+        routeClient.reset("TRANSIT", false);
+        routeClient.routeFail = true;
+        PlanningContext context = completedItinerary("edit-transit-route-failure@example.com");
+        JsonNode baseline = currentItinerary(context);
+
+        mockMvc.perform(post("/api/test/trips/{tripId}/itinerary/edits", context.tripId())
+                        .header("Authorization", bearer(context.accessToken()))
+                        .header("Idempotency-Key", nextIdempotencyKey().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transitEditJson(
+                                uuid(baseline, "versionId"),
+                                uuid(baseline.at("/days/0/transitLegs/0"), "id"),
+                                "TRANSIT", true)))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("ITINERARY_TRANSIT_ROUTE_UNAVAILABLE"));
+
+        // Fail closed: no fabricated estimate snapshot may be persisted.
         assertThat(count("business.itinerary_version")).isEqualTo(1);
     }
 
@@ -2191,20 +2223,37 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
 
     static final class ScriptedAgentRouteClient implements AgentRouteClient {
         private final List<AgentRouteDtos.RecommendRequest> requests = new ArrayList<>();
+        private final List<AgentRouteDtos.RouteRequest> routeRequests = new ArrayList<>();
         private final List<Boolean> transactionStates = new ArrayList<>();
         private String selectedMode = "TRANSIT";
         private boolean fail;
+        private boolean routeFail;
 
         void reset(String selectedMode, boolean fail) {
             requests.clear();
+            routeRequests.clear();
             transactionStates.clear();
             this.selectedMode = selectedMode;
             this.fail = fail;
+            this.routeFail = false;
         }
 
         @Override
         public AgentRouteDtos.RouteFacts route(AgentRouteDtos.RouteRequest request) {
-            throw new AssertionError("AUTO must use the recommendation endpoint");
+            routeRequests.add(request);
+            transactionStates.add(
+                    TransactionSynchronizationManager.isActualTransactionActive());
+            if (routeFail) {
+                throw new ApiException(
+                        org.springframework.http.HttpStatus.BAD_GATEWAY,
+                        "ROUTE_PROVIDER_UNAVAILABLE",
+                        "Route service is temporarily unavailable");
+            }
+            return new AgentRouteDtos.RouteFacts(
+                    request.mode(), 4_500, 900,
+                    List.of(request.origin(), request.destination()),
+                    BigDecimal.valueOf(4), 200, 1,
+                    "AMAP", false, false, Instant.parse("2026-08-20T04:00:00Z"));
         }
 
         @Override

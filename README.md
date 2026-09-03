@@ -180,7 +180,7 @@ docker compose -f compose.prod.yaml --env-file .env up -d --build --wait --wait-
 - Real-world planning quality depends on external provider data availability（高德 / QWeather）。
 - 网页攻略导入仅支持可公开访问的静态 HTTPS 页面：不登录、不执行 JS、不绕过验证码或平台访问控制；动态渲染或登录墙页面请改用粘贴正文或图片截图导入。
 - 图片截图导入需要配置 OpenAI 兼容视觉模型（`OCR_MODEL_*`）；未配置时返回明确提示，不影响其他导入方式。
-- manual-edit TRANSIT 使用本地估计（Planner 生成的 TRANSIT 已是真实 AMap）；请求模型（TAXI/AUTO）与持久化模型严格区分。
+- manual-edit TRANSIT 模式切换会即时经内部路由端点以 Provider 真实路线刷新快照（Provider 不可用时编辑失败回绝，不落伪造估计；模拟视图仅标记 stale）；请求模型（TAXI/AUTO）与持久化模型严格区分，下游编辑任务仍以 Provider 事实统一复验。
 - The current release is validated as a complete software release, but is not presented as a large-scale public production deployment（本地优先运行，未部署公网）。
 
 ## Roadmap

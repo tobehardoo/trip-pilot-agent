@@ -27,6 +27,9 @@ import io.github.tobehardoo.trippilot.common.EventRejectedException;
 import io.github.tobehardoo.trippilot.planning.PlanningFactImpactMapper;
 import io.github.tobehardoo.trippilot.planning.PlanningTaskCompletionRecord;
 import io.github.tobehardoo.trippilot.planning.PlanningTaskService;
+import io.github.tobehardoo.trippilot.route.AgentRouteClient;
+import io.github.tobehardoo.trippilot.route.AgentRouteDtos;
+import io.github.tobehardoo.trippilot.trip.TripMapper;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -45,19 +48,25 @@ public class ItineraryService {
     private final ObjectMapper objectMapper;
     private final PlanningTaskService planningTaskService;
     private final PlanningFactImpactMapper factImpactMapper;
+    private final AgentRouteClient routeClient;
+    private final TripMapper tripMapper;
 
     public ItineraryService(
             ItineraryMapper itineraryMapper,
             ItineraryVersionPersister versionPersister,
             ObjectMapper objectMapper,
             @Lazy PlanningTaskService planningTaskService,
-            PlanningFactImpactMapper factImpactMapper
+            PlanningFactImpactMapper factImpactMapper,
+            AgentRouteClient routeClient,
+            TripMapper tripMapper
     ) {
         this.itineraryMapper = itineraryMapper;
         this.versionPersister = versionPersister;
         this.objectMapper = objectMapper;
         this.planningTaskService = planningTaskService;
         this.factImpactMapper = factImpactMapper;
+        this.routeClient = routeClient;
+        this.tripMapper = tripMapper;
     }
 
     @Transactional(readOnly = true)
@@ -103,7 +112,7 @@ public class ItineraryService {
         if (planningTaskService.hasActiveTask(tripId)) {
             return blockedPreview(request, "ITINERARY_PLANNING_ACTIVE", PLANNING_ACTIVE_MESSAGE);
         }
-        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        EditableItinerary itinerary = readEditableItinerary(version.versionId(), tripId);
         EditEvaluation evaluation = evaluate(itinerary, request, budgetFrom(version.constraintSnapshotJson()));
         return evaluation.toPreview(request.operation());
     }
@@ -129,13 +138,13 @@ public class ItineraryService {
             throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_PLANNING_ACTIVE", PLANNING_ACTIVE_MESSAGE);
         }
 
-        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        EditableItinerary itinerary = readEditableItinerary(version.versionId(), tripId);
         EditEvaluation evaluation = evaluate(itinerary, request, budgetFrom(version.constraintSnapshotJson()));
         if (!evaluation.canApply()) {
             throw evaluation.toApiException();
         }
 
-        apply(itinerary, request, evaluation.operation());
+        apply(itinerary, request, evaluation.operation(), true);
         UUID resultVersionId = persistEditedVersion(version, itinerary);
         requireOne(itineraryMapper.completeEditIdempotency(
                 tripId, idempotencyKey, requestHash, resultVersionId), "itinerary edit idempotency");
@@ -159,7 +168,7 @@ public class ItineraryService {
             throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
                     "The itinerary draft does not match the current version");
         }
-        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        EditableItinerary itinerary = readEditableItinerary(version.versionId(), tripId);
         for (ItineraryEditRequest edit : edits) {
             if (edit == null || !baseVersionId.equals(edit.baseVersionId())) {
                 throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
@@ -170,7 +179,9 @@ public class ItineraryService {
             if (!evaluation.canApply()) {
                 throw evaluation.toApiException();
             }
-            apply(itinerary, edit, evaluation.operation());
+            // Simulation only: route facts for a mode change stay stale here
+            // (no provider call); the persisting path refreshes them.
+            apply(itinerary, edit, evaluation.operation(), false);
         }
         return toCandidateResponse(version, itinerary);
     }
@@ -199,12 +210,12 @@ public class ItineraryService {
             throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_VERSION_CONFLICT",
                     "The itinerary was updated. Reload it before applying this edit");
         }
-        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        EditableItinerary itinerary = readEditableItinerary(version.versionId(), tripId);
         EditEvaluation evaluation = evaluate(itinerary, request, budgetFrom(version.constraintSnapshotJson()));
         if (!evaluation.canApply()) {
             throw evaluation.toApiException();
         }
-        apply(itinerary, request, evaluation.operation());
+        apply(itinerary, request, evaluation.operation(), true);
         ItineraryResponse candidate = toCandidateResponse(version, itinerary);
         return planningTaskService.createCandidateValidation(
                 ownerId, tripId, idempotencyKey, "EDIT", version.versionId(),
@@ -236,7 +247,7 @@ public class ItineraryService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "ITINERARY_EDIT_EMPTY",
                     "At least one itinerary edit is required");
         }
-        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        EditableItinerary itinerary = readEditableItinerary(version.versionId(), tripId);
         LinkedHashSet<LocalDate> changedDates = new LinkedHashSet<>();
         for (ItineraryEditRequest edit : request.edits()) {
             if (edit == null || !version.versionId().equals(edit.baseVersionId())) {
@@ -249,7 +260,7 @@ public class ItineraryService {
                 throw evaluation.toApiException();
             }
             changedDates.addAll(evaluation.impact().dates());
-            apply(itinerary, edit, evaluation.operation());
+            apply(itinerary, edit, evaluation.operation(), true);
         }
         ItineraryResponse candidate = toCandidateResponse(version, itinerary);
         return planningTaskService.createCandidateValidation(
@@ -283,7 +294,7 @@ public class ItineraryService {
         if (planningTaskService.hasActiveTask(tripId)) {
             throw new ApiException(HttpStatus.CONFLICT, "ITINERARY_PLANNING_ACTIVE", PLANNING_ACTIVE_MESSAGE);
         }
-        EditableItinerary itinerary = readEditableItinerary(version.versionId());
+        EditableItinerary itinerary = readEditableItinerary(version.versionId(), tripId);
         for (ItineraryEditRequest edit : request.edits()) {
             if (edit == null || edit.baseVersionId() == null
                     || !edit.baseVersionId().equals(version.versionId())) {
@@ -294,7 +305,7 @@ public class ItineraryService {
             if (!evaluation.canApply()) {
                 throw evaluation.toApiException();
             }
-            apply(itinerary, edit, evaluation.operation());
+            apply(itinerary, edit, evaluation.operation(), true);
         }
         UUID resultVersionId = persistEditedVersion(version, itinerary);
         requireOne(itineraryMapper.completeEditIdempotency(
@@ -421,7 +432,12 @@ public class ItineraryService {
         return storedTotal.subtract(roadTolls).max(BigDecimal.ZERO);
     }
 
-    private EditableItinerary readEditableItinerary(UUID versionId) {
+    private EditableItinerary readEditableItinerary(UUID versionId, UUID tripId) {
+        // The trip destination scopes TRANSIT route lookups (AMap transit is
+        // city-scoped); WALKING/DRIVING ignore it.
+        String city = tripMapper.findById(tripId)
+                .map(trip -> trip.destination())
+                .orElse(null);
         List<EditableDay> days = itineraryMapper.findDays(versionId).stream()
                 .map(day -> new EditableDay(
                         day.date(),
@@ -432,7 +448,7 @@ public class ItineraryService {
                         day.dayType()
                 ))
                 .toList();
-        return new EditableItinerary(days);
+        return new EditableItinerary(days, city);
     }
 
     private EditableActivity toEditableActivity(ItineraryMapper.StoredActivity activity) {
@@ -618,7 +634,11 @@ public class ItineraryService {
         );
     }
 
-    private void apply(EditableItinerary itinerary, ItineraryEditRequest request, EditOperation operation) {
+    private void apply(
+            EditableItinerary itinerary,
+            ItineraryEditRequest request,
+            EditOperation operation,
+            boolean refreshRouteFacts) {
         if (operation == EditOperation.UPDATE_TRANSIT_LEG) {
             TransitLocation location = itinerary.findTransitLeg(request.transitLegId());
             if (location == null) {
@@ -627,7 +647,9 @@ public class ItineraryService {
             ItineraryMapper.StoredTransitLeg leg = location.leg();
             location.day().transitLegs().set(
                     location.index(),
-                    applyTransitLegEdit(leg, request.transitMode(), request.transitLocked())
+                    applyTransitLegEdit(
+                            itinerary, leg, request.transitMode(), request.transitLocked(),
+                            refreshRouteFacts)
             );
             return;
         }
@@ -691,10 +713,12 @@ public class ItineraryService {
         }
     }
 
-    static ItineraryMapper.StoredTransitLeg applyTransitLegEdit(
+    private ItineraryMapper.StoredTransitLeg applyTransitLegEdit(
+            EditableItinerary itinerary,
             ItineraryMapper.StoredTransitLeg leg,
             String requestedMode,
-            Boolean requestedLocked) {
+            Boolean requestedLocked,
+            boolean refreshRouteFacts) {
         String mode = requestedMode == null ? leg.mode() : requestedMode;
         boolean locked = requestedLocked == null ? leg.locked() : requestedLocked;
         if (mode.equals(leg.mode())) {
@@ -705,35 +729,85 @@ public class ItineraryService {
                     leg.providerRouteId(), leg.calculatedAt(), leg.stale()
             );
         }
+        if (!refreshRouteFacts) {
+            // Simulation (working view for later batch edits): keep the old
+            // route facts but mark them stale — they no longer describe the
+            // requested mode, and no provider call is spent here.
+            return new ItineraryMapper.StoredTransitLeg(
+                    leg.id(), leg.legOrder(), leg.fromActivityId(), leg.toActivityId(),
+                    mode, leg.distanceMeters(), leg.durationSeconds(), leg.provider(),
+                    true, leg.polylineJson(), locked, leg.estimatedCost(),
+                    leg.providerRouteId(), leg.calculatedAt(), true
+            );
+        }
+        // Manual-edit TRANSIT realification (P2.9): a mode change is refreshed
+        // against the provider right away instead of persisting a speed-model
+        // estimate.  The downstream candidate worker still re-validates the
+        // leg with fresh provider facts; this snapshot is persisted so the
+        // candidate never carries fabricated duration/cost data.
+        EditableActivity from = requireLegEndpoint(itinerary, leg.fromActivityId());
+        EditableActivity to = requireLegEndpoint(itinerary, leg.toActivityId());
+        if (from.longitude() == null || from.latitude() == null
+                || to.longitude() == null || to.latitude() == null) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "ITINERARY_EDIT_INVALID",
+                    "The transit endpoints carry no coordinates to route against");
+        }
+        // TAXI rides on the DRIVING road route and the rule fare; the wire
+        // keeps the request/persisted mode distinction (F8).
+        String providerMode = "TAXI".equals(mode) ? "DRIVING" : mode;
+        if ("TRANSIT".equals(providerMode) && (itinerary.city() == null || itinerary.city().isBlank())) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "ITINERARY_EDIT_INVALID",
+                    "A transit route requires the trip destination");
+        }
+        AgentRouteDtos.RouteFacts facts;
+        try {
+            facts = routeClient.route(new AgentRouteDtos.RouteRequest(
+                    new AgentRouteDtos.Coordinates(from.longitude(), from.latitude()),
+                    new AgentRouteDtos.Coordinates(to.longitude(), to.latitude()),
+                    providerMode,
+                    from.endTime(),
+                    from.providerPoiId(),
+                    to.providerPoiId(),
+                    itinerary.city()
+            ));
+        } catch (RuntimeException exception) {
+            // Fail closed: an unavailable provider never persists fabricated
+            // route facts for the edited leg.
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "ITINERARY_TRANSIT_ROUTE_UNAVAILABLE",
+                    "The route provider could not refresh this transit leg; the edit was not applied");
+        }
+        BigDecimal cost = "TAXI".equals(mode)
+                ? TransitLegSemantics.taxiFare(facts.distanceMeters())
+                : facts.estimatedCost();
+        // The presentation layer stores TAXI durations inclusive of the wait
+        // time; a real road route shorter than the wait would violate that
+        // invariant, so the wait floors the stored duration.
+        int durationSeconds = "TAXI".equals(mode)
+                ? Math.max(facts.durationSeconds(), TransitLegSemantics.TAXI_WAIT_SECONDS)
+                : facts.durationSeconds();
         return new ItineraryMapper.StoredTransitLeg(
                 leg.id(), leg.legOrder(), leg.fromActivityId(), leg.toActivityId(),
-                mode, leg.distanceMeters(), estimatedTransitDuration(mode, leg.distanceMeters()),
-                "DEMO", true, "[]", locked,
-                estimatedTransitCost(mode, leg.distanceMeters()), null, Instant.now(), false
+                mode, facts.distanceMeters(), durationSeconds, facts.provider(),
+                facts.estimated(), writePolyline(facts.polyline()), locked, cost,
+                null, Instant.now(), false
         );
     }
 
-    private static int estimatedTransitDuration(String mode, int distanceMeters) {
-        double seconds = switch (mode) {
-            case "WALKING" -> distanceMeters / 1.25;
-            case "TRANSIT" -> distanceMeters / 5.5 + 420;
-            case "DRIVING" -> distanceMeters / 8.33 + 180;
-            case "TAXI" -> distanceMeters / 8.33 + 300;
-            default -> throw new IllegalArgumentException("Unsupported transit mode: " + mode);
-        };
-        return Math.max(60, (int) Math.round(seconds / 60) * 60);
+    private EditableActivity requireLegEndpoint(EditableItinerary itinerary, UUID activityId) {
+        ActivityLocation location = itinerary.findActivity(activityId);
+        if (location == null) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "ITINERARY_EDIT_INVALID",
+                    "The transit leg references an activity outside the itinerary");
+        }
+        return location.activity();
     }
 
-    private static BigDecimal estimatedTransitCost(String mode, int distanceMeters) {
-        double kilometers = Math.max(1, distanceMeters) / 1_000D;
-        double cost = switch (mode) {
-            case "WALKING" -> 0D;
-            case "TRANSIT" -> 2D + Math.floor(kilometers / 6D);
-            case "DRIVING" -> Math.max(3D, kilometers * 0.8D);
-            case "TAXI" -> 12D + kilometers * 2.6D;
-            default -> throw new IllegalArgumentException("Unsupported transit mode: " + mode);
-        };
-        return BigDecimal.valueOf(cost).setScale(2, java.math.RoundingMode.HALF_UP);
+    private String writePolyline(List<AgentRouteDtos.Coordinates> polyline) {
+        try {
+            return objectMapper.writeValueAsString(polyline);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Route polyline could not be serialized", exception);
+        }
     }
 
     private BigDecimal budgetFrom(String constraintSnapshotJson) {
@@ -1162,13 +1236,19 @@ public class ItineraryService {
 
     private static final class EditableItinerary {
         private final List<EditableDay> days;
+        private final String city;
 
-        private EditableItinerary(List<EditableDay> days) {
+        private EditableItinerary(List<EditableDay> days, String city) {
             this.days = days;
+            this.city = city;
         }
 
         List<EditableDay> days() {
             return days;
+        }
+
+        String city() {
+            return city;
         }
 
         EditableDay findDay(LocalDate date) {

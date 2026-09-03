@@ -287,3 +287,45 @@ def test_resolve_day_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
     assert resolve_day_scheduler({"PLANNING_DAY_SCHEDULER": " SHADOW "}) == "SHADOW"
     with pytest.raises(ValueError):
         resolve_day_scheduler({"PLANNING_DAY_SCHEDULER": "EXACT"})
+
+
+def test_greedy_dispatch_does_not_require_ortools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default GREEDY scheduling must run on ortools-less installs: the
+    CP-SAT module import is guarded and GREEDY never touches the solver.
+    (Regression: a rebuilt production image without the optional package used
+    to crash every planning run with ModuleNotFoundError.)
+    """
+    from trip_agent.planning import cpsat_schedule as cpsat_mod
+    from trip_agent.planning.daily_schedule import _fill_slots_dispatch
+
+    monkeypatch.setattr(cpsat_mod, "cp_model", None)
+    monkeypatch.delenv("PLANNING_DAY_SCHEDULER", raising=False)
+    placed = _fill_slots_dispatch(
+        (_candidate("poi-a", minutes=60, score=100),),
+        ((0, 240),),
+        day_type="FULL_DAY",
+        pace="BALANCED",
+        mobility_reduced=False,
+        primary_region=None,
+    )
+    assert len(placed) == 1
+    assert placed[0].candidate.poi_id == "poi-a"
+
+
+def test_cpsat_mode_fails_loudly_without_ortools(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit CPSAT selection on an ortools-less install raises a clear
+    config error instead of silently degrading to greedy (or crashing with a
+    raw ModuleNotFoundError inside the generic solver fallback)."""
+    from trip_agent.planning import cpsat_schedule as cpsat_mod
+
+    monkeypatch.setattr(cpsat_mod, "cp_model", None)
+    monkeypatch.setenv("PLANNING_DAY_SCHEDULER", "CPSAT")
+    with pytest.raises(ValueError, match="ortools"):
+        cpsat_mod.choose_activities_cpsat(
+            (_candidate("poi-a", minutes=60, score=100),),
+            ((0, 240),),
+            day_type="FULL_DAY",
+            pace="BALANCED",
+            mobility_reduced=False,
+            primary_region=None,
+        )

@@ -260,12 +260,10 @@ def test_provider_no_result_maps_to_200_empty_candidates(monkeypatch) -> None:
     assert body["candidates"] == []
 
 
-def test_exact_place_name_is_ranked_before_same_name_infrastructure(monkeypatch) -> None:
-    """A fast user must not be led to pick ``陈家祠(地铁站)`` when the
-    exact attraction ``陈家祠`` is present in the same provider response.
-
-    AMap does not guarantee user-intent ordering, so the internal boundary
-    owns this deterministic exact-name preference for every caller.
+def test_same_name_infrastructure_is_filtered_out_of_the_picker(monkeypatch) -> None:
+    """AMap text search mixes metro stations / gates with the real place; the
+    picker must never offer infrastructure entries (planning fail-closed dead
+    ends), even when they share the exact keyword name with an attraction.
     """
     monkeypatch.setenv("AGENT_INTERNAL_TOKEN", "test-internal-token")
 
@@ -282,7 +280,7 @@ def test_exact_place_name_is_ranked_before_same_name_infrastructure(monkeypatch)
             address=f"{name}地址",
         )
 
-    class _OutOfOrderProvider:
+    class _MixedProvider:
         async def search_pois(self, request):
             return ProviderSuccess(
                 data=(
@@ -297,7 +295,7 @@ def test_exact_place_name_is_ranked_before_same_name_infrastructure(monkeypatch)
                 estimated=False,
             )
 
-    app.dependency_overrides[places_api.get_place_search_provider] = lambda: _OutOfOrderProvider()
+    app.dependency_overrides[places_api.get_place_search_provider] = lambda: _MixedProvider()
     try:
         response = _client().post(
             "/internal/v1/places/search",
@@ -310,6 +308,111 @@ def test_exact_place_name_is_ranked_before_same_name_infrastructure(monkeypatch)
     assert response.status_code == 200
     assert [candidate["providerPoiId"] for candidate in response.json()["candidates"]] == [
         "attraction",
-        "metro",
-        "gate",
     ]
+
+
+def test_geo_hotspot_is_not_offered_instead_of_the_real_attraction(monkeypatch) -> None:
+    """R3 regression: ``陈家祠`` resolves to the AMap geo hot-spot 190700
+    ("地名地址信息·热点地名", classified OTHER) whose exact name wins the old
+    ordering — the actual museum ``陈家祠堂`` (110202) must be the picker's
+    first schedulable candidate instead.
+    """
+    monkeypatch.setenv("AGENT_INTERNAL_TOKEN", "test-internal-token")
+
+    def poi(provider_id: str, name: str, type_code: str) -> Poi:
+        return Poi(
+            provider_id=provider_id,
+            name=name,
+            coordinates=Coordinates(longitude=113.25, latitude=23.13),
+            type_name="地名地址信息" if type_code == "190700" else "风景名胜",
+            type_code=type_code,
+            province="广东省",
+            city="广州市",
+            district="荔湾区",
+            address=f"{name}地址",
+        )
+
+    class _RealWorldProvider:
+        async def search_pois(self, request):
+            return ProviderSuccess(
+                data=(
+                    poi("hotspot", "陈家祠", "190700"),
+                    poi("museum", "陈家祠堂", "110202"),
+                    poi("square", "陈家祠广场", "110105"),
+                ),
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 9, 3, tzinfo=UTC),
+                estimated=False,
+            )
+
+    app.dependency_overrides[places_api.get_place_search_provider] = lambda: _RealWorldProvider()
+    try:
+        response = _client().post(
+            "/internal/v1/places/search",
+            json=_search(keyword="陈家祠"),
+            headers=_headers(),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert [candidate["providerPoiId"] for candidate in response.json()["candidates"]] == [
+        "museum",
+        "square",
+    ]
+
+
+def test_legit_non_attraction_kinds_stay_selectable(monkeypatch) -> None:
+    """Dining, hotels, shopping and transport hubs remain pickable — the
+    filter excludes ONLY never-schedulable kinds (OTHER/UNKNOWN/TRANSIT_INFRA).
+    """
+    monkeypatch.setenv("AGENT_INTERNAL_TOKEN", "test-internal-token")
+
+    def poi(provider_id: str, name: str, type_code: str) -> Poi:
+        return Poi(
+            provider_id=provider_id,
+            name=name,
+            coordinates=Coordinates(longitude=113.30, latitude=23.12),
+            type_name="place",
+            type_code=type_code,
+            province="广东省",
+            city="广州市",
+            district="越秀区",
+            address=f"{name}地址",
+        )
+
+    class _KindsProvider:
+        async def search_pois(self, request):
+            return ProviderSuccess(
+                data=(
+                    poi("hotel", "白天鹅宾馆", "100100"),
+                    poi("restaurant", "陶陶居", "050100"),
+                    poi("mall", "正佳广场", "060100"),
+                    poi("station", "广州南站", "150200"),
+                    poi("hotspot", "陶陶居(热点)", "190700"),
+                ),
+                provider="AMAP",
+                latency_ms=1,
+                cached=False,
+                fetched_at=datetime(2026, 9, 3, tzinfo=UTC),
+                estimated=False,
+            )
+
+    app.dependency_overrides[places_api.get_place_search_provider] = lambda: _KindsProvider()
+    try:
+        response = _client().post(
+            "/internal/v1/places/search",
+            json=_search(keyword="陶陶居"),
+            headers=_headers(),
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    ids = [candidate["providerPoiId"] for candidate in response.json()["candidates"]]
+    assert "hotspot" not in ids
+    for kept in ("hotel", "restaurant", "mall", "station"):
+        assert kept in ids
+

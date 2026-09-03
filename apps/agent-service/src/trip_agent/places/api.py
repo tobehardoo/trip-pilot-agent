@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from trip_agent.internal_security import require_internal_token
+from trip_agent.planning.poi_quality import place_search_selectable
 from trip_agent.providers.errors import ProviderErrorCategory, ProviderExecutionMode
 from trip_agent.providers.map import (
     AmapMapProvider,
@@ -160,7 +161,17 @@ async def search_places(
             status.HTTP_502_BAD_GATEWAY,
             f"{result.error_code} ({result.category})",
         )
-    candidates = _exact_name_first(request.keyword, result.data)
+    # AMap text search freely mixes schedulable places with station gates,
+    # metro/bus stops, parking and geo hot-spots ("热点地名").  Selecting one
+    # of those as a must-visit is a planning dead end by design (fail-closed
+    # MUST_VISIT_UNAVAILABLE) — never offer them in the picker.  Demo results
+    # are a single "… (demo)" placeholder kind and stay untouched.
+    raw_candidates = result.data
+    if result.provider == "AMAP":
+        raw_candidates = tuple(
+            poi for poi in raw_candidates if place_search_selectable(poi)
+        )
+    candidates = _exact_name_first(request.keyword, raw_candidates)
     return PlaceSearchResponse(
         provider=result.provider,
         estimated=result.estimated,

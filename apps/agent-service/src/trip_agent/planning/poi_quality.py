@@ -200,6 +200,29 @@ def activity_candidate_eligible(poi: Poi) -> bool:
     return classify_poi_role(poi) == "KEEP"
 
 
+# Kinds a user may legitimately pick from a search box.  Everything else is
+# never schedulable in ANY travel role: OTHER covers AMap "地名地址信息 /
+# 热点地名 / 门牌号" geo entries, UNKNOWN covers missing/unparseable codes,
+# TRANSIT_INFRA covers station gates, entrances, metro/bus stops and parking.
+# (A user must-visiting "陈家祠" is offered the hot-spot geo entry 190700
+# otherwise, which fails closed as OTHER during planning — the search box
+# must not surface places the planner can never schedule.)
+_PLACE_SEARCH_EXCLUDED_KINDS: frozenset[PlaceKind] = frozenset(
+    {"OTHER", "UNKNOWN", "TRANSIT_INFRA"}
+)
+
+
+def place_search_selectable(poi: Poi) -> bool:
+    """Whether a provider search result may be offered as a user-selectable place.
+
+    Selectable covers attractions, restaurants, accommodation, shopping and
+    transport hubs (arrival/departure anchors).  Metro stations, station
+    gates/entrances, parking and geo/hot-spot entries are excluded — picking
+    them as a must-visit or anchor is a planning dead end by design.
+    """
+    return classify_place(poi) not in _PLACE_SEARCH_EXCLUDED_KINDS
+
+
 def canonical_poi_key(poi: Poi) -> str:
     """Return a lightweight canonical identity for a POI.
 

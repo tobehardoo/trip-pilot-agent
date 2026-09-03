@@ -47,7 +47,13 @@ import os
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from ortools.sat.python import cp_model
+# ortools is an OPTIONAL dependency: the default GREEDY scheduler must run on
+# installs without it, so the import is guarded and only CPSAT/SHADOW require
+# the package (fail-loud with a clear message — never a raw ModuleNotFoundError).
+try:
+    from ortools.sat.python import cp_model
+except ImportError:  # pragma: no cover - exercised only on ortools-less installs
+    cp_model = None  # type: ignore[assignment]
 
 from trip_agent.planning.daily_schedule import (
     BUFFER_BETWEEN_MINUTES,
@@ -61,6 +67,20 @@ from trip_agent.planning.daily_schedule import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _require_cp_model() -> None:
+    """Fail loudly when CPSAT/SHADOW is selected but ortools is not installed.
+
+    The caller's generic solver-failure fallback must not silently swallow a
+    missing package: an operator who explicitly chose CPSAT gets a clear
+    config error, never a quiet greedy plan.
+    """
+    if cp_model is None:
+        raise ValueError(
+            "PLANNING_DAY_SCHEDULER=CPSAT/SHADOW requires the optional "
+            "'ortools' package; install it or keep GREEDY"
+        )
 
 DayScheduler = Literal["GREEDY", "CPSAT", "SHADOW"]
 
@@ -131,6 +151,7 @@ def choose_activities_cpsat(
     the SPECIAL_ACTIVITY_DAY main-slot placement is owned by the caller, so
     only the remaining-slot fill arrives here.
     """
+    _require_cp_model()
     try:
         solved = _solve(
             candidates,
@@ -179,6 +200,7 @@ def choose_activities_shadow(
     logs, feeding the switch decision with real traffic instead of only the
     offline benchmark.
     """
+    _require_cp_model()
     greedy = _greedy(
         candidates,
         slots,

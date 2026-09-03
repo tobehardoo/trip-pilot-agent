@@ -86,6 +86,7 @@ def _route_provider() -> Any:
 
 
 def _place_search_adapter(provider: Any) -> Callable[..., Any]:
+    from trip_agent.planning.poi_quality import place_search_selectable
     from trip_agent.providers.map import PoiSearchRequest, ProviderFailure
 
     async def search(*, keyword: str, city: str | None = None) -> dict[str, Any]:
@@ -97,6 +98,11 @@ def _place_search_adapter(provider: Any) -> Callable[..., Any]:
                 "error": result.error_code,
                 "message": getattr(result, "safe_message", "") or result.error_code,
             }
+        places = result.data
+        if result.provider == "AMAP":
+            # Same selection rule as the places search endpoint: never offer
+            # station gates/metro/parking or geo hot-spots as "places".
+            places = tuple(poi for poi in places if place_search_selectable(poi))
         return {
             "places": [
                 {
@@ -107,7 +113,7 @@ def _place_search_adapter(provider: Any) -> Callable[..., Any]:
                     "longitude": float(poi.coordinates.longitude),
                     "latitude": float(poi.coordinates.latitude),
                 }
-                for poi in result.data
+                for poi in places
             ]
         }
 

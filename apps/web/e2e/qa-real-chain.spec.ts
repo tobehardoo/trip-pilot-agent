@@ -26,7 +26,8 @@ import { expect, test, type Page } from '@playwright/test'
 // 隔离层面的确定性。因此只允许在本地具备完整栈时运行。
 // ─────────────────────────────────────────────────────────────────────────────
 
-test.setTimeout(5 * 60 * 1000)
+// 真链真实 AMap(REAL_ONLY) 一次规划可达 5-8 分钟，测试窗口对齐轮询上限。
+test.setTimeout(10 * 60 * 1000)
 
 // 种子管理员（seed admin account migration）。
 const ADMIN = { email: 'admin@admin.com', password: 'Admin123456' }
@@ -43,10 +44,14 @@ async function adminToken(page: Page): Promise<string> {
 }
 
 // 从侧栏读真实创建出的 tripId（元素 testid = workspace-project-<id>）。
+// 必须取【激活】项（aria-current="true"，刚创建的行程），而非侧栏第一项——
+// 第一项可能是历史 DRAFT，轮询它会永远等不到非空行程。
 async function readCreatedTripId(page: Page): Promise<string> {
-  const el = page.locator('[data-testid^="workspace-project-"]').first()
-  await expect(el).toBeVisible({ timeout: 30_000 })
-  const testid = (await el.getAttribute('data-testid')) as string
+  const active = page.locator(
+    '[data-testid^="workspace-project-"][aria-current="true"]',
+  )
+  await expect(active.first()).toBeVisible({ timeout: 30_000 })
+  const testid = (await active.first().getAttribute('data-testid')) as string
   return testid.slice('workspace-project-'.length)
 }
 
@@ -102,9 +107,11 @@ async function driveCreationDialogueToReady(page: Page, maxTurns = 8): Promise<b
 }
 
 // 等待真实行程落库：轮询 real backend（非 DOM、非 mock）。
+// 真实 AMap(REAL_ONLY) 一次规划需数百次 provider 调用，可达 4-5 分钟，
+// 故轮询窗口按真实链节奏放宽到 8 分钟，而非 mock 链的秒级快出。
 async function waitRealItinerary(page: Page, tripId: string): Promise<{ days: number; provider: string }> {
   const token = await adminToken(page)
-  const deadline = Date.now() + 180_000
+  const deadline = Date.now() + 480_000
   while (Date.now() < deadline) {
     const tripRes = await page.request.get(`/api/trips/${tripId}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -132,10 +139,9 @@ async function waitRealItinerary(page: Page, tripId: string): Promise<{ days: nu
     await page.waitForTimeout(4000)
   }
   throw new Error(
-    `真链 3 分钟内未产出非空行程（trip 仍未 terminal / itinerary 未落库）。` +
-    `当前 PROD 栈为 REAL_ONLY + 真实 AMap，规划慢且受配额限流；` +
-    `本次实测中 travel-server 对 AGENT_COMPLETED 事件抛 ` +
-    `“payload field types do not match JSON Schema”而拒绝消费，导致部分 run 的行程不落库。`,
+    `真链 8 分钟内未产出非空行程（trip 仍未 terminal / itinerary 未落库）。` +
+    `当前 PROD 栈为 REAL_ONLY + 真实 AMap，规划受配额限流且耗时较长；` +
+    `若持续超时，请确认 AMAP_WEB_SERVICE_KEY 配额充足，或以 DEMO_ONLY 跑确定性闭环。`,
   )
 }
 

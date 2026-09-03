@@ -11,8 +11,6 @@ langgraph dependency chain at import time.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 # Lightweight exports — always available
 from trip_agent.agent.state import (
     REQUIRED_SLOTS,

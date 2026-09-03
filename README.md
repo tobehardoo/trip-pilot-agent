@@ -188,9 +188,9 @@ docker compose -f compose.prod.yaml --env-file .env up -d --build --wait --wait-
 **当前主线：Agent 化改造（v1.1）** —— 在确定性内核之上叠加有界的 LangGraph Agent 编排层：LLM 负责意图理解、约束收集、策略选择与澄清，求解、可行性校验与终态生成由确定性系统守门（`validate_itinerary` 一票否决）。详见 [Agent化路线图](docs/product/Agent化路线图.md) 与 [ADR-015](docs/adr/Agent编排层与记忆系统.md)。
 
 - Richer preference modeling（用户交通偏好、行程节奏）
-- Advanced multimodal transport planning（manual-edit TRANSIT 真实化、跨城 TRANSIT）
+- Advanced multimodal transport planning（manual-edit TRANSIT 已真实化；跨城 TRANSIT）
 - Weather-aware planning（天气与行李输入）
-- Stronger global itinerary optimization（跨 leg 联合优化的确定性内核升级）
+- ~~Stronger global itinerary optimization~~（✅ 日内调度 CP-SAT 精确内核已落地：`PLANNING_DAY_SCHEDULER=CPSAT/SHADOW`，基准见 `apps/agent-service/benchmarks/scheduler/`；跨日联合优化为下一步）
 - Broader multi-city planning（多城市联程）
 
 详细路线图见 [项目路线图](docs/product/项目路线图.md)。

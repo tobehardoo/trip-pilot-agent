@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError as SchemaValidationError
 from pydantic import ValidationError
 
 from trip_agent.worker.contracts import (
@@ -209,7 +210,7 @@ def test_completed_rejects_a_payload_carrying_an_itinerary() -> None:
     wire["payload"]["itinerary"] = {"title": "测试行程", "days": []}
     with pytest.raises(ValidationError):
         AgentCompletedEvent.model_validate(wire)
-    with pytest.raises(Exception):
+    with pytest.raises(SchemaValidationError):
         Draft202012Validator(_load_schema("agent-completed-event-v1.schema.json")).validate(wire)
 
 

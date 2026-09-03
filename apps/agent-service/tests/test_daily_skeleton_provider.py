@@ -277,8 +277,12 @@ def test_skeleton_emits_unresolved_meal_without_fake_poi() -> None:
 
 
 def test_skeleton_uses_each_restaurant_at_most_once_when_alternatives_exist() -> None:
-    first_meal = _poi("r1", "老字号粤菜馆", district="越秀区", type_code="050000", type_name="餐饮服务")
-    second_meal = _poi("r2", "西关粤菜馆", district="越秀区", type_code="050000", type_name="餐饮服务")
+    first_meal = _poi(
+        "r1", "老字号粤菜馆", district="越秀区", type_code="050000", type_name="餐饮服务"
+    )
+    second_meal = _poi(
+        "r2", "西关粤菜馆", district="越秀区", type_code="050000", type_name="餐饮服务"
+    )
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"), _poi("p3", "广州塔"))
     result = asyncio.run(_provider(pois, meal_pois=(first_meal, second_meal)).plan(_command()))
 
@@ -341,7 +345,9 @@ def test_small_scenic_poi_uses_normal_not_half_day_duration() -> None:
 
 
 def test_skeleton_emits_hotel_nodes_when_accommodation_known() -> None:
-    hotel = _poi("hotel-1", "广州花园酒店", district="越秀区", type_code="100000", type_name="住宿服务")
+    hotel = _poi(
+        "hotel-1", "广州花园酒店", district="越秀区", type_code="100000", type_name="住宿服务"
+    )
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"))
     result = asyncio.run(
         _provider(pois, accommodation_poi=hotel).plan(
@@ -690,7 +696,9 @@ def test_amap_skeleton_dates_match_itinerary_dates() -> None:
 
 
 def test_amap_skeleton_confirmed_when_hotel_resolved() -> None:
-    hotel = _poi("hotel-1", "广州花园酒店", district="越秀区", type_code="100000", type_name="住宿服务")
+    hotel = _poi(
+        "hotel-1", "广州花园酒店", district="越秀区", type_code="100000", type_name="住宿服务"
+    )
     pois = (_poi("p1", "越秀公园"), _poi("p2", "陈家祠"))
     result = asyncio.run(
         _provider(pois, accommodation_poi=hotel).plan(
@@ -783,8 +791,12 @@ def test_amap_confirmed_chain_validates_continuity_pass() -> None:
     from trip_agent.feasibility.models import FeasibilityStatus, RuleOutcome
     from trip_agent.feasibility.validator import validate_itinerary
 
-    hotel = _poi("hotel-1", "广州花园酒店", district="越秀区", type_code="100000", type_name="住宿服务")
-    meal = _poi("r1", "老字号粤菜馆", district="越秀区", type_code="050000", type_name="餐饮服务")
+    hotel = _poi(
+        "hotel-1", "广州花园酒店", district="越秀区", type_code="100000", type_name="住宿服务"
+    )
+    meal = _poi(
+        "r1", "老字号粤菜馆", district="越秀区", type_code="050000", type_name="餐饮服务"
+    )
     pois = tuple(_poi(f"p{index}", f"景点{index}") for index in range(1, 8))
     command = _command(accommodation={"placeName": "广州花园酒店"})
     result = asyncio.run(

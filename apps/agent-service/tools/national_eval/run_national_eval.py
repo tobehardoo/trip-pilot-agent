@@ -17,7 +17,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -271,7 +271,9 @@ class ApiClient:
         resp.raise_for_status()
         return resp.json()
 
-    def poll_task_until_terminal(self, trip_id: str, task_id: str, timeout_ms: int = 420_000) -> dict[str, Any]:
+    def poll_task_until_terminal(
+        self, trip_id: str, task_id: str, timeout_ms: int = 420_000
+    ) -> dict[str, Any]:
         deadline = time.time() + timeout_ms / 1000
         while time.time() < deadline:
             task = self.get_planning_task(trip_id, task_id)
@@ -340,7 +342,10 @@ def validate_itinerary(it: dict[str, Any], spec: ScenarioSpec,
                 intervals.append((t[0], u[0], str(a.get("title", ""))))
         dense = len([a for a in acts if str(a.get("kind", "")) not in ("MEAL", "ACCOMMODATION")])
         if dense > 8:
-            problems.append({"check": "too_dense", "detail": f"每日非餐饮活动过多 ({dense}) @ {day.get('date')}"})
+            problems.append({
+                "check": "too_dense",
+                "detail": f"每日非餐饮活动过多 ({dense}) @ {day.get('date')}",
+            })
         for i in range(len(intervals)):
             for j in range(i + 1, len(intervals)):
                 a, b = intervals[i], intervals[j]
@@ -486,7 +491,10 @@ def _meta(it: dict[str, Any] | None) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch", required=True, help="batch1/batch2_budget/batch3_modify/batch4_boundary/all")
+    parser.add_argument(
+        "--batch", required=True,
+        help="batch1/batch2_budget/batch3_modify/batch4_boundary/all"
+    )
     parser.add_argument("--report", required=True, help="输出 json 路径")
     parser.add_argument("--only", nargs="*", default=[], help="仅运行指定 scenario id")
     args = parser.parse_args()

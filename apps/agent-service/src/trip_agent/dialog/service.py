@@ -508,7 +508,9 @@ def _new_state(context: TripContext | None) -> _DialogState:
         ("budget", context.budget_amount if context else None),
     ):
         if value is not None:
-            slots[name] = SlotView(value=value, state=SlotState.CONFIRMED, source=SlotSource.USER_EXPLICIT)
+            slots[name] = SlotView(
+                value=value, state=SlotState.CONFIRMED, source=SlotSource.USER_EXPLICIT
+            )
     return _DialogState(run_id=uuid.uuid4().hex[:12], slots=slots)
 
 
@@ -1092,11 +1094,10 @@ class AgentDialogService:
             if not (require_external and slot in EXTERNAL_SLOTS)
         ):
             return False
-        if require_external and not all(
+        return not (require_external and not all(
             (state.slots.get(slot) is not None and state.slots[slot].value is not None)
             for slot in EXTERNAL_SLOTS
-        ):
-            return False
+        ))
         return True
 
     def _date_range_error(

@@ -121,7 +121,11 @@ def test_historical_planning_result_omits_provenance_instead_of_guessing_amap() 
         **COMMAND,
         "payload": {
             **COMMAND["payload"],
-            "trip": {**COMMAND["payload"]["trip"], "startDate": "2026-08-01", "endDate": "2026-08-01"},
+            "trip": {
+                **COMMAND["payload"]["trip"],
+                "startDate": "2026-08-01",
+                "endDate": "2026-08-01",
+            },
         },
     }
     command = PlanningCreateCommand.model_validate(one_day_command)

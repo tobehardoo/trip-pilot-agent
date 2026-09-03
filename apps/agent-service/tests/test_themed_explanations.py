@@ -17,7 +17,9 @@ from trip_agent.evaluation.models import (
 )
 
 
-def _decision(summary: str, *codes: str, reasons: tuple[str, ...] | None = None) -> DecisionExplanation:
+def _decision(
+    summary: str, *codes: str, reasons: tuple[str, ...] | None = None
+) -> DecisionExplanation:
     return DecisionExplanation(
         subject_type="PLAN",
         subject_id=None,

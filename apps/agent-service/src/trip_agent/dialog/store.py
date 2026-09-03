@@ -13,6 +13,8 @@ import os
 from typing import Protocol
 from urllib.parse import quote
 
+from trip_agent.agent.persistence import PsycopgAgentRunRepository
+from trip_agent.agent.state import agent_state_from_dict, agent_state_to_dict
 from trip_agent.providers.redis_cache import RedisJsonCache
 
 logger = logging.getLogger(__name__)
@@ -64,7 +66,72 @@ class InMemoryDialogStore:
         self._states.clear()
 
 
+class PsycopgDialogStore:
+    """PostgreSQL-backed dialog checkpoint store (single constraint state).
+
+    Reuses the exact ``agent.agent_checkpoint`` table and ``AgentState``
+    snapshot format as the planning agent, so creation-mode dialogs and
+    trip-mode agent runs persist through one durable store instead of a
+    disposable Redis scratch key.  A run row is ensured idempotently before
+    saving so the checkpoint's FK is satisfied.
+    """
+
+    def __init__(self, repository: PsycopgAgentRunRepository) -> None:
+        self._repo = repository
+
+    @staticmethod
+    def _run_id(scope_key: str) -> str:
+        # scope keys are unique text ids ("create:{sessionId}" / "trip:{tripId}")
+        return scope_key
+
+    async def load(self, scope_key: str) -> dict | None:
+        state = await self._repo.load_checkpoint(self._run_id(scope_key))
+        return None if state is None else agent_state_to_dict(state)
+
+    async def save(self, scope_key: str, state: dict) -> None:
+        run_id = self._run_id(scope_key)
+        await self._repo.ensure_run(run_id=run_id)
+        await self._repo.save_checkpoint(run_id=run_id, state=agent_state_from_dict(state))
+
+    async def close(self) -> None:
+        # PsycopgAgentRunRepository opens a short-lived connection per op.
+        return None
+
+
 async def build_store() -> DialogStore:
+    """Postgres-preferred, then Redis, then in-memory dialog state store.
+
+    The conversation checkpoint is the same one the planning agent persists,
+    so Postgres is the durable authority when available; a DB outage degrades
+    to Redis (loud), and a Redis outage to per-process memory (loud) — never
+    failing the endpoint over scratch checkpoint data.
+    """
+    postgres = await _build_postgres_store()
+    if postgres is not None:
+        return postgres
+    return await _build_redis_or_memory_store()
+
+
+async def _build_postgres_store() -> PsycopgDialogStore | None:
+    try:
+        from trip_agent.acquisition.cli import AcquisitionSettings
+
+        database_url = AcquisitionSettings().database_url()
+    except Exception as error:  # noqa: BLE001 - configuration probing must not raise
+        logger.warning("dialog_postgres_unavailable missing_config error=%s", type(error).__name__)
+        return None
+    if not database_url:
+        return None
+    try:
+        repository = PsycopgAgentRunRepository(database_url)
+        await repository.migrate()
+        return PsycopgDialogStore(repository)
+    except Exception as error:  # noqa: BLE001 - any provider failure degrades
+        logger.warning("dialog_postgres_unavailable fallback=redis error=%s", type(error).__name__)
+        return None
+
+
+async def _build_redis_or_memory_store() -> DialogStore:
     """Redis-backed store when configured; in-memory fallback when not.
 
     The probe keeps a silently-broken Redis from swallowing every turn —

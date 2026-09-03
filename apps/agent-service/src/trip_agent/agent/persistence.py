@@ -92,6 +92,15 @@ class PsycopgAgentRunRepository:
             self._start_run_sync, run_id, command_event_id, trip_id
         )
 
+    async def ensure_run(self, *, run_id: str, status: str = "RUNNING") -> None:
+        """Idempotently create a run row so a checkpoint can reference it.
+
+        Used by non-MQ scopes (e.g. the creation dialog) that persist an
+        ``AgentState`` checkpoint under a client-scoped run id without going
+        through the command-event dedup path.
+        """
+        await asyncio.to_thread(self._ensure_run_sync, run_id, status)
+
     async def record_step(
         self,
         *,
@@ -211,6 +220,17 @@ class PsycopgAgentRunRepository:
                 (run_id, command_event_id, trip_id),
             )
         return AgentRunStarted(run_id=run_id, created=True)
+
+    def _ensure_run_sync(self, run_id: str, status: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO agent.agent_run (run_id, status)
+                VALUES (%s, %s)
+                ON CONFLICT (run_id) DO NOTHING
+                """,
+                (run_id, status),
+            )
 
     def _record_step_sync(
         self,

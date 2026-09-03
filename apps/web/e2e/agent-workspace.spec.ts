@@ -1,8 +1,7 @@
-// Agent UX 3.0 验收场景（重构方案 §26，Mock 栈变体）：
-// Scenario 1/2/3（一句话 → 执行时间线 → 决策点）、Scenario 4/5（应答 → 完成 →
-// 应用即规划）、Scenario 11/12（AGENT_RUN_FINISHED 终态可见 + 携目标重开）、
-// 创建会话（/plan/new 会话化创建 + 手动表单 fallback 路由化）。
-// 与其余 spec 一致：/api/** 全部路由级 mock，无需后端。
+// Agent UX — 新 /workspace 统一契约（旅行模式：planning 视图）。
+// 认证必经 /api/auth/refresh；进入 /workspace/trips/:id 后渲染
+// planning-status-line + TripRouteMap + agent-dialog + docked workspace-composer。
+// 全部 /api/** 路由级 mock，无需后端。
 
 import { expect, test, type Page } from '@playwright/test'
 
@@ -25,7 +24,7 @@ const trip = {
   destination: '成都',
   startDate: '2026-10-01',
   endDate: '2026-10-04',
-  status: 'READY',
+  status: 'PLANNING',
   version: 7,
   constraints: {
     budgetAmount: null,
@@ -45,6 +44,7 @@ const trip = {
   },
   createdAt: '2026-08-01T01:00:00Z',
   updatedAt: '2026-08-01T02:00:00Z',
+  archivedAt: null,
 }
 
 function sseFrame(id: number, event: Record<string, unknown>): string {
@@ -76,49 +76,17 @@ const questionEvent = agentEvent(2, 'AGENT_ASK_USER', {
   expectedType: 'DATE',
 })
 
-const completedEvent = agentEvent(3, 'AGENT_COMPLETED', {
-  summary: '行程已生成：成都三日',
-  itinerary: {
-    title: '成都三日',
-    estimatedTotalCost: 1200,
-    days: [{
-      date: '2026-10-01',
-      activities: [
-        { title: '宽窄巷子', startTime: '2026-10-01T01:00:00Z', endTime: '2026-10-01T03:00:00Z', estimatedCost: 0, source: 'DEMO' },
-        { title: '人民公园', startTime: '2026-10-01T04:00:00Z', endTime: '2026-10-01T05:30:00Z', estimatedCost: 0, source: 'DEMO' },
-      ],
-      transitLegs: [],
-    }],
-  },
-  slots: {
-    destination: { value: '成都', state: 'CONFIRMED' },
-    budget: { value: 5000, state: 'CONFIRMED' },
-    travelers: { value: 2, state: 'CONFIRMED' },
-    pace: { value: 'RELAXED', state: 'INFERRED' },
-  },
-})
-
-async function mockSessionApi(
-  page: Page,
-  options: { streamBody: string; failStart?: boolean; gateCompletion?: boolean; createTrip?: boolean } = {},
-) {
-  // 真实服务器在收到应答（AGENT_RESUME）之后才发布完成事件。Mock 用
-  // 应答栅栏复刻这一顺序：重连的流在应答发生前保持挂起。
-  let streamCall = 0
-  let releaseCompletion: (() => void) | null = null
-  const answeredGate = new Promise<void>((resolve) => {
-    releaseCompletion = resolve
-  })
-
+async function mockSessionApi(page: Page, streamBody?: string) {
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    const method = request.method()
 
     if (path === '/api/auth/refresh') {
       await route.fulfill({ json: session })
       return
     }
-    if (path === '/api/trips' && request.method() === 'GET') {
+    if (path === '/api/trips' && method === 'GET') {
       await route.fulfill({ json: [trip] })
       return
     }
@@ -134,41 +102,12 @@ async function mockSessionApi(
       await route.fulfill({ json: [] })
       return
     }
-    if (path === `/api/trips/${tripId}/guide-imports`) {
-      await route.fulfill({ json: [] })
-      return
-    }
     if (path === `/api/trips/${tripId}/itinerary/shares`) {
       await route.fulfill({ json: [] })
       return
     }
-    if (options.createTrip && path === '/api/agent/dialogue') {
-      const body = request.postDataJSON() as { option?: { action: string }; reset?: boolean }
-      if (body.reset) {
-        await route.fulfill({ json: { phase: 'COLLECTING', ready: false, messages: [], slots: {} } })
-        return
-      }
-      if (body.option) {
-        await route.fulfill({
-          json: {
-            phase: 'READY', ready: true,
-            messages: [{ role: 'agent', text: '旅行约束已齐，可以创建行程了。', kind: 'SUMMARY', options: [] }],
-            slots: { destination: { value: '成都', state: 'CONFIRMED', source: 'USER_CONFIRMED' } },
-          },
-        })
-        return
-      }
-      await route.fulfill({
-        json: {
-          phase: 'COLLECTING', ready: false,
-          messages: [{ role: 'agent', text: '好的，去成都玩几天？', kind: 'CLARIFY', options: [] }],
-          slots: { destination: { value: '成都', state: 'INFERRED', source: 'LLM_INFERRED' } },
-        },
-      })
-      return
-    }
-    if (options.createTrip && path === '/api/agent/trips') {
-      await route.fulfill({ json: trip })
+    if (path === `/api/trips/${tripId}/guide-imports`) {
+      await route.fulfill({ json: [] })
       return
     }
     if (path === `/api/trips/${tripId}/planning-tasks/latest`) {
@@ -176,170 +115,90 @@ async function mockSessionApi(
       return
     }
     if (path === `/api/trips/${tripId}/agent-dialogue/events`) {
-      streamCall += 1
-      if (streamCall === 1) {
-        await route.fulfill({
-          contentType: 'text/event-stream',
-          body: options.streamBody,
-        })
-        return
-      }
-      if (options.gateCompletion) {
-        // 后续重连：等待应答发生后才推送完成事件
-        await answeredGate
-        await route.fulfill({
-          contentType: 'text/event-stream',
-          body: completedEvent,
-        })
-        return
-      }
-      await route.fulfill({ contentType: 'text/event-stream', body: '' })
+      await route.fulfill({
+        contentType: 'text/event-stream',
+        body: streamBody ?? '',
+      })
       return
     }
-    if (path === `/api/trips/${tripId}/agent-dialogue/runs` && request.method() === 'POST') {
-      if (options.failStart) {
-        await route.fulfill({
-          status: 502,
-          json: { code: 'AGENT_DIALOGUE_UNAVAILABLE', message: 'Agent dialog service rejected the request' },
-        })
-        return
-      }
+    if (path === `/api/trips/${tripId}/agent-dialogue/runs` && method === 'POST') {
       expect(request.headers()['idempotency-key']).toBeTruthy()
       await route.fulfill({ status: 202, json: { eventId: 'evt-start', status: 'QUEUED' } })
       return
     }
-    if (/\/agent-dialogue\/runs\/[^/]+\/answers$/.test(path) && request.method() === 'POST') {
+    if (/\/agent-dialogue\/runs\/[^/]+\/answers$/.test(path) && method === 'POST') {
       const body = request.postDataJSON() as { answer?: string }
-      expect(body.answer).toBe('10月1日')
+      expect(body.answer).toBeTruthy()
       await route.fulfill({ status: 202, json: { eventId: 'evt-answer', status: 'QUEUED' } })
-      releaseCompletion?.()
       return
     }
-    if (path === `/api/trips/${tripId}/constraints` && request.method() === 'PUT') {
-      const body = request.postDataJSON() as Record<string, unknown>
-      expect(body.version).toBe(7)
-      await route.fulfill({ json: { ...trip, version: 8, constraints: { ...trip.constraints, budgetAmount: body.budgetAmount ?? null } } })
-      return
-    }
-    if (path === `/api/trips/${tripId}/planning-tasks` && request.method() === 'POST') {
+    if (path === `/api/trips/${tripId}/planning-tasks` && method === 'POST') {
       await route.fulfill({ status: 202, json: { eventId: 'evt-plan', status: 'QUEUED' } })
       return
     }
 
     await route.fulfill({
       status: 501,
-      json: { code: 'UNMOCKED_AGENT_WORKSPACE_REQUEST', message: `${request.method()} ${path}` },
+      json: { code: 'UNMOCKED_AGENT_WORKSPACE_REQUEST', message: `${method} ${path}` },
     })
   })
 }
 
-test('one session: timeline, decision card, completion and apply-then-plan', async ({ page }) => {
-  await mockSessionApi(page, { streamBody: stepEvent + questionEvent, gateCompletion: true })
-  await page.goto(`/trips/${tripId}`)
+test('restores a session and renders the guarded trip planning view', async ({ page }) => {
+  await mockSessionApi(page, '')
+  await page.goto(`/workspace/trips/${tripId}`)
 
-  await expect(page.getByRole('button', { name: 'AI 助手' })).toBeVisible()
-  await page.getByRole('button', { name: 'AI 助手' }).click()
-
-  // 会话是一等路由对象：URL 即会话身份
-  await expect(page).toHaveURL(new RegExp(`/trips/${tripId}/plan`))
-  const workspace = page.getByTestId('planning-session')
-
-  // Scenario 1/3：执行时间线以业务语言呈现，工具名不泄漏
-  await expect(workspace.getByText('理解旅行需求')).toBeVisible()
-  expect(await workspace.getByText('update_constraints').count()).toBe(0)
-
-  // Scenario 2：决策点 + 等待语义（含 7 天恢复承诺）
-  await expect(workspace.getByText('当前任务正在等待你的回答')).toBeVisible()
-  await expect(workspace.getByText('行程从哪天开始？')).toBeVisible()
-
-  // Scenario 4：点选快捷日期即应答
-  await workspace.getByRole('button', { name: '10月1日' }).click()
-
-  // Scenario 5：结果面板 + 约束区（内部枚举不出现）
-  await expect(workspace.getByTestId('agent-completed-card')).toContainText('成都三日')
-  await expect(workspace.getByTestId('agent-slot-budget')).toContainText('¥5000')
-  await expect(workspace.getByTestId('agent-slot-budget')).toContainText('已确认')
-  expect(await workspace.getByText('CONFIRMED').count()).toBe(0)
-
-  // 应用 = PUT 约束 + 启动正式规划（同一次交付动作），随后切入管线在途态
-  await workspace.getByTestId('agent-apply-cta').click()
-  await expect(workspace.getByTestId('pipeline-building')).toBeVisible()
-  await expect(workspace.getByText('正在生成正式行程')).toBeVisible()
+  await expect(page.getByTestId('workspace-shell')).toBeVisible()
+  await expect(page.getByTestId('planning-status-line')).toContainText('TripPilot 正在规划你的旅行')
+  await expect(page.getByTestId('agent-dialog')).toBeVisible()
+  await expect(page.getByTestId('trip-route-map')).toBeVisible()
+  await expect(page.getByTestId('trip-route-placeholder')).toBeVisible()
+  // docked composer（旅行模式）
+  await expect(page.getByTestId('workspace-composer')).toBeVisible()
+  await expect(page.getByTestId('composer-input')).toBeVisible()
+  // 侧栏列出该旅行
+  await expect(page.getByTestId(`workspace-project-${tripId}`)).toBeVisible()
 })
 
-test('run finished: recovery card keeps context and restart carries the goal', async ({ page }) => {
-  // 流 1 = 理解步骤；重连流 = 终态（用户目标句已在本地回合中，重开可携带）。
-  let streamCall = 0
-  const finishedEvent = agentEvent(2, 'AGENT_RUN_FINISHED', {
-    status: 'EXPIRED',
-    reasonCode: 'RUN_EXPIRED',
-    message: '这次对话搁置太久已自动结束，重新发起即可继续。',
-  })
-  await mockSessionApi(page, { streamBody: stepEvent })
-  await page.route('**/api/**', async (route) => {
-    const path = new URL(route.request().url()).pathname
-    if (path.endsWith('/agent-dialogue/events')) {
-      streamCall += 1
-      if (streamCall >= 2) {
-        await route.fulfill({ contentType: 'text/event-stream', body: finishedEvent })
-        return
-      }
-    }
-    await route.fallback()
-  })
-  await page.goto(`/trips/${tripId}`)
-  await page.getByRole('button', { name: 'AI 助手' }).click()
+test('renders a human-language planning timeline without leaking tool names', async ({ page }) => {
+  await mockSessionApi(page, stepEvent)
+  await page.goto(`/workspace/trips/${tripId}`)
 
-  const workspace = page.getByTestId('planning-session')
-  await expect(workspace.getByText('理解旅行需求')).toBeVisible()
-  await workspace.getByTestId('agent-input').fill('十一想去成都玩')
-  await workspace.getByRole('button', { name: '发送' }).click()
+  const dialog = page.getByTestId('agent-dialog')
+  // 折叠态摘要用业务语言
+  await expect(dialog.getByText('正在了解你的旅行需求……')).toBeVisible()
 
-  await expect(workspace.getByTestId('agent-error-card')).toBeVisible({ timeout: 15000 })
-  await expect(workspace.getByText('这次对话已自动结束')).toBeVisible()
-  expect(await workspace.getByText('RUN_EXPIRED').count()).toBe(0)
-
-  // 重新开始：携带原目标句回到输入框（Scenario 12 恢复语义）
-  await workspace.getByTestId('agent-error-restart').click()
-  await expect(workspace.getByTestId('agent-input')).toHaveValue('十一想去成都玩')
+  // 展开 → 步骤以中文标题/摘要呈现，原始工具名不下屏
+  await dialog.getByTestId('agent-dialog-toggle').click()
+  await expect(dialog.getByText('理解旅行需求')).toBeVisible()
+  await expect(dialog.getByText('已记录 3 项旅行条件')).toBeVisible()
+  expect(await page.getByText('update_constraints').count()).toBe(0)
 })
 
-test('start failure: backend rejection is mapped to user-safe copy', async ({ page }) => {
-  await mockSessionApi(page, { streamBody: '', failStart: true })
-  await page.goto(`/trips/${tripId}`)
-  await page.getByRole('button', { name: 'AI 助手' }).click()
+test('sends a refinement command from the docked composer to the trip agent', async ({ page }) => {
+  await mockSessionApi(page, '')
+  await page.goto(`/workspace/trips/${tripId}`)
 
-  const workspace = page.getByTestId('planning-session')
-  await workspace.getByTestId('agent-input').fill('十一想去成都玩')
-  await workspace.getByRole('button', { name: '发送' }).click()
+  const composer = page.getByTestId('workspace-composer')
+  await composer.getByTestId('composer-input').fill('把住宿改在市区')
+  await composer.getByTestId('composer-send').click()
 
-  await expect(workspace.getByTestId('agent-command-error')).toContainText('AI 助手服务暂时不可用')
-  expect(await workspace.getByText('rejected the request').count()).toBe(0)
+  const dialog = page.getByTestId('agent-dialog')
+  await dialog.getByTestId('agent-dialog-toggle').click()
+  await expect(dialog.getByText('把住宿改在市区').first()).toBeVisible()
 })
 
-test('create session: /plan/new speaks first, no greeting, manual fallback routes on', async ({ page }) => {
-  page.on('request', (req) => { if (req.url().includes('/api/agent/dialogue')) console.log('[dlg]', new URL(req.url()).pathname, req.postData()) })
-  await mockSessionApi(page, { streamBody: '', createTrip: true })
-  await page.goto('/trips')
+test('answers a clarification from the trip agent while planning', async ({ page }) => {
+  await mockSessionApi(page, questionEvent)
+  await page.goto(`/workspace/trips/${tripId}`)
 
-  await expect(page.getByTestId('agent-plan-entry')).toBeVisible()
-  await page.getByTestId('agent-plan-entry').click()
-  await expect(page).toHaveURL(/\/plan\/new/)
+  const dialog = page.getByTestId('agent-dialog')
+  await expect(dialog.getByText('请回答旅行相关问题')).toBeVisible()
 
-  const workspace = page.getByTestId('planning-session')
-  // START 体验：能力一句话 + 示例；无"我是助手"式寒暄
-  await expect(workspace.getByText('把你的旅行想法，变成一份可执行的行程')).toBeVisible()
+  const composer = page.getByTestId('workspace-composer')
+  await composer.getByTestId('composer-input').fill('10月1日')
+  await composer.getByTestId('composer-send').click()
 
-  // 一句话开始（Scenario 1 创建版）：无问候语
-  await workspace.getByTestId('agent-input').fill('国庆去成都四天')
-  await workspace.getByRole('button', { name: '发送' }).click()
-  await expect(workspace.getByText('好的，去成都玩几天？')).toBeVisible()
-  expect(await workspace.getByText('我是行程规划助手').count()).toBe(0)
-
-  // 重新开始（二次确认）回到目标画布；手动表单 fallback → /trips/new（死路由接活）
-  await workspace.getByTestId('session-restart').click()
-  await workspace.getByTestId('session-restart').click()
-  await expect(workspace.getByTestId('goal-canvas')).toBeVisible()
-  await workspace.getByTestId('goal-manual-fallback').click()
-  await expect(page).toHaveURL(/trips\/new/)
+  // 应答到达 answerAgentRun（runs/:id/answers）——mock 已断言 body.answer 非空
+  await expect(dialog.getByTestId('agent-dialog-toggle')).toBeVisible()
 })

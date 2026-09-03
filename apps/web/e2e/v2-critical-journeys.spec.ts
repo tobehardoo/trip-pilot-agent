@@ -1,8 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 
 const tripId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
-const taskId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
-const versionId = 'cccccccc-cccc-cccc-cccc-cccccccccccc'
 
 const session = {
   user: { id: 'dddddddd-dddd-dddd-dddd-dddddddddddd', email: 'v2@example.com', displayName: 'V2 Traveler' },
@@ -11,37 +9,48 @@ const session = {
   expiresIn: 900,
 }
 
-const trip = {
+const baseConstraints = {
+  budgetAmount: 1200,
+  travelers: 1,
+  travelerType: 'SOLO',
+  pace: 'BALANCED',
+  preferences: [],
+  fixedSchedules: [],
+  arrival: null,
+  departure: null,
+  accommodation: null,
+  mustVisitPlaces: [],
+  avoidPlaces: [],
+  mealWindows: [],
+  mobilityLevel: 'STANDARD',
+  schemaVersion: 2,
+}
+
+const planningTrip = {
   id: tripId,
   title: 'Controlled planning trip',
   destination: 'Guangzhou',
   startDate: '2026-08-01',
   endDate: '2026-08-02',
-  status: 'DRAFT',
+  status: 'PLANNING',
   version: 0,
-  constraints: {
-    budgetAmount: 1200,
-    travelers: 1,
-    travelerType: 'SOLO',
-    pace: 'BALANCED',
-    preferences: [],
-    fixedSchedules: [],
-    arrival: null,
-    departure: null,
-    accommodation: null,
-    mustVisitPlaces: [],
-    avoidPlaces: [],
-    mealWindows: [],
-    mobilityLevel: 'STANDARD',
-    schemaVersion: 2,
-  },
+  constraints: baseConstraints,
   createdAt: '2026-07-27T00:00:00Z',
   updatedAt: '2026-07-27T00:00:00Z',
   archivedAt: null,
 }
 
+const completedTrip = {
+  ...planningTrip,
+  title: 'Controlled final trip',
+  status: 'COMPLETED',
+  version: 1,
+}
+
+const emptyItineraryTrip = { ...planningTrip, title: 'Empty completed trip', status: 'COMPLETED', version: 1 }
+
 const plannedItinerary = {
-  versionId,
+  versionId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
   versionNumber: 1,
   parentVersionId: null,
   title: 'Controlled final itinerary',
@@ -49,130 +58,132 @@ const plannedItinerary = {
   provider: 'DEMO',
   days: [{
     date: '2026-08-01',
-    activities: [{
-      id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
-      title: 'River walk',
-      startTime: '2026-08-01T01:00:00Z',
-      endTime: '2026-08-01T02:00:00Z',
-      estimatedCost: 0,
-      source: 'DEMO',
-      providerPoiId: null,
-      coordinates: { longitude: 113.26, latitude: 23.13 },
-      address: 'Riverside',
+    dayType: null,
+    activities: [
+      {
+        id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+        title: 'River walk',
+        startTime: '2026-08-01T01:00:00Z',
+        endTime: '2026-08-01T02:00:00Z',
+        estimatedCost: 0,
+        source: 'DEMO',
+        providerPoiId: null,
+        coordinates: { longitude: 113.26, latitude: 23.13 },
+        address: 'Riverside',
+        locked: false,
+        typeCode: null,
+        typeName: null,
+        kind: 'EXPERIENCE',
+        timeFixed: null,
+      },
+      {
+        id: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+        title: 'Canton Tower',
+        startTime: '2026-08-01T04:00:00Z',
+        endTime: '2026-08-01T06:00:00Z',
+        estimatedCost: 40,
+        source: 'DEMO',
+        providerPoiId: null,
+        coordinates: { longitude: 113.32, latitude: 23.1 },
+        address: 'Guangzhou',
+        locked: false,
+        typeCode: null,
+        typeName: 'Landmark',
+        kind: 'ATTRACTION',
+        timeFixed: null,
+      },
+    ],
+    transitLegs: [{
+      id: 'dddddddd-dddd-dddd-dddd-dddddddddddd',
+      legOrder: 0,
+      fromActivityId: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      toActivityId: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+      mode: 'WALKING',
       locked: false,
+      distanceMeters: 2000,
+      durationSeconds: 1500,
+      provider: 'DEMO',
+      estimated: true,
+      estimatedCost: 0,
+      providerRouteId: null,
+      calculatedAt: '2026-07-27T00:00:00Z',
+      stale: false,
+      polyline: [],
     }],
-    transitLegs: [],
   }],
   knowledge: { status: 'UNAVAILABLE', query: 'Guangzhou', citations: [], freshness: { status: 'UNAVAILABLE', checkedAt: null, staleReason: 'Controlled demo' }, message: 'Controlled demo' },
   createdAt: '2026-07-27T00:10:00Z',
 }
 
-function progressEvent(eventId: number, sequence: number, stage: string, progress: number, message: string) {
-  return `id: ${eventId}\ndata: ${JSON.stringify({ eventId, eventType: 'PLANNING_PROGRESS', payload: { stage, sequence, progress, message, statistics: {} }, createdAt: '2026-07-27T00:00:00Z' })}\n\n`
-}
-
-const v2VerifiedReport = {
-  schemaVersion: 1,
-  reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
-  validatorVersion: 'hard-validator-v4',
-  itineraryFingerprint: 'a'.repeat(64),
-  status: 'VERIFIED',
-  validatedAt: '2026-07-27T00:00:02Z',
-  requiredRuleIds: ['OPENING_HOURS'],
-  missingRequiredRuleIds: [],
-  summary: { totalCount: 1, passCount: 1, failCount: 0, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
-  ruleResults: [{
-    ruleId: 'OPENING_HOURS',
-    ruleVersion: 'hard-rule-v1',
-    outcome: 'PASS',
-    reasonCode: 'OPENING_HOURS_VERIFIED',
-    message: 'Opening hours verified',
-    affectedDates: ['2026-08-01'],
-    affectedEntityRefs: [],
-    evidenceRefs: [],
-    repairable: false,
-  }],
-  repairAttempts: [],
-}
-
-const v2Evaluation = {
-  schemaVersion: 1,
-  evaluatorVersion: 'rule-v1',
-  feasible: true,
-  overallScore: 91,
-  dimensions: {
-    constraintSatisfaction: 100,
-    timeFeasibility: 90,
-    budgetFit: 88,
-    routeEfficiency: 85,
-    interestMatch: 80,
-  },
-  warnings: [],
-  decisions: [],
-  summary: 'Trip quality 91/100.',
-  evaluatedAt: '2026-07-27T00:00:02Z',
-}
-
-function completedEvent(eventId: number) {
-  return `id: ${eventId}\ndata: ${JSON.stringify({
-    eventId,
-    eventType: 'PLANNING_COMPLETED',
-    payload: { status: 'SUCCEEDED', provider: 'DEMO', feasibilityReport: v2VerifiedReport, evaluation: v2Evaluation },
-    createdAt: '2026-07-27T00:00:02Z',
-  })}\n\n`
-}
-
-async function mockPlanningApi(page: Page) {
-  let streamAttempts = 0
-  let completed = false
+async function mockApi(page: Page, trip: unknown, itineraryBody: unknown) {
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    const method = request.method()
     if (path === '/api/auth/refresh') return route.fulfill({ json: session })
-    if (path === '/api/trips' && request.method() === 'GET') return route.fulfill({ json: [trip] })
+    if (path === '/api/trips' && method === 'GET') return route.fulfill({ json: [trip] })
     if (path === `/api/trips/${tripId}`) return route.fulfill({ json: trip })
-    if (path === `/api/trips/${tripId}/guide-imports` || path === `/api/trips/${tripId}/itinerary/shares`) return route.fulfill({ json: [] })
-    if (path === `/api/trips/${tripId}/itinerary/versions`) return route.fulfill({ json: completed ? [{ id: versionId, versionNumber: 1, title: plannedItinerary.title, createdAt: plannedItinerary.createdAt }] : [] })
+    if (path === `/api/trips/${tripId}/guide-imports` || path === `/api/trips/${tripId}/itinerary/shares`) {
+      return route.fulfill({ json: [] })
+    }
+    if (path === `/api/trips/${tripId}/itinerary/versions`) return route.fulfill({ json: [] })
     if (path === `/api/trips/${tripId}/itinerary`) {
-      return completed
-        ? route.fulfill({ json: plannedItinerary })
-        : route.fulfill({ status: 404, json: { code: 'ITINERARY_NOT_FOUND', message: 'Not planned' } })
+      return typeof itineraryBody === 'function'
+        ? route.fulfill({ json: itineraryBody() })
+        : route.fulfill(itineraryBody as {})
     }
-    if (path === `/api/trips/${tripId}/planning-tasks` && request.method() === 'POST') {
-      return route.fulfill({ status: 202, json: { taskId, tripId, taskType: 'CREATE', status: 'QUEUED', baselineTripVersion: 0, eventStreamUrl: `/api/planning-tasks/${taskId}/events`, createdAt: '2026-07-27T00:00:00Z', updatedAt: '2026-07-27T00:00:00Z' } })
+    if (path === `/api/trips/${tripId}/planning-tasks/latest`) {
+      return route.fulfill({ status: 404, json: { code: 'PLANNING_TASK_NOT_FOUND', message: 'none' } })
     }
-    if (path === `/api/planning-tasks/${taskId}/events`) {
-      streamAttempts += 1
-      if (streamAttempts === 1) return route.abort('connectionreset')
-      completed = true
-      return route.fulfill({
-        contentType: 'text/event-stream',
-        body: progressEvent(2, 2, 'ROUTES_CALCULATING', 60, 'Routes calculated')
-          + progressEvent(3, 2, 'ROUTES_CALCULATING', 60, 'Routes calculated')
-          + progressEvent(4, 3, 'RESULT_PERSISTING', 95, 'Persisted final itinerary')
-          + completedEvent(5),
-      })
+    if (path === `/api/trips/${tripId}/planning-tasks` && method === 'POST') {
+      return route.fulfill({ status: 202, json: { taskId: 'task-1', tripId, taskType: 'CREATE', status: 'QUEUED', baselineTripVersion: 0, eventStreamUrl: '', createdAt: '2026-07-27T00:00:00Z', updatedAt: '2026-07-27T00:00:00Z' } })
     }
-    return route.fulfill({ status: 501, json: { code: 'UNMOCKED_V2_REQUEST', message: `${request.method()} ${path}` } })
+    if (path === `/api/trips/${tripId}/agent-dialogue/events`) {
+      return route.fulfill({ contentType: 'text/event-stream', body: '' })
+    }
+    if (path === `/api/trips/${tripId}/agent-dialogue/runs` && method === 'POST') {
+      return route.fulfill({ status: 202, json: { eventId: 'evt', status: 'QUEUED' } })
+    }
+    return route.fulfill({ status: 501, json: { code: 'UNMOCKED_V2_REQUEST', message: `${method} ${path}` } })
   })
-  return () => streamAttempts
 }
 
-test('recovers the planning stream and ignores a duplicate stage before showing one final itinerary', async ({ page }) => {
-  const streamAttempts = await mockPlanningApi(page)
-  await page.goto('/trips')
-  await page.getByRole('button', { name: '打开 Controlled planning trip' }).click()
-  await page.getByTestId('start-planning').click()
+test('stays in the planning view for a planning trip (no fake success)', async ({ page }) => {
+  await mockApi(page, planningTrip, {
+    status: 404,
+    json: { code: 'ITINERARY_NOT_FOUND', message: 'Not planned' },
+  })
+  await page.goto(`/workspace/trips/${tripId}`)
 
-  // The stream sends a duplicate ROUTES_CALCULATING stage, then a terminal
-  // RESULT_PERSISTING / completed pair.  RESULT_PERSISTING is transient and
-  // may be observed only momentarily, so the test asserts the durable
-  // outcome rather than a fleeting progress label: reconnect happened, the
-  // duplicate stage caused no repeated itinerary, and one final itinerary is
-  // rendered.
-  await expect(page.getByRole('heading', { name: 'River walk', level: 3 })).toBeVisible()
-  await expect(page.getByText('Controlled final itinerary')).toBeVisible()
-  await expect.poll(streamAttempts).toBe(2)
+  await expect(page.getByTestId('planning-status-line')).toContainText('TripPilot 正在规划你的旅行')
+  await expect(page.getByTestId('agent-dialog')).toBeVisible()
+  // 完成态标记绝不出现
+  await expect(page.getByTestId('agent-message-done')).toHaveCount(0)
+  await expect(page.getByText('行程已完成，但方案数据当前不可用')).toHaveCount(0)
+})
+
+test('renders a completed itinerary with day routes and a transit leg', async ({ page }) => {
+  await mockApi(page, completedTrip, { json: plannedItinerary })
+  await page.goto(`/workspace/trips/${tripId}`)
+
+  await expect(page.getByTestId('plan-overview-title')).toHaveText(completedTrip.title)
+  await expect(page.getByTestId('agent-message-done')).toContainText('旅行方案已经完成')
+  await expect(page.getByTestId('trip-route-map')).toBeVisible()
+  await expect(page.getByTestId('plan-day-chip-2026-08-01')).toBeVisible()
+  await expect(page.getByTestId('plan-activity-River walk')).toBeVisible()
+  await expect(page.getByTestId('plan-activity-Canton Tower')).toBeVisible()
+  await expect(page.getByTestId('plan-transit-Canton Tower')).toContainText('步行')
+})
+
+test('fails closed when a completed trip has no itinerary data (no 0-day fake success)', async ({ page }) => {
+  const emptyItinerary = { ...plannedItinerary, days: [] }
+  await mockApi(page, emptyItineraryTrip, { json: emptyItinerary })
+  await page.goto(`/workspace/trips/${tripId}`)
+
+  await expect(page.getByTestId('workspace-itinerary-empty')).toBeVisible()
+  await expect(page.getByText('行程已完成，但方案数据当前不可用。')).toBeVisible()
+  // 绝不渲染「已完成 0 天」的假成功条
+  await expect(page.getByTestId('agent-message-done')).toHaveCount(0)
 })
 
 test('renders a redacted immutable share on a narrow mobile viewport', async ({ page }) => {

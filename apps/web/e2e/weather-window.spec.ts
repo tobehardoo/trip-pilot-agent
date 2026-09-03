@@ -1,12 +1,8 @@
+// Weather window — completed 视图天气条（weather-banner，来自城市情报 WEATHER facts）。
+// 同步入口为「攻略情报」面板的「同步城市情报」按钮（POST /guide-imports CITY_INTELLIGENCE）。
 import { expect, test, type Page } from '@playwright/test'
 
-// B13-I: the public weather window is mounted above planning/review content
-// and survives every planning state — it is not bound to the formal
-// itinerary.  Verified at 1440×900 so the weather bar and the candidate
-// schedule are visible before any validation details.
-
 const tripId = '22222222-2222-2222-2222-222222222222'
-const taskId = '33333333-3333-4333-8333-333333333333'
 
 const session = {
   user: { id: '11111111-1111-1111-1111-111111111111', email: 'traveler@example.com', displayName: '旅行者' },
@@ -17,11 +13,11 @@ const session = {
 
 const trip = {
   id: tripId,
-  title: '广州周末四日',
+  title: '广州周末二日',
   destination: '广州',
   startDate: '2026-08-01',
-  endDate: '2026-08-04',
-  status: 'DRAFT',
+  endDate: '2026-08-02',
+  status: 'COMPLETED',
   version: 2,
   constraints: {
     budgetAmount: 4000,
@@ -41,68 +37,109 @@ const trip = {
   },
   createdAt: '2026-07-26T01:00:00Z',
   updatedAt: '2026-07-26T02:00:00Z',
+  archivedAt: null,
 }
 
-const candidateItinerary = {
-  title: '候选行程',
-  days: [{
-    date: '2026-08-02',
-    dayType: null,
-    activities: [{
-      activityId: '66666666-6666-6666-6666-666666666666',
-      title: '候选活动',
-      startTime: '2026-08-02T02:00:00Z',
-      endTime: '2026-08-02T04:00:00Z',
-      estimatedCost: 0,
-      source: 'DEMO',
-      providerPoiId: null,
-      coordinates: null,
-      address: null,
-      typeCode: null,
-      typeName: null,
-      kind: null,
-      timeFixed: null,
+const itinerary = {
+  versionId: '55555555-5555-5555-5555-555555555555',
+  versionNumber: 2,
+  parentVersionId: null,
+  title: '广州 Demo 行程',
+  estimatedTotalCost: 160,
+  provider: 'DEMO',
+  days: [
+    {
+      date: '2026-08-01',
+      dayType: null,
+      activities: [{
+        id: '66666666-6666-6666-6666-666666666666',
+        title: '漫步沙面岛',
+        startTime: '2026-08-01T01:00:00Z',
+        endTime: '2026-08-01T03:00:00Z',
+        estimatedCost: 0,
+        source: 'DEMO',
+        providerPoiId: null,
+        coordinates: { longitude: 113.2392, latitude: 23.1097 },
+        address: '广州市荔湾区沙面岛',
+        locked: false,
+        typeCode: null,
+        typeName: '景点',
+        kind: 'ATTRACTION',
+        timeFixed: null,
+      }],
+      transitLegs: [],
+    },
+    {
+      date: '2026-08-02',
+      dayType: null,
+      activities: [{
+        id: '99999999-9999-4999-8999-999999999999',
+        title: '陈家祠',
+        startTime: '2026-08-02T02:00:00Z',
+        endTime: '2026-08-02T04:00:00Z',
+        estimatedCost: 20,
+        source: 'DEMO',
+        providerPoiId: null,
+        coordinates: { longitude: 113.2489, latitude: 23.1189 },
+        address: '广州市荔湾区陈家祠',
+        locked: false,
+        typeCode: null,
+        typeName: '古迹',
+        kind: 'ATTRACTION',
+        timeFixed: null,
+      }],
+      transitLegs: [],
+    },
+  ],
+  knowledge: {
+    status: 'UNAVAILABLE',
+    query: '广州',
+    citations: [],
+    freshness: { status: 'UNAVAILABLE', checkedAt: null, staleReason: 'Demo' },
+    message: 'Demo',
+  },
+  createdAt: '2026-07-26T02:00:00Z',
+}
+
+function weatherImport(id: string, effectiveDate: string, statement: string) {
+  return {
+    id,
+    sourceType: 'CITY_INTELLIGENCE',
+    sourceUrl: 'https://dev.qweather.com/',
+    finalUrl: 'https://dev.qweather.com/',
+    sourceHost: 'QWeather',
+    title: '广州城市天气情报',
+    excerpt: statement,
+    contentHash: `hash-${id}`,
+    fetchedAt: '2026-08-01T00:00:00Z',
+    enabled: true,
+    facts: [{
+      id: `fact-${id}`,
+      category: 'WEATHER',
+      statement,
+      evidence: 'Controlled weather response',
+      confidence: 0.9,
+      observedAt: '2026-08-01T00:00:00Z',
+      expiresAt: '2026-08-03T00:00:00Z',
+      effectiveDate,
     }],
-    transitLegs: [],
-  }],
-  estimatedTotalCost: 100,
+    quality: null,
+  }
 }
 
-const needsRepairReport = {
-  schemaVersion: 1,
-  reportId: 'c9c467cc-65c4-8ff1-e175-4af42f2ed545',
-  validatorVersion: 'hard-validator-v4',
-  itineraryFingerprint: 'b'.repeat(64),
-  status: 'NEEDS_REPAIR',
-  validatedAt: '2026-08-02T00:00:00Z',
-  requiredRuleIds: ['MEAL_WINDOW'],
-  missingRequiredRuleIds: [],
-  summary: { totalCount: 1, passCount: 0, failCount: 1, unknownCount: 0, notApplicableCount: 0, missingRequiredCount: 0 },
-  ruleResults: [{
-    ruleId: 'MEAL_WINDOW',
-    ruleVersion: 'hard-rule-v1',
-    outcome: 'FAIL',
-    reasonCode: 'MEAL_PLACEMENT_MISSING',
-    message: '午餐窗口缺少安排',
-    affectedDates: ['2026-08-02'],
-    affectedEntityRefs: [],
-    evidenceRefs: [],
-    repairable: true,
-  }],
-  repairAttempts: [],
-}
-
-async function mockWeatherApi(page: Page) {
+async function mockWeatherApi(page: Page, initialImports: unknown[]) {
+  const createdImports = new Map<string, unknown>()
   const syncBodies: unknown[] = []
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    const method = request.method()
 
     if (path === '/api/auth/refresh') {
       await route.fulfill({ json: session })
       return
     }
-    if (path === '/api/trips' && request.method() === 'GET') {
+    if (path === '/api/trips' && method === 'GET') {
       await route.fulfill({ json: [trip] })
       return
     }
@@ -111,7 +148,7 @@ async function mockWeatherApi(page: Page) {
       return
     }
     if (path === `/api/trips/${tripId}/itinerary`) {
-      await route.fulfill({ status: 404, json: { code: 'ITINERARY_NOT_FOUND', message: '尚未生成行程' } })
+      await route.fulfill({ json: itinerary })
       return
     }
     if (path === `/api/trips/${tripId}/itinerary/versions`) {
@@ -122,227 +159,83 @@ async function mockWeatherApi(page: Page) {
       await route.fulfill({ json: [] })
       return
     }
-    if (path === `/api/trips/${tripId}/guide-imports` && request.method() === 'GET') {
-      await route.fulfill({ json: [] })
+    if (path === `/api/trips/${tripId}/guide-imports` && method === 'GET') {
+      await route.fulfill({ json: [...createdImports.values(), ...initialImports] })
       return
     }
-    if (path === `/api/trips/${tripId}/planning-tasks/latest`) {
-      await route.fulfill({
-        json: {
-          taskId,
-          tripId,
-          taskType: 'CREATE',
-          status: 'WAITING_USER',
-          baselineTripVersion: 0,
-          eventStreamUrl: `/api/planning-tasks/${taskId}/events`,
-          feasibilityReport: needsRepairReport,
-          candidateItinerary,
-          createdAt: '2026-08-02T00:00:00Z',
-          updatedAt: '2026-08-02T00:01:00Z',
-        },
-      })
+    if (path === `/api/trips/${tripId}/guide-imports` && method === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>
+      syncBodies.push(body)
+      const created = weatherImport(
+        `created-${syncBodies.length}`,
+        String(body.startDate).slice(0, 10),
+        `${trip.destination}天气预报：白天晴 33℃，夜间多云 26℃，东风3级。`,
+      )
+      createdImports.set(created.id, created)
+      await route.fulfill({ status: 201, json: created })
       return
     }
-    if (path === `/api/trips/${tripId}/guide-imports` && request.method() === 'POST') {
-      syncBodies.push(request.postDataJSON())
-      await route.fulfill({ status: 201, json: { id: 'import-1', sourceType: 'CITY_INTELLIGENCE' } })
+    if (path === `/api/trips/${tripId}/agent-dialogue/events`) {
+      await route.fulfill({ contentType: 'text/event-stream', body: '' })
       return
     }
-    await route.fulfill({
-      status: 501,
-      json: { code: 'UNMOCKED_WEATHER_WINDOW_REQUEST', message: `${request.method()} ${path}` },
-    })
+    if (path === `/api/trips/${tripId}/agent-dialogue/runs` && method === 'POST') {
+      await route.fulfill({ status: 202, json: { eventId: 'evt', status: 'QUEUED' } })
+      return
+    }
+
+    await route.fulfill({ status: 501, json: { code: 'UNMOCKED_WEATHER_REQUEST', message: `${method} ${path}` } })
   })
   return syncBodies
 }
 
-test.use({ viewport: { width: 1440, height: 900 } })
+test('renders a weather banner from city-intelligence facts and focuses a single day', async ({ page }) => {
+  await mockWeatherApi(page, [
+    weatherImport('imp-1', '2026-08-01', '2026-08-01 广州天气预报：白天晴 32℃，夜间多云。'),
+    weatherImport('imp-2', '2026-08-02', '2026-08-02 广州天气预报：白天有雨 28℃。'),
+  ])
+  await page.goto(`/workspace/trips/${tripId}`)
 
-test('1440×900: waiting_user without a formal itinerary shows weather and candidate above validation details', async ({ page }) => {
-  await mockWeatherApi(page)
-  await page.goto(`/trips/${tripId}`)
+  const banner = page.getByTestId('weather-banner')
+  await expect(banner).toBeVisible()
+  // 未聚焦：头标「行程天气」
+  await expect(banner).toContainText('行程天气')
+  await expect(banner).toContainText('2026/08/01')
+  await expect(banner).toContainText('2026/08/02')
+  await expect(banner).toContainText('白天晴')
 
-  await expect(page.getByRole('heading', { name: trip.title, level: 1 })).toBeVisible()
-
-  const weather = page.getByRole('region', { name: '行程天气' })
-  await expect(weather).toBeVisible()
-  // No weather facts are synced → the public sync action is offered.
-  await expect(weather.getByRole('button', { name: '同步天气' })).toBeVisible()
-
-  const review = page.locator('#planning-review-section')
-  await expect(review).toBeVisible()
-  await expect(review.getByRole('heading', { name: '方案需要调整' })).toBeVisible()
-  await expect(review.getByText('预览方案')).toBeVisible()
-  await expect(review.getByText('候选活动')).toBeVisible()
-
-  // B15: the preview plan and its Chinese issue summary lead the panel; no
-  // technical details toggle exists on the user page.  In a 900px viewport
-  // the status heading must be visible WITHOUT scrolling: the page is pinned
-  // at scrollY=0 and the heading's box must already fit the first viewport.
-  await page.evaluate(() => window.scrollTo(0, 0))
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
-  const statusBox = await review.getByRole('heading', { name: '方案需要调整' }).boundingBox()
-  expect(statusBox!.y).toBeGreaterThanOrEqual(0)
-  expect(statusBox!.y + statusBox!.height).toBeLessThanOrEqual(900)
-  await expect(review.getByText('需要调整（1）')).toBeVisible()
-  await expect(review.getByText('该项安排需要调整').first()).toBeVisible()
-  await expect(review.getByText('MEAL_PLACEMENT_MISSING', { exact: true })).toHaveCount(0)
-  await expect(review.getByText('hard-validator-v4', { exact: true })).toHaveCount(0)
-  await expect(review.getByTestId('validation-details-toggle')).toHaveCount(0)
-
-  // Weather window sits above the review section in the layout.
-  const weatherBox = await weather.boundingBox()
-  const reviewBox = await review.boundingBox()
-  expect(weatherBox!.y + weatherBox!.height).toBeLessThanOrEqual(reviewBox!.y + 1)
-
-  // Without any schedule, clicking a weather date only selects it (no error).
-  const dayButton = weather.getByRole('button', { name: '选择 2026-08-02 天气' })
-  await dayButton.click()
-  await expect(dayButton).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.getByText('尚未生成行程')).toBeVisible()
+  // 点选某天聚焦：Banner 头标切换为具体日期，只保留当天
+  const dayChip = page.getByTestId('plan-day-chip-2026-08-02')
+  await dayChip.click()
+  await expect(dayChip).toHaveAttribute('aria-pressed', 'true')
+  await expect(banner).toContainText('2026/08/02')
+  await expect(banner.getByText('行程天气')).toHaveCount(0)
+  await expect(banner.getByText('2026/08/01')).toHaveCount(0)
 })
 
-test('P1-7: with a formal itinerary present, weather clicks still target the WAITING_USER candidate day', async ({ page }) => {
-  const formalItinerary = {
-    versionId: 'aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-    versionNumber: 1,
-    parentVersionId: null,
-    title: '正式行程',
-    estimatedTotalCost: 88,
-    provider: 'DEMO',
-    days: [{
-      date: '2026-08-02',
-      activities: [{
-        id: 'ffff6666-ffff-ffff-ffff-ffffffffffff',
-        title: '旧正式版本活动',
-        startTime: '2026-08-02T01:00:00Z',
-        endTime: '2026-08-02T02:00:00Z',
-        estimatedCost: 0,
-        source: 'DEMO',
-        providerPoiId: null,
-        coordinates: null,
-        address: null,
-        locked: false,
-      }],
-      transitLegs: [],
-    }],
-    knowledge: {
-      status: 'UNAVAILABLE',
-      query: '广州',
-      citations: [],
-      freshness: { status: 'UNAVAILABLE' },
-      message: 'no knowledge',
-    },
-  }
+test('syncs weather through the city-intelligence sync button in the guide panel', async ({ page }) => {
+  const syncBodies = await mockWeatherApi(page, [])
+  await page.goto(`/workspace/trips/${tripId}`)
 
-  await page.route('**/api/**', async (route) => {
-    const request = route.request()
-    const path = new URL(request.url()).pathname
-    if (path === '/api/auth/refresh') {
-      await route.fulfill({ json: session })
-      return
-    }
-    if (path === '/api/trips' && request.method() === 'GET') {
-      await route.fulfill({ json: [trip] })
-      return
-    }
-    if (path === `/api/trips/${tripId}`) {
-      await route.fulfill({ json: trip })
-      return
-    }
-    if (path === `/api/trips/${tripId}/itinerary`) {
-      await route.fulfill({ json: formalItinerary })
-      return
-    }
-    if (path === `/api/trips/${tripId}/itinerary/versions`) {
-      await route.fulfill({ json: [] })
-      return
-    }
-    if (path === `/api/trips/${tripId}/itinerary/shares`) {
-      await route.fulfill({ json: [] })
-      return
-    }
-    if (path === `/api/trips/${tripId}/guide-imports` && request.method() === 'GET') {
-      await route.fulfill({ json: [] })
-      return
-    }
-    if (path === `/api/trips/${tripId}/planning-tasks/latest`) {
-      await route.fulfill({
-        json: {
-          taskId,
-          tripId,
-          taskType: 'CREATE',
-          status: 'WAITING_USER',
-          baselineTripVersion: 0,
-          eventStreamUrl: `/api/planning-tasks/${taskId}/events`,
-          feasibilityReport: needsRepairReport,
-          candidateItinerary,
-          createdAt: '2026-08-02T00:00:00Z',
-          updatedAt: '2026-08-02T00:01:00Z',
-        },
-      })
-      return
-    }
-    await route.fulfill({
-      status: 501,
-      json: { code: 'UNMOCKED_P17', message: `${request.method()} ${path}` },
-    })
-  })
+  // 无天气数据时 weather-banner 不渲染
+  await expect(page.getByTestId('weather-banner')).toHaveCount(0)
 
-  await page.goto(`/trips/${tripId}`)
-  const weather = page.getByRole('region', { name: '行程天气' })
-  await expect(weather).toBeVisible()
-  const review = page.locator('#planning-review-section')
-  await expect(review).toBeVisible()
+  // 打开「攻略情报」手风琴 → 同步城市情报
+  await page.getByTestId('more-toggle-guide').click()
+  const guidePanel = page.locator('#guide-intelligence-title')
+  await expect(guidePanel).toBeVisible()
 
-  // With a formal itinerary present the candidate must still fit the first
-  // 1440×900 viewport without scrolling (same gate as the no-formal case).
-  await page.evaluate(() => window.scrollTo(0, 0))
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
-  const candidateBox = await review.getByRole('heading', { name: '方案需要调整' }).boundingBox()
-  expect(candidateBox!.y).toBeGreaterThanOrEqual(0)
-  expect(candidateBox!.y + candidateBox!.height).toBeLessThanOrEqual(900)
-
-  // The weather date click must light up the CANDIDATE day, never the old
-  // formal version's route.
-  const dayButton = weather.getByRole('button', { name: '选择 2026-08-02 天气' })
-  await dayButton.click()
-  const candidateDay = page.locator('#candidate-day-2026-08-02')
-  await expect(candidateDay).toHaveClass(/border-primary-400/)
-  await expect(page.locator('#day-2026-08-02')).toBeVisible()
-  // The formal itinerary heading still exists and is untouched.
-  await expect(page.getByRole('heading', { name: '正式行程' })).toBeVisible()
-
-  // B13_FIX.1 R5: the formal activity must NOT carry the selected styles and
-  // the map must NOT receive the old formal selection.
-  const formalActivity = page.locator('#activity-ffff6666-ffff-ffff-ffff-ffffffffffff')
-  await expect(formalActivity).not.toHaveClass(/z-10/)
-  await expect(formalActivity).not.toHaveClass(/ring-primary-400/)
-  // Fallback map markers (no AMap key) must not show any selected pin.
-  await expect(page.locator('.amap-marker-pin.is-selected')).toHaveCount(0)
-  await expect(page.locator('.overview-marker.is-selected')).toHaveCount(0)
-
-  // "查看全部行程" clears both the candidate and the formal selection state.
-  const showAll = page.getByRole('button', { name: '查看全部行程' })
-  await expect(showAll).toBeVisible()
-  await showAll.click()
-  await expect(candidateDay).not.toHaveClass(/border-primary-400/)
-  await expect(dayButton).toHaveAttribute('aria-pressed', 'false')
-})
-
-test('sync weather reuses the city-intelligence sync chain', async ({ page }) => {
-  const syncBodies = await mockWeatherApi(page)
-  await page.goto(`/trips/${tripId}`)
-
-  const weather = page.getByRole('region', { name: '行程天气' })
-  await expect(weather).toBeVisible()
-  await weather.getByRole('button', { name: '同步天气' }).click()
+  await page.getByRole('button', { name: '同步城市情报' }).click()
 
   await expect.poll(() => syncBodies.length).toBe(1)
   expect(syncBodies[0]).toEqual({
     sourceType: 'CITY_INTELLIGENCE',
     city: '广州',
     startDate: '2026-08-01',
-    endDate: '2026-08-04',
+    endDate: '2026-08-02',
   })
+
+  // 同步结果注入 guideImports → 天气条出现
+  await expect(page.getByTestId('weather-banner')).toBeVisible()
+  await expect(page.getByTestId('weather-banner')).toContainText('白天晴 33℃')
 })

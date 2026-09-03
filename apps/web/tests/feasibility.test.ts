@@ -5,8 +5,11 @@ import {
   readCandidateItinerary,
   readFeasibilityReport,
   readPlanEvaluation,
+  readPlanningDecisions,
   readPlanningEventOutcome,
   readPlanningTaskOutcome,
+  decisionReasonLabel,
+  decisionSubjectLabel,
   type FeasibilityReport,
   type VersionFeasibilityMetadata,
 } from '../src/lib/feasibility'
@@ -1015,5 +1018,96 @@ describe('readPlanningEventOutcome', () => {
       payload: { status: 'CANCELLED' },
     })
     expect(outcome.kind).toBe('cancelled')
+  })
+})
+
+// ── ③ 决策解释上屏：readPlanningDecisions / 展示标签 ───────────────────────
+
+describe('readPlanningDecisions', () => {
+  const validDecision = {
+    subjectType: 'DAY',
+    subjectId: null,
+    summary: '第一天就近安排景点以缩短跨区交通',
+    reasonCodes: ['NEARBY_CLUSTER', 'TIME_OPTIMIZATION'],
+    reasons: ['把相邻景点排在同一天', '减少跨区往返时间'],
+    dayIndex: 0,
+  }
+
+  test('reads a valid decisions list', () => {
+    const result = readPlanningDecisions([validDecision])
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value).toHaveLength(1)
+      expect(result.value[0]!.reasonCodes).toHaveLength(2)
+      expect(result.value[0]!.dayIndex).toBe(0)
+    }
+  })
+
+  test('missing or empty input is an empty list (never fabricated)', () => {
+    expect(readPlanningDecisions(undefined).ok).toBe(true)
+    const empty = readPlanningDecisions(undefined)
+    if (empty.ok) expect(empty.value).toEqual([])
+    const absent = readPlanningDecisions(null)
+    if (absent.ok) expect(absent.value).toEqual([])
+    const present = readPlanningDecisions([])
+    if (present.ok) expect(present.value).toEqual([])
+  })
+
+  test('rejects a non-array input', () => {
+    expect(readPlanningDecisions('nope').ok).toBe(false)
+    expect(readPlanningDecisions({ not: 'array' }).ok).toBe(false)
+  })
+
+  test('rejects a decision missing summary', () => {
+    const { summary: _summary, ...rest } = validDecision
+    expect(readPlanningDecisions([rest]).ok).toBe(false)
+  })
+
+  test('rejects a decision with non-string reasonCodes', () => {
+    expect(readPlanningDecisions([{
+      ...validDecision,
+      reasonCodes: 'NEARBY_CLUSTER',
+    }]).ok).toBe(false)
+  })
+
+  test('rejects a decision with an unknown subjectType', () => {
+    expect(readPlanningDecisions([{
+      ...validDecision,
+      subjectType: 'MAGIC',
+    }]).ok).toBe(false)
+  })
+
+  test('carries optional evidence and subjectId', () => {
+    const result = readPlanningDecisions([{
+      ...validDecision,
+      subjectId: '11111111-1111-4111-8111-111111111111',
+      evidence: [{ key: 'distance', label: '距离', value: '1.2km' }],
+    }])
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value[0]!.subjectId).toBe('11111111-1111-4111-8111-111111111111')
+      expect(result.value[0]!.evidence).toHaveLength(1)
+    }
+  })
+})
+
+describe('decision display labels', () => {
+  test('maps every known reasonCode to a Chinese label', () => {
+    expect(decisionReasonLabel('NEARBY_CLUSTER')).toBe('就近聚类')
+    expect(decisionReasonLabel('BUDGET_CONSTRAINT')).toBe('预算约束')
+    expect(decisionReasonLabel('MUST_VISIT')).toBe('必去地点')
+  })
+
+  test('falls back to the raw code for unknown reasonCode', () => {
+    expect(decisionReasonLabel('SOME_NEW_CODE')).toBe('SOME_NEW_CODE')
+  })
+
+  test('maps subject type + dayIndex to a readable origin', () => {
+    expect(decisionSubjectLabel('PLAN', null)).toBe('整段行程')
+    expect(decisionSubjectLabel('DAY', 0)).toBe('第 1 天')
+    expect(decisionSubjectLabel('DAY', null)).toBe('当天')
+    expect(decisionSubjectLabel('ACTIVITY', 2)).toBe('活动')
+    expect(decisionSubjectLabel('TRANSIT', null)).toBe('交通')
+    expect(decisionSubjectLabel('UNKNOWN', null)).toBe('行程')
   })
 })

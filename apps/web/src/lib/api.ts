@@ -553,6 +553,9 @@ export interface Itinerary {
   rollbackFromVersionId?: string | null
   accommodationStatus?: 'CONFIRMED' | 'AREA_ESTIMATED' | 'UNRESOLVED' | null
   accommodationLabel?: string | null
+  /** ③ 决策解释上屏：该版本规划引擎的决策说明（evaluation.decisions 只读透出）。
+   *  用户手工编辑/回滚版本无此字段；展示时缺失即不展示，绝不伪造。 */
+  planningDecisions?: DecisionExplanation[]
   createdAt: string
 }
 

@@ -37,6 +37,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     private final io.github.tobehardoo.trippilot.itinerary.ItineraryFeasibilityReportMapper
             feasibilityReportMapper;
     private final io.github.tobehardoo.trippilot.itinerary.FeasibilityEntityRefMapper entityRefMapper;
+    private final io.github.tobehardoo.trippilot.itinerary.ItineraryPlanningDecisionMapper
+            planningDecisionMapper;
     private final PlanningOutcomeGuard guard;
     private final ObjectMapper objectMapper;
     private final Clock clock;
@@ -52,6 +54,8 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                                              feasibilityReportMapper,
                                      io.github.tobehardoo.trippilot.itinerary.FeasibilityEntityRefMapper
                                              entityRefMapper,
+                                     io.github.tobehardoo.trippilot.itinerary.ItineraryPlanningDecisionMapper
+                                             planningDecisionMapper,
                                      PlanningOutcomeGuard guard,
                                      ObjectMapper objectMapper,
                                      Clock clock,
@@ -64,6 +68,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         this.factImpactMapper = factImpactMapper;
         this.feasibilityReportMapper = feasibilityReportMapper;
         this.entityRefMapper = entityRefMapper;
+        this.planningDecisionMapper = planningDecisionMapper;
         this.guard = guard;
         this.objectMapper = objectMapper;
         this.clock = clock;
@@ -154,6 +159,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                             candidateRouteIntents(task.id()));
             persistFactImpacts(event, result.versionId());
             String reportJson = persistFeasibilityReport(event, result);
+            persistPlanningDecisions(event, result);
             log.info("candidate queued: version persisted versionId={} versionNumber={}",
                     result.versionId(), result.versionNumber());
             updateTaskToSucceeded(
@@ -173,6 +179,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                     itineraryService.createReplanVersion(
                             task.tripId(), event, task, clock);
             String reportJson = persistFeasibilityReport(event, result);
+            persistPlanningDecisions(event, result);
             log.info("version persisted: replan versionId={} versionNumber={}",
                     result.versionId(), result.versionNumber());
             updateTaskToSucceeded(
@@ -186,6 +193,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         task.constraintSnapshotJson(), clock);
         persistFactImpacts(event, result.versionId());
         String reportJson = persistFeasibilityReport(event, result);
+        persistPlanningDecisions(event, result);
         log.info("version persisted: initial versionId={} versionNumber={}",
                 result.versionId(), result.versionNumber());
         updateTaskToSucceeded(
@@ -273,6 +281,51 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
         return reportJson;
     }
 
+    /**
+     * Persists the remapped planning-decision explanations (③ 决策解释上屏) for
+     * the newly created itinerary version.  Empty decisions are deliberately not
+     * stored — the read model then surfaces an absent explanation for that
+     * version (no fabricated "why").  The same remapped decisions also ride the
+     * persisted PLANNING_COMPLETED task event (via {@code completionPayload}).
+     */
+    private void persistPlanningDecisions(
+            PlanningCompletedEvent event,
+            ItineraryService.CreateItineraryResult result
+    ) {
+        List<PlanningCompletedEvent.DecisionExplanation> decisions =
+                remappedDecisions(event.payload().evaluation(), result);
+        if (decisions.isEmpty()) {
+            return;
+        }
+        requireOne(planningDecisionMapper.insert(
+                result.versionId(), writeJson(decisions)
+        ), "itinerary planning decisions");
+    }
+
+    /**
+     * Remaps the evaluation's decision subject ids (activity/transit) from the
+     * temporary wire ids to the persisted node ids, so the stored and returned
+     * explanations refer to the authoritative itinerary identities.
+     */
+    private List<PlanningCompletedEvent.DecisionExplanation> remappedDecisions(
+            PlanningCompletedEvent.PlanEvaluation evaluation,
+            ItineraryService.CreateItineraryResult result
+    ) {
+        if (evaluation == null) {
+            return List.of();
+        }
+        return evaluation.decisions().stream()
+                .map(decision -> new PlanningCompletedEvent.DecisionExplanation(
+                        decision.subjectType(),
+                        remapEvaluationEntity(
+                                decision.subjectType(), decision.subjectId(),
+                                result.persistedActivities(), result.persistedTransit()),
+                        decision.summary(), decision.reasonCodes(), decision.reasons(),
+                        decision.constraintRefs(), decision.evidence(), decision.dayIndex()
+                ))
+                .toList();
+    }
+
     private CompletionPayload completionPayload(
             PlanningCompletedEvent event,
             ItineraryService.CreateItineraryResult result,
@@ -331,16 +384,9 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
                         warning.metricKey(), warning.actualValue(), warning.threshold()
                 ))
                 .toList();
-        List<PlanningCompletedEvent.DecisionExplanation> decisions = evaluation.decisions().stream()
-                .map(decision -> new PlanningCompletedEvent.DecisionExplanation(
-                        decision.subjectType(),
-                        remapEvaluationEntity(
-                                decision.subjectType(), decision.subjectId(),
-                                persistedActivities, persistedTransit),
-                        decision.summary(), decision.reasonCodes(), decision.reasons(),
-                        decision.constraintRefs(), decision.evidence(), decision.dayIndex()
-                ))
-                .toList();
+        List<PlanningCompletedEvent.DecisionExplanation> decisions = remappedDecisions(
+                evaluation, new ItineraryService.CreateItineraryResult(
+                        null, 0, null, persistedActivities, persistedTransit));
         return new PlanningCompletedEvent.PlanEvaluation(
                 evaluation.schemaVersion(), evaluation.evaluatorVersion(), evaluation.feasible(),
                 evaluation.overallScore(), evaluation.dimensions(), warnings, decisions,

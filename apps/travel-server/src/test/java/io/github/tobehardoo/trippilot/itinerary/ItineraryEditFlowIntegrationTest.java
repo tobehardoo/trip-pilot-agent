@@ -122,6 +122,59 @@ class ItineraryEditFlowIntegrationTest extends PostgresIntegrationTest {
     }
 
     @Test
+    void surfacesPlanningDecisionExplanationsOnTheCurrentItinerary() throws Exception {
+        // ③ 决策解释上屏：完成事件 evaluation.decisions 持久化后经读模型透出，
+        // GET /api/trips/:id/itinerary 的 planningDecisions 携带该规划说明。
+        String accessToken = registerAndGetAccessToken("edit-decisions@example.com");
+        UUID tripId = createTrip(accessToken);
+        MvcResult taskResult = mockMvc.perform(post("/api/trips/{tripId}/planning-tasks", tripId)
+                        .header("Authorization", bearer(accessToken))
+                        .header("Idempotency-Key", nextIdempotencyKey()))
+                .andExpect(status().isAccepted())
+                .andReturn();
+        UUID taskId = uuid(json(taskResult), "taskId");
+        UUID traceId = jdbcTemplate.queryForObject(
+                "SELECT trace_id FROM business.planning_task WHERE id = ?", UUID.class, taskId
+        );
+        PlanningCompletedEvent event = eventParser.parse(
+                withPlanningDecision(
+                        PlanningCompletedEventFixture.upgradeToV9(
+                                PlanningCompletedEventFixture.completedAmapEventV3(
+                                        UUID.randomUUID(), traceId, taskId, tripId
+                                )
+                        )
+                )
+        );
+        completionService.handle(event);
+
+        mockMvc.perform(get("/api/trips/{tripId}/itinerary", tripId)
+                        .header("Authorization", bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.planningDecisions").isArray())
+                .andExpect(jsonPath("$.planningDecisions.length()").value(1))
+                .andExpect(jsonPath("$.planningDecisions[0].summary")
+                        .value("第一天就近安排景点以缩短跨区交通"))
+                .andExpect(jsonPath("$.planningDecisions[0].reasonCodes[0]")
+                        .value("NEARBY_CLUSTER"))
+                .andExpect(jsonPath("$.planningDecisions[0].dayIndex").value(0));
+    }
+
+    /** Injects one decision explanation into the completion event's evaluation. */
+    private byte[] withPlanningDecision(String eventJson) throws Exception {
+        ObjectNode event = (ObjectNode) objectMapper.readTree(eventJson);
+        ObjectNode evaluation = (ObjectNode) event.path("payload").path("evaluation");
+        ArrayNode decisions = (ArrayNode) evaluation.putArray("decisions");
+        ObjectNode decision = decisions.addObject();
+        decision.put("subjectType", "DAY");
+        decision.putNull("subjectId");
+        decision.put("summary", "第一天就近安排景点以缩短跨区交通");
+        decision.putArray("reasonCodes").add("NEARBY_CLUSTER");
+        decision.putArray("reasons").add("把相邻景点排在同一天");
+        decision.put("dayIndex", 0);
+        return objectMapper.writeValueAsBytes(event);
+    }
+
+    @Test
     void submitsEditCandidateForValidationWithoutChangingCurrentVersion() throws Exception {
         PlanningContext context = completedItinerary("edit-candidate@example.com");
         JsonNode current = currentItinerary(context);

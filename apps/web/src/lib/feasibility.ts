@@ -1,4 +1,4 @@
-import type { PlanEvaluation } from './api'
+import type { DecisionExplanation, EvaluationEvidence, PlanEvaluation } from './api'
 
 // ── Feasibility report wire types (mirror of the Java FeasibilityReport) ──
 
@@ -664,6 +664,83 @@ export function readPlanEvaluation(input: unknown): ReadResult<PlanEvaluation> {
       summary: input.summary as string,
       evaluatedAt: input.evaluatedAt as string,
     },
+  }
+}
+
+/**
+ * Reads an itinerary version's persisted planning-decision explanations (③ 决策解释上屏)
+ * for read-only display.  A user-edited / rollback version carries no decisions
+ * (field absent / empty) and yields an empty list — the UI must not fabricate a
+ * "why".  Each decision is validated to the same shape {@link readPlanEvaluation}
+ * demands, so a corrupt wire body fails closed instead of rendering garbage.
+ */
+export function readPlanningDecisions(input: unknown): ReadResult<DecisionExplanation[]> {
+  if (input === null || input === undefined || input === '') {
+    return { ok: true, value: [] }
+  }
+  if (!Array.isArray(input)) {
+    return { ok: false, reason: 'planning decisions are not an array' }
+  }
+  const decisions: DecisionExplanation[] = []
+  for (const item of input) {
+    if (!isRecord(item) || typeof item.summary !== 'string'
+      || typeof item.subjectType !== 'string' || !SUBJECT_TYPES.has(item.subjectType)
+      || !Array.isArray(item.reasonCodes) || !isStringArray(item.reasonCodes)
+      || !Array.isArray(item.reasons) || !isStringArray(item.reasons)) {
+      return { ok: false, reason: 'planning decision is invalid' }
+    }
+    decisions.push({
+      subjectType: item.subjectType as DecisionExplanation['subjectType'],
+      subjectId: typeof item.subjectId === 'string' ? item.subjectId : null,
+      summary: item.summary,
+      reasonCodes: item.reasonCodes,
+      reasons: item.reasons,
+      constraintRefs: isStringArray(item.constraintRefs) ? item.constraintRefs : [],
+      evidence: Array.isArray(item.evidence) ? item.evidence as EvaluationEvidence[] : [],
+      dayIndex: typeof item.dayIndex === 'number' ? item.dayIndex : null,
+    })
+  }
+  return { ok: true, value: decisions }
+}
+
+/** ③ 决策说明 reasonCode → 人类可读中文标签；未知 code 回退为原始 code。 */
+const DECISION_REASON_CODE_LABEL: Record<string, string> = {
+  FIXED_APPOINTMENT: '固定安排',
+  NEARBY_CLUSTER: '就近聚类',
+  MUST_VISIT: '必去地点',
+  TRANSIT_MODE: '交通方式',
+  SHORTEST_ROUTE: '最短路线',
+  PROVIDER_CONSTRAINT: '提供商约束',
+  TIME_OPTIMIZATION: '时间优化',
+  BUDGET_CONSTRAINT: '预算约束',
+  REGIONAL_GROUPING: '区域分组',
+  PACE_POLICY: '节奏策略',
+  INTEREST_MATCH: '偏好匹配',
+}
+
+export function decisionReasonLabel(reasonCode: string): string {
+  return DECISION_REASON_CODE_LABEL[reasonCode] ?? reasonCode
+}
+
+/**
+ * ③ 决策说明展示归属标签：把 subjectType + dayIndex 转为用户可读的「哪里」。
+ * PLAN → 整段行程;DAY → 第 N 天;ACTIVITY/TRANSIT → 活动/交通。
+ */
+export function decisionSubjectLabel(
+  subjectType: string,
+  dayIndex: number | null | undefined,
+): string {
+  switch (subjectType) {
+    case 'PLAN':
+      return '整段行程'
+    case 'DAY':
+      return dayIndex == null ? '当天' : `第 ${dayIndex + 1} 天`
+    case 'ACTIVITY':
+      return '活动'
+    case 'TRANSIT':
+      return '交通'
+    default:
+      return '行程'
   }
 }
 

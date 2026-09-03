@@ -39,6 +39,11 @@ import {
   type GuideImportInput,
 } from '../../lib/api'
 import { formatChinaDate, formatChinaTime, formatSlashDate } from '../lib/present'
+import {
+  readPlanningDecisions,
+  decisionReasonLabel,
+  decisionSubjectLabel,
+} from '../../lib/feasibility'
 
 const props = defineProps<{
   trip: Trip
@@ -48,6 +53,13 @@ const props = defineProps<{
 const tripStore = useTripStore()
 
 const itineraryDays = computed(() => props.itinerary?.days ?? [])
+
+// ③ 决策解释上屏：读取该版本的规划说明（展示安全读取；缺失/空则整区不渲染）。
+const planningDecisions = computed(() => {
+  if (!props.itinerary) return []
+  const read = readPlanningDecisions(props.itinerary.planningDecisions)
+  return read.ok ? read.value : []
+})
 
 // B1：汇总所有活动的费用来源，供概览预算徽标注记「含估算」。
 const allActivities = computed<ItineraryActivity[]>(() =>
@@ -508,6 +520,57 @@ async function changeLegMode(legId: string, mode: 'AUTO' | 'WALKING' | 'TRANSIT'
         ，共 {{ itineraryDays.length }} 天的行程，可直接按天查看或在下方继续调整。
       </p>
     </div>
+
+    <!-- ③ TripPilot 的规划说明（决策解释只读区，来自规划引擎 evaluation.decisions） -->
+    <section
+      v-if="planningDecisions.length"
+      class="mt-4 rounded-lg border border-tp-line bg-tp-panel px-3.5 py-2.5"
+      aria-label="TripPilot 的规划说明"
+      data-testid="plan-decision-explanation"
+    >
+      <h3 class="m-0 flex items-center gap-1.5 text-[13px] font-medium leading-5 text-tp-ink">
+        <Wand2 :size="13" class="text-tp-mute" aria-hidden="true" />TripPilot 的规划说明
+      </h3>
+      <ul class="m-0 mt-1.5 space-y-2.5">
+        <li
+          v-for="(decision, index) in planningDecisions"
+          :key="`${decision.subjectType}-${decision.subjectId ?? ''}-${decision.summary}-${index}`"
+          class="rounded-md bg-white px-2.5 py-2"
+          :data-testid="`plan-decision-${index}`"
+        >
+          <p class="m-0 flex flex-wrap items-start gap-1.5 text-xs leading-5 text-tp-body">
+            <span class="mt-0.5 shrink-0 rounded-full bg-tp-panel px-1.5 py-0.5 text-[10px] leading-3 text-tp-mute">
+              {{ decisionSubjectLabel(decision.subjectType, decision.dayIndex) }}
+            </span>
+            <span class="min-w-0 flex-1">{{ decision.summary }}</span>
+          </p>
+          <div v-if="decision.reasonCodes.length" class="mt-1 flex flex-wrap items-center gap-1">
+            <span
+              v-for="code in decision.reasonCodes"
+              :key="code"
+              class="rounded-full border border-tp-line px-1.5 py-0.5 text-[10px] leading-3 text-tp-sub"
+              :title="`决策理由：${code}`"
+              :data-testid="`plan-decision-reason-${code}`"
+            >{{ decisionReasonLabel(code) }}</span>
+          </div>
+          <ul v-if="decision.reasons.length" class="m-0 mt-1 list-disc pl-4">
+            <li
+              v-for="(reason, reasonIndex) in decision.reasons"
+              :key="reasonIndex"
+              class="text-xs leading-5 text-tp-mute"
+            >{{ reason }}</li>
+          </ul>
+          <div v-if="decision.evidence && decision.evidence.length" class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+            <span
+              v-for="ev in decision.evidence"
+              :key="ev.key"
+              class="text-[11px] leading-4 text-tp-faint"
+              :title="`${ev.label}：${ev.value}`"
+            >{{ ev.value }}</span>
+          </div>
+        </li>
+      </ul>
+    </section>
 
     <!-- 编辑/删除失败提示（不再静默吞错） -->
     <div

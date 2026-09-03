@@ -48,6 +48,7 @@ public class ItineraryService {
     private final ObjectMapper objectMapper;
     private final PlanningTaskService planningTaskService;
     private final PlanningFactImpactMapper factImpactMapper;
+    private final ItineraryPlanningDecisionMapper planningDecisionMapper;
     private final AgentRouteClient routeClient;
     private final TripMapper tripMapper;
 
@@ -57,6 +58,7 @@ public class ItineraryService {
             ObjectMapper objectMapper,
             @Lazy PlanningTaskService planningTaskService,
             PlanningFactImpactMapper factImpactMapper,
+            ItineraryPlanningDecisionMapper planningDecisionMapper,
             AgentRouteClient routeClient,
             TripMapper tripMapper
     ) {
@@ -65,6 +67,7 @@ public class ItineraryService {
         this.objectMapper = objectMapper;
         this.planningTaskService = planningTaskService;
         this.factImpactMapper = factImpactMapper;
+        this.planningDecisionMapper = planningDecisionMapper;
         this.routeClient = routeClient;
         this.tripMapper = tripMapper;
     }
@@ -404,8 +407,28 @@ public class ItineraryService {
                         ))
                         .toList(),
                 version.accommodationStatus(), version.accommodationLabel(),
+                readPlanningDecisions(version.id()),
                 version.createdAt(), version.rollbackFromVersionId()
         );
+    }
+
+    /**
+     * Reads the version's persisted planning-decision explanations (③ 决策解释上屏).
+     * A version produced by planning carries them; user-edit / rollback versions
+     * have no decision row and return an empty list (never fabricated).
+     */
+    private List<PlanningCompletedEvent.DecisionExplanation> readPlanningDecisions(UUID versionId) {
+        java.util.Optional<String> stored = planningDecisionMapper.findDecisionsJson(versionId);
+        if (stored.isEmpty()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(
+                    stored.get(),
+                    new TypeReference<java.util.List<PlanningCompletedEvent.DecisionExplanation>>() { });
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Stored itinerary planning decisions are invalid", exception);
+        }
     }
 
     private String responseProvider(String storedProvider, List<DayResponse> days) {
@@ -904,7 +927,7 @@ public class ItineraryService {
                 version.title(), itinerary.totalCost(),
                 version.provider(), days,
                 toKnowledgeResponse(version.versionId()), List.of(),
-                null, null, version.createdAt(), null
+                null, null, List.of(), version.createdAt(), null
         );
     }
 
@@ -1052,6 +1075,7 @@ public class ItineraryService {
             List<FactImpactResponse> factImpacts,
             String accommodationStatus,
             String accommodationLabel,
+            List<PlanningCompletedEvent.DecisionExplanation> planningDecisions,
             Instant createdAt,
             UUID rollbackFromVersionId
     ) {

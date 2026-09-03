@@ -5,8 +5,7 @@ from pydantic import BaseModel
 
 from trip_agent.agent.factory import resolve_decider_kind
 from trip_agent.dialog.api import router as dialog_router
-from trip_agent.dialog.extractor import build_extractor
-from trip_agent.dialog.service import AgentDialogService, place_search_from_runtime
+from trip_agent.dialog.service import AgentDialogService
 from trip_agent.dialog.store import build_store
 from trip_agent.guide_intelligence.api import router as guide_intelligence_router
 from trip_agent.places.api import (
@@ -35,17 +34,10 @@ async def lifespan(app: FastAPI):
     app.state.place_search_runtime = place_runtime
     app.state.route_runtime = route_runtime
     dialog_store = await build_store()
-    dialog_extractor = build_extractor()
-    app.state.dialog_service = AgentDialogService(
-        store=dialog_store,
-        extractor=dialog_extractor,
-        places=place_search_from_runtime(place_runtime),
-    )
+    app.state.dialog_service = AgentDialogService(store=dialog_store)
     try:
         yield
     finally:
-        if dialog_extractor is not None:
-            await dialog_extractor.aclose()
         await dialog_store.close()
         await close_route_runtime(route_runtime)
         await close_place_search_runtime(place_runtime)

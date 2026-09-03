@@ -1,5 +1,10 @@
 """Single-city smoke test — full distributed chain verification."""
-import json, sys, time, urllib.request, urllib.error, uuid
+import json
+import sys
+import time
+import urllib.request
+import urllib.error
+import uuid
 
 BASE = "http://127.0.0.1:8081"
 
@@ -104,7 +109,7 @@ def main():
     if ev:
         log(f"Score: {ev['overallScore']} dims={ev['dimensions']}")
 
-    print(f"\n=== RESULT: PASS ===")
+    print("\n=== RESULT: PASS ===")
     print(f"Trip: {trip_id}  Task: {task_id}  Score: {ev.get('overallScore') if ev else 'N/A'}")
     return 0 if status in ("COMPLETED", "SUCCEEDED") else 1
 

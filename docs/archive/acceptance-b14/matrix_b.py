@@ -225,7 +225,6 @@ def s069():
 def s070():
     user = L.new_user()
     trip, st, terminal, rules = _plan_report(user, {})
-    report = (terminal or {}).get("feasibilityReport") or {}
     ok = terminal is not None
     return {"ok": ok, "evidence": f"terminal={terminal.get('status') if terminal else None}"}
 

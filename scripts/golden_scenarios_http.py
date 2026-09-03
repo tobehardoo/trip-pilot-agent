@@ -3,7 +3,13 @@
 Verifies day-type semantics of the daily-skeleton path end-to-end.
 """
 
-import json, os, sys, time, urllib.request, urllib.error, uuid
+import json
+import os
+import sys
+import time
+import urllib.request
+import urllib.error
+import uuid
 
 BASE = os.environ.get("TRIPPILOT_BASE", "http://127.0.0.1:8081")
 

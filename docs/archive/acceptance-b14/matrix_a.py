@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
-import uuid
 
 sys.path.insert(0, __import__("os").path.dirname(__file__))
 import b14lib as L
@@ -57,7 +55,7 @@ def s002():
 
 
 def s003():
-    user = L.new_user()
+    L.new_user()
     st, body = L.http("POST", "/api/auth/refresh", {}, None)
     # refresh without cookie -> 401; with valid session the app refreshes in-browser.
     ok = st in (401, 400)

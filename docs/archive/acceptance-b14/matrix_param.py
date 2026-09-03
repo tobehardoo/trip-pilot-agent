@@ -7,8 +7,6 @@ import json
 import os
 import sys
 import threading
-import time
-import uuid
 
 sys.path.insert(0, os.path.dirname(__file__))
 import b14lib as L
@@ -43,7 +41,6 @@ def param_bulk():
              [{"mealType": "DINNER", "startTime": "18:00", "endTime": "20:00"}],
              [{"mealType": "LUNCH", "startTime": "11:30", "endTime": "13:30"},
               {"mealType": "DINNER", "startTime": "17:30", "endTime": "20:30"}]]
-    regions = list(L.REGIONS.keys()) if hasattr(L, "REGIONS") else []
     days_opts = [(1, 1), (2, 2), (3, 3), (7, 7)]
     count = 0
     fails = []

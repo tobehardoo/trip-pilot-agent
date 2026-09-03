@@ -191,7 +191,7 @@ def test_an_unresolved_failure_never_escalates_and_attempts_alone_is_not_enough(
     ) is None
     # a different action than the one that failed is always allowed — this is
     # what keeps ask_user and update_constraints outside the guard's reach
-    for tool in ("ask_user", "update_constraints", "search_place"):
+    for tool in ("ask_user", "update_constraints", "update_preferences"):
         assert escalate_duplicate(
             kind="FEASIBILITY",
             signature="FEASIBILITY:build_itinerary:X",

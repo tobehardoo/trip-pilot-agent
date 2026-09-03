@@ -608,7 +608,7 @@ class _LoopingDecider:
         del state
         return Decision(
             thought="keep going",
-            call=ToolCall("search_place", {"keyword": "景点"}),
+            call=ToolCall("validate_itinerary"),
         )
 
 

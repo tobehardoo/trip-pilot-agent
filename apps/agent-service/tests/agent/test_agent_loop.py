@@ -136,7 +136,7 @@ def test_unknown_tool_is_reported_instead_of_raising() -> None:
 def test_missing_capability_fails_closed_instead_of_guessing() -> None:
     tools = ToolRegistry.with_runtime(ToolRuntime())
     result, _ = run_async(
-        tools.invoke(ToolCall("search_place", {"keyword": "武侯祠"}), AgentState())
+        tools.invoke(ToolCall("build_itinerary"), AgentState())
     )
     assert not result.ok
     assert result.error_code == "CAPABILITY_MISSING"
@@ -252,9 +252,9 @@ def test_declared_strategy_is_recorded_in_the_state() -> None:
         async def decide(self, state: AgentState) -> Decision:
             if not state.observations:
                 return Decision(
-                    thought="look around first",
-                    call=ToolCall("retrieve_guide_knowledge", {"query": "成都 攻略"}),
-                    strategy="RETRIEVE",
+                    thought="trigger the pipeline first",
+                    call=ToolCall("build_itinerary"),
+                    strategy="BUILD",
                 )
             return Decision(
                 thought="ask",

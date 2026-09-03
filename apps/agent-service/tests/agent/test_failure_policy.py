@@ -85,10 +85,10 @@ def test_provider_error_stays_internal() -> None:
 
 def test_capability_missing_classifies_as_capability() -> None:
     kind, signature = classify_failure(
-        tool="search_place", ok=False, error_code="CAPABILITY_MISSING"
+        tool="build_itinerary", ok=False, error_code="CAPABILITY_MISSING"
     )
     assert kind == "CAPABILITY_MISSING"
-    assert signature == "CAPABILITY_MISSING:search_place"
+    assert signature == "CAPABILITY_MISSING:build_itinerary"
 
 
 # ── Test 3: User Constraint (validation reason) ─────────────────────────────
@@ -300,7 +300,7 @@ def test_failure_memory_counts_consecutive_identical_failures() -> None:
     ) == (kind, signature, 2)
 
     other, other_sig = classify_failure(
-        tool="search_place", ok=False, error_code="CAPABILITY_MISSING"
+        tool="build_itinerary", ok=False, error_code="CAPABILITY_MISSING"
     )
     assert advance_failure_memory(
         kind=other, signature=other_sig,

@@ -40,7 +40,6 @@ from trip_agent.agent.itinerary_builder import (
     RealItineraryBuilder,
 )
 from trip_agent.agent.profile import TravelProfileRepository
-from trip_agent.agent.tool_capabilities import build_observation_capabilities
 from trip_agent.worker.contracts import (
     AgentAskUserEvent,
     AgentCompletedEvent,
@@ -641,18 +640,12 @@ async def _default_agent_processor(event_exchange: DialogEventExchange) -> Agent
     profile_store = TravelProfileRepository(database_url)
     # Idempotent, checksummed — covers V1 (runs) and V2 (profile).
     await repository.migrate()
-    # V3 C-2: the four observation tools are wired from the same provider
-    # stack (per-capability degradation, fail closed).
-    capabilities = build_observation_capabilities()
+    # V3 C-1: real planning backend per PROVIDER_MODE — the dialog agent drafts
+    # REAL itineraries when planning is configured; DEMO mode (or missing
+    # configuration) keeps the demo builder. Constraint/ask/preference tools
+    # are capability-free; only the deterministic pipeline needs a backend.
     registry = ToolRegistry.with_runtime(
         ToolRuntime(
-            place_search=capabilities.place_search,
-            route=capabilities.route,
-            opening_hours=capabilities.opening_hours,
-            knowledge=capabilities.knowledge,
-            # V3 C-1: real planning backend per PROVIDER_MODE — the dialog
-            # agent drafts REAL itineraries when planning is configured;
-            # DEMO mode (or missing configuration) keeps the demo builder.
             itinerary_builder=_itinerary_builder_for_mode(),
             feasibility=StructuralFeasibilityGate(),
             profile_store=profile_store,

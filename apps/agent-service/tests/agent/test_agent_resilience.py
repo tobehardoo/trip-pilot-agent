@@ -30,6 +30,13 @@ from trip_agent.agent import (
 )
 from trip_agent.platform_util import run_async
 
+
+def _confirmed_slots() -> ConstraintSlots:
+    slots = ConstraintSlots.empty()
+    for name in ("destination", "start_date", "end_date"):
+        slots = slots.fill(name, "value", state=SlotState.CONFIRMED)
+    return slots
+
 DECISION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {},
@@ -121,14 +128,29 @@ def test_a_run_with_a_failing_transport_still_converges() -> None:
 # ── P1.2 / D2: handler exceptions become observations ──────────────
 
 
-async def _exploding_search(**_kwargs: Any) -> Any:
-    raise RuntimeError("provider exploded")
+class _ExplodingProfileStore:
+    """A profile store whose writes raise — proves handler exceptions surface."""
+
+    async def propose(self, *__args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("store exploded")
+
+    async def confirm(self, *__args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("store exploded")
+
+    async def revoke(self, *__args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("store exploded")
 
 
 def test_handler_exception_becomes_a_tool_error_not_a_crash() -> None:
-    tools = ToolRegistry.with_runtime(ToolRuntime(place_search=_exploding_search))
+    tools = ToolRegistry.with_runtime(ToolRuntime(profile_store=_ExplodingProfileStore()))
     result, update = run_async(
-        tools.invoke(ToolCall("search_place", {"keyword": "武侯祠"}), AgentState())
+        tools.invoke(
+            ToolCall(
+                "update_preferences",
+                {"proposals": [{"category": "DIETARY", "value": "川菜"}]},
+            ),
+            AgentState(user_id="u1", slots=_confirmed_slots()),
+        )
     )
     assert not result.ok
     assert result.error_code == "TOOL_ERROR"
@@ -136,22 +158,26 @@ def test_handler_exception_becomes_a_tool_error_not_a_crash() -> None:
 
 
 def test_a_run_continues_after_a_handler_exception() -> None:
-    tools = ToolRegistry.with_runtime(ToolRuntime(place_search=_exploding_search))
+    tools = ToolRegistry.with_runtime(ToolRuntime(profile_store=_ExplodingProfileStore()))
     loop = AgentLoop(
-        decider=_ScriptedSearchThenAsk(),
+        decider=_ScriptedPreferenceThenAsk(),
         tools=tools,
     )
-    result = run_async(run_agent(loop))
-    failed = [obs for obs in result.observations if obs.tool == "search_place"]
+    result = run_async(run_agent(loop, AgentState(user_id="u1", slots=_confirmed_slots())))
+    failed = [obs for obs in result.observations if obs.tool == "update_preferences"]
     assert failed and not failed[0].ok and failed[0].error_code == "TOOL_ERROR"
     assert result.stop_reason == "WAITING_USER"
 
 
-class _ScriptedSearchThenAsk:
+class _ScriptedPreferenceThenAsk:
     async def decide(self, state: AgentState) -> Decision:
         if not state.observations:
             return Decision(
-                thought="try the tool", call=ToolCall("search_place", {"keyword": "武侯祠"})
+                thought="try the tool",
+                call=ToolCall(
+                    "update_preferences",
+                    {"proposals": [{"category": "DIETARY", "value": "川菜"}]},
+                ),
             )
         return Decision(thought="ask instead", call=ToolCall("ask_user", {"question": "在吗？"}))
 

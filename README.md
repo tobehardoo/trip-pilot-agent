@@ -2,6 +2,10 @@
 
 A constraint-driven intelligent travel planning system for generating realistic, executable, and editable itineraries.
 
+> **定位（Positioning）**：TripPilot 是一个 **Constraint-Driven Travel Planning Engine with a Bounded Conversational Agent**（确定性约束规划引擎 + 有界对话式 Agent）。权威行程只由确定性规划 Pipeline 产生（候选检索 → 可行性过滤 → 调度/优化 → 交通 → 硬校验，可选 CP-SAT 精确调度）；Agent 是**有界会话层**，只负责 Intent / Conversation / Constraint Collection / Clarification / Modification / Explanation / HITL，全程通过 `build_itinerary` 触发确定性 Pipeline，自身不求解行程。
+>
+> **默认运行形态**：确定性 `AskingDecider`（Level 2 Agentic Workflow）——用脚本化策略按缺失约束顺序向用户提问，可复现、无需模型密钥。仅当配置 `STRUCTURED_MODEL_*` 时升级为 Level 3 Tool-Using Dialog Agent（LLM 决策 + 结构化输出）。全文不再自称 Autonomous Planning Agent。
+
 TripPilot is designed for independent travel planning in China. Instead of simply asking an LLM to "generate a trip", it treats travel planning as a constrained planning problem involving time windows, transportation, budgets, fixed activities, must-visit places, accommodation, real-world provider data, and itinerary feasibility.
 
 > TripPilot 是一个面向国内自由行场景的约束驱动旅行规划系统，目标不是生成"看起来合理"的行程，而是生成时间、交通、预算和现实条件上**真正可执行**的旅行计划。
@@ -185,7 +189,7 @@ docker compose -f compose.prod.yaml --env-file .env up -d --build --wait --wait-
 
 ## Roadmap
 
-**当前主线：Agent 化改造（v1.1）** —— 在确定性内核之上叠加有界的 LangGraph Agent 编排层：LLM 负责意图理解、约束收集、策略选择与澄清，求解、可行性校验与终态生成由确定性系统守门（`validate_itinerary` 一票否决）。详见 [Agent化路线图](docs/product/Agent化路线图.md) 与 [ADR-015](docs/adr/Agent编排层与记忆系统.md)。
+**当前主线：有界的 Conversational Agent 编排（v1.1）** —— 在确定性规划内核之上叠加有界的 LangGraph 会话编排层：LLM 负责意图理解、约束收集、策略选择与澄清，求解、可行性校验与终态生成由确定性系统守门（`validate_itinerary` 一票否决）。Agent 是**有界会话 Agent**，不参与权威行程求解；权威行程只来自确定性 Pipeline（见顶部「定位」）。默认运行形态为确定性 `AskingDecider`（Level 2），配置 `STRUCTURED_MODEL_*` 后升级为 Level 3 Tool-Using Dialog Agent。详见 [Agent化路线图](docs/product/Agent化路线图.md) 与 [ADR-015](docs/adr/Agent编排层与记忆系统.md)。
 
 - Richer preference modeling（用户交通偏好、行程节奏）
 - Advanced multimodal transport planning（manual-edit TRANSIT 已真实化；跨城 TRANSIT）

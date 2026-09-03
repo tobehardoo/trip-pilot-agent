@@ -2,9 +2,9 @@
 
 ``providers/settings.resolve_provider_mode`` is the one place that turns
 the environment (``PROVIDER_MODE`` + ``AMAP_WEB_SERVICE_KEY``) into a
-``ProviderExecutionMode``.  ``tool_capabilities._mode`` and the places API
-both delegate here; the AMQP worker's ``WorkerSettings`` deliberately keeps
-its own fail-closed policy (B12) and is out of scope for this helper.
+``ProviderExecutionMode``.  The places API delegates here; the AMQP
+worker's ``WorkerSettings`` deliberately keeps its own fail-closed policy
+(B12) and is out of scope for this helper.
 """
 
 from __future__ import annotations

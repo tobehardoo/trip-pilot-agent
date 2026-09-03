@@ -61,20 +61,23 @@ def _sample_state() -> AgentState:
         slots=_sample_slots(),
         observations=(
             ToolObservation(
-                tool="search_place", ok=True, summary="searched", data={"places": [1, 2]}
+                tool="update_constraints",
+                ok=True,
+                summary="updated",
+                data={"applied": ["destination"]},
             ),
             ToolObservation(
-                tool="check_opening_hours",
+                tool="build_itinerary",
                 ok=False,
-                summary="opening hours are unknown",
+                summary="required slots missing",
                 data=None,
-                error_code="UNKNOWN",
+                error_code="INCOMPLETE_CONSTRAINTS",
             ),
         ),
         pending_question="行程从哪天开始？",
         pending_options=("10月1日", "10月2日"),
         pending_expected_type="date",
-        pending_call=ToolCall("search_place", {"keyword": "武侯祠"}),
+        pending_call=ToolCall("update_constraints", {"values": {"destination": "成都"}}),
         steps=5,
         stop_reason="WAITING_USER",
     )
@@ -126,7 +129,7 @@ class _ScriptedSearchThenAsk:
         if not state.observations:
             return Decision(
                 thought="try the tool",
-                call=ToolCall("search_place", {"keyword": "武侯祠"}),
+                call=ToolCall("update_constraints", {"values": {"destination": "成都"}}),
             )
         return Decision(thought="ask instead", call=ToolCall("ask_user", {"question": "在吗？"}))
 
@@ -196,7 +199,7 @@ def test_recorder_records_only_new_observations() -> None:
 
     first = AgentState(
         observations=(
-            ToolObservation(tool="search_place", ok=True, summary="searched", data=None),
+            ToolObservation(tool="update_constraints", ok=True, summary="updated", data=None),
         )
     )
     run_async(recorder.on_state(first))
@@ -209,7 +212,7 @@ def test_recorder_records_only_new_observations() -> None:
     run_async(recorder.on_state(second))
 
     assert [step["seq"] for step in repository.steps] == [0, 1]
-    assert [step["tool"] for step in repository.steps] == ["search_place", "ask_user"]
+    assert [step["tool"] for step in repository.steps] == ["update_constraints", "ask_user"]
     assert repository.steps[0]["kind"] == "TOOL_OBSERVATION"
     assert repository.checkpoints == [first, second]
 
@@ -302,8 +305,8 @@ def test_record_step_is_idempotent_per_seq(agent_tables: PsycopgAgentRunReposito
                 run_id="run-1",
                 seq=0,
                 kind="TOOL_OBSERVATION",
-                tool="search_place",
-                payload={"ok": True, "summary": "searched"},
+                tool="update_constraints",
+                payload={"ok": True, "summary": "updated"},
             )
         )
     asyncio.run(
@@ -316,8 +319,11 @@ def test_record_step_is_idempotent_per_seq(agent_tables: PsycopgAgentRunReposito
             "SELECT seq, tool, payload FROM agent.agent_step "
             "WHERE run_id = 'run-1' ORDER BY seq"
         ).fetchall()
-    assert [(row["seq"], row["tool"]) for row in rows] == [(0, "search_place"), (1, "ask_user")]
-    assert rows[0]["payload"]["summary"] == "searched"
+    assert [(row["seq"], row["tool"]) for row in rows] == [
+        (0, "update_constraints"),
+        (1, "ask_user"),
+    ]
+    assert rows[0]["payload"]["summary"] == "updated"
 
 
 def test_checkpoint_round_trip(agent_tables: PsycopgAgentRunRepository) -> None:

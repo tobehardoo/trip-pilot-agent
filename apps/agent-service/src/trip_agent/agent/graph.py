@@ -5,6 +5,15 @@ Shape::
     START → decide → (tool pending) → act → decide
                   → (answered / waiting / emitted / ceiling) → finish → END
 
+Agent boundary (T1, Phase 3).  This is a *bounded conversational agent*, NOT
+an authority on trip schedules.  The agent is responsible only for intent,
+conversation, constraint collection, clarification, modification, explanation
+and human-in-the-loop handoff.  It never produces an authoritative itinerary:
+the deterministic planning pipeline under ``trip_agent.planning`` owns
+scheduling truth, and the agent reaches it only through the ``build_itinerary``
+tool that triggers that pipeline.  Nothing in this module may derive a route,
+pick places, or resolve opening hours on its own.
+
 The loop is bounded by three ceilings — steps, tool calls and model calls.
 Hitting a ceiling is a stop condition, never a reason to loop forever.  This
 mirrors the planner's ``MAX_REPAIR_ATTEMPTS`` philosophy: the agent may try,

@@ -84,10 +84,6 @@ class ToolRuntime:
     the agent runnable with no provider keys configured.
     """
 
-    place_search: Callable[..., Awaitable[Any]] | None = None
-    route: Callable[..., Awaitable[Any]] | None = None
-    opening_hours: Callable[..., Awaitable[Any]] | None = None
-    knowledge: Callable[..., Awaitable[Any]] | None = None
     feasibility: Callable[..., Awaitable[Any]] | None = None
     itinerary_builder: Callable[..., Awaitable[Any]] | None = None
     profile_store: Any | None = None
@@ -317,78 +313,6 @@ async def _ask_user(call: ToolCall, _state: AgentState) -> tuple[ToolResult, dic
             "stop_reason": "WAITING_USER",
         },
     )
-
-
-async def _search_place(
-    call: ToolCall,
-    _state: AgentState,
-    runtime: ToolRuntime,
-) -> tuple[ToolResult, dict[str, Any]]:
-    keyword = str(call.args.get("keyword", "")).strip()
-    if not keyword:
-        return ToolResult.failure("EMPTY_KEYWORD", "search_place needs a keyword"), {}
-    if runtime.place_search is None:
-        return ToolResult.failure("CAPABILITY_MISSING", "place search is not configured"), {}
-    result = await runtime.place_search(keyword=keyword, city=call.args.get("city"))
-    return ToolResult(ok=True, summary=f"searched '{keyword}'", data=result), {}
-
-
-async def _get_route(
-    call: ToolCall,
-    state: AgentState,
-    runtime: ToolRuntime,
-) -> tuple[ToolResult, dict[str, Any]]:
-    origin = call.args.get("origin")
-    destination = call.args.get("destination")
-    if not origin or not destination:
-        return ToolResult.failure("INCOMPLETE_ROUTE", "get_route needs origin and destination"), {}
-    if runtime.route is None:
-        return ToolResult.failure("CAPABILITY_MISSING", "route service is not configured"), {}
-    result = await runtime.route(
-        origin=origin,
-        destination=destination,
-        mode=call.args.get("mode", "TRANSIT"),
-        city=state.slots.confirmed_values().get("destination"),
-    )
-    return ToolResult(ok=True, summary="route computed", data=result), {}
-
-
-async def _check_opening_hours(
-    call: ToolCall,
-    state: AgentState,
-    runtime: ToolRuntime,
-) -> tuple[ToolResult, dict[str, Any]]:
-    place = str(call.args.get("place", "")).strip()
-    if not place:
-        return ToolResult.failure("EMPTY_PLACE", "check_opening_hours needs a place"), {}
-    if runtime.opening_hours is None:
-        return ToolResult.failure("CAPABILITY_MISSING", "opening hours are not configured"), {}
-    result = await runtime.opening_hours(
-        place=place,
-        city=state.slots.confirmed_values().get("destination"),
-        date=call.args.get("date"),
-    )
-    if result is None:
-        return ToolResult.failure("UNKNOWN", f"opening hours for '{place}' are unknown"), {}
-    return ToolResult(ok=True, summary=f"opening hours resolved for '{place}'", data=result), {}
-
-
-async def _retrieve_knowledge(
-    call: ToolCall,
-    state: AgentState,
-    runtime: ToolRuntime,
-) -> tuple[ToolResult, dict[str, Any]]:
-    query = str(call.args.get("query", "")).strip()
-    if not query:
-        return ToolResult.failure("EMPTY_QUERY", "retrieve_guide_knowledge needs a query"), {}
-    if runtime.knowledge is None:
-        return ToolResult.failure("CAPABILITY_MISSING", "knowledge retrieval is not configured"), {}
-    result = await runtime.knowledge(
-        query=query,
-        limit=call.args.get("limit", 5),
-        city=state.slots.confirmed_values().get("destination"),
-    )
-    return ToolResult(ok=True, summary=f"knowledge retrieved for '{query}'", data=result), {}
 
 
 async def _update_preferences(
@@ -700,59 +624,6 @@ def build_tool_specs(runtime: ToolRuntime) -> tuple[ToolSpec, ...]:
                 "required": ["question"],
             },
             handler=_ask_user,
-        ),
-        ToolSpec(
-            name="search_place",
-            description="Search real places by keyword using the map provider.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "keyword": _prop("Place name or keyword."),
-                    "city": _prop("Optional city to narrow the search."),
-                },
-                "required": ["keyword"],
-            },
-            handler=lambda call, state: _search_place(call, state, runtime),
-        ),
-        ToolSpec(
-            name="get_route",
-            description="Compute a real route between two places.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "origin": _prop("Origin place name."),
-                    "destination": _prop("Destination place name."),
-                    "mode": _prop("WALKING, TRANSIT, TAXI, DRIVING or AUTO."),
-                },
-                "required": ["origin", "destination"],
-            },
-            handler=lambda call, state: _get_route(call, state, runtime),
-        ),
-        ToolSpec(
-            name="check_opening_hours",
-            description="Resolve opening hours for a place. Returns UNKNOWN when unresolved.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "place": _prop("Place name."),
-                    "date": _prop("Optional visit date (YYYY-MM-DD)."),
-                },
-                "required": ["place"],
-            },
-            handler=lambda call, state: _check_opening_hours(call, state, runtime),
-        ),
-        ToolSpec(
-            name="retrieve_guide_knowledge",
-            description="Retrieve travel-guide knowledge for a query.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": _prop("What to look up."),
-                    "limit": {"type": "integer", "description": "Max results.", "minimum": 1},
-                },
-                "required": ["query"],
-            },
-            handler=lambda call, state: _retrieve_knowledge(call, state, runtime),
         ),
         ToolSpec(
             name="update_preferences",

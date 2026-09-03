@@ -1,9 +1,9 @@
 """Environment-driven provider configuration (single source of truth).
 
 F-2b: the provider execution mode used to be resolved independently in
-``tool_capabilities._mode`` and ``places/api._resolved_provider_mode`` with
-identical logic.  This module owns that decision exactly once; both call
-sites delegate here.
+``places/api._resolved_provider_mode`` (and previously the removed agent
+``tool_capabilities`` module) with identical logic.  This module owns that
+decision exactly once; the remaining call site delegates here.
 
 Note on scope: this is the *tool/endpoint* policy.  The AMQP worker's
 ``WorkerSettings.resolved_provider_mode`` deliberately fails closed to

@@ -17,7 +17,7 @@ implementation clusters live in the sibling collaborators:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from trip_agent.domain.planning.protocols import (
@@ -29,6 +29,7 @@ from trip_agent.domain.planning.protocols import (
     RelaxationSuggestion,
 )
 from trip_agent.domain.shared import snapshot_boundary_times
+from trip_agent.guide_intelligence.trusted_facts import ValidatedFact
 from trip_agent.infrastructure.amap.accommodation_projection import (
     project_amap_trip_skeleton,
 )
@@ -91,6 +92,68 @@ def _non_weather_guide_statements(
 ) -> tuple[str, ...]:
     return tuple(
         f"{fact.statement} {fact.evidence}" for fact in facts if fact.category != "WEATHER"
+    )
+
+
+# M0 wiring: map the only provenance signal a GuideFactEvidence carries
+# (``source_type``) onto the canonical reliability vocabulary the evidence /
+# fusion tiering layer consumes (``evidence_fusion.RELIABILITY_ORDER``).  The
+# knowledge / city-intelligence path's registered second trusted source is
+# declared CURATED (guangzhou-culture-open-data in knowledge/sources), so a
+# CITY_INTELLIGENCE fact is tiered CURATED here to stay consistent with the
+# source registry — the same fact thus surfaces the same strength whether it
+# reached guide_evidence through the city-intelligence acquisition or the
+# registry.  Everything else falls back to PUBLIC_GUIDE.
+_SOURCE_TYPE_RELIABILITY: dict[str, str] = {
+    "OFFICIAL_ATTRACTION": "OFFICIAL_PORTAL",
+    "OFFICIAL_TOURISM": "OFFICIAL_PORTAL",
+    "CITY_INTELLIGENCE": "CURATED",
+    "PUBLIC_GUIDE_URL": "PUBLIC_GUIDE",
+    "XIAOHONGSHU_SHARED_TEXT": "UGC",
+    "IMAGE_OCR": "OCR_UNVERIFIED",
+    "PASTED_TEXT": "PUBLIC_GUIDE",
+    "TEXT_FILE": "PUBLIC_GUIDE",
+}
+
+
+def guide_evidence_validated_facts(
+    facts: tuple[GuideFactEvidence, ...],
+) -> tuple[ValidatedFact, ...]:
+    """Turn incoming guide-evidence facts into :class:`ValidatedFact` for M0 tiering.
+
+    Pure adapter (no I/O): the ranker's ``evidence_facts`` surface expects
+    :class:`~trip_agent.guide_intelligence.trusted_facts.ValidatedFact`, but the
+    wire contract only carries ``GuideFactEvidence``.  Reliability is derived
+    from ``source_type`` via :data:`_SOURCE_TYPE_RELIABILITY`, so the same fact
+    list can feed both the flat guide-statements path and the evidence tiered
+    path without re-deriving provenance.  Weather facts are excluded from
+    ranking evidence (they are consumed by the weather policy instead).
+    """
+    return tuple(
+        ValidatedFact(
+            fact_id=str(fact.fact_id),
+            document_id=str(fact.guide_import_id),
+            category=fact.category,
+            statement=fact.statement,
+            normalized_value={},
+            evidence=fact.evidence,
+            evidence_start=0,
+            evidence_end=len(fact.evidence),
+            confidence=fact.confidence,
+            checked_at=fact.observed_at,
+            expires_at=fact.expires_at,
+            effective_date=fact.effective_date,
+            source_type=fact.source_type,
+            source_name=fact.source_host or fact.source_title,
+            source_url=str(fact.source_url) if fact.source_url is not None else None,
+            reliability_level=_SOURCE_TYPE_RELIABILITY.get(fact.source_type, "PUBLIC_GUIDE"),
+            source_reviewed=False,
+            hard_constraint_eligible=False,
+            entity="",
+            source_id=str(fact.guide_import_id),
+        )
+        for fact in facts
+        if fact.category != "WEATHER"
     )
 
 
@@ -202,9 +265,7 @@ class AmapPlanningProvider:
     # code must call the collaborators directly (``self._recaller`` /
     # ``self._anchor_resolver`` / ``self._route_resolver`` / ``self._day_emitter``).
 
-    async def _collect_pois(
-        self, command: PlanningCreateCommand, required_count: int
-    ) -> tuple:
+    async def _collect_pois(self, command: PlanningCreateCommand, required_count: int) -> tuple:
         return await self._recaller.collect(command, required_count)
 
     @staticmethod
@@ -327,9 +388,7 @@ class AmapPlanningProvider:
         # anything unclassified are fail-closed out before ranking.  Transport
         # hubs serving arrival/departure are resolved separately and kept.
         activity_pois = tuple(
-            fetched.poi
-            for fetched in raw_pois
-            if classify_place(fetched.poi) == "ATTRACTION"
+            fetched.poi for fetched in raw_pois if classify_place(fetched.poi) == "ATTRACTION"
         )
         candidate_pois = (*activity_pois, *pinned_pois)
         if not candidate_pois:
@@ -366,8 +425,7 @@ class AmapPlanningProvider:
                     subject_type="PLAN",
                     subject_id=None,
                     summary=(
-                        f"{len(excluded)} 个召回候选不是可游览地点，"
-                        f"未进入景点池（{kind_summary}）"
+                        f"{len(excluded)} 个召回候选不是可游览地点，未进入景点池（{kind_summary}）"
                     ),
                     reason_codes=("PROVIDER_CONSTRAINT",),
                     reasons=(
@@ -419,6 +477,14 @@ class AmapPlanningProvider:
             # contains the must-visit text get no +100.
             must_visit_provider_ids=frozenset(must_visit_ids),
             guide_statements=_non_weather_guide_statements(command.payload.guide_evidence.facts),
+            # M0 wiring: feed the same guide facts into the evidence tiered
+            # path.  ``_score`` tiered boost takes precedence over the flat
+            # guide-statement +25 when a trusted fact matches, and falls back
+            # to the flat path when no fact matches (or when ``evidence_facts``
+            # is empty) — so high-reliability / recent facts boost more and
+            # low-reliability / stale facts boost less, never double-counted.
+            evidence_facts=guide_evidence_validated_facts(command.payload.guide_evidence.facts),
+            evidence_now=datetime.now(UTC),
             entity_facts=entity_facts_for_pois(raw_pois, command),
             # P1-2: budget-aware ranking.  Costs are pre-resolved from the
             # knowledge layer (pure, no I/O) so a tight budget can demote
@@ -445,13 +511,9 @@ class AmapPlanningProvider:
                     subject_id=None,
                     summary="预算紧张：已知票价超出当日人均门票上限的候选已在排序中降权",
                     reason_codes=("BUDGET_CONSTRAINT",),
-                    reasons=(
-                        "预算压力为 TIGHT；降权仅作用于知识层 PROVIDER 成本来源的候选",
-                    ),
+                    reasons=("预算压力为 TIGHT；降权仅作用于知识层 PROVIDER 成本来源的候选",),
                     evidence=(
-                        DecisionEvidence(
-                            key="budget_pressure", label="预算压力", value="TIGHT"
-                        ),
+                        DecisionEvidence(key="budget_pressure", label="预算压力", value="TIGHT"),
                         DecisionEvidence(
                             key="budget_amount",
                             label="预算金额",
@@ -542,9 +604,7 @@ class AmapPlanningProvider:
                         f"{RELAXED_SLOT_CAPACITY_DISCOUNT_MINUTES} 分钟/时段 的休整余量",
                     ),
                     evidence=(
-                        DecisionEvidence(
-                            key="pace", label="旅行节奏", value=str(constraints.pace)
-                        ),
+                        DecisionEvidence(key="pace", label="旅行节奏", value=str(constraints.pace)),
                         DecisionEvidence(
                             key="slot_capacity_discount_minutes",
                             label="时段容量折扣",
@@ -700,9 +760,7 @@ class AmapPlanningProvider:
                             if candidate.poi_id != rejected_poi_id
                         )
                 except PlanningInfeasibleError as error:
-                    removable_poi_id = capacity_repair_candidate(
-                        error, day_plan, day_candidates
-                    )
+                    removable_poi_id = capacity_repair_candidate(error, day_plan, day_candidates)
                     if removable_poi_id is not None:
                         day_candidates = tuple(
                             candidate
@@ -714,9 +772,7 @@ class AmapPlanningProvider:
                     # removable optional left).  Boundedly relax the day's
                     # start instead of failing immediately — but only when the
                     # boundary is system-default, never a user anchor.
-                    if can_relax_window_start(
-                        day_plan, error, steps_taken=window_relax_steps
-                    ):
+                    if can_relax_window_start(day_plan, error, steps_taken=window_relax_steps):
                         window_relax_steps += 1
                         window_override = (
                             day_plan.window_start_minute - WINDOW_RELAX_STEP_MINUTES,

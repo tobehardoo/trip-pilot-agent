@@ -326,6 +326,7 @@ export interface EvaluationDimensions {
   budgetFit: number | null
   routeEfficiency: number
   interestMatch: number | null
+  evidenceStrength: number | null
 }
 
 export interface EvaluationWarning {

@@ -2,5 +2,5 @@
   "id": "clean-real",
   "description": "A compact AMAP itinerary with ample budget and transfer time.",
   "profile": "clean-real",
-  "expect": {"minimum_score": 100, "maximum_score": 100, "required_warnings": [], "forbidden_warnings": ["ESTIMATED_TRANSIT", "PROVIDER_FALLBACK_USED"]}
+  "expect": {"minimum_score": 98, "maximum_score": 100, "required_warnings": [], "forbidden_warnings": ["ESTIMATED_TRANSIT", "PROVIDER_FALLBACK_USED"]}
 }

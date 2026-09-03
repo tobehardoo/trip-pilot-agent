@@ -594,11 +594,13 @@ export function readPlanEvaluation(input: unknown): ReadResult<PlanEvaluation> {
   const budgetFit = dimensions.budgetFit
   const routeEfficiency = dimensions.routeEfficiency
   const interestMatch = dimensions.interestMatch
+  const evidenceStrength = dimensions.evidenceStrength ?? null
   if (!readScoreField(constraintSatisfaction)
     || !readScoreField(timeFeasibility)
     || !readNullableScoreField(budgetFit)
     || !readScoreField(routeEfficiency)
-    || !readNullableScoreField(interestMatch)) {
+    || !readNullableScoreField(interestMatch)
+    || !readNullableScoreField(evidenceStrength)) {
     return { ok: false, reason: 'evaluation dimensions are invalid' }
   }
   if (!Array.isArray(input.warnings) || !Array.isArray(input.decisions)) {
@@ -658,6 +660,7 @@ export function readPlanEvaluation(input: unknown): ReadResult<PlanEvaluation> {
         budgetFit: budgetFit as number | null,
         routeEfficiency: routeEfficiency as number,
         interestMatch: interestMatch as number | null,
+        evidenceStrength: evidenceStrength as number | null,
       },
       warnings,
       decisions,
@@ -716,6 +719,7 @@ const DECISION_REASON_CODE_LABEL: Record<string, string> = {
   REGIONAL_GROUPING: '区域分组',
   PACE_POLICY: '节奏策略',
   INTEREST_MATCH: '偏好匹配',
+  EVIDENCE_STRENGTH: '证据充分度',
 }
 
 export function decisionReasonLabel(reasonCode: string): string {

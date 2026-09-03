@@ -38,7 +38,7 @@ def test_evaluator_marks_missing_budget_and_preferences_not_applicable() -> None
     )
 
     assert evaluation.schema_version == 2
-    assert evaluation.evaluator_version == "rule-v3"
+    assert evaluation.evaluator_version == "rule-v6"
     assert evaluation.dimensions.budget_fit is None
     assert evaluation.dimensions.interest_match is None
 

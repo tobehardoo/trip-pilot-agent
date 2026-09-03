@@ -3,10 +3,13 @@
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+from trip_agent.guide_intelligence.evidence_fusion import guide_fact_bonus
 from trip_agent.guide_intelligence.travel_entities import Attraction
+from trip_agent.guide_intelligence.trusted_facts import ValidatedFact
 from trip_agent.planning.cost_model import ResolvedCost
 from trip_agent.planning.poi_quality import same_mapped_place
 from trip_agent.providers.map import Poi
@@ -112,6 +115,12 @@ class CandidateRanker:
         # budget is not tight).
         cost_hints: Mapping[str, ResolvedCost] | None = None,
         budget_ceiling: Decimal | None = None,
+        # M0 evidence-tiered guide matching: when non-empty, a POI that matches
+        # a trusted fact is boosted by reliability x freshness instead of the
+        # flat guide-statement boost; ``evidence_now`` is the explicit
+        # reference clock for staleness (None -> treat as fresh).
+        evidence_facts: tuple[ValidatedFact, ...] = (),
+        evidence_now: datetime | None = None,
     ) -> CandidateRanking:
         if limit < 1:
             raise ValueError("candidate limit must be positive")
@@ -158,6 +167,8 @@ class CandidateRanker:
                     must_visit_provider_ids,
                     (cost_hints or {}).get(poi.provider_id),
                     budget_ceiling,
+                    evidence_facts,
+                    evidence_now,
                 )
             )
 
@@ -197,6 +208,8 @@ class CandidateRanker:
         must_visit_provider_ids: frozenset[str] = frozenset(),
         cost_hint: ResolvedCost | None = None,
         budget_ceiling: Decimal | None = None,
+        evidence_facts: tuple[ValidatedFact, ...] = (),
+        evidence_now: datetime | None = None,
     ) -> RankedCandidate:
         score = 20
         reasons = ["VALID_CITY_AND_METADATA"]
@@ -224,7 +237,12 @@ class CandidateRanker:
                     reasons.append(f"MUST_VISIT_MATCH:{place}")
                     break
         poi_name = _text_key(poi.name)
-        if poi_name and any(
+        tiered = _evidence_guide_bonus(poi, evidence_facts, evidence_now)
+        if tiered is not None:
+            bonus, reason = tiered
+            score += bonus
+            reasons.append(reason)
+        elif poi_name and any(
             poi_name in _text_key(statement) and is_positive_guide_statement(statement)
             for statement in guide_statements
         ):
@@ -324,6 +342,35 @@ def is_positive_guide_statement(value: str) -> bool:
     return any(_text_key(term) in normalized for term in _POSITIVE_GUIDE_TERMS) and not any(
         _text_key(term) in normalized for term in _NEGATIVE_GUIDE_TERMS
     )
+
+
+def _evidence_guide_bonus(
+    poi: Poi,
+    facts: tuple[ValidatedFact, ...],
+    now: datetime | None,
+) -> tuple[int, str] | None:
+    """Reliability x freshness tiered guide-match boost for a POI.
+
+    Best (highest-bonus) matching positive fact wins.  When no trusted fact
+    matches, returns ``None`` so the caller falls back to the flat guide-statement
+    boost (unchanged happy path).
+    """
+    if not facts:
+        return None
+    poi_name = _text_key(poi.name)
+    best_bonus: int | None = None
+    best_reason: str | None = None
+    for fact in facts:
+        text = f"{fact.statement} {fact.evidence}"
+        if poi_name not in _text_key(text) or not is_positive_guide_statement(text):
+            continue
+        bonus = guide_fact_bonus(fact.reliability_level, fact.checked_at, now=now)
+        if best_bonus is None or bonus > best_bonus:
+            best_bonus = bonus
+            best_reason = f"GUIDE_FACT_MATCH:{fact.reliability_level}"
+    if best_bonus is None:
+        return None
+    return best_bonus, best_reason or "GUIDE_FACT_MATCH"
 
 
 def is_adverse_weather_statement(value: str) -> bool:

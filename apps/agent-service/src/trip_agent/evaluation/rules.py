@@ -33,12 +33,18 @@ from trip_agent.worker.contracts import (
 )
 
 # ── Central weight configuration ──────────────────────────────────────────
+#
+# M0 (rule-v6): the evidence-strength dimension takes weight from constraint
+# satisfaction and time feasibility.  Fractions still sum to 1.0
+# (0.25+0.22+0.15+0.15+0.15+0.08 == 1.00), mirroring the integer scoring in
+# scoring.weighted_overall_score.
 
-CONSTRAINT_SATISFACTION_WEIGHT = 0.30
-TIME_FEASIBILITY_WEIGHT = 0.25
+CONSTRAINT_SATISFACTION_WEIGHT = 0.25
+TIME_FEASIBILITY_WEIGHT = 0.22
 BUDGET_FIT_WEIGHT = 0.15
 ROUTE_EFFICIENCY_WEIGHT = 0.15
 INTEREST_MATCH_WEIGHT = 0.15
+EVIDENCE_STRENGTH_WEIGHT = 0.08
 
 WEIGHTS = (
     ("constraintSatisfaction", CONSTRAINT_SATISFACTION_WEIGHT),
@@ -46,6 +52,7 @@ WEIGHTS = (
     ("budgetFit", BUDGET_FIT_WEIGHT),
     ("routeEfficiency", ROUTE_EFFICIENCY_WEIGHT),
     ("interestMatch", INTEREST_MATCH_WEIGHT),
+    ("evidenceStrength", EVIDENCE_STRENGTH_WEIGHT),
 )
 
 # ── Threshold configuration ───────────────────────────────────────────────
@@ -570,6 +577,33 @@ def score_interest_match(
 
     # Combined score: 70% preference coverage + 30% activity coverage
     score = round(pref_coverage * 70 + activity_ratio * 30)
+    return max(0, min(100, score))
+
+
+# ── Evidence strength (M0 rule-v6) ─────────────────────────────────────────
+
+# Neutral baseline when no fused evidence is supplied: the plan is judged on
+# provider/defaults alone, never booted out — the dimension only surfaces and
+# discloses, it never hard-blocks a completion.
+NEUTRAL_EVIDENCE_STRENGTH = 80
+
+
+def score_evidence_strength(conclusions: tuple[object, ...]) -> int:
+    """Score evidence sufficiency from fused L1 conclusions (0–100).
+
+    Higher verified coverage + higher average confidence -> higher score;
+    undecided CONFLICTING conclusions pull the score down.  No conclusions
+    (e.g. happy path without an L1 feed) return the neutral baseline.
+    """
+    if not conclusions:
+        return NEUTRAL_EVIDENCE_STRENGTH
+    verified = sum(1 for c in conclusions if getattr(c, "status", "") == "VERIFIED")
+    conflicting = sum(1 for c in conclusions if getattr(c, "status", "") == "CONFLICTING")
+    coverage = verified / len(conclusions)
+    avg_confidence = sum(getattr(c, "confidence", 0.0) for c in conclusions) / len(conclusions)
+    score = round(coverage * 60 + avg_confidence * 40)
+    if conflicting:
+        score -= 20
     return max(0, min(100, score))
 
 

@@ -13,3 +13,18 @@ fetch_interval_hours = 168
 min_request_interval_seconds = 1
 request_timeout_seconds = 10
 max_response_bytes = 2_000_000
+
+[[sources]]
+source_id = "guangzhou-culture-open-data"
+city = "广州"
+source_name = "广州市文化广电旅游开放数据"
+reliability_level = "CURATED"
+allowed_domains = ["data.gz.gov.cn"]
+resource_urls = [
+  "https://data.gz.gov.cn/api/datasets/gz-culture-tourism",
+  "https://data.gz.gov.cn/opendata/resource/gz-attractions",
+]
+fetch_interval_hours = 72
+min_request_interval_seconds = 2
+request_timeout_seconds = 10
+max_response_bytes = 2_000_000

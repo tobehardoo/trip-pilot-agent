@@ -1322,6 +1322,14 @@
               ],
               "minimum": 0,
               "maximum": 100
+            },
+            "evidenceStrength": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 100
             }
           }
         },
@@ -1463,7 +1471,8 @@
               "PROVIDER_CONSTRAINT",
               "TIME_OPTIMIZATION",
               "BUDGET_CONSTRAINT",
-              "REGIONAL_GROUPING"
+              "REGIONAL_GROUPING",
+              "EVIDENCE_STRENGTH"
             ]
           }
         },

@@ -3,7 +3,7 @@
   "description": "A weighted workload of 5.0 (five full activities) triggers the daily-load disclosure.",
   "profile": "high-daily-load",
   "expect": {
-    "minimum_score": 94,
+    "minimum_score": 93,
     "maximum_score": 98,
     "required_warnings": [
       "HIGH_DAILY_LOAD"

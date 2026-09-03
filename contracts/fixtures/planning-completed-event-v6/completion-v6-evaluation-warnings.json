@@ -54,7 +54,7 @@
       "schemaVersion": 1,
       "evaluatorVersion": "rule-v1",
       "feasible": true,
-      "overallScore": 82,
+      "overallScore": 81,
       "dimensions": {
         "constraintSatisfaction": 100,
         "timeFeasibility": 67,
@@ -78,7 +78,7 @@
         "constraintRefs": [],
         "evidence": [{"key": "provider", "label": "数据 Provider", "value": "AMAP"}]
       }],
-      "summary": "行程整体质量 82/100，1 个路段使用 Demo 降级。",
+      "summary": "行程整体质量 81/100，1 个路段使用 Demo 降级。",
       "evaluatedAt": "2026-08-02T00:00:00Z"
     }
   }

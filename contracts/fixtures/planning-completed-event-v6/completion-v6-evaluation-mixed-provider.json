@@ -48,7 +48,7 @@
       "schemaVersion": 1,
       "evaluatorVersion": "rule-v1",
       "feasible": true,
-      "overallScore": 94,
+      "overallScore": 93,
       "dimensions": {
         "constraintSatisfaction": 100,
         "timeFeasibility": 100,
@@ -70,7 +70,7 @@
         "evidence": [{"key": "provider_fallback", "label": "降级 Provider", "value": "DEMO (retry=2)"}],
         "dayIndex": 0
       }],
-      "summary": "行程整体质量 94/100，1 个路段使用 Demo 降级。",
+      "summary": "行程整体质量 93/100，1 个路段使用 Demo 降级。",
       "evaluatedAt": "2026-08-02T00:00:00Z"
     }
   }

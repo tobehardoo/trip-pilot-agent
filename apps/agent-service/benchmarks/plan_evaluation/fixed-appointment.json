@@ -2,5 +2,5 @@
   "id": "fixed-appointment",
   "description": "A fixed appointment is covered by an activity window.",
   "profile": "fixed-appointment",
-  "expect": {"minimum_score": 100, "maximum_score": 100, "required_warnings": [], "forbidden_warnings": ["TIGHT_TRANSFER"]}
+  "expect": {"minimum_score": 98, "maximum_score": 100, "required_warnings": [], "forbidden_warnings": ["TIGHT_TRANSFER"]}
 }

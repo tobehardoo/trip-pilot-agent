@@ -258,7 +258,8 @@ public record PlanningCompletedEvent(
             int timeFeasibility,
             Integer budgetFit,
             int routeEfficiency,
-            Integer interestMatch
+            Integer interestMatch,
+            Integer evidenceStrength
     ) {
     }
 

@@ -42,7 +42,9 @@ public class PlanningCompletedEventParser {
             // 与 agent-service 的 DecisionTrace 契约对齐：偏好命中与 RELAXED
             // 节奏这两个合法决策此前不在白名单，导致任意带偏好或轻松节奏的
             // 行程其 PLANNING_COMPLETED 事件被整件拒绝，任务永远卡在 RUNNING。
-            "INTEREST_MATCH", "PACE_POLICY"
+            "INTEREST_MATCH", "PACE_POLICY",
+            // M0 证据充分度披露（rule-v6）：只披露，不拦截。
+            "EVIDENCE_STRENGTH"
     );
     private static final Set<String> STRUCTURAL_KINDS = Set.of(
             "MEAL", "ACCOMMODATION", "ARRIVAL", "DEPARTURE"
@@ -462,14 +464,16 @@ public class PlanningCompletedEventParser {
                 || dims.routeEfficiency() < 0 || dims.routeEfficiency() > 100
                 || !validOptionalScore(dims.budgetFit())
                 || !validOptionalScore(dims.interestMatch())
+                || !validOptionalScore(dims.evidenceStrength())
                 || (evaluation.schemaVersion() == 1
                 && (dims.budgetFit() == null || dims.interestMatch() == null))) {
             throw invalid("evaluation dimension scores must be 0-100");
         }
-        int numerator = dims.constraintSatisfaction() * 30
-                + dims.timeFeasibility() * 25
+        // M0 (rule-v6) weights: 25/22/15/15/15/8.
+        int numerator = dims.constraintSatisfaction() * 25
+                + dims.timeFeasibility() * 22
                 + dims.routeEfficiency() * 15;
-        int totalWeight = 70;
+        int totalWeight = 62;
         if (dims.budgetFit() != null) {
             numerator += dims.budgetFit() * 15;
             totalWeight += 15;
@@ -477,6 +481,10 @@ public class PlanningCompletedEventParser {
         if (dims.interestMatch() != null) {
             numerator += dims.interestMatch() * 15;
             totalWeight += 15;
+        }
+        if (dims.evidenceStrength() != null) {
+            numerator += dims.evidenceStrength() * 8;
+            totalWeight += 8;
         }
         int expectedOverall = (numerator + totalWeight / 2) / totalWeight;
         if (evaluation.overallScore() != expectedOverall) {

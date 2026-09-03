@@ -16,12 +16,18 @@ def test_source_catalog_loads_official_guangzhou_sources() -> None:
 
     sources = catalog.for_city("广州")
 
-    assert len(sources) == 1
-    assert sources[0].source_id == "guangzhou-government-tourism"
-    assert len(sources[0].resource_urls) == 3
-    assert sources[0].allowed_domains == ("www.gz.gov.cn",)
-    assert sources[0].min_request_interval_seconds == 1.0
-    assert isinstance(sources[0].min_request_interval_seconds, float)
+    # M0: a second trusted source (开放数据) joins the official tourism source.
+    assert len(sources) == 2
+    official = next(s for s in sources if s.source_id == "guangzhou-government-tourism")
+    assert official.source_id == "guangzhou-government-tourism"
+    assert len(official.resource_urls) == 3
+    assert official.allowed_domains == ("www.gz.gov.cn",)
+    assert official.min_request_interval_seconds == 1.0
+    assert isinstance(official.min_request_interval_seconds, float)
+    open_data = next(s for s in sources if s.source_id == "guangzhou-culture-open-data")
+    assert open_data.source_id == "guangzhou-culture-open-data"
+    assert open_data.reliability_level == "CURATED"
+    assert len(open_data.resource_urls) == 2
 
 
 def test_source_catalog_rejects_duplicate_source_ids(tmp_path: Path) -> None:

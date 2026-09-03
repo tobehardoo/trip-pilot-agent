@@ -44,6 +44,7 @@ type ReasonCode = Literal[
     "REGIONAL_GROUPING",
     "PACE_POLICY",
     "INTEREST_MATCH",
+    "EVIDENCE_STRENGTH",
 ]
 
 
@@ -61,6 +62,10 @@ class EvaluationDimensions(BaseModel):
     budget_fit: int | None = Field(default=None, ge=0, le=100)
     route_efficiency: int = Field(ge=0, le=100)
     interest_match: int | None = Field(default=None, ge=0, le=100)
+    # M0 evidence dimension (rule-v6): how well-supported decisions are by
+    # fused L1 evidence.  Optional so legacy schema-v1 plans (no evidence
+    # field) keep validating; the current evaluator always emits it.
+    evidence_strength: int | None = Field(default=None, ge=0, le=100)
 
 
 class EvaluationWarning(BaseModel):

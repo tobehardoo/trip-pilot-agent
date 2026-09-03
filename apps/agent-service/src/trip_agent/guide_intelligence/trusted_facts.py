@@ -197,6 +197,12 @@ class ValidatedFact:
     reliability_level: str
     source_reviewed: bool
     hard_constraint_eligible: bool
+    # M0 evidence-fusion surface: the domain entity a fact describes and the
+    # acquisition source-registry id.  Kept optional so unchanged callers and
+    # hand-built facts keep working; the fusion layer prefers these over
+    # value-embedded names.
+    entity: str = ""
+    source_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -548,6 +554,12 @@ class FactValidator:
                     reliability_level=document.reliability_level,
                     source_reviewed=document.source_reviewed,
                     hard_constraint_eligible=hard_eligible,
+                    entity=(
+                        str(candidate.normalized_value.get("poiName"))
+                        if candidate.normalized_value.get("poiName")
+                        else document.source_name
+                    ),
+                    source_id="",
                 )
             )
         return FactValidationResult(accepted=tuple(accepted), rejected=tuple(rejected))

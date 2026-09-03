@@ -7,7 +7,9 @@ from trip_agent.evaluation.explanations import (
     DeterministicPlanExplanationGenerator,
 )
 from trip_agent.evaluation.models import (
+    DecisionExplanation,
     EvaluationDimensions,
+    EvaluationEvidence,
     EvaluationWarning,
     PlanEvaluation,
 )
@@ -19,6 +21,7 @@ from trip_agent.evaluation.rules import (
     route_warnings,
     score_budget_fit,
     score_constraint_satisfaction,
+    score_evidence_strength,
     score_interest_match,
     score_route_efficiency,
     score_time_feasibility,
@@ -32,7 +35,7 @@ from trip_agent.worker.contracts import (
     PlanningReplanCommand,
 )
 
-EVALUATOR_VERSION = "rule-v3"
+EVALUATOR_VERSION = "rule-v6"
 
 
 class PlanEvaluator:
@@ -57,6 +60,7 @@ class PlanEvaluator:
         self,
         command: PlanningCreateCommand | PlanningReplanCommand | PlanningCandidateValidationCommand,
         result: PlanningResult,
+        evidence: tuple[object, ...] = (),
     ) -> PlanEvaluation:
         """Produce a complete, deterministic plan evaluation.
 
@@ -110,6 +114,7 @@ class PlanEvaluator:
             if command.payload.trip.constraints.preferences
             else None
         )
+        evidence_strength = score_evidence_strength(evidence)
 
         dimensions = EvaluationDimensions(
             constraint_satisfaction=constraint_sat,
@@ -117,6 +122,7 @@ class PlanEvaluator:
             budget_fit=budget_fit,
             route_efficiency=route_eff,
             interest_match=interest,
+            evidence_strength=evidence_strength,
         )
 
         # Collect warnings
@@ -133,6 +139,7 @@ class PlanEvaluator:
             budget_ctx=budget_ctx,
             day_stats=day_stats,
         )
+        decisions = _append_evidence_strength_decision(decisions, evidence_strength)
 
         evaluated_at = (
             self._clock.now(UTC)
@@ -153,3 +160,37 @@ class PlanEvaluator:
             ),
             evaluated_at=evaluated_at,
         )
+
+
+def _append_evidence_strength_decision(
+    decisions: tuple[DecisionExplanation, ...],
+    evidence_strength: int,
+) -> tuple[DecisionExplanation, ...]:
+    """Disclosure-only plan decision for the evidence dimension (M0).
+
+    Purely informational — never gates completion.  A deterministic summary
+    avoids colliding with other plan-level decisions (unique on subjectType,
+    subjectId, summary).
+    """
+    summary = "基于多源证据融合评估的充分度"
+    decision = DecisionExplanation(
+        subject_type="PLAN",
+        summary=summary,
+        reason_codes=("EVIDENCE_STRENGTH",),
+        reasons=(f"证据充分度评价 {evidence_strength}/100",),
+        evidence=(
+            EvaluationEvidence(
+                key="evidence_strength",
+                label="证据充分度",
+                value=str(evidence_strength),
+            ),
+        ),
+    )
+    for item in decisions:
+        if (
+            item.subject_type == "PLAN"
+            and item.subject_id is None
+            and item.summary == summary
+        ):
+            return decisions
+    return (decision, *decisions)

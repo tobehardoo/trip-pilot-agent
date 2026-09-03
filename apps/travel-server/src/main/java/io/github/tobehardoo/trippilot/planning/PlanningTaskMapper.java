@@ -13,6 +13,24 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface PlanningTaskMapper {
 
+    @Select("""
+            SELECT id FROM business.planning_task
+            WHERE status IN ('QUEUED', 'RUNNING')
+              AND updated_at < #{threshold}
+            ORDER BY updated_at
+            LIMIT #{limit}
+            """)
+    List<UUID> findStaleActiveTaskIds(
+            @Param("threshold") java.time.Instant threshold,
+            @Param("limit") int limit);
+
+    @Select("""
+            SELECT id, trip_id AS tripId, trace_id AS traceId, task_type AS taskType
+            FROM business.planning_task
+            WHERE id = #{id}
+            """)
+    Optional<PlanningTaskRef> findTaskRef(@Param("id") UUID id);
+
     @Insert("""
             INSERT INTO business.planning_task(
                 id, trip_id, idempotency_key, task_type, status,
@@ -245,5 +263,8 @@ public interface PlanningTaskMapper {
     }
 
     record RetryableFailedTask(UUID taskId, UUID tripId, UUID ownerId) {
+    }
+
+    record PlanningTaskRef(UUID id, UUID tripId, UUID traceId, String taskType) {
     }
 }

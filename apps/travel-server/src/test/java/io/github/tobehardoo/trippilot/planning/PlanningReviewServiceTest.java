@@ -337,6 +337,17 @@ class PlanningReviewServiceTest {
 
     private static final class FakePlanningTaskMapper implements PlanningTaskMapper {
 
+        @Override
+        public java.util.List<UUID> findStaleActiveTaskIds(
+                java.time.Instant threshold, int limit) {
+            return java.util.List.of();
+        }
+
+        @Override
+        public java.util.Optional<PlanningTaskRef> findTaskRef(UUID id) {
+            return java.util.Optional.empty();
+        }
+
         private Optional<PlanningTaskCompletionRecord> completionContext;
         private int waitingUserResult;
         private UUID markedWaitingUserTaskId;

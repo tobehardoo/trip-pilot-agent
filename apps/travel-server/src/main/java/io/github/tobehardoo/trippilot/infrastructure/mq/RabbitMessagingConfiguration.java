@@ -252,6 +252,25 @@ public class RabbitMessagingConfiguration {
         return new OutboxPublisherJob(publicationService);
     }
 
+    @Bean
+    @ConditionalOnProperty(
+            name = "app.planning.stale-task-sweeper-enabled",
+            havingValue = "true",
+            matchIfMissing = true
+    )
+    io.github.tobehardoo.trippilot.planning.PlanningStaleTaskSweeperJob planningStaleTaskSweeperJob(
+            io.github.tobehardoo.trippilot.planning.PlanningTaskMapper taskMapper,
+            io.github.tobehardoo.trippilot.planning.PlanningFailureService failureService,
+            java.time.Clock clock,
+            @org.springframework.beans.factory.annotation.Value(
+                    "${app.planning.stale-task-timeout-minutes:30}") long staleTimeoutMinutes,
+            @org.springframework.beans.factory.annotation.Value(
+                    "${app.planning.stale-task-batch-size:20}") int batchSize
+    ) {
+        return new io.github.tobehardoo.trippilot.planning.PlanningStaleTaskSweeperJob(
+                taskMapper, failureService, clock, staleTimeoutMinutes, batchSize);
+    }
+
     private Queue durableQueue(String name, String deadLetterRoutingKey) {
         return QueueBuilder.durable(name)
                 .deadLetterExchange(DEAD_LETTER_EXCHANGE)

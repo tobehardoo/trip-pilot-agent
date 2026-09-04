@@ -26,10 +26,10 @@ from trip_agent.acquisition.security import (
     normalize_allowed_domain,
     validate_source_url,
 )
-from trip_agent.guide_intelligence.link_parser import LinkParseError, looks_supported, parse_link
-from trip_agent.guide_intelligence.link_parser.util import make_client
 from trip_agent.guide_intelligence.city_intelligence import AmapCityIntelligenceProvider
 from trip_agent.guide_intelligence.extraction import GenericGuideExtractor
+from trip_agent.guide_intelligence.link_parser import LinkParseError, looks_supported, parse_link
+from trip_agent.guide_intelligence.link_parser.util import make_client
 from trip_agent.guide_intelligence.models import ExtractedGuide, GuideImportResult, GuideSourceType
 from trip_agent.guide_intelligence.ocr import (
     HttpVisionOcrProvider,

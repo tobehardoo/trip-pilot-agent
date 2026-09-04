@@ -16,6 +16,7 @@
 **/__pycache__/
 **/.pytest_cache/
 **/.pytest-temp-*/
+**/.pytest-tmp*/
 apps/agent-service/.tmp/
 **/.ruff_cache/
 **/.coverage
@@ -56,3 +57,6 @@ output/
 .tmp-eval/
 .tmp-repro/
 .e2e-trip-id.txt
+
+# Benchmark outputs (generated, local diffing only)
+**/benchmarks/**/results/

@@ -169,11 +169,11 @@ docker compose -f compose.prod.yaml --env-file .env up -d --build --wait --wait-
 
 当前发布通过 Python、Java、Web、Contract、集成测试与真实端到端规划工作流的全部自动化套件。
 
-### Current release validation（v1.0 收口）
+### Current release validation
 
-- Python: **2051 passed / 42 skipped**（skipped 为可选真实链路：3 个真实 AMap 单测 + ~39 个依赖 `KNOWLEDGE_TEST_DATABASE_URL` 的攻略库用例）· ruff 0
-- Java: **626 passed**
-- Web: **307 passed** · coverage 86.83%（statements/lines）· typecheck 0 · production build 通过
+- Python: **2112 passed / 42 skipped**（skipped 为可选真实链路：真实 AMap/DashScope/数据库类用例，需显式开启或 `KNOWLEDGE_TEST_DATABASE_URL`）· ruff 0
+- Java: **621 passed**
+- Web: **350 passed**（34 个测试文件）· typecheck 0 · production build 通过
 - Real browser E2E: **PASS**（零 mock 真实链路：Web → Java → MQ → Python → 行程完成 → 真实渲染）
 
 测试门禁与常见坑见 [测试策略](docs/development/测试策略.md)。

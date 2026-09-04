@@ -48,7 +48,9 @@ async def _fetch_initial_data(page_url: str) -> tuple[dict, str]:
 
     try:
         resp = await asyncio.to_thread(
-            lambda: curl_requests.get(page_url, impersonate="chrome", timeout=20, allow_redirects=True)
+            lambda: curl_requests.get(
+                page_url, impersonate="chrome", timeout=20, allow_redirects=True
+            )
         )
     except Exception as error:  # noqa: BLE001
         raise LinkParseError.network(str(error)) from error

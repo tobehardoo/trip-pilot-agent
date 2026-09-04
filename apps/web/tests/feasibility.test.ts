@@ -659,6 +659,54 @@ describe('readPlanEvaluation', () => {
     }
   })
 
+  test('accepts the M0 evidence strength dimension and disclosure decision', () => {
+    const input = {
+      schemaVersion: 2,
+      evaluatorVersion: 'rule-v6',
+      feasible: true,
+      overallScore: 90,
+      dimensions: {
+        constraintSatisfaction: 100,
+        timeFeasibility: 100,
+        budgetFit: 100,
+        routeEfficiency: 80,
+        interestMatch: 100,
+        evidenceStrength: 80,
+      },
+      warnings: [],
+      decisions: [
+        {
+          subjectType: 'PLAN',
+          subjectId: null,
+          summary: '基于多源证据融合评估的充分度',
+          reasonCodes: ['EVIDENCE_STRENGTH'],
+          reasons: ['证据充分度评价 80/100'],
+          constraintRefs: [],
+          evidence: [{ key: 'evidence_strength', label: '证据充分度', value: '80' }],
+          dayIndex: null,
+        },
+      ],
+      summary: '行程整体质量 90/100。',
+      evaluatedAt: '2026-09-01T00:00:00Z',
+    }
+
+    const result = readPlanEvaluation(input)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value.dimensions.evidenceStrength).toBe(80)
+      expect(result.value.decisions[0].reasonCodes).toContain('EVIDENCE_STRENGTH')
+    }
+  })
+
+  test('accepts a legacy plan evaluation without the evidence dimension', () => {
+    const { evidenceStrength: _evidenceStrength, ...legacyDimensions } = {
+      ...validEvaluation.dimensions,
+      evidenceStrength: 80,
+    }
+    const result = readPlanEvaluation({ ...validEvaluation, dimensions: legacyDimensions })
+    expect(result.ok).toBe(true)
+  })
+
   test('rejects missing evaluation', () => {
     expect(readPlanEvaluation(undefined).ok).toBe(false)
     expect(readPlanEvaluation(null).ok).toBe(false)
@@ -1096,6 +1144,8 @@ describe('decision display labels', () => {
     expect(decisionReasonLabel('NEARBY_CLUSTER')).toBe('就近聚类')
     expect(decisionReasonLabel('BUDGET_CONSTRAINT')).toBe('预算约束')
     expect(decisionReasonLabel('MUST_VISIT')).toBe('必去地点')
+    expect(decisionReasonLabel('EVIDENCE_STRENGTH')).toBe('证据充分度')
+    expect(decisionReasonLabel('INTEREST_MATCH')).toBe('偏好匹配')
   })
 
   test('falls back to the raw code for unknown reasonCode', () => {

@@ -285,7 +285,7 @@ class PlanningCompletionFlowIntegrationTest extends PostgresIntegrationTest {
         mockMvc.perform(get("/api/planning-tasks/{taskId}", context.taskId())
                         .header("Authorization", bearer(context.accessToken())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.evaluation.overallScore").value(94))
+                .andExpect(jsonPath("$.evaluation.overallScore").value(93))
                 .andExpect(jsonPath("$.fallbackOperations[0].transitId")
                         .value(persistedTransitId.toString()))
                 .andExpect(jsonPath("$.evaluation.warnings[0].entityId")

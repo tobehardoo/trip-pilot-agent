@@ -300,7 +300,9 @@ def _snapshot(citation: KnowledgeCitation) -> KnowledgeCitationSnapshot:
         chunk_id=citation.chunk_id,
         chunk_index=citation.chunk_index,
         title=citation.title,
-        content=citation.content,
+        # Bounded excerpt only: the contract caps citation content at 200 chars
+        # so internal retrieval text never crosses the boundary un-bounded.
+        content=citation.content[:200],
         source_url=citation.source_url,
         source_name=citation.source_name,
         collected_at=citation.collected_at,

@@ -1,8 +1,0 @@
-
-[[sources]]
-source_id = "two"
-city = "广州"
-source_name = "来源二"
-reliability_level = "CURATED"
-allowed_domains = ["example.com"]
-resource_urls = ["https://example.com/article"]

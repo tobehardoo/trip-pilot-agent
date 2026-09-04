@@ -18,6 +18,9 @@ EXCLUDED_DIRECTORY_NAMES = {
     "playwright-report",
     "target",
     "test-results",
+    # Archived docs are frozen historical snapshots; their relative links to
+    # paths that may have moved or been removed since are expected to break.
+    "archive",
 }
 
 

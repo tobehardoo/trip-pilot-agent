@@ -146,7 +146,13 @@ class PsycopgAgentRunRepository:
     # ── sync bodies ─────────────────────────────────────────────────
 
     def _connect(self) -> psycopg.Connection:
-        return psycopg.connect(self._database_url, row_factory=dict_row)
+        # Short connect timeout so a DB outage degrades to the Redis/in-memory
+        # dialog fallback quickly instead of blocking startup for minutes.
+        return psycopg.connect(
+            self._database_url,
+            row_factory=dict_row,
+            connect_timeout=3,
+        )
 
     def _migrate_sync(self) -> None:
         migrations = sorted(

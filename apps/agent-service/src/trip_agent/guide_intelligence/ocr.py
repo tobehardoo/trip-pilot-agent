@@ -359,7 +359,7 @@ class RapidScanTextExtractor:
             detections = result[0] if isinstance(result, tuple) else result
             lines: list[str] = []
             for item in detections or []:
-                if not isinstance(item, (list, tuple)) or len(item) < 2:
+                if not isinstance(item, list | tuple) or len(item) < 2:
                     continue
                 text = str(item[1]).strip()
                 if text:

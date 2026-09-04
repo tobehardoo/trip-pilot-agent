@@ -163,7 +163,7 @@ async function mockVersionPanel(page: Page, versions: unknown[]) {
 }
 
 async function openVersionPanel(page: Page) {
-  await page.getByTestId('more-toggle-version').click()
+  await page.getByTestId('tool-tab-version').click()
   await expect(page.getByRole('heading', { name: '行程版本' })).toBeVisible()
 }
 

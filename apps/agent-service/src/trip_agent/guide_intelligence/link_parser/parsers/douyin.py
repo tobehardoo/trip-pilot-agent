@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 
@@ -15,7 +16,7 @@ import httpx
 
 from ..errors import LinkParseError
 from ..models import ParsedLink
-from ..util import DESKTOP_UA, fetch_text, resolve_redirect
+from ..util import fetch_text, resolve_redirect
 
 _TTWID_URL = "https://ttwid.bytedance.com/ttwid/union/register/"
 _VID = re.compile(r"(?:video|note)/(?P<vid>\d{10,})")
@@ -64,10 +65,8 @@ async def _ensure_ttwid(client: httpx.AsyncClient) -> None:
         body = {}
     callback = body.get("redirect_url") if isinstance(body, dict) else None
     if callback:
-        try:
+        with contextlib.suppress(httpx.HTTPError):
             await client.get(callback, headers={"Referer": "https://www.iesdouyin.com/"})
-        except httpx.HTTPError:
-            pass
 
 
 def _canonical_url(ty: str, vid: str) -> str:

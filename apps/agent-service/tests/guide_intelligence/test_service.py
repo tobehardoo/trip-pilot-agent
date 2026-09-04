@@ -372,7 +372,14 @@ def test_import_uses_single_host_allowlist_and_returns_traceable_result() -> Non
         )
     )
 
-    assert fetcher.source.allowed_domains == ("example.com",)
+    assert fetcher.source.allowed_domains == (
+        "example.com",
+        "xiaohongshu.com",
+        "xhslink.com",
+        "xhslink.cn",
+        "douyin.com",
+        "iesdouyin.com",
+    )
     assert fetcher.source.max_response_bytes == 5_000_000
     assert fetcher.resource.url == "https://example.com/post/1"
     assert result.source_url == "https://example.com/post/1"

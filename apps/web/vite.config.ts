@@ -46,8 +46,7 @@ export default defineConfig(({ mode }) => {
         include: [
           // F-2d: coverage tracks the production files the current test set
           // actually exercises — every entry maps to a live tests/ suite.
-          // (16 stale paths from F-UI-11 removed; constraint-editor.ts is
-          // untested and excluded rather than counting as 0%.)
+          // (16 stale paths from F-UI-11 removed.)
           'src/App.vue',
           'src/app/router/index.ts',
           'src/app/stores/auth.ts',

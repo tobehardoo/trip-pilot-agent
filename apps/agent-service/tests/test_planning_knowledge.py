@@ -72,7 +72,9 @@ def test_real_retrieval_builds_versioned_citation_snapshots() -> None:
     assert evidence.freshness.status == "FRESH"
     assert evidence.citations[0].document_version == 2
     assert evidence.citations[0].chunk_id == "guangzhou-history-001-v2-c0"
-    assert not hasattr(evidence.citations[0], "content")
+    # Bounded excerpt only: citation content is capped at the 200-char contract
+    # bound so internal retrieval text never crosses the boundary un-bounded.
+    assert len(evidence.citations[0].content) <= 200
     assert repository.request.city == "广州"
     assert repository.request.traveler_type == "FRIENDS"
     assert repository.request.as_of.isoformat() == "2026-08-01"

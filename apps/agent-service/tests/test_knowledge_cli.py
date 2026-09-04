@@ -152,8 +152,10 @@ version = 1
         lambda database_url: repository,
     )
     settings = KnowledgeSettings(
+        _env_file=None,
         knowledge_database_url="postgresql://user:password@localhost:5432/db",
         knowledge_embedding_dimensions=32,
+        knowledge_embedding_provider="demo",
     )
 
     migrate_args = build_parser().parse_args(["migrate"])
@@ -199,6 +201,9 @@ expected_document_ids = ["guangzhou-cli"]
         "KNOWLEDGE_DATABASE_URL",
         "postgresql://user:password@localhost:5432/db",
     )
+    # Pin the deterministic demo embedding so this test never depends on
+    # ambient env (e.g. an accidentally configured dashscope provider).
+    monkeypatch.setenv("KNOWLEDGE_EMBEDDING_PROVIDER", "demo")
     assert main(["evaluate", str(suite), "--top-k", "3"]) == 3
     cli_report = json.loads(capsys.readouterr().out)
     assert cli_report["status"] == "DEMO_ONLY"

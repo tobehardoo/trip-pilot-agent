@@ -221,7 +221,7 @@ test('syncs weather through the city-intelligence sync button in the guide panel
   await expect(page.getByTestId('weather-banner')).toHaveCount(0)
 
   // 打开「攻略情报」手风琴 → 同步城市情报
-  await page.getByTestId('more-toggle-guide').click()
+  await page.getByTestId('tool-tab-guide').click()
   const guidePanel = page.locator('#guide-intelligence-title')
   await expect(guidePanel).toBeVisible()
 

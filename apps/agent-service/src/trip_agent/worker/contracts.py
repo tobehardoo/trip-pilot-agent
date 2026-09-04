@@ -777,12 +777,17 @@ class KnowledgeCitationSnapshot(MessageModel):
     chunk_id: KnowledgeIdentifier
     chunk_index: int = Field(strict=True, ge=0)
     title: ItineraryText
-    content: ItineraryText = ""
+    # content / claim_type are internal-only: consumed by the worker's
+    # guide-fact injection, but excluded from the wire contract — Java's
+    # KnowledgeCitation is fail-closed on unknown fields, so emitting them
+    # would reject the whole completion event (and they are not consumed
+    # by any cross-service consumer).
+    content: ItineraryText = Field(default="", exclude=True)
     source_url: AnyHttpUrl
     source_name: NameText
     collected_at: datetime
     reliability_level: ShortText
-    claim_type: ShortText = "RECOMMENDATION"
+    claim_type: ShortText = Field(default="RECOMMENDATION", exclude=True)
     similarity: float = Field(ge=-1, le=1)
 
     @field_validator("collected_at")

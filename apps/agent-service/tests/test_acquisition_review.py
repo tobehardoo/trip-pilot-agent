@@ -287,6 +287,7 @@ def test_publisher_maps_frozen_approval_to_knowledge_document() -> None:
         "applicable_seasons": ("all",),
         "traveler_types": ("FAMILY", "SOLO"),
         "reliability_level": "OFFICIAL",
+        "claim_type": "RECOMMENDATION",
         "version": 2,
     }
     assert repository.succeeded == [("a" * 64, 1, result, published_at)]

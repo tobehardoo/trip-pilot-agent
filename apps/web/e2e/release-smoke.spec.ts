@@ -236,9 +236,9 @@ test('restores a session and renders the completed itinerary workspace', async (
   await expect(page.getByTestId('plan-transit-品尝西关早茶')).toContainText('步行')
 
   // 管理手风琴 + docked composer
-  await expect(page.getByTestId('more-toggle-version')).toBeVisible()
-  await expect(page.getByTestId('more-toggle-share')).toBeVisible()
-  await expect(page.getByTestId('more-toggle-guide')).toBeVisible()
+  await expect(page.getByTestId('tool-tab-version')).toBeVisible()
+  await expect(page.getByTestId('tool-tab-share')).toBeVisible()
+  await expect(page.getByTestId('tool-tab-guide')).toBeVisible()
   await expect(page.getByTestId('workspace-composer')).toBeVisible()
 })
 

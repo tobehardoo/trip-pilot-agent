@@ -56,7 +56,7 @@ async def parse(client, url: str) -> ParsedLink:
     except (json.JSONDecodeError, KeyError, TypeError):
         raise LinkParseError.parse_failed("微博返回数据异常") from None
 
-    body = strip_html((data.get("text") or ""))
+    body = strip_html(data.get("text") or "")
     if not body:
         raise LinkParseError.parse_failed("微博无正文")
     user = data.get("user") or {}

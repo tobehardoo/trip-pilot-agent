@@ -102,11 +102,62 @@ public class HttpGuideIntelligenceClient implements GuideIntelligenceClient {
                     "图片不符合要求：仅支持 PNG、JPEG、WEBP，单张不超过 5 MB、一次不超过 5 张。"
             );
         }
+        ApiException linkFailure = linkFailureFor(detail);
+        if (linkFailure != null) {
+            return linkFailure;
+        }
         return new ApiException(
                 HttpStatus.UNPROCESSABLE_ENTITY,
                 "GUIDE_IMPORT_REJECTED",
                 "The public guide could not be imported"
         );
+    }
+
+    /** 代理 agent 链接解析的结构化错误 → 可读中文提示。 */
+    private static ApiException linkFailureFor(String detail) {
+        if (detail.contains("UNSUPPORTED_PLATFORM")) {
+            return new ApiException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "LINK_UNSUPPORTED_PLATFORM",
+                    "该平台分享链接暂不支持自动提取正文，请打开内容复制文字，改用「粘贴正文」导入。"
+            );
+        }
+        if (detail.contains("LINK_EXPIRED")) {
+            return new ApiException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "LINK_EXPIRED",
+                    "该分享链接无效或内容已删除，请确认链接有效后重试。"
+            );
+        }
+        if (detail.contains("NEEDS_AUTH")) {
+            return new ApiException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "LINK_NEEDS_AUTH",
+                    "该内容需要登录或分享登录态才能查看，暂无法自动提取，请改用「粘贴正文」。"
+            );
+        }
+        if (detail.contains("MEDIA_ONLY")) {
+            return new ApiException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "LINK_MEDIA_ONLY",
+                    "该链接为纯视频/图集，没有可用的文字正文，请复制简介文字改用「粘贴正文」。"
+            );
+        }
+        if (detail.contains("NETWORK_UNAVAILABLE")) {
+            return new ApiException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "LINK_NETWORK_UNAVAILABLE",
+                    "抓取链接失败（网络异常），请稍后重试或改用「粘贴正文」。"
+            );
+        }
+        if (detail.contains("PARSE_FAILED")) {
+            return new ApiException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "LINK_PARSE_FAILED",
+                    "未能从该链接解析出可用正文，请改用「粘贴正文」导入。"
+            );
+        }
+        return null;
     }
 
     private ApiException unavailable(String message) {

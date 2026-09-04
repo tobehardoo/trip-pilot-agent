@@ -14,10 +14,20 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from trip_agent.acquisition.fetch_models import FetchResult, ResourceFetched
+from trip_agent.acquisition.fetch_models import (
+    AcquisitionFetchError,
+    FetchResult,
+    ResourceFetched,
+)
 from trip_agent.acquisition.fetching import HttpResourceFetcher
 from trip_agent.acquisition.models import DiscoveredResource, KnowledgeSource
-from trip_agent.acquisition.security import SourceSecurityError, validate_source_url
+from trip_agent.acquisition.security import (
+    SourceSecurityError,
+    normalize_allowed_domain,
+    validate_source_url,
+)
+from trip_agent.guide_intelligence.link_parser import LinkParseError, looks_supported, parse_link
+from trip_agent.guide_intelligence.link_parser.util import make_client
 from trip_agent.guide_intelligence.city_intelligence import AmapCityIntelligenceProvider
 from trip_agent.guide_intelligence.extraction import GenericGuideExtractor
 from trip_agent.guide_intelligence.models import ExtractedGuide, GuideImportResult, GuideSourceType
@@ -25,6 +35,7 @@ from trip_agent.guide_intelligence.ocr import (
     HttpVisionOcrProvider,
     ImagePayload,
     OcrError,
+    ScanTextExtractor,
     ValidatedImage,
     configured_ocr_provider,
     configured_scan_extractor,
@@ -56,6 +67,16 @@ _TEXT_SOURCE_LABELS: dict[GuideSourceType, str] = {
     "CITY_INTELLIGENCE": "和风天气城市情报",
     "PUBLIC_GUIDE_URL": "公开攻略链接",
 }
+
+# 用户贴的抖音/小红书短链会 302 到这些生态域名；公开链接导入需一并放行，
+# 否则重定向会被源安全策略以 UNSAFE_REDIRECT 拦截（见 fetching._fetch_with_client）。
+_SOCIAL_ALLOWED_DOMAINS = (
+    "xiaohongshu.com",
+    "xhslink.com",
+    "xhslink.cn",
+    "douyin.com",
+    "iesdouyin.com",
+)
 
 _OCR_MIN_TEXT_CHARACTERS = 20
 _OCR_MAX_CONCURRENCY = 3
@@ -113,15 +134,25 @@ class GuideImportService:
         self._text_refiner = text_refiner
 
     async def import_url(self, source_url: str) -> GuideImportResult:
+        # 已识别平台（小红书/抖音/微博/知乎/快手/视频号/B站）走专用链接解析，
+        # 能拿到真实正文；失败以结构化错误抛给上层用户提示。
+        if looks_supported(source_url):
+            try:
+                return await self.import_link_text(source_url)
+            except LinkParseError as error:
+                raise AcquisitionFetchError(
+                    error.code, error.message, retryable=False
+                ) from error
         host = _candidate_host(source_url)
-        normalized_url = validate_source_url(source_url, allowed_domains=(host,))
+        allowed_domains = _allowed_social_domains(host)
+        normalized_url = validate_source_url(source_url, allowed_domains=allowed_domains)
         source_id = f"user-guide-{hashlib.sha256(host.encode()).hexdigest()[:16]}"
         source = KnowledgeSource(
             source_id=source_id,
             city="USER_TRIP",
             source_name=host,
             reliability_level="COMMUNITY",
-            allowed_domains=(host,),
+            allowed_domains=allowed_domains,
             resource_urls=(normalized_url,),
             min_request_interval_seconds=1.0,
             request_timeout_seconds=12.0,
@@ -162,6 +193,45 @@ class GuideImportService:
             content_type=fetched.content_type,
             fetched_at=fetched.fetched_at,
             reliability_level="PUBLIC_GUIDE",
+        )
+        return await self._enrich(result, document)
+
+    async def import_link_text(self, source_url: str) -> GuideImportResult:
+        """用 link_parser 抓取已识别平台的标题+正文，归一化为文本文档。"""
+        async with make_client() as http_client:
+            link = await parse_link(http_client, source_url)
+        title = link.title or f"{link.platform_label}攻略"
+        content = link.text or title
+        fetched_at = datetime.now(UTC)
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+        real_url = link.url or source_url
+        result = GuideImportResult(
+            source_type="PUBLIC_GUIDE_URL",
+            source_url=real_url,
+            final_url=real_url,
+            source_host=link.platform_label,
+            title=title,
+            excerpt=content[:800],
+            content_hash=content_hash,
+            fetched_at=fetched_at,
+            facts=(),
+        )
+        document = self._normalizer.normalize_text(
+            source_type="PUBLIC_GUIDE_URL",
+            source_name=f"{link.platform_label}链接",
+            source_url=real_url,
+            city="USER_TRIP",
+            title=title,
+            content=content,
+            fetched_at=fetched_at,
+            encoding="utf-8",
+            reliability_level="COMMUNITY",
+            metadata={
+                "platform": link.platform,
+                "platformLabel": link.platform_label,
+                "author": link.author,
+                "parser": "link_parser",
+            },
         )
         return await self._enrich(result, document)
 
@@ -365,13 +435,17 @@ class GuideImportService:
         else:
             async with httpx.AsyncClient(trust_env=False) as http_client:
                 provider = configured_ocr_provider(http_client)
-                if provider is None:
-                    raise OcrError(
-                        "OCR_NOT_CONFIGURED",
-                        "图片识别未配置：请在服务端设置 OCR_MODEL_ENDPOINT、OCR_MODEL_API_KEY"
-                        "和 OCR_MODEL_NAME 后重试，或改用粘贴正文导入。",
-                    )
-                recognized = await self._recognize_images(provider, validated_images)
+                if provider is not None:
+                    recognized = await self._recognize_images(provider, validated_images)
+                else:
+                    scan = self._scan_extractor or configured_scan_extractor()
+                    if scan is None:
+                        raise OcrError(
+                            "OCR_NOT_CONFIGURED",
+                            "图片识别未配置：请在服务端设置 OCR_MODEL_ENDPOINT、OCR_MODEL_API_KEY"
+                            "和 OCR_MODEL_NAME 后重试，或改用粘贴正文导入。",
+                        )
+                    recognized = await self._recognize_scan(scan, validated_images)
         ocr_text = "\n\n".join(item.text for item in recognized if item.text)
         stripped = _require_usable_ocr_text(ocr_text)
         fetched_at = observed_at or datetime.now(UTC)
@@ -406,6 +480,28 @@ class GuideImportService:
                 return await self._recognize_one(provider, image)
 
         return list(await asyncio.gather(*(recognize(image) for image in images)))
+
+    async def _recognize_scan(
+        self,
+        scan_extractor: ScanTextExtractor,
+        images: tuple[ValidatedImage, ...],
+    ) -> list[RecognizedImage]:
+        """Local no-model OCR used as a primary when no vision endpoint is set."""
+        results: list[RecognizedImage] = []
+        for image in images:
+            raw = (await scan_extractor.extract_text(image)).strip()
+            refined, refined_by_llm = await self._refine_scan_text(
+                raw, "OCR_NOT_CONFIGURED"
+            )
+            results.append(
+                RecognizedImage(
+                    text=refined,
+                    provider="scan_fallback",
+                    fallback_reason="OCR_NOT_CONFIGURED",
+                    refined_by_llm=refined_by_llm,
+                )
+            )
+        return results
 
     async def _recognize_one(
         self,
@@ -863,6 +959,18 @@ def _candidate_host(source_url: str) -> str:
         return hostname.encode("idna").decode("ascii").lower().rstrip(".")
     except UnicodeError as error:
         raise SourceSecurityError("source URL hostname is invalid") from error
+
+
+def _allowed_social_domains(host: str) -> tuple[str, ...]:
+    """Allow the primary host plus social-platform redirect targets."""
+    seen: set[str] = set()
+    domains: list[str] = []
+    for candidate in (host, *_SOCIAL_ALLOWED_DOMAINS):
+        normalized = normalize_allowed_domain(candidate)
+        if normalized not in seen:
+            seen.add(normalized)
+            domains.append(normalized)
+    return tuple(domains)
 
 
 @dataclass(frozen=True, slots=True)

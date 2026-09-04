@@ -354,9 +354,14 @@ class RapidScanTextExtractor:
             with Image.open(io.BytesIO(image.data)) as decoded:
                 pixels = np.asarray(decoded.convert("RGB"))
             result = engine(pixels)
+            # RapidOCR 1.4.4 returns (detections, elapsed); rails on older
+            # lists must both be handled so we only read real text entries.
+            detections = result[0] if isinstance(result, tuple) else result
             lines: list[str] = []
-            for item in result or []:
-                text = str(item[1]).strip() if item and len(item) > 1 else ""
+            for item in detections or []:
+                if not isinstance(item, (list, tuple)) or len(item) < 2:
+                    continue
+                text = str(item[1]).strip()
                 if text:
                     lines.append(text)
             return lines

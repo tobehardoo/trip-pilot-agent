@@ -1,5 +1,6 @@
 """Internal HTTP contract for guide intelligence extraction."""
 
+import os
 from datetime import date, datetime
 from typing import Literal
 
@@ -11,6 +12,12 @@ from trip_agent.acquisition.security import SourceSecurityError
 from trip_agent.guide_intelligence.ocr import ImagePayload, OcrError
 from trip_agent.guide_intelligence.service import GuideImportService
 from trip_agent.internal_security import require_internal_token
+from trip_agent.retrieval.embeddings import (
+    DashScopeEmbeddingProvider,
+    EmbeddingProvider,
+    EmbeddingProviderError,
+    HashEmbeddingProvider,
+)
 
 router = APIRouter(prefix="/internal/v1", tags=["guide-intelligence"])
 
@@ -392,3 +399,65 @@ def _merge_decision_responses(result) -> list[MergeDecisionResponse]:
         )
         for decision in result.merge_decisions
     ]
+
+
+# ── 批量嵌入式接口：知识库写入时按 chunk 取向量 ──────────────────────────
+
+class EmbeddingsRequest(BaseModel):
+    texts: list[str] = Field(default_factory=list, max_length=100)
+    model: str | None = None
+
+
+class EmbeddingsResponse(BaseModel):
+    model: str
+    dimensions: int
+    embeddings: list[list[float]]
+
+
+@router.post("/embeddings", response_model=EmbeddingsResponse)
+async def embed_texts(
+    request: EmbeddingsRequest,
+    x_internal_token: str | None = Header(default=None),
+) -> EmbeddingsResponse:
+    _require_internal_token(x_internal_token)
+    texts = tuple(text.strip() for text in request.texts if text and text.strip())
+    if not texts:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "texts 不能为空")
+    provider = _build_embedding_provider()
+    try:
+        vectors = await provider.embed_texts(texts)
+    except EmbeddingProviderError as error:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from error
+    if len(vectors) != len(texts):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "embedding 数量与输入不一致")
+    return EmbeddingsResponse(
+        model=provider.model_name,
+        dimensions=provider.dimensions,
+        embeddings=[list(vector.values) for vector in vectors],
+    )
+
+
+def _build_embedding_provider() -> EmbeddingProvider:
+    provider_kind = os.getenv("KNOWLEDGE_EMBEDDING_PROVIDER", "demo").strip().casefold()
+    api_key = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if provider_kind != "dashscope" or not api_key:
+        dimensions = _env_int("KNOWLEDGE_EMBEDDING_DIMENSIONS", 1024)
+        return HashEmbeddingProvider(dimensions=dimensions)
+    return DashScopeEmbeddingProvider(
+        api_key=api_key,
+        base_url=os.getenv(
+            "DASHSCOPE_EMBEDDING_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ).strip()
+        or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model_name=os.getenv("KNOWLEDGE_EMBEDDING_MODEL", "text-embedding-v4").strip(),
+        dimensions=_env_int("KNOWLEDGE_EMBEDDING_DIMENSIONS", 1024),
+        timeout_seconds=float(os.getenv("DASHSCOPE_EMBEDDING_TIMEOUT_SECONDS", "10")),
+    )
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if raw.isdigit():
+        return int(raw)
+    return default

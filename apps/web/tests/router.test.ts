@@ -17,6 +17,10 @@ describe('TripPilot router', () => {
       params: { tripId: 'trip id' },
     })
 
+    // 设置中心（F-UI-11 方案 A）：独立路由，可深链
+    await router.push('/workspace/settings')
+    expect(router.currentRoute.value.name).toBe('workspace-settings')
+
     await router.push('/share/shared%20version')
     expect(router.currentRoute.value).toMatchObject({
       name: 'shared-itinerary',

@@ -18,10 +18,13 @@ import { useAgentWorkspace } from '../components/agent-workspace/useAgentWorkspa
 import WorkspaceHeader from './layout/WorkspaceHeader.vue'
 import WorkspaceSidebar from './layout/WorkspaceSidebar.vue'
 import WorkspaceContextPanel from './layout/WorkspaceContextPanel.vue'
+import { usePanelResize } from './layout/usePanelResize'
 import ItineraryWorkspace from './plan/ItineraryWorkspace.vue'
 import TripLoadingState from './plan/TripLoadingState.vue'
 import TripOverview from './plan/TripOverview.vue'
 import TripRouteMap from './plan/TripRouteMap.vue'
+import KnowledgeBasePage from './knowledge/KnowledgeBasePage.vue'
+import SettingsPage from './settings/SettingsPage.vue'
 import AgentDialog from './execution/AgentDialog.vue'
 import WorkspaceComposer from './composer/WorkspaceComposer.vue'
 import CreationTranscript from './composer/CreationTranscript.vue'
@@ -58,17 +61,39 @@ onMounted(() => {
   void session.restoreSession()
 })
 
-// 响应式状态：<1024px 两侧均为抽屉（默认收起、互斥打开）；
-// 1024~1279 仅 Sidebar 常驻；≥1280 三栏全部常驻。
+// 响应式状态（F-UI-12 三栏并排 + 可拖拽）：<768px 两侧均为抽屉（默认收起、
+// 互斥打开）；≥768px Sidebar 常驻并排；≥1024px 右栏也常驻——三栏并排，
+// 不再以覆盖式抽屉出现（手机除外）。栏宽为「占容器比例」（CSS clamp 包 px
+// 上下限），不同屏幕等比例缩放；拖分隔把手调整，宽度持久化见 usePanelResize。
+const mdUp = window.matchMedia('(min-width: 768px)')
 const lgUp = window.matchMedia('(min-width: 1024px)')
-const xlUp = window.matchMedia('(min-width: 1280px)')
 
-const drawerMode = ref(!lgUp.matches)
-const sidebarOpen = ref(lgUp.matches)
-const contextOpen = ref(xlUp.matches)
+const drawerMode = ref(!mdUp.matches)
+const sidebarOpen = ref(mdUp.matches)
+const contextOpen = ref(lgUp.matches)
+
+const { panesEl, sidebarRatio, contextRatio, startResize } = usePanelResize()
+
+/** 栏宽渲染：并排 = clamp(px下限, 比例%, px上限) 等比缩放；抽屉 = 固定 px。 */
+const sidebarStyle = computed(() =>
+  drawerMode.value
+    ? { width: '240px' }
+    : { width: `clamp(180px, ${(sidebarRatio.value * 100).toFixed(2)}%, 360px)` },
+)
+const contextStyle = computed(() =>
+  drawerMode.value
+    ? { width: '264px' }
+    : { width: `clamp(200px, ${(contextRatio.value * 100).toFixed(2)}%, 400px)` },
+)
 
 // ── 双模式 ──────────────────────────────────────────────────────
 const creationMode = computed(() => tripStore.currentTripId === null)
+
+/** 知识库管理视图（侧栏「知识库」打开时接管主区）。 */
+const showKnowledge = ref(false)
+
+/** 设置中心（F-UI-11 方案 A）：/workspace/settings 整页替换工作区壳。 */
+const isSettingsRoute = computed(() => route.name === 'workspace-settings')
 
 /** 中间区渲染由当前旅行阶段推导（数据驱动，不再有"演示"切换） */
 const mainView = computed(() => tripStore.currentPhase ?? 'draft')
@@ -162,17 +187,17 @@ watch(
   },
 )
 
-lgUp.addEventListener('change', (event) => {
+mdUp.addEventListener('change', (event) => {
   drawerMode.value = !event.matches
   if (event.matches) {
     sidebarOpen.value = true
-    contextOpen.value = xlUp.matches
+    contextOpen.value = lgUp.matches
   } else {
     sidebarOpen.value = false
     contextOpen.value = false
   }
 })
-xlUp.addEventListener('change', (event) => {
+lgUp.addEventListener('change', (event) => {
   if (!drawerMode.value) contextOpen.value = event.matches
 })
 
@@ -223,6 +248,7 @@ function closeDrawersOnNavigate() {
 
 /** 左侧旅行切换：更新数据上下文 + 总是同步 URL */
 function handleSelectTrip(id: string) {
+  showKnowledge.value = false
   if (tripStore.currentTripId !== id) selectTrip(id)
   router.push(`/workspace/trips/${id}`)
   closeDrawersOnNavigate()
@@ -230,10 +256,21 @@ function handleSelectTrip(id: string) {
 
 /** [+ 新建旅行]：切换到创建模式（中央 Composer），不再打开 Drawer。 */
 function handleNewTrip() {
+  showKnowledge.value = false
   if (tripStore.currentTripId !== null) {
     tripStore.clearCurrentTrip()
     if (route.params.tripId) router.push('/workspace')
   }
+}
+
+/** [删除旅行]：批量/单条走 tripStore，返回 Promise 供侧栏确认按钮等待。 */
+async function deleteTrips(ids: string[]): Promise<number> {
+  const result = await tripStore.removeTrips(ids)
+  // 删除了当前旅行 → 已回到创建模式；同步 URL，避免刷新后按残留 tripId 重选到 404。
+  if (tripStore.currentTripId === null && route.params.tripId) {
+    router.push('/workspace')
+  }
+  return result
 }
 
 function handleUpdateDestination(name: string, region: { provinceCode: string; cityCode: string } | null) {
@@ -325,6 +362,9 @@ async function handleStartPlanning() {
     @submit="session.authenticate"
   />
 
+  <!-- 设置中心（F-UI-11 方案 A）：整页替换工作区壳（含侧栏与 Header） -->
+  <SettingsPage v-else-if="isSettingsRoute" />
+
   <!-- 已登录：Workspace 四区壳 -->
   <div v-else class="flex h-screen min-h-0 flex-col overflow-hidden bg-tp-bg" data-testid="workspace-shell">
     <WorkspaceHeader
@@ -336,7 +376,7 @@ async function handleStartPlanning() {
       @toggle-context="toggleContext"
     />
 
-    <div class="relative flex min-h-0 flex-1 items-stretch">
+    <div ref="panesEl" class="relative flex min-h-0 flex-1 items-stretch">
       <!-- 抽屉遮罩 -->
       <div
         v-if="drawerMode && (sidebarOpen || contextOpen)"
@@ -345,10 +385,11 @@ async function handleStartPlanning() {
         @click="closeDrawersOnNavigate"
       />
 
-      <!-- 左：Sidebar -->
+      <!-- 左：Sidebar（≥768px 并排常驻；宽度=比例 clamp，等比缩放可拖拽） -->
       <div
         v-if="sidebarOpen"
-        class="absolute inset-y-0 left-0 z-30 border-r border-tp-line lg:static lg:z-auto lg:border-r-0"
+        class="absolute inset-y-0 left-0 z-30 border-r border-tp-line md:static md:z-auto md:border-r-0"
+        :style="sidebarStyle"
       >
         <WorkspaceSidebar
           :trips="trips"
@@ -359,13 +400,31 @@ async function handleStartPlanning() {
           @select-trip="handleSelectTrip"
           @new-trip="handleNewTrip"
           @retry="loadTrips"
+          @delete-trips="deleteTrips"
+          :knowledge-active="showKnowledge"
+          @open-knowledge="showKnowledge = true"
+          @exit-knowledge="showKnowledge = false"
         />
       </div>
 
+      <!-- 左分隔把手：拖拽调整 Sidebar 宽度（并排模式才有） -->
+      <div
+        v-if="sidebarOpen && !drawerMode"
+        class="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-tp-hover md:block"
+        data-testid="workspace-sidebar-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖拽调整导航栏宽度"
+        @pointerdown="startResize($event, 'sidebar')"
+      />
+
       <!-- 中：工作区 -->
       <main class="min-w-0 flex-1 overflow-y-auto bg-tp-bg" data-testid="workspace-main">
+        <!-- ── 知识库管理视图（侧栏「知识库」打开）────────────────── -->
+        <KnowledgeBasePage v-if="showKnowledge" />
+
         <!-- ── 创建模式：中央悬浮 Composer + 创建对话 ─────────────── -->
-        <div v-if="creationMode" class="flex min-h-full flex-col" data-testid="workspace-creation">
+        <div v-else-if="creationMode" class="flex min-h-full flex-col" data-testid="workspace-creation">
           <div class="min-h-0 flex-1">
             <!-- 空会话：视觉核心 = 引导 + Composer 大量留白 -->
             <div v-if="!creationStarted" class="mx-auto w-full max-w-2xl px-6 pb-2 pt-[16vh] text-center">
@@ -473,10 +532,22 @@ async function handleStartPlanning() {
         </template>
       </main>
 
-      <!-- 右：Context Inspector -->
+      <!-- 右分隔把手：拖拽调整 Context 面板宽度（并排模式才有） -->
+      <div
+        v-if="contextOpen && !drawerMode"
+        class="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-tp-hover lg:block"
+        data-testid="workspace-context-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖拽调整上下文面板宽度"
+        @pointerdown="startResize($event, 'context')"
+      />
+
+      <!-- 右：Context Inspector（≥1024px 并排常驻；宽度=比例 clamp，等比缩放可拖拽） -->
       <div
         v-if="contextOpen"
-        class="absolute inset-y-0 right-0 z-30 border-l border-tp-line xl:static xl:z-auto xl:border-l-0"
+        class="absolute inset-y-0 right-0 z-30 border-l border-tp-line lg:static lg:z-auto lg:border-l-0"
+        :style="contextStyle"
       >
         <WorkspaceContextPanel
           :trip="tripStore.currentTrip"

@@ -17,6 +17,8 @@ const routes: RouteRecordRaw[] = [
   // TripPilot Planning Intelligence：AI Agent Workspace（新产品入口）。
   { path: '/workspace', name: 'workspace', component: WorkspacePage },
   { path: '/workspace/trips/:tripId', name: 'workspace-trip', component: WorkspacePage },
+  // 设置中心（F-UI-11 方案 A）：整页替换工作区，由 WorkspacePage 按 route name 分支渲染。
+  { path: '/workspace/settings', name: 'workspace-settings', component: WorkspacePage },
   // 根路径重定向到 workspace
   { path: '/', redirect: { name: 'workspace' } },
   { path: '/:pathMatch(.*)*', name: 'not-found', redirect: { name: 'workspace' } },

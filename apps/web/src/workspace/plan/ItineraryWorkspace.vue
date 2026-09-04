@@ -11,18 +11,15 @@
 // 视觉统一：全部改用 tp-* token；时间戳经 formatChinaTime 化为 HH:mm。
 import { computed, nextTick, ref, watch, onMounted } from 'vue'
 import {
-  Bed, BookOpen, Bus, CalendarDays, Car, Check, ChevronDown, ChevronRight,
+  Bed, Bus, CalendarDays, Car, Check, ChevronDown, ChevronRight,
   CloudLightning, CloudRain, CloudSnow, CloudSun, Cloudy, Coffee, FerrisWheel, Flame,
-  Footprints, History, Home, Landmark, Lock, Map as MapIcon, MapPin, Mountain,
-  Pencil, Plane, Route as RouteIcon, Sandwich, Search, Share2, ShoppingBag, Sun, Trees,
+  Footprints, Home, Landmark, Lock, Map as MapIcon, MapPin, Mountain,
+  Pencil, Plane, Route as RouteIcon, Sandwich, Search, ShoppingBag, Sun, Trees,
   Unlock, Utensils, Wand2, Trash2, X,
 } from 'lucide-vue-next'
 
 import TripOverview from './TripOverview.vue'
 import TripRouteMap from './TripRouteMap.vue'
-import ItineraryVersionPanel from '../../components/ItineraryVersionPanel.vue'
-import ItineraryActionsPanel from '../../components/ItineraryActionsPanel.vue'
-import GuideIntelligencePanel from '../../components/GuideIntelligencePanel.vue'
 
 import { useTripStore } from '../stores/tripStore'
 import { useAuthStore } from '../../app/stores/auth'
@@ -34,11 +31,8 @@ import {
   type ItineraryTransitLeg,
   type PlaceCandidate,
   type Trip,
-  type CreatedItineraryShare,
-  type ItineraryVersionDiff,
-  type GuideImportInput,
 } from '../../lib/api'
-import { formatChinaDate, formatChinaTime, formatSlashDate } from '../lib/present'
+import { formatChinaTime, formatSlashDate } from '../lib/present'
 
 const props = defineProps<{
   trip: Trip
@@ -108,18 +102,8 @@ function toggleGuide(dayIndex: number, activity: ItineraryActivity) {
     : [...expandedKeys.value, key]
 }
 
-// ── 底部「行程管理 & 更多」手风琴 ───────────────────────────────────
-const openSections = ref<string[]>([])
-function isSectionOpen(key: string) {
-  return openSections.value.includes(key)
-}
-function toggleSection(key: string) {
-  openSections.value = openSections.value.includes(key)
-    ? openSections.value.filter((k) => k !== key)
-    : [...openSections.value, key]
-}
-
-// 加载版本、分享、攻略数据
+// 版本/分享/攻略数据由右侧栏工具面板读取；此处负责触发加载。
+// （三个面板已迁移到 WorkspaceContextPanel 的 Tab 下区，本组件不再渲染手风琴。）
 onMounted(() => {
   if (props.itinerary) {
     void tripStore.loadVersions()
@@ -133,15 +117,12 @@ watch(() => props.trip.id, () => {
   selectedActivityId.value = null
   collapsedDays.value = []
   expandedKeys.value = []
-  openSections.value = []
   if (props.itinerary) {
     void tripStore.loadVersions()
     void tripStore.loadShares()
     void tripStore.loadGuideImports()
   }
 })
-
-const currentVersionId = computed(() => props.itinerary?.versionId ?? '')
 
 // ── 活动编辑（Phase 4） ────────────────────────────────────────────
 const editingBusy = ref(false)
@@ -326,19 +307,6 @@ async function commitEdit() {
     editingBusy.value = false
   }
 }
-
-// 版本管理回调
-const getDiff = (from: string, to: string): Promise<ItineraryVersionDiff> => tripStore.diffVersions(from, to)
-const rollback = (source: string, expected: string, key: string): Promise<void> => tripStore.rollbackVersion(source, expected, key)
-
-// 分享回调
-const createShare = (versionId: string, expiresAt?: string): Promise<CreatedItineraryShare> => tripStore.createShare(versionId, expiresAt)
-const revokeShare = (shareId: string): Promise<void> => tripStore.revokeShare(shareId)
-const downloadExport = (versionId: string, format: 'ics' | 'pdf'): Promise<void> => tripStore.downloadExport(versionId, format)
-
-// 攻略回调
-const importGuide = (input: GuideImportInput): Promise<void> => tripStore.importGuide(input)
-const setGuideEnabled = (id: string, enabled: boolean): Promise<void> => tripStore.setGuideEnabled(id, enabled)
 
 // ── 功能③：按天聚焦（默认全览，点选某天聚焦，再点取消） ──────────
 const selectedDayDate = ref<string | null>(null)
@@ -952,95 +920,6 @@ async function changeLegMode(legId: string, mode: 'AUTO' | 'WALKING' | 'TRANSIT'
               </template>
               </template>
             </div>
-          </div>
-        </div>
-      </section>
-    </template>
-
-    <!-- ⑤ 行程管理 & 更多：手风琴分组 -->
-    <template v-if="itinerary">
-      <div class="mt-5 border-t border-tp-div" role="separator" />
-
-      <section class="mt-4" aria-label="行程管理与更多">
-        <h2 class="m-0 text-[13px] font-medium leading-5 text-tp-ink">行程管理与更多</h2>
-
-        <!-- 版本 -->
-        <div class="mt-3 rounded-xl border border-tp-line bg-white">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-            :aria-expanded="isSectionOpen('version')"
-            data-testid="more-toggle-version"
-            @click="toggleSection('version')"
-          >
-            <span class="flex items-center gap-2 text-[13px] font-medium leading-5 text-tp-ink">
-              <History :size="14" class="text-tp-mute" aria-hidden="true" />行程版本
-            </span>
-            <component :is="isSectionOpen('version') ? ChevronDown : ChevronRight" :size="14" class="text-tp-mute" aria-hidden="true" />
-          </button>
-          <div v-if="isSectionOpen('version')" class="border-t border-tp-div px-4 py-4">
-            <ItineraryVersionPanel
-              :versions="tripStore.versions"
-              :current-version-id="currentVersionId"
-              :busy="false"
-              :error="null"
-              :get-diff="getDiff"
-              :rollback="rollback"
-            />
-          </div>
-        </div>
-
-        <!-- 分享与导出 -->
-        <div class="mt-3 rounded-xl border border-tp-line bg-white">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-            :aria-expanded="isSectionOpen('share')"
-            data-testid="more-toggle-share"
-            @click="toggleSection('share')"
-          >
-            <span class="flex items-center gap-2 text-[13px] font-medium leading-5 text-tp-ink">
-              <Share2 :size="14" class="text-tp-mute" aria-hidden="true" />分享与导出
-            </span>
-            <component :is="isSectionOpen('share') ? ChevronDown : ChevronRight" :size="14" class="text-tp-mute" aria-hidden="true" />
-          </button>
-          <div v-if="isSectionOpen('share')" class="border-t border-tp-div px-4 py-4">
-            <ItineraryActionsPanel
-              :version-id="currentVersionId"
-              :shares="tripStore.shares"
-              :create-share="createShare"
-              :revoke-share="revokeShare"
-              :download="downloadExport"
-            />
-          </div>
-        </div>
-
-        <!-- 攻略情报 -->
-        <div class="mt-3 rounded-xl border border-tp-line bg-white">
-          <button
-            type="button"
-            class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-            :aria-expanded="isSectionOpen('guide')"
-            data-testid="more-toggle-guide"
-            @click="toggleSection('guide')"
-          >
-            <span class="flex items-center gap-2 text-[13px] font-medium leading-5 text-tp-ink">
-              <BookOpen :size="14" class="text-tp-mute" aria-hidden="true" />攻略情报
-            </span>
-            <component :is="isSectionOpen('guide') ? ChevronDown : ChevronRight" :size="14" class="text-tp-mute" aria-hidden="true" />
-          </button>
-          <div v-if="isSectionOpen('guide')" class="border-t border-tp-div px-4 py-4">
-            <GuideIntelligencePanel
-              :guide-imports="tripStore.guideImports"
-              :destination="trip.destination"
-              :start-date="trip.startDate"
-              :end-date="trip.endDate"
-              :itinerary="itinerary"
-              :busy="tripStore.guideImportBusy"
-              :error="tripStore.guideImportError"
-              :import-guide="importGuide"
-              :set-guide-enabled="setGuideEnabled"
-            />
           </div>
         </div>
       </section>

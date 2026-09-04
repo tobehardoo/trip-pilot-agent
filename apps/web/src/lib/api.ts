@@ -832,6 +832,221 @@ export function getTrip(accessToken: string, tripId: string): Promise<Trip> {
   return request(`/api/trips/${encodeURIComponent(tripId)}`, {}, accessToken)
 }
 
+/** 删除（软删除 / 归档）单条旅行；幂等。 */
+export function archiveTrip(accessToken: string, tripId: string): Promise<void> {
+  return request(`/api/trips/${encodeURIComponent(tripId)}`, {
+    method: 'DELETE',
+  }, accessToken)
+}
+
+/** 批量删除（软删除 / 归档）旅行；返回实际归档条数。 */
+export function archiveTrips(accessToken: string, tripIds: string[]): Promise<number> {
+  return request('/api/trips/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify(tripIds),
+  }, accessToken)
+}
+
+// ── 知识库管理 ──────────────────────────────────────────────────────
+export interface KnowledgeDocumentSummary {
+  documentId: string
+  title: string
+  city: string
+  category: string
+  contentType: string | null
+  regionProvince: string | null
+  regionCity: string | null
+  regionDistrict: string | null
+  version: number
+  sourceUrl: string | null
+  sourceName: string
+  reliabilityLevel: string
+  collectedAt: string
+  validFrom: string | null
+  validTo: string | null
+  applicableSeasons: string
+  travelerTypes: string
+  content: string
+  chunkCount: number
+}
+
+export interface KnowledgeChunk {
+  chunkId: string
+  chunkIndex: number
+  headingPath: string
+  contentType: string | null
+  content: string
+}
+
+export interface KnowledgeDetail {
+  document: KnowledgeDocumentSummary
+  chunks: KnowledgeChunk[]
+}
+
+export interface KnowledgeCitation {
+  chunkId: string
+  documentId: string
+  title: string
+  city: string
+  category: string
+  contentType: string | null
+  regionCity: string | null
+  regionDistrict: string | null
+  sourceUrl: string | null
+  sourceName: string
+  reliabilityLevel: string
+  collectedAt: string
+  content: string
+  similarity: number
+}
+
+export interface KnowledgeImportInput {
+  city: string
+  category: string
+  title?: string
+  content?: string
+  sourceUrl?: string
+  sourceName?: string
+  sourceType?: 'PASTE_TEXT' | 'IMAGE_OCR' | 'DOUYIN_VIDEO' | 'XIAOHONGSHU_VIDEO'
+  images?: GuideImageInput[]
+  contentType?: string
+  regionProvince?: string
+  regionCity?: string
+  regionDistrict?: string
+  reliabilityLevel?: string
+  validFrom?: string
+  validTo?: string
+}
+
+export interface KnowledgeImportResult {
+  documentId: string
+  version: number
+  status: 'CREATED' | 'UNCHANGED'
+}
+
+export async function fileToGuideImage(file: File): Promise<GuideImageInput> {
+  const buffer = await file.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+  return {
+    dataBase64: btoa(binary),
+    fileName: file.name,
+    contentType: file.type || undefined,
+  }
+}
+
+export interface KnowledgePage {
+  items: KnowledgeDocumentSummary[]
+  total: number
+  page: number
+  size: number
+}
+
+export function listKnowledgeDocuments(
+  accessToken: string,
+  params: { city?: string; keyword?: string; page?: number; size?: number } = {},
+): Promise<KnowledgePage> {
+  const query = new URLSearchParams()
+  if (params.city?.trim()) query.set('city', params.city.trim())
+  if (params.keyword?.trim()) query.set('keyword', params.keyword.trim())
+  query.set('page', String(params.page ?? 1))
+  query.set('size', String(params.size ?? 20))
+  return request(`/api/knowledge/documents?${query}`, {}, accessToken)
+}
+
+export function getKnowledgeDocument(accessToken: string, documentId: string): Promise<KnowledgeDetail> {
+  return request(`/api/knowledge/documents/${encodeURIComponent(documentId)}`, {}, accessToken)
+}
+
+export function updateKnowledgeDocument(
+  accessToken: string,
+  documentId: string,
+  input: {
+    category?: string
+    contentType?: string
+    regionProvince?: string
+    regionCity?: string
+    regionDistrict?: string
+    sourceName?: string
+    reliabilityLevel?: string
+    validFrom?: string
+    validTo?: string
+    content?: string
+  },
+): Promise<KnowledgeDocumentSummary> {
+  return request(`/api/knowledge/documents/${encodeURIComponent(documentId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  }, accessToken)
+}
+
+export function deleteKnowledgeDocument(accessToken: string, documentId: string): Promise<void> {
+  return request(`/api/knowledge/documents/${encodeURIComponent(documentId)}`, {
+    method: 'DELETE',
+  }, accessToken)
+}
+
+export function deleteKnowledgeDocuments(accessToken: string, documentIds: string[]): Promise<number> {
+  return request('/api/knowledge/documents/batch-delete', {
+    method: 'POST',
+    body: JSON.stringify(documentIds),
+  }, accessToken)
+}
+
+export function searchKnowledge(
+  accessToken: string,
+  query: string,
+  params: { city?: string; category?: string; contentType?: string; regionCity?: string; regionDistrict?: string; limit?: number } = {},
+): Promise<KnowledgeCitation[]> {
+  const sp = new URLSearchParams({ query })
+  if (params.city?.trim()) sp.set('city', params.city.trim())
+  if (params.category) sp.set('category', params.category)
+  if (params.contentType) sp.set('contentType', params.contentType)
+  if (params.regionCity) sp.set('regionCity', params.regionCity)
+  if (params.regionDistrict) sp.set('regionDistrict', params.regionDistrict)
+  sp.set('limit', String(params.limit ?? 10))
+  return request(`/api/knowledge/search?${sp}`, {}, accessToken)
+}
+
+export function importKnowledgeDocument(accessToken: string, input: KnowledgeImportInput): Promise<KnowledgeImportResult> {
+  return request('/api/knowledge/import', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, accessToken)
+}
+
+// ── 用户自建第三方 API 配置（设置页） ──────────────────────────────
+export interface UserApiConfig {
+  provider: string
+  apiKey: string | null
+  apiBaseUrl: string | null
+  model: string | null
+  updatedAt: string
+}
+
+export function listApiConfigs(accessToken: string): Promise<UserApiConfig[]> {
+  return request('/api/config/api-configs', {}, accessToken)
+}
+
+export function saveApiConfigs(accessToken: string, items: Array<{
+  provider: string
+  apiKey?: string
+  apiBaseUrl?: string
+  model?: string
+}>): Promise<void> {
+  return request('/api/config/api-configs', {
+    method: 'PUT',
+    body: JSON.stringify(items),
+  }, accessToken)
+}
+
+export function deleteApiConfig(accessToken: string, provider: string): Promise<void> {
+  return request(`/api/config/api-configs/${encodeURIComponent(provider)}`, {
+    method: 'DELETE',
+  }, accessToken)
+}
+
 export function createTrip(accessToken: string, input: CreateTripInput): Promise<Trip> {
   return request('/api/trips', {
     method: 'POST',

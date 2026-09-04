@@ -4,12 +4,16 @@
 // - 创建模式·对话中：旅行需求（chips）+ 已了解（CONFIRMED slots 投影）+ 待确认。
 //   纯投影，不是第二个表单；内部枚举不上屏。
 // - 旅行模式：目的地/日期/约束摘要 + 生成结果（来自 trip 实体）。
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
-import type { AgentDialogSlotView, Trip } from '../../lib/api'
+import type { AgentDialogSlotView, GuideImportInput, Trip } from '../../lib/api'
 import { creationSummary } from '../../lib/agent-slots'
 import type { TripPhase } from '../lib/phase'
 import { formatChinaDate, formatChinaMoney, preferencesLabel, mustVisitLabel } from '../lib/present'
+import ItineraryVersionPanel from '../../components/ItineraryVersionPanel.vue'
+import ItineraryActionsPanel from '../../components/ItineraryActionsPanel.vue'
+import GuideIntelligencePanel from '../../components/GuideIntelligencePanel.vue'
+import { useTripStore } from '../stores/tripStore'
 
 interface CreationContextSummary {
   destination: string | null
@@ -119,10 +123,38 @@ const ARTIFACT_STATUS_TEXT: Record<ArtifactRow['status'], { text: string; classe
   running: { text: '进行中', classes: 'text-tp-run' },
   pending: { text: '待生成', classes: 'text-tp-faint' },
 }
+
+// ── 下区工具面板（方案 A：上下双区 + Tab）─────────────────────────
+// 行程版本 / 攻略情报 / 分享与导出 由右侧栏承载，数据一律取自 tripStore
+// （单一约束状态源），保持与主区域作用同一条 store 数据。
+const tripStore = useTripStore()
+
+type ToolTabKey = 'version' | 'guide' | 'share'
+const ToolTabs: Array<{ key: ToolTabKey; label: string }> = [
+  { key: 'version', label: '版本' },
+  { key: 'guide', label: '攻略' },
+  { key: 'share', label: '分享' },
+]
+
+const activeToolTab = ref<ToolTabKey>('version')
+
+// 面板仅在旅行模式下展示（trip 存在），用 v-show 保内状态避免切换丢失表单文本。
+const showToolPanels = computed(() => Boolean(props.trip))
+
+const currentVersionId = computed(() => tripStore.itinerary?.versionId ?? '')
+
+// 版本/分享/攻略回调（复用 tripStore actions，避免在组件内复制逻辑）
+const getDiff = (from: string, to: string) => tripStore.diffVersions(from, to)
+const rollback = (source: string, expected: string, key: string) => tripStore.rollbackVersion(source, expected, key)
+const createShare = (versionId: string, expiresAt?: string) => tripStore.createShare(versionId, expiresAt)
+const revokeShare = (shareId: string) => tripStore.revokeShare(shareId)
+const downloadExport = (versionId: string, format: 'ics' | 'pdf') => tripStore.downloadExport(versionId, format)
+const importGuide = (input: GuideImportInput) => tripStore.importGuide(input)
+const setGuideEnabled = (id: string, enabled: boolean) => tripStore.setGuideEnabled(id, enabled)
 </script>
 
 <template>
-  <aside class="flex h-full min-h-0 w-64 shrink-0 flex-col border-l border-tp-line bg-tp-panel" aria-label="旅行上下文">
+  <aside class="flex h-full min-h-0 w-full shrink-0 flex-col border-l border-tp-line bg-tp-panel" aria-label="旅行上下文">
     <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3">
       <!-- ── 创建模式（未开始）：极弱化 ─────────────────────────── -->
       <template v-if="!trip && creation && !creation.started">
@@ -280,6 +312,66 @@ const ARTIFACT_STATUS_TEXT: Record<ArtifactRow['status'], { text: string; classe
               </button>
             </li>
           </ul>
+        </section>
+
+        <div v-if="showToolPanels" class="mt-3 border-t border-tp-div pt-3" role="separator" />
+
+        <!-- 下区工具面板（方案 A：下方 Tab 切换 版本/攻略/分享） -->
+        <section v-if="showToolPanels" class="mt-3" aria-label="行程工具">
+          <div
+            class="flex gap-1 rounded-lg border border-tp-line bg-tp-panel p-1"
+            role="tablist"
+            aria-label="行程工具"
+          >
+            <button
+              v-for="tab in ToolTabs"
+              :key="tab.key"
+              type="button"
+              role="tab"
+              class="flex-1 rounded-md px-2 py-1.5 text-xs font-semibold transition-colors"
+              :aria-selected="activeToolTab === tab.key"
+              :data-testid="`tool-tab-${tab.key}`"
+              :class="activeToolTab === tab.key
+                ? 'bg-tp-ink text-white'
+                : 'bg-white text-tp-body'"
+              @click="activeToolTab = tab.key"
+            >{{ tab.label }}</button>
+          </div>
+
+          <div class="mt-3">
+            <div v-show="activeToolTab === 'version'" class="rounded-xl border border-tp-line bg-white p-3">
+              <ItineraryVersionPanel
+                :versions="tripStore.versions"
+                :current-version-id="currentVersionId"
+                :busy="false"
+                :error="null"
+                :get-diff="getDiff"
+                :rollback="rollback"
+              />
+            </div>
+            <div v-show="activeToolTab === 'guide'" class="rounded-xl border border-tp-line bg-white p-3">
+              <GuideIntelligencePanel
+                :guide-imports="tripStore.guideImports"
+                :destination="trip.destination"
+                :start-date="trip.startDate"
+                :end-date="trip.endDate"
+                :itinerary="tripStore.itinerary"
+                :busy="tripStore.guideImportBusy"
+                :error="tripStore.guideImportError"
+                :import-guide="importGuide"
+                :set-guide-enabled="setGuideEnabled"
+              />
+            </div>
+            <div v-show="activeToolTab === 'share'" class="rounded-xl border border-tp-line bg-white p-3">
+              <ItineraryActionsPanel
+                :version-id="currentVersionId"
+                :shares="tripStore.shares"
+                :create-share="createShare"
+                :revoke-share="revokeShare"
+                :download="downloadExport"
+              />
+            </div>
+          </div>
         </section>
       </template>
     </div>

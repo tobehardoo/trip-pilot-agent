@@ -34,6 +34,8 @@ import {
   updateGuideImportEnabled as updateGuideImportEnabledApi,
   previewItineraryEdit as previewItineraryEditApi,
   applyItineraryEdit as applyItineraryEditApi,
+  archiveTrip as archiveTripApi,
+  archiveTrips as archiveTripsApi,
   type CreateTripInput,
   type CreatedItineraryShare,
   type GuideImport,
@@ -211,6 +213,23 @@ export const useTripStore = defineStore('workspace-trips', () => {
     detailStatus.value = 'idle'
     detailError.value = null
     resetCurrentContent()
+  }
+
+  /** 删除单条旅行（软删除 / 归档），并从当前列表移除。若删除的是当前旅行则回到创建模式。 */
+  async function removeTrip(tripId: string): Promise<void> {
+    await session.withAccessToken((token) => archiveTripApi(token, tripId))
+    trips.value = trips.value.filter((trip) => trip.id !== tripId)
+    if (currentTripId.value === tripId) clearCurrentTrip()
+  }
+
+  /** 批量删除旅行（软删除 / 归档）。若包含当前旅行则回到创建模式。 */
+  async function removeTrips(tripIds: string[]): Promise<number> {
+    if (tripIds.length === 0) return 0
+    const ids = new Set(tripIds)
+    const deleted = await session.withAccessToken((token) => archiveTripsApi(token, tripIds))
+    trips.value = trips.value.filter((trip) => !ids.has(trip.id))
+    if (currentTripId.value && ids.has(currentTripId.value)) clearCurrentTrip()
+    return deleted
   }
 
   /** Agent run 终态后刷新当前旅行（status 由后端流转，前端需重取才能切视图）。 */
@@ -486,6 +505,8 @@ export const useTripStore = defineStore('workspace-trips', () => {
     setGuideEnabled,
     previewEdit,
     applyEdit,
+    removeTrip,
+    removeTrips,
     resetAll,
   }
 })

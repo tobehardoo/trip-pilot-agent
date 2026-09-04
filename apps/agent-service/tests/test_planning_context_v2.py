@@ -425,7 +425,7 @@ def test_reduced_mobility_retries_after_guide_ranked_pair_is_too_far() -> None:
     assert selected != {"top-one", "top-two"}
 
 
-def test_guide_fact_is_not_cited_when_it_does_not_change_the_baseline_plan() -> None:
+def test_guide_fact_is_cited_when_it_matches_a_selected_poi() -> None:
     payload = _v2_command()
     payload["payload"]["trip"]["endDate"] = "2026-08-01"
     constraints = payload["payload"]["trip"]["constraints"]
@@ -461,7 +461,9 @@ def test_guide_fact_is_not_cited_when_it_does_not_change_the_baseline_plan() -> 
 
     result = asyncio.run(AmapPlanningProvider(MapProvider(), RouteProvider()).plan(command))
 
-    assert result.guide_fact_ids == ()
+    # Alpha is positively recommended and contributes to its ranking, so the
+    # matched guide fact is returned as a decision-bound citation.
+    assert result.guide_fact_ids == (command.payload.guide_evidence.facts[0].fact_id,)
 
 
 

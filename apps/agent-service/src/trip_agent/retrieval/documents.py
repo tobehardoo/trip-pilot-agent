@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from trip_agent.retrieval.embeddings import EmbeddingVector
+from trip_agent.retrieval.governance import ClaimType
 
 type DocumentId = Annotated[
     str,
@@ -67,6 +68,7 @@ class KnowledgeDocument(BaseModel):
     applicable_seasons: tuple[ApplicableSeason, ...] = ()
     traveler_types: tuple[TravelerType, ...] = ()
     reliability_level: ReliabilityLevel
+    claim_type: ClaimType = "RECOMMENDATION"
     version: int = Field(strict=True, ge=1)
 
     @field_validator("collected_at")

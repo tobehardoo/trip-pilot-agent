@@ -236,10 +236,12 @@ def test_v4_processor_serializes_real_knowledge_citations_and_freshness() -> Non
                 "chunkId": "guangzhou-history-001-v2-c0",
                 "chunkIndex": 0,
                 "title": "广州历史文化资料",
+                "content": "",
                 "sourceUrl": "https://www.gz.gov.cn/history",
                 "sourceName": "广州市人民政府",
                 "collectedAt": "2026-07-22T02:00:00Z",
                 "reliabilityLevel": "official",
+                "claimType": "RECOMMENDATION",
                 "similarity": 0.87,
             }
         ],

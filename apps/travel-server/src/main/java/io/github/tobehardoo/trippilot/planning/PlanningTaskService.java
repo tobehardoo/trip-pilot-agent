@@ -73,6 +73,7 @@ public class PlanningTaskService {
     private final TransactionTemplate transactionTemplate;
     private final PlanningMetrics metrics;
     private final PlanningTaskOutcomeReadModel outcomeReadModel;
+    private final io.github.tobehardoo.trippilot.userconfig.UserApiConfigMapper userApiConfigMapper;
 
     public PlanningTaskService(PlanningTaskMapper planningTaskMapper,
                                ItineraryMapper itineraryMapper,
@@ -89,7 +90,9 @@ public class PlanningTaskService {
                                ApplicationEventPublisher eventPublisher,
                                PlatformTransactionManager transactionManager,
                                PlanningMetrics metrics,
-                               PlanningTaskOutcomeReadModel outcomeReadModel) {
+                               PlanningTaskOutcomeReadModel outcomeReadModel,
+                               io.github.tobehardoo.trippilot.userconfig.UserApiConfigMapper
+                                       userApiConfigMapper) {
         this.planningTaskMapper = planningTaskMapper;
         this.itineraryMapper = itineraryMapper;
         this.itineraryService = itineraryService;
@@ -106,6 +109,7 @@ public class PlanningTaskService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.metrics = metrics;
         this.outcomeReadModel = outcomeReadModel;
+        this.userApiConfigMapper = userApiConfigMapper;
     }
 
     public PlanningTaskResponse create(UUID ownerId, UUID tripId, UUID idempotencyKey) {
@@ -220,7 +224,8 @@ public class PlanningTaskService {
                                 chinaOffset(trip.arrivalAt()), chinaOffset(trip.departureAt())
                         ),
                         guideEvidenceSnapshot,
-                        planningContext
+                        planningContext,
+                        resolveCredentialOverrides(ownerId)
                 )
         );
         outboxMapper.insert(new OutboxEventRecord(
@@ -229,6 +234,31 @@ public class PlanningTaskService {
         ));
         log.info("task queued: taskType=CREATE");
         return toResponse(task);
+    }
+
+    /** BYOK: carry the trip owner's third-party API credentials (WEATHER/AMAP/
+     *  KNOWLEDGE/PLANNER) on the planning command so the agent runtime can use
+     *  them (env fallback on the consumer side).  Empty when the user saved no
+     *  key. */
+    private Map<String, Map<String, String>> resolveCredentialOverrides(UUID ownerId) {
+        Map<String, Map<String, String>> overrides = new HashMap<>();
+        for (io.github.tobehardoo.trippilot.userconfig.UserApiConfigRow row
+                : userApiConfigMapper.list(ownerId)) {
+            String key = row.apiKey();
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            Map<String, String> value = new HashMap<>();
+            if (row.apiBaseUrl() != null && !row.apiBaseUrl().isBlank()) {
+                value.put("apiBaseUrl", row.apiBaseUrl());
+            }
+            if (row.model() != null && !row.model().isBlank()) {
+                value.put("model", row.model());
+            }
+            value.put("apiKey", key);
+            overrides.put(row.provider(), value);
+        }
+        return overrides;
     }
 
     private void validateTripDuration(TripService.TripResponse trip) {
@@ -803,7 +833,8 @@ public class PlanningTaskService {
             UUID idempotencyKey,
             TripSnapshot trip,
             GuideEvidenceSnapshot guideEvidence,
-            PlanningContextSnapshot planningContext
+            PlanningContextSnapshot planningContext,
+            Map<String, Map<String, String>> credentialOverrides
     ) {
     }
 

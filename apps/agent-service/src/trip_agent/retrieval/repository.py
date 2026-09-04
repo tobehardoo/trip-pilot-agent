@@ -57,6 +57,7 @@ class KnowledgeCitation(BaseModel):
     source_url: str
     source_name: str
     reliability_level: str
+    claim_type: str = "RECOMMENDATION"
     collected_at: datetime
     similarity: float
 
@@ -173,8 +174,8 @@ class PsycopgKnowledgeRepository:
                     document_id, version, city, category, title, content, content_hash,
                     version_fingerprint,
                     source_url, source_name, published_at, collected_at, valid_from, valid_to,
-                    applicable_seasons, traveler_types, reliability_level
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    applicable_seasons, traveler_types, reliability_level, claim_type
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     document.document_id,
@@ -194,6 +195,7 @@ class PsycopgKnowledgeRepository:
                     list(document.applicable_seasons),
                     list(document.traveler_types),
                     document.reliability_level,
+                    document.claim_type,
                 ),
             )
             for chunk in chunks:
@@ -317,7 +319,7 @@ class PsycopgKnowledgeRepository:
                     SELECT
                         c.chunk_id, c.document_id, c.document_version, c.chunk_index,
                         d.city, d.category, d.title, c.chunk_content AS content, d.source_url,
-                        d.source_name, d.reliability_level, d.collected_at,
+                        d.source_name, d.reliability_level, d.collected_at, d.claim_type,
                         1 - (e.embedding <=> %s) AS similarity
                     FROM agent.knowledge_chunk c
                     JOIN current_documents d
@@ -338,7 +340,8 @@ class PsycopgKnowledgeRepository:
                 )
                 SELECT chunk_id, document_id, document_version, chunk_index,
                     city, category, title, content, source_url, source_name,
-                    reliability_level, collected_at, similarity
+                    reliability_level, COALESCE(claim_type, 'RECOMMENDATION') AS claim_type,
+                    collected_at, similarity
                 FROM document_ranked
                 WHERE similarity >= %s
                   AND (%s::boolean = FALSE OR document_chunk_rank = 1)

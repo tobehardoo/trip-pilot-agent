@@ -28,7 +28,7 @@ from trip_agent.domain.planning.protocols import (
     PlanningResult,
     RelaxationSuggestion,
 )
-from trip_agent.domain.shared import snapshot_boundary_times
+from trip_agent.domain.shared import matched_guide_fact_ids, snapshot_boundary_times
 from trip_agent.guide_intelligence.trusted_facts import ValidatedFact
 from trip_agent.infrastructure.amap.accommodation_projection import (
     project_amap_trip_skeleton,
@@ -903,7 +903,7 @@ class AmapPlanningProvider:
         return PlanningResult(
             provider="AMAP",
             itinerary=itinerary,
-            guide_fact_ids=(),
+            guide_fact_ids=matched_guide_fact_ids(command, ranked_pois),
             requested_provider_mode=self._provider_mode.value,
             primary_provider="AMAP",
             actual_providers=actual_providers,

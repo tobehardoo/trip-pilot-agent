@@ -13,6 +13,13 @@ from trip_agent.retrieval.embeddings import (
     EmbeddingProviderError,
     EmbeddingVector,
 )
+from trip_agent.retrieval.governance import (
+    ClaimType,
+    assess_document,
+    claim_allowed,
+    is_valid_claim_type,
+    maximally_permissive_claim_type,
+)
 from trip_agent.retrieval.repository import (
     KnowledgeCitation,
     KnowledgeSearchRequest,
@@ -120,6 +127,83 @@ class StaticCatalogKnowledgeFreshnessProvider:
         return KnowledgeFreshness(status="FRESH", checked_at=checked_at)
 
 
+class GovernedKnowledgeFreshnessProvider:
+    """Per-document governance for retrieved knowledge citations.
+
+    Unlike the catalog providers, this does NOT require a citation's
+    source_url to be a registered acquisition datasource.  Eligibility is
+    decided from the document's own metadata (``reliability_level`` x
+    ``claim_type`` x relevance) via :func:`assess_document` — so knowledge
+    imported through the knowledge-base UI can participate while the
+    trust/freshness rules stay fully in force:
+
+    - OFFICIAL factual claims must be fresh and allowed (hard gate).
+    - Community / curated recommendation and preference signals are soft;
+      they pass through themed-eligibility and are only *weakened* when stale
+      (the ranking tier applies the ``guide_fact_bonus`` penalty).
+
+    Returns ``UNAVAILABLE`` only when nothing usable was found.
+    """
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        self._clock = clock or (lambda: datetime.now(UTC))
+
+    async def assess(
+        self,
+        city: str,
+        citations: tuple[KnowledgeCitation, ...],
+    ) -> KnowledgeFreshness:
+        if not citations:
+            return KnowledgeFreshness(status="UNAVAILABLE")
+        now = self._clock()
+        usable = 0
+        stale_usable = 0
+        for citation in citations:
+            claim_type = _coerce_claim_type(citation.claim_type)
+            verdict = assess_document(
+                claim_type=claim_type,
+                reliability=citation.reliability_level,
+                collected_at=citation.collected_at,
+                valid_to=None,
+                now=now,
+            )
+            if not verdict.usable:
+                continue
+            usable += 1
+            if not verdict.fresh:
+                stale_usable += 1
+        if usable == 0:
+            return KnowledgeFreshness(status="UNAVAILABLE")
+        if stale_usable == usable:
+            return KnowledgeFreshness(
+                status="STALE",
+                checked_at=now,
+                stale_reason="SOURCE_NOT_FRESH",
+            )
+        return KnowledgeFreshness(status="FRESH", checked_at=now)
+
+
+def _coerce_claim_type(value: str) -> ClaimType:
+    if is_valid_claim_type(value):
+        return value  # type: ignore[return-value]
+    return maximally_permissive_claim_type(value)
+
+
+def claim_type_for_source(reliability: str) -> ClaimType:
+    """Default claim type used when importing a source of a given reliability."""
+    return maximally_permissive_claim_type(reliability)
+
+
+def citation_claim_permitted(citation: KnowledgeCitation) -> bool:
+    """Whether a citation is allowed to support its own declared claim type."""
+    claim_type = _coerce_claim_type(citation.claim_type)
+    return claim_allowed(claim_type, citation.reliability_level)
+
+
 class RetrievalKnowledgeEvidenceProvider:
     def __init__(
         self,
@@ -216,10 +300,12 @@ def _snapshot(citation: KnowledgeCitation) -> KnowledgeCitationSnapshot:
         chunk_id=citation.chunk_id,
         chunk_index=citation.chunk_index,
         title=citation.title,
+        content=citation.content,
         source_url=citation.source_url,
         source_name=citation.source_name,
         collected_at=citation.collected_at,
         reliability_level=citation.reliability_level,
+        claim_type=getattr(citation, "claim_type", "RECOMMENDATION"),
         similarity=citation.similarity,
     )
 

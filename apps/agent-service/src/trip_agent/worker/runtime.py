@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, Self
+from typing import TYPE_CHECKING, Literal, Protocol, Self
 from urllib.parse import quote
 from uuid import UUID
 
@@ -25,7 +25,6 @@ import psycopg
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from trip_agent.acquisition.registry import SourceCatalog
 from trip_agent.domain.planning.protocols import (
     KnowledgeEvidenceProvider,
     PlanningProvider,
@@ -57,12 +56,15 @@ from trip_agent.retrieval.embeddings import (
 )
 from trip_agent.retrieval.repository import PsycopgKnowledgeRepository
 from trip_agent.worker.knowledge import (
+    GovernedKnowledgeFreshnessProvider,
     KnowledgeFreshnessProvider,
     KnowledgeSearchRepository,
     RetrievalKnowledgeEvidenceProvider,
-    StaticCatalogKnowledgeFreshnessProvider,
 )
 from trip_agent.workflow.planner_pipeline import FallbackPlanningProvider
+
+if TYPE_CHECKING:
+    from trip_agent.providers.credentials import ProviderCredentials
 
 logger = logging.getLogger("trip_agent.worker")
 
@@ -218,19 +220,29 @@ def build_planning_provider(
     *,
     http_client: httpx.AsyncClient | None = None,
     cache: JsonCache | None = None,
+    credentials: "ProviderCredentials | None" = None,
 ) -> PlanningProvider:
     mode = settings.resolved_provider_mode
     if mode == ProviderExecutionMode.DEMO_ONLY:
         return DemoPlanningProvider()
     if http_client is None:
         raise ValueError("HTTP client is required in real provider mode")
-    key = settings.amap_web_service_key
-    if key is None:
+    # BYOK: prefer the resolved user credential over the server env default.
+    amap_key = (
+        credentials.amap_key
+        if credentials is not None and credentials.amap_key
+        else (
+            settings.amap_web_service_key.get_secret_value()
+            if settings.amap_web_service_key is not None
+            else None
+        )
+    )
+    if amap_key is None:
         raise ValueError("AMap key is required in real provider mode")
     retry_policy = settings.provider_retry_policy()
     amap_map = RetryingMapProvider(
         AmapMapProvider(
-            api_key=key.get_secret_value(),
+            api_key=amap_key,
             http_client=http_client,
             cache=cache,
             cache_ttl_seconds=settings.poi_cache_ttl_seconds,
@@ -239,7 +251,7 @@ def build_planning_provider(
     )
     amap_route = RetryingRouteProvider(
         AmapRouteProvider(
-            api_key=key.get_secret_value(),
+            api_key=amap_key,
             http_client=http_client,
             cache=cache,
             cache_ttl_seconds=settings.route_cache_ttl_seconds,
@@ -248,7 +260,7 @@ def build_planning_provider(
     )
     amap_transit = RetryingRouteProvider(
         AmapTransitProvider(
-            api_key=key.get_secret_value(),
+            api_key=amap_key,
             http_client=http_client,
             cache=cache,
             cache_ttl_seconds=settings.route_cache_ttl_seconds,
@@ -284,16 +296,20 @@ def build_knowledge_provider(
     embedding_provider: EmbeddingProvider | None = None,
     repository: KnowledgeSearchRepository | None = None,
     freshness_provider: KnowledgeFreshnessProvider | None = None,
+    credentials: "ProviderCredentials | None" = None,
 ) -> KnowledgeEvidenceProvider:
     if settings.resolved_provider_mode == ProviderExecutionMode.DEMO_ONLY:
         return DemoKnowledgeEvidenceProvider()
     database_url = settings.knowledge_connection_url()
-    selected_embedding = embedding_provider or _configured_embedding_provider(settings)
+    selected_embedding = embedding_provider or _configured_embedding_provider(
+        settings, credentials=credentials
+    )
     selected_repository = repository or PsycopgKnowledgeRepository(database_url)
     if freshness_provider is None:
-        freshness_provider = StaticCatalogKnowledgeFreshnessProvider(
-            catalog=SourceCatalog.load_directory(settings.knowledge_source_directory),
-        )
+        # Per-document governance (reliability_level x claim_type x freshness):
+        # imported knowledge-base documents participate without a SourceCatalog
+        # registration, while the trust / freshness rules stay fully in force.
+        freshness_provider = GovernedKnowledgeFreshnessProvider()
     return RetrievalKnowledgeEvidenceProvider(
         embedding_provider=selected_embedding,
         repository=selected_repository,
@@ -301,16 +317,39 @@ def build_knowledge_provider(
     )
 
 
-def _configured_embedding_provider(settings: WorkerSettings) -> EmbeddingProvider:
+def _configured_embedding_provider(
+    settings: WorkerSettings,
+    *,
+    credentials: "ProviderCredentials | None" = None,
+) -> EmbeddingProvider:
     if settings.knowledge_embedding_provider == "demo":
         return HashEmbeddingProvider(dimensions=settings.knowledge_embedding_dimensions)
-    key = settings.dashscope_api_key
-    if key is None:
+    # BYOK: prefer the user's KNOWLEDGE embedding credentials over env default.
+    api_key = (
+        credentials.dashscope_key
+        if credentials is not None and credentials.dashscope_key
+        else (
+            settings.dashscope_api_key.get_secret_value()
+            if settings.dashscope_api_key is not None
+            else None
+        )
+    )
+    base_url = (
+        credentials.dashscope_base_url
+        if credentials is not None and credentials.dashscope_base_url
+        else settings.dashscope_embedding_base_url
+    )
+    model_name = (
+        credentials.dashscope_model
+        if credentials is not None and credentials.dashscope_model
+        else settings.knowledge_embedding_model
+    )
+    if api_key is None:
         raise ValueError("DASHSCOPE_API_KEY is required for DashScope embeddings")
     return DashScopeEmbeddingProvider(
-        api_key=key.get_secret_value(),
-        base_url=settings.dashscope_embedding_base_url,
-        model_name=settings.knowledge_embedding_model,
+        api_key=api_key,
+        base_url=base_url,
+        model_name=model_name,
         dimensions=settings.knowledge_embedding_dimensions,
         timeout_seconds=settings.dashscope_embedding_timeout_seconds,
     )
@@ -319,6 +358,8 @@ def _configured_embedding_provider(settings: WorkerSettings) -> EmbeddingProvide
 @asynccontextmanager
 async def planning_provider_runtime(
     settings: WorkerSettings,
+    *,
+    credentials: "ProviderCredentials | None" = None,
 ) -> AsyncIterator[PlanningProvider]:
     logger.info("provider_mode=%s", settings.resolved_provider_mode.value)
     if settings.resolved_provider_mode == ProviderExecutionMode.DEMO_ONLY:
@@ -335,6 +376,7 @@ async def planning_provider_runtime(
                 settings,
                 http_client=http_client,
                 cache=cache,
+                credentials=credentials,
             )
         finally:
             await cache.aclose()

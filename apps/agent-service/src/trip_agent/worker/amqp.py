@@ -24,6 +24,7 @@ from trip_agent.domain.planning.protocols import (
 )
 from trip_agent.infrastructure.demo.planning_provider import DemoPlanningProvider
 from trip_agent.platform_util import run_async
+from trip_agent.providers.credentials import ProviderCredentials, command_credential_overrides
 from trip_agent.worker.agent_processor import (
     AGENT_DEAD_LETTER_ROUTING_KEY,
     AGENT_DIALOG_QUEUE,
@@ -34,11 +35,13 @@ from trip_agent.worker.agent_processor import (
 from trip_agent.worker.contracts import (
     PlanningCancelCommand,
     PlanningCandidateValidationCommand,
+    PlanningCompletedEventV11,
     PlanningCreateCommand,
     PlanningProgressEvent,
     PlanningProgressPayload,
     PlanningProgressStage,
     PlanningReplanCommand,
+    PlanningReviewRequiredEventV2,
 )
 from trip_agent.worker.processor import (
     planning_failed_event,
@@ -225,6 +228,25 @@ async def _is_cancelled(
     return oracle is not None and await oracle.is_cancelled(task_id)
 
 
+async def _run_credentialed_create(
+    command: PlanningCreateCommand,
+    settings: WorkerSettings,
+    credentials: ProviderCredentials,
+) -> PlanningCompletedEventV11 | PlanningReviewRequiredEventV2:
+    """Run one create with the owner's BYOK credentials (env fallback already
+    merged into ``credentials``).  Fresh provider resources are scoped to the
+    run; knowledge provider is built with the same user credentials."""
+    from trip_agent.worker.runtime import build_knowledge_provider, planning_provider_runtime
+
+    async with planning_provider_runtime(settings, credentials=credentials) as planning_provider:
+        knowledge_provider = build_knowledge_provider(settings, credentials=credentials)
+        return await process_planning_create(
+            command,
+            planning_provider,
+            knowledge_provider=knowledge_provider,
+        )
+
+
 async def handle_delivery(
     message: IncomingDelivery,
     event_exchange: EventExchange,
@@ -232,6 +254,7 @@ async def handle_delivery(
     knowledge_provider: KnowledgeEvidenceProvider | None = None,
     cancellation_registry: CancellationRegistry | None = None,
     cancellation_oracle: CancellationOracle | None = None,
+    settings: "WorkerSettings | None" = None,
 ) -> None:
     processing_command = False
     try:
@@ -308,13 +331,26 @@ async def handle_delivery(
                     )
                 )
             else:
-                process_task = asyncio.create_task(
-                    process_planning_create(
-                        command,
-                        planning_provider,
-                        knowledge_provider=knowledge_provider,
-                    )
+                # BYOK (full per-user): when the command carries the owner's
+                # API credentials, build a credentialed provider for this run;
+                # otherwise fall back to the shared environment provider.
+                overrides = (
+                    command_credential_overrides(command)
+                    if settings is not None
+                    else ProviderCredentials()
                 )
+                if settings is not None and overrides.has_user_overrides():
+                    process_task = asyncio.create_task(
+                        _run_credentialed_create(command, settings, overrides)
+                    )
+                else:
+                    process_task = asyncio.create_task(
+                        process_planning_create(
+                            command,
+                            planning_provider,
+                            knowledge_provider=knowledge_provider,
+                        )
+                    )
             cancel_wait: asyncio.Task[bool] | None = None
             if cancellation_registry is not None:
                 signal = cancellation_registry.signal_for(command.task_id)
@@ -680,6 +716,7 @@ async def _consume(
             knowledge_provider=knowledge_provider,
             cancellation_registry=cancellation_registry,
             cancellation_oracle=cancellation_oracle,
+            settings=settings,
         )
         agent_callback: Callable[[AbstractIncomingMessage], Awaitable[None]] = partial(
             _handle_agent_incoming,
@@ -709,6 +746,7 @@ async def _handle_incoming(
     knowledge_provider: KnowledgeEvidenceProvider,
     cancellation_registry: CancellationRegistry,
     cancellation_oracle: CancellationOracle,
+    settings: "WorkerSettings | None" = None,
 ) -> None:
     await handle_delivery(
         message,
@@ -717,6 +755,7 @@ async def _handle_incoming(
         knowledge_provider,
         cancellation_registry,
         cancellation_oracle,
+        settings,
     )
 
 

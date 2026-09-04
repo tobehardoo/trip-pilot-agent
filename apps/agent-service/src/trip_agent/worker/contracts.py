@@ -481,6 +481,14 @@ class TripSnapshot(InboundMessageModel):
         return self
 
 
+class CredentialOverrideData(InboundMessageModel):
+    """One provider's per-user credential carried on a planning command (BYOK)."""
+
+    api_key: ShortText | None = None
+    api_base_url: ShortText | None = None
+    model: ShortText | None = None
+
+
 class PlanningCreatePayload(InboundMessageModel):
     task_type: Literal["CREATE"]
     baseline_trip_version: int = Field(strict=True, ge=0)
@@ -488,6 +496,10 @@ class PlanningCreatePayload(InboundMessageModel):
     trip: TripSnapshot
     guide_evidence: GuideEvidenceSnapshot = GuideEvidenceSnapshot()
     planning_context: PlanningContextSnapshot | None = None
+    # BYOK: optional per-provider API credentials resolved by the travel-server
+    # from the trip owner's user_api_config.  Absent -> the worker uses its own
+    # environment-configured providers.
+    credential_overrides: dict[str, CredentialOverrideData] | None = None
 
     @model_validator(mode="after")
     def validate_baseline_version(self) -> Self:
@@ -765,10 +777,12 @@ class KnowledgeCitationSnapshot(MessageModel):
     chunk_id: KnowledgeIdentifier
     chunk_index: int = Field(strict=True, ge=0)
     title: ItineraryText
+    content: ItineraryText = ""
     source_url: AnyHttpUrl
     source_name: NameText
     collected_at: datetime
     reliability_level: ShortText
+    claim_type: ShortText = "RECOMMENDATION"
     similarity: float = Field(ge=-1, le=1)
 
     @field_validator("collected_at")

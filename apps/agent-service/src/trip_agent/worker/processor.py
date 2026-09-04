@@ -42,6 +42,7 @@ from trip_agent.providers.errors import (
     ProviderFailureDetails,
     ProviderOperation,
 )
+from trip_agent.retrieval.planning_bridge import inject_knowledge_guide_facts
 from trip_agent.worker.contracts import (
     KnowledgeCitationSnapshot,
     KnowledgeEvidence,
@@ -98,6 +99,14 @@ async def process_planning_create(
         {"guideFactCount": len(effective_command.payload.guide_evidence.facts)},
     )
     log.info("provider started", extra={"provider": "PLANNING"})
+    # KB knowledge is retrieved ONCE, before planning, so it can genuinely
+    # influence ranking (injected as guide facts) and is also reused as the
+    # completed event's knowledge evidence.  Demo/unavailable evidence injects
+    # nothing and leaves the retrieve->evidence step unchanged.
+    kb_knowledge = await (knowledge_provider or DemoKnowledgeEvidenceProvider()).get_evidence(
+        effective_command
+    )
+    effective_command = inject_knowledge_guide_facts(effective_command, kb_knowledge)
     result = await provider.plan(effective_command)
     log.info("provider completed", extra={"provider": result.provider})
     return await _resolve_and_emit(
@@ -111,6 +120,7 @@ async def process_planning_create(
             repaired,
             knowledge_provider=knowledge_provider,
             completed_at=completed_at,
+            precomputed_knowledge=kb_knowledge,
         ),
     )
 
@@ -390,12 +400,15 @@ async def _create_evidence(
     *,
     knowledge_provider: KnowledgeEvidenceProvider | None,
     completed_at: datetime,
+    precomputed_knowledge: KnowledgeEvidence | None = None,
 ) -> tuple[KnowledgeEvidence, tuple[PlanningFactImpact, ...]]:
     await report_planning_progress(
         "KNOWLEDGE_RETRIEVING",
         "Retrieving supporting travel knowledge",
     )
-    knowledge = await (knowledge_provider or DemoKnowledgeEvidenceProvider()).get_evidence(command)
+    knowledge = precomputed_knowledge or await (
+        knowledge_provider or DemoKnowledgeEvidenceProvider()
+    ).get_evidence(command)
     await report_planning_progress(
         "RESULT_EXPLAINING",
         "Preparing evidence and explanations for the itinerary",
@@ -672,9 +685,19 @@ def _merge_guide_evidence(
         )
         for index, fact in enumerate(facts)
     )
-    citations = (
-        (*guide_citations, *knowledge.citations) if knowledge.status == "REAL" else guide_citations
-    )[:20]
+    if knowledge.status == "REAL":
+        # Bound guide citations win; do not re-list a retrieval citation that
+        # already appeared as a decision-bound guide citation for the same URL.
+        bound_urls = {str(citation.source_url) for citation in guide_citations}
+        extras = tuple(
+            citation
+            for citation in knowledge.citations
+            if str(citation.source_url) not in bound_urls
+        )
+        citations = (*guide_citations, *extras)
+    else:
+        citations = guide_citations
+    citations = citations[:20]
     freshness = (
         knowledge.freshness
         if knowledge.status == "REAL"

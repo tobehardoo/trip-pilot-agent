@@ -32,7 +32,22 @@
         "idempotencyKey": {"type": "string", "format": "uuid"},
         "trip": {"$ref": "#/$defs/trip"},
         "guideEvidence": {"$ref": "#/$defs/guideEvidence"},
-        "planningContext": {"$ref": "#/$defs/planningContext"}
+        "planningContext": {"$ref": "#/$defs/planningContext"},
+        "credentialOverrides": {
+          "type": ["object", "null"],
+          "description": "BYOK: per-user provider API credentials resolved from the trip owner's user_api_config. Keys are provider names (WEATHER/AMAP/KNOWLEDGE/PLANNER).",
+          "propertyNames": {"enum": ["WEATHER", "AMAP", "KNOWLEDGE", "PLANNER"]},
+          "additionalProperties": {"$ref": "#/$defs/credentialOverride"}
+        }
+      }
+    },
+    "credentialOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiKey": {"type": "string", "minLength": 1, "maxLength": 500},
+        "apiBaseUrl": {"type": "string", "maxLength": 500},
+        "model": {"type": "string", "maxLength": 120}
       }
     },
     "trip": {

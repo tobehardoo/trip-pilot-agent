@@ -2,7 +2,7 @@
 
 - 状态：**已批准实施（2026-08-30）— P1–P7 全部落地（P3 约束板为降级模式，AGENT_SLOTS 契约未实施）**
 - 日期：2026-08-30
-- 前置：[Agent UX 2.0 重构方案](agent-ux-2.0-redesign-plan.md)（已实施并发布，镜像标签 `agent-ux-2.0`）
+- 前置：[Agent UX 2.0 重构方案](../archive/architecture/agent-ux-2.0-redesign-plan.md)（已实施并发布，镜像标签 `agent-ux-2.0`）
 - 审计方法：本方案所有断言基于当前工作树代码逐条核验（file:line 可溯），事件矩阵经真实栈冒烟与 MQ 探针确认，未采纳提示词中任何未经代码证实的假设（含提示词自身的两处不准确，见 §3.3）
 
 ---
@@ -428,4 +428,4 @@ MCP / Skill 体系 / Multi-Agent / ReAct / Agent Marketplace / 无意义 Memory�
 
 ## 附：审计证据索引（关键 file:line）
 
-死路由 `apps/web/src/app/router/index.ts:24-27` + `TripWorkspace.vue:94,98,1303,1323,1372`；向导问候 `dialog/service.py:537`；记忆加载/注入 `agent_processor.py:209,288` + `graph.py:336`；事件发布条件 `agent_processor.py`（_publish_question/_publish_completion/_publish_run_finished/publish_resume_rejected）；Java 消费 `AgentDialogEventListener.java` + 绑定 `RabbitMessagingConfiguration.java`；SSE `AgentDialogEventHub.java`（per-trip/重放/30min）；投影组件 `apps/web/src/components/agent-workspace/*`；e2e `apps/web/e2e/agent-workspace.spec.ts`；2.0 方案 `docs/architecture/agent-ux-2.0-redesign-plan.md`。
+死路由 `apps/web/src/app/router/index.ts:24-27` + `TripWorkspace.vue:94,98,1303,1323,1372`；向导问候 `dialog/service.py:537`；记忆加载/注入 `agent_processor.py:209,288` + `graph.py:336`；事件发布条件 `agent_processor.py`（_publish_question/_publish_completion/_publish_run_finished/publish_resume_rejected）；Java 消费 `AgentDialogEventListener.java` + 绑定 `RabbitMessagingConfiguration.java`；SSE `AgentDialogEventHub.java`（per-trip/重放/30min）；投影组件 `apps/web/src/components/agent-workspace/*`；e2e `apps/web/e2e/agent-workspace.spec.ts`；2.0 方案 `docs/archive/architecture/agent-ux-2.0-redesign-plan.md`。

@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -72,6 +73,22 @@ public class TripController {
     TripService.TripResponse updateMetadata(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId,
                                             @Valid @RequestBody TripRequests.UpdateTripMetadataRequest request) {
         return tripService.updateMetadata(userId(jwt), tripId, request);
+    }
+
+    /**
+     * 删除单条旅行（owner 作用域，软删除 / 归档）。幂等：重复删除或被
+     * 归档的旅行同样返回 204，不产生级联数据清理。
+     */
+    @DeleteMapping("/{tripId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    void delete(@AuthenticationPrincipal Jwt jwt, @PathVariable UUID tripId) {
+        tripService.archive(userId(jwt), tripId);
+    }
+
+    /** 批量删除旅行（owner 作用域，软删除 / 归档）。返回实际归档数量。 */
+    @PostMapping("/batch-delete")
+    int deleteBatch(@AuthenticationPrincipal Jwt jwt, @RequestBody List<UUID> tripIds) {
+        return tripService.archiveMany(userId(jwt), tripIds);
     }
 
     private UUID userId(Jwt jwt) {

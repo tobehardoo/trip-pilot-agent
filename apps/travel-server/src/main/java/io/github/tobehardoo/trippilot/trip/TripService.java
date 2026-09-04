@@ -156,6 +156,25 @@ public class TripService {
                 ));
     }
 
+    /**
+     * 删除单条旅行（软删除 / 归档）：仅置 archived_at，由列表查询过滤。
+     * 幂等——旅行已归档、不存在或不属于当前用户时同样安静返回。
+     */
+    @Transactional
+    public void archive(UUID ownerId, UUID tripId) {
+        tripMapper.archiveOwned(tripId, ownerId);
+    }
+
+    /** 批量删除（软删除 / 归档），返回实际被归档的条数。 */
+    @Transactional
+    public int archiveMany(UUID ownerId, List<UUID> tripIds) {
+        int deleted = 0;
+        for (UUID tripId : tripIds) {
+            deleted += tripMapper.archiveOwned(tripId, ownerId);
+        }
+        return deleted;
+    }
+
     @Transactional
     public TripResponse updateConstraints(UUID ownerId, UUID tripId, UpdateConstraintRequest request) {
         TripRecord trip = findOwned(ownerId, tripId);

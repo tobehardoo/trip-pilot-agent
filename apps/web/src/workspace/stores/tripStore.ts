@@ -449,12 +449,13 @@ export const useTripStore = defineStore('workspace-trips', () => {
   })
 
   const hasTrips = computed(() => trips.value.length > 0)
-  /** 从 API Trip.status 推导产品阶段（draft/planning/completed） */
+  /** 从 API Trip.status 推导产品阶段（draft/planning/completed/failed） */
   const currentPhase = computed<TripPhase | null>(() => {
     const s = currentTrip.value?.status?.toLowerCase() ?? ''
     if (s === 'draft') return 'draft'
     if (s === 'planning') return 'planning'
     if (s === 'completed') return 'completed'
+    if (s === 'failed') return 'failed'
     return null
   })
 

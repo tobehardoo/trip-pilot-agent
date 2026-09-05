@@ -128,7 +128,7 @@ async function confirmDelete() {
 </script>
 
 <template>
-  <nav class="flex h-full min-h-0 w-full shrink-0 flex-col border-r border-tp-line bg-tp-panel" aria-label="工作区导航">
+  <nav class="flex h-full min-h-0 w-full shrink-0 flex-col bg-tp-panel" aria-label="工作区导航">
     <!-- WORKSPACE 功能导航 -->
     <div class="px-2 pb-2 pt-3">
       <h2 class="m-0 mb-1 px-2 text-[10px] font-medium uppercase tracking-[0.08em] text-tp-mute">工作区</h2>

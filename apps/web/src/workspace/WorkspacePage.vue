@@ -8,6 +8,7 @@
 //   旅行模式：现有三视图（draft/planning/completed）+ 底部 docked Composer
 //     （原 WorkspaceCommandBar 被 docked 形态吸收，同一组件不维护两套聊天框）。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Maximize2, Minimize2 } from 'lucide-vue-next'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -18,7 +19,6 @@ import { useAgentWorkspace } from '../components/agent-workspace/useAgentWorkspa
 import WorkspaceHeader from './layout/WorkspaceHeader.vue'
 import WorkspaceSidebar from './layout/WorkspaceSidebar.vue'
 import WorkspaceContextPanel from './layout/WorkspaceContextPanel.vue'
-import { usePanelResize } from './layout/usePanelResize'
 import ItineraryWorkspace from './plan/ItineraryWorkspace.vue'
 import TripLoadingState from './plan/TripLoadingState.vue'
 import TripOverview from './plan/TripOverview.vue'
@@ -31,7 +31,7 @@ import CreationTranscript from './composer/CreationTranscript.vue'
 import { useCreationSession } from './composer/useCreationSession'
 
 import { useTripStore } from './stores/tripStore'
-import { createTripFromAgent } from '../lib/api'
+import { createTripFromAgent, createPlanningTask } from '../lib/api'
 import { presentableError } from './lib/errors'
 
 const tripStore = useTripStore()
@@ -44,9 +44,13 @@ const route = useRoute()
 const router = useRouter()
 
 // ── Agent Workspace（旅行模式对话，Phase 2 既有通道） ────────────
+// Agent 通道的请求必须走 withAccessToken（401 → 单飞 refresh → 重试），
+// 否则 access token 过期后 run 创建/应答/SSE 重连都会静默 401。
 const agent = useAgentWorkspace({
   tripId: () => tripStore.currentTripId ?? '',
   getToken: () => auth.accessToken,
+  withAccessToken: session.withAccessToken,
+  rotateSession: session.rotateSession,
   tripVersion: () => tripStore.currentTrip?.version ?? 0,
   tripConstraints: () => tripStore.currentTrip?.constraints ?? null,
   applyConstraints: async (input) => {
@@ -61,33 +65,40 @@ onMounted(() => {
   void session.restoreSession()
 })
 
-// 响应式状态（F-UI-12 三栏并排 + 可拖拽）：<768px 两侧均为抽屉（默认收起、
-// 互斥打开）；≥768px Sidebar 常驻并排；≥1024px 右栏也常驻——三栏并排，
-// 不再以覆盖式抽屉出现（手机除外）。栏宽为「占容器比例」（CSS clamp 包 px
-// 上下限），不同屏幕等比例缩放；拖分隔把手调整，宽度持久化见 usePanelResize。
-const mdUp = window.matchMedia('(min-width: 768px)')
-const lgUp = window.matchMedia('(min-width: 1024px)')
+// ── 三栏独立窗口卡片（无抽屉）──────────────────────────────────
+// 左栏 / 中栏 / 右栏始终并排（任何屏宽都不覆盖）。每栏顶部标题条带
+// 「展开/收起」按钮：点开某栏 → 该栏放大（占 45%），其余两栏按默认权重
+// 等比例缩减剩余空间；再点收起恢复默认比例。小屏时按百分比收窄但绝不覆盖。
+type PanelKey = 'sidebar' | 'main' | 'context'
+const DEFAULT_WEIGHTS: Record<PanelKey, number> = { sidebar: 0.18, main: 0.62, context: 0.2 }
+const EXPANDED_WEIGHT = 0.45
 
-const drawerMode = ref(!mdUp.matches)
-const sidebarOpen = ref(mdUp.matches)
-const contextOpen = ref(lgUp.matches)
+const panelWeights = ref<Record<PanelKey, number>>({ ...DEFAULT_WEIGHTS })
+const expandedPanel = ref<PanelKey | null>(null)
 
-const { panesEl, sidebarRatio, contextRatio, startResize } = usePanelResize()
+function togglePanel(key: PanelKey) {
+  if (expandedPanel.value === key) {
+    panelWeights.value = { ...DEFAULT_WEIGHTS }
+    expandedPanel.value = null
+    return
+  }
+  expandedPanel.value = key
+  const others = (Object.keys(DEFAULT_WEIGHTS) as PanelKey[]).filter((k) => k !== key)
+  const total = others.reduce((sum, k) => sum + DEFAULT_WEIGHTS[k], 0)
+  const remaining = 1 - EXPANDED_WEIGHT
+  const next = { ...DEFAULT_WEIGHTS }
+  next[key] = EXPANDED_WEIGHT
+  for (const k of others) next[k] = (DEFAULT_WEIGHTS[k] / total) * remaining
+  panelWeights.value = next
+}
 
-/** 栏宽渲染：并排 = clamp(px下限, 比例%, px上限) 等比缩放；抽屉 = 固定 px。 */
-const sidebarStyle = computed(() =>
-  drawerMode.value
-    ? { width: '240px' }
-    : { width: `clamp(180px, ${(sidebarRatio.value * 100).toFixed(2)}%, 360px)` },
-)
-const contextStyle = computed(() =>
-  drawerMode.value
-    ? { width: '264px' }
-    : { width: `clamp(200px, ${(contextRatio.value * 100).toFixed(2)}%, 400px)` },
-)
+const panelWidth = (key: PanelKey) => `${(panelWeights.value[key] * 100).toFixed(2)}%`
 
 // ── 双模式 ──────────────────────────────────────────────────────
 const creationMode = computed(() => tripStore.currentTripId === null)
+
+/** 中栏窗口卡片标题。 */
+const mainPanelTitle = computed(() => (creationMode.value ? '新建旅行' : '行程'))
 
 /** 知识库管理视图（侧栏「知识库」打开时接管主区）。 */
 const showKnowledge = ref(false)
@@ -187,20 +198,6 @@ watch(
   },
 )
 
-mdUp.addEventListener('change', (event) => {
-  drawerMode.value = !event.matches
-  if (event.matches) {
-    sidebarOpen.value = true
-    contextOpen.value = lgUp.matches
-  } else {
-    sidebarOpen.value = false
-    contextOpen.value = false
-  }
-})
-lgUp.addEventListener('change', (event) => {
-  if (!drawerMode.value) contextOpen.value = event.matches
-})
-
 // ── 规划阶段轮询 ──────────────────────────────────────────────────
 // AGENT_COMPLETED（SSE）与后端 itinerary 落库（RabbitMQ 异步消费）存在时差：
 // run 终态事件先到时 trip.status 可能还是 PLANNING，且此后不再有事件触发
@@ -229,20 +226,25 @@ watch(
 
 onBeforeUnmount(stopPlanningPoll)
 
-function toggleSidebar() {
-  if (drawerMode.value && !sidebarOpen.value) contextOpen.value = false
-  sidebarOpen.value = !sidebarOpen.value
-}
+// ── 规划失败态：明确中文错误 + 重新规划入口 ──────────────────────
+// 后端首次规划失败会把 trip.status 置为 FAILED（确定性终态），
+// 前端据此渲染失败视图，绝不继续显示"正在规划/路线正在生成"的假加载。
+const retryingPlanning = ref(false)
+const planningRetryError = ref<string | null>(null)
 
-function toggleContext() {
-  if (drawerMode.value && !contextOpen.value) sidebarOpen.value = false
-  contextOpen.value = !contextOpen.value
-}
-
-function closeDrawersOnNavigate() {
-  if (drawerMode.value) {
-    sidebarOpen.value = false
-    contextOpen.value = false
+async function handleRetryPlanning(): Promise<void> {
+  const tripId = tripStore.currentTripId
+  if (!tripId || retryingPlanning.value) return
+  retryingPlanning.value = true
+  planningRetryError.value = null
+  try {
+    const key = globalThis.crypto?.randomUUID?.() ?? `replan-${Date.now()}`
+    await session.withAccessToken((token) => createPlanningTask(token, tripId, key))
+    await tripStore.refreshCurrentTrip()
+  } catch (cause) {
+    planningRetryError.value = presentableError(cause)
+  } finally {
+    retryingPlanning.value = false
   }
 }
 
@@ -251,7 +253,6 @@ function handleSelectTrip(id: string) {
   showKnowledge.value = false
   if (tripStore.currentTripId !== id) selectTrip(id)
   router.push(`/workspace/trips/${id}`)
-  closeDrawersOnNavigate()
 }
 
 /** [+ 新建旅行]：切换到创建模式（中央 Composer），不再打开 Drawer。 */
@@ -369,57 +370,72 @@ async function handleStartPlanning() {
   <div v-else class="flex h-screen min-h-0 flex-col overflow-hidden bg-tp-bg" data-testid="workspace-shell">
     <WorkspaceHeader
       :task-title="taskTitle"
-      :sidebar-visible="sidebarOpen"
-      :context-visible="contextOpen"
+      :sidebar-visible="expandedPanel === 'sidebar'"
+      :context-visible="expandedPanel === 'context'"
       :phase="tripStore.currentPhase"
-      @toggle-sidebar="toggleSidebar"
-      @toggle-context="toggleContext"
+      @toggle-sidebar="togglePanel('sidebar')"
+      @toggle-context="togglePanel('context')"
     />
 
-    <div ref="panesEl" class="relative flex min-h-0 flex-1 items-stretch">
-      <!-- 抽屉遮罩 -->
-      <div
-        v-if="drawerMode && (sidebarOpen || contextOpen)"
-        class="absolute inset-0 z-20 bg-tp-ink/20"
-        data-testid="workspace-drawer-backdrop"
-        @click="closeDrawersOnNavigate"
-      />
-
-      <!-- 左：Sidebar（≥768px 并排常驻；宽度=比例 clamp，等比缩放可拖拽） -->
-      <div
-        v-if="sidebarOpen"
-        class="absolute inset-y-0 left-0 z-30 border-r border-tp-line md:static md:z-auto md:border-r-0"
-        :style="sidebarStyle"
+    <!-- 三栏独立窗口卡片（始终并排，无抽屉/覆盖） -->
+    <div class="flex min-h-0 flex-1 items-stretch">
+      <!-- 左栏窗口卡片 -->
+      <section
+        class="flex h-full min-h-0 flex-col border-r border-tp-line bg-tp-panel"
+        :style="{ width: panelWidth('sidebar') }"
+        data-testid="panel-sidebar"
       >
-        <WorkspaceSidebar
-          :trips="trips"
-          :active-trip-id="tripStore.currentTripId"
-          :active-phase="tripStore.currentPhase"
-          :loading="tripStore.listStatus === 'loading'"
-          :error="tripStore.listError"
-          @select-trip="handleSelectTrip"
-          @new-trip="handleNewTrip"
-          @retry="loadTrips"
-          @delete-trips="deleteTrips"
-          :knowledge-active="showKnowledge"
-          @open-knowledge="showKnowledge = true"
-          @exit-knowledge="showKnowledge = false"
-        />
-      </div>
+        <div class="flex h-8 shrink-0 items-center justify-between border-b border-tp-div px-2">
+          <span class="text-[11px] font-medium tracking-[0.08em] text-tp-mute">工作区</span>
+          <button
+            type="button"
+            class="flex h-6 w-6 items-center justify-center rounded text-tp-sub transition-colors hover:bg-tp-hover hover:text-tp-ink"
+            :title="expandedPanel === 'sidebar' ? '收起左栏' : '展开左栏'"
+            :aria-label="expandedPanel === 'sidebar' ? '收起左栏' : '展开左栏'"
+            data-testid="panel-toggle-sidebar"
+            @click="togglePanel('sidebar')"
+          >
+            <component :is="expandedPanel === 'sidebar' ? Minimize2 : Maximize2" :size="13" aria-hidden="true" />
+          </button>
+        </div>
+        <div class="min-h-0 flex-1 overflow-hidden">
+          <WorkspaceSidebar
+            :trips="trips"
+            :active-trip-id="tripStore.currentTripId"
+            :active-phase="tripStore.currentPhase"
+            :loading="tripStore.listStatus === 'loading'"
+            :error="tripStore.listError"
+            @select-trip="handleSelectTrip"
+            @new-trip="handleNewTrip"
+            @retry="loadTrips"
+            @delete-trips="deleteTrips"
+            :knowledge-active="showKnowledge"
+            @open-knowledge="showKnowledge = true"
+            @exit-knowledge="showKnowledge = false"
+          />
+        </div>
+      </section>
 
-      <!-- 左分隔把手：拖拽调整 Sidebar 宽度（并排模式才有） -->
-      <div
-        v-if="sidebarOpen && !drawerMode"
-        class="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-tp-hover md:block"
-        data-testid="workspace-sidebar-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="拖拽调整导航栏宽度"
-        @pointerdown="startResize($event, 'sidebar')"
-      />
-
-      <!-- 中：工作区 -->
-      <main class="min-w-0 flex-1 overflow-y-auto bg-tp-bg" data-testid="workspace-main">
+      <!-- 中栏窗口卡片（主工作区） -->
+      <section
+        class="flex h-full min-h-0 flex-col"
+        :style="{ width: panelWidth('main') }"
+        data-testid="panel-main"
+      >
+        <div class="flex h-8 shrink-0 items-center justify-between border-b border-tp-div bg-tp-panel px-2">
+          <span class="text-[11px] font-medium tracking-[0.08em] text-tp-mute">{{ mainPanelTitle }}</span>
+          <button
+            type="button"
+            class="flex h-6 w-6 items-center justify-center rounded text-tp-sub transition-colors hover:bg-tp-hover hover:text-tp-ink"
+            :title="expandedPanel === 'main' ? '收起中栏' : '展开中栏'"
+            :aria-label="expandedPanel === 'main' ? '收起中栏' : '展开中栏'"
+            data-testid="panel-toggle-main"
+            @click="togglePanel('main')"
+          >
+            <component :is="expandedPanel === 'main' ? Minimize2 : Maximize2" :size="13" aria-hidden="true" />
+          </button>
+        </div>
+        <main class="min-h-0 flex-1 overflow-y-auto bg-tp-bg" data-testid="workspace-main">
         <!-- ── 知识库管理视图（侧栏「知识库」打开）────────────────── -->
         <KnowledgeBasePage v-if="showKnowledge" />
 
@@ -502,6 +518,37 @@ async function handleStartPlanning() {
             :itinerary="tripStore.itinerary"
           />
 
+          <!-- 规划失败：明确中文错误 + 重新规划入口（绝不渲染假"正在规划"） -->
+          <div v-else-if="mainView === 'failed' && tripStore.currentTrip" class="mx-auto w-full max-w-3xl px-6 py-5">
+            <TripOverview :trip="tripStore.currentTrip" />
+            <div
+              class="mt-4 rounded-md border border-tp-warn/30 bg-tp-warn/10 px-4 py-3"
+              role="alert"
+              data-testid="planning-failed"
+            >
+              <p class="m-0 text-xs leading-5 text-tp-warn">
+                行程生成失败，请调整条件后重新规划。若多次失败，请检查服务状态后重试。
+              </p>
+              <p v-if="planningRetryError" class="m-0 mt-1 text-[11px] leading-4 text-tp-warn" role="alert">
+                {{ planningRetryError }}
+              </p>
+              <button
+                type="button"
+                :disabled="retryingPlanning"
+                class="mt-2 flex h-7 items-center rounded-md border border-tp-line bg-white px-3 text-xs text-tp-sub transition-colors hover:bg-tp-hover hover:text-tp-ink disabled:opacity-50"
+                data-testid="planning-retry"
+                @click="handleRetryPlanning"
+              >
+                {{ retryingPlanning ? '正在重新规划……' : '重新规划' }}
+              </button>
+            </div>
+            <div class="mt-4 border-t border-tp-div" role="separator" />
+            <!-- 真实 Agent 对话 -->
+            <div class="mt-4">
+              <AgentDialog :agent="agent" />
+            </div>
+          </div>
+
           <!-- COMPLETED 但方案未就绪：不展示"已完成共0天"假成功，改为加载/重试 -->
           <div v-else-if="tripCompletedNoData && tripStore.currentTrip" class="mx-auto w-full max-w-2xl px-6 py-10">
             <TripLoadingState
@@ -530,48 +577,56 @@ async function handleStartPlanning() {
             </button>
           </div>
         </template>
-      </main>
+        <!-- 底：旅行模式 docked Composer（位于中栏内容流末尾，滚动到底部才显示；
+             创建模式由中央悬浮 Composer 接管；知识库 / 行程展示不出现聊天框） -->
+        <footer
+          v-if="!creationMode && !showKnowledge"
+          class="border-t border-tp-line bg-tp-panel px-4 py-2"
+        >
+          <div class="mx-auto w-full max-w-2xl">
+            <WorkspaceComposer
+              variant="docked"
+              :disabled="agent.inputDisabled.value"
+              :context-label="dockContextLabel"
+              @send="agent.send"
+            />
+          </div>
+        </footer>
+        </main>
+      </section>
 
-      <!-- 右分隔把手：拖拽调整 Context 面板宽度（并排模式才有） -->
-      <div
-        v-if="contextOpen && !drawerMode"
-        class="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent transition-colors hover:bg-tp-hover lg:block"
-        data-testid="workspace-context-resizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="拖拽调整上下文面板宽度"
-        @pointerdown="startResize($event, 'context')"
-      />
-
-      <!-- 右：Context Inspector（≥1024px 并排常驻；宽度=比例 clamp，等比缩放可拖拽） -->
-      <div
-        v-if="contextOpen"
-        class="absolute inset-y-0 right-0 z-30 border-l border-tp-line lg:static lg:z-auto lg:border-l-0"
-        :style="contextStyle"
+      <!-- 右栏窗口卡片 -->
+      <section
+        class="flex h-full min-h-0 flex-col border-l border-tp-line bg-tp-panel"
+        :style="{ width: panelWidth('context') }"
+        data-testid="panel-context"
       >
-        <WorkspaceContextPanel
-          :trip="tripStore.currentTrip"
-          :creation="creationMode ? {
-            destination: requiredContext.destination,
-            startDate: requiredContext.startDate,
-            endDate: requiredContext.endDate,
-            started: creationStarted,
-            slots: creation.reply.value?.slots ?? null,
-          } : null"
-        />
-      </div>
+        <div class="flex h-8 shrink-0 items-center justify-between border-b border-tp-div px-2">
+          <span class="text-[11px] font-medium tracking-[0.08em] text-tp-mute">上下文</span>
+          <button
+            type="button"
+            class="flex h-6 w-6 items-center justify-center rounded text-tp-sub transition-colors hover:bg-tp-hover hover:text-tp-ink"
+            :title="expandedPanel === 'context' ? '收起右栏' : '展开右栏'"
+            :aria-label="expandedPanel === 'context' ? '收起右栏' : '展开右栏'"
+            data-testid="panel-toggle-context"
+            @click="togglePanel('context')"
+          >
+            <component :is="expandedPanel === 'context' ? Minimize2 : Maximize2" :size="13" aria-hidden="true" />
+          </button>
+        </div>
+        <div class="min-h-0 flex-1 overflow-hidden">
+          <WorkspaceContextPanel
+            :trip="tripStore.currentTrip"
+            :creation="creationMode ? {
+              destination: requiredContext.destination,
+              startDate: requiredContext.startDate,
+              endDate: requiredContext.endDate,
+              started: creationStarted,
+              slots: creation.reply.value?.slots ?? null,
+            } : null"
+          />
+        </div>
+      </section>
     </div>
-
-    <!-- 底：旅行模式 docked Composer（创建模式由中央悬浮 Composer 接管） -->
-    <footer v-if="!creationMode" class="shrink-0 border-t border-tp-line bg-tp-panel px-4 py-2 shadow-[0_-6px_16px_-10px_rgb(0_0_0/0.12)]">
-      <div class="mx-auto w-full max-w-2xl">
-        <WorkspaceComposer
-          variant="docked"
-          :disabled="agent.inputDisabled.value"
-          :context-label="dockContextLabel"
-          @send="agent.send"
-        />
-      </div>
-    </footer>
   </div>
 </template>

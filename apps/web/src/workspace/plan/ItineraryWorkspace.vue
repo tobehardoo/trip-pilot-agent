@@ -9,7 +9,7 @@
 //   ⑤ 行程管理&更多：版本 / 分享导出 / 攻略情报 统一为手风琴分组
 //
 // 视觉统一：全部改用 tp-* token；时间戳经 formatChinaTime 化为 HH:mm。
-import { computed, nextTick, ref, watch, onMounted } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   Bed, Bus, CalendarDays, Car, Check, ChevronDown, ChevronRight,
   CloudLightning, CloudRain, CloudSnow, CloudSun, Cloudy, Coffee, FerrisWheel, Flame,
@@ -102,12 +102,10 @@ function toggleGuide(dayIndex: number, activity: ItineraryActivity) {
     : [...expandedKeys.value, key]
 }
 
-// 版本/分享/攻略数据由右侧栏工具面板读取；此处负责触发加载。
-// （三个面板已迁移到 WorkspaceContextPanel 的 Tab 下区，本组件不再渲染手风琴。）
+// 天气数据来自 tripStore.guideImports（城市情报），需要主动加载；
+// 版本/分享已随右栏精简移除，不再加载。
 onMounted(() => {
   if (props.itinerary) {
-    void tripStore.loadVersions()
-    void tripStore.loadShares()
     void tripStore.loadGuideImports()
   }
 })
@@ -118,8 +116,6 @@ watch(() => props.trip.id, () => {
   collapsedDays.value = []
   expandedKeys.value = []
   if (props.itinerary) {
-    void tripStore.loadVersions()
-    void tripStore.loadShares()
     void tripStore.loadGuideImports()
   }
 })
@@ -320,7 +316,8 @@ function toggleDayFocus(date: string) {
   selectedDayDate.value = selectedDayDate.value === date ? null : date
 }
 
-// ── 功能②：天气条（只取城市情报 CITY_INTELLIGENCE 来源的 WEATHER facts，按日期） ──
+// ── 功能②：天气（只取城市情报 CITY_INTELLIGENCE 来源的 WEATHER facts，按日期） ──
+// 简略描述与图标并入日期聚焦按钮，不再渲染独立的天气卡片区。
 const weatherByDate = computed<Map<string, string>>(() => {
   const map = new Map<string, string>()
   for (const guide of tripStore.guideImports) {
@@ -334,15 +331,14 @@ const weatherByDate = computed<Map<string, string>>(() => {
   return map
 })
 
-const weatherBanner = computed(() => {
-  if (selectedDayDate.value) {
-    const text = weatherByDate.value.get(selectedDayDate.value)
-    return text ? [{ date: selectedDayDate.value, text }] : []
-  }
-  return itineraryDays.value
-    .map((day) => ({ date: day.date, text: weatherByDate.value.get(day.date) ?? '' }))
-    .filter((item) => item.text)
-})
+/** 从天气语句提取简略描述（如「阴 31°」「多云 28°」），取天气词 + 温度。 */
+function weatherBrief(text: string): string {
+  const forecast = text.match(/白天([\u4e00-\u9fa5]+?)\s*(\d+)℃/)
+  if (forecast) return `${forecast[1]} ${forecast[2]}°`
+  const current = text.match(/天气[:：]\s*([\u4e00-\u9fa5]+?)[，,]\s*(\d+)℃/)
+  if (current) return `${current[1]} ${current[2]}°`
+  return ''
+}
 
 // ── 图标映射（功能②：天气/交通/活动类型图标化） ────────────────────
 function weatherIcon(text: string) {
@@ -456,7 +452,7 @@ async function changeLegMode(legId: string, mode: 'AUTO' | 'WALKING' | 'TRANSIT'
 </script>
 
 <template>
-  <article class="mx-auto flex w-full max-w-3xl flex-col px-6 py-5" aria-label="旅行方案">
+  <article class="mx-auto flex w-full max-w-3xl flex-col px-6 pt-5 pb-2" aria-label="旅行方案">
     <!-- ① 摘要卡 -->
     <TripOverview :trip="trip" :activities="allActivities" />
 
@@ -487,36 +483,7 @@ async function changeLegMode(legId: string, mode: 'AUTO' | 'WALKING' | 'TRANSIT'
       <p class="m-0 text-xs leading-5 text-tp-warn">{{ editError }}</p>
     </div>
 
-    <!-- ② 天气格子：一天一格 + 图标（来自城市情报 WEATHER） -->
-    <div
-      v-if="weatherBanner.length"
-      class="mt-4 grid grid-cols-1 gap-2 rounded-lg border border-tp-line bg-tp-panel p-3 sm:grid-cols-2 lg:grid-cols-3"
-      data-testid="weather-banner"
-    >
-      <span v-if="selectedDayDate" class="flex items-center gap-1.5 text-[11px] leading-4 text-tp-mute">
-        <CloudSun :size="13" class="text-tp-faint" aria-hidden="true" />{{ formatSlashDate(selectedDayDate) }}
-      </span>
-      <template v-else>
-        <span class="flex items-center gap-1.5 text-[11px] leading-4 text-tp-mute">
-          <CloudSun :size="13" class="text-tp-faint" aria-hidden="true" />行程天气
-        </span>
-      </template>
-      <div
-        v-for="item in weatherBanner"
-        :key="item.date"
-        class="flex items-center gap-2.5 rounded-lg bg-white px-2.5 py-2"
-        :data-testid="`weather-day-${item.date}`"
-      >
-        <component :is="weatherIcon(item.text)" :size="22" class="shrink-0 text-tp-mute" aria-hidden="true" />
-        <div class="min-w-0">
-          <p class="m-0 text-xs font-medium leading-4 text-tp-ink">{{ formatSlashDate(item.date) }}</p>
-          <p class="m-0 truncate text-[11px] leading-4 text-tp-body" :title="item.text">{{ item.text }}</p>
-        </div>
-      </div>
-      <span v-if="!weatherByDate.size" class="text-[11px] leading-4 text-tp-faint">
-        暂无天气数据，可在「攻略情报」同步城市情报
-      </span>
-    </div>
+    <!-- ② 天气已并入下方日期聚焦按钮（不再渲染独立天气卡片区） -->
 
     <!-- ③ 旅行路线：Day chips（具体日期，含年份）+ 地图 -->
     <section class="mt-5" aria-label="旅行路线" data-testid="trip-route-section">
@@ -527,7 +494,7 @@ async function changeLegMode(legId: string, mode: 'AUTO' | 'WALKING' | 'TRANSIT'
         <span class="text-[11px] leading-4 text-tp-mute">点选某天聚焦，再点取消</span>
       </div>
 
-      <!-- Day chips：具体日期（功能④含年份），选中高亮（功能③） -->
+      <!-- Day chips：具体日期 + 天气简略徽标（功能④含年份），选中高亮（功能③） -->
       <div class="mb-2 flex flex-wrap items-center gap-1.5" role="group" aria-label="按天定位">
         <button
           v-for="day in itineraryDays"
@@ -544,6 +511,17 @@ async function changeLegMode(legId: string, mode: 'AUTO' | 'WALKING' | 'TRANSIT'
         >
           <CalendarDays :size="12" class="opacity-60" aria-hidden="true" />
           {{ formatSlashDate(day.date) }}
+          <!-- 天气并入日期按钮：图标 + 简略（如「阴 31°」），悬停显示完整描述 -->
+          <template v-if="weatherByDate.get(day.date)">
+            <span
+              class="flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] leading-3"
+              :class="selectedDayDate === day.date ? 'bg-white/20 text-white' : 'bg-tp-panel text-tp-mute'"
+              :title="weatherByDate.get(day.date)!"
+            >
+              <component :is="weatherIcon(weatherByDate.get(day.date)!)" :size="10" aria-hidden="true" />
+              {{ weatherBrief(weatherByDate.get(day.date)!) }}
+            </span>
+          </template>
         </button>
       </div>
 

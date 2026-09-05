@@ -22,6 +22,7 @@ const PHASE_META: Record<TripPhase, { text: string; dot: string }> = {
   planning: { text: '规划中', dot: 'bg-tp-dot animate-pulse' },
   completed: { text: '已完成', dot: 'bg-tp-ok' },
   draft: { text: '未规划', dot: 'bg-tp-dot' },
+  failed: { text: '规划失败', dot: 'bg-tp-warn' },
 }
 </script>
 

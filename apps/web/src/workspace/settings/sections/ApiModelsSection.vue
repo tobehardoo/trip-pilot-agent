@@ -19,6 +19,7 @@ const {
   load,
   save,
   clearProvider,
+  touchProvider,
 } = useApiConfigs()
 
 onMounted(() => {
@@ -75,9 +76,10 @@ onMounted(() => {
             <input
               v-model="form[p.key].apiKey"
               type="password"
-              :placeholder="p.keyPlaceholder"
+              :placeholder="configured[p.key] ? '已配置 · 输入新 Key 更换' : p.keyPlaceholder"
               class="h-8 w-full rounded border border-tp-line bg-white px-2 font-mono text-xs text-tp-ink outline-none focus:border-tp-sub"
               :data-testid="`settings-provider-key-${p.key}`"
+              @input="touchProvider(p.key)"
             />
           </label>
           <label class="block">

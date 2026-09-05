@@ -13,6 +13,7 @@ const props = defineProps<{
     stage: { value: string }
     send: (text: string) => void
     inputDisabled: { value: boolean }
+    commandError: { value: { title: string; detail: string } | null }
   }
 }>()
 
@@ -58,6 +59,16 @@ const totalCount = computed(() => allSteps.value.length)
 
 <template>
   <div class="space-y-3" data-testid="agent-dialog">
+    <!-- 命令级错误（run 启动/应答失败等）：必须上屏，绝不静默 -->
+    <div
+      v-if="props.agent.commandError?.value"
+      class="rounded-md border border-tp-warn/30 bg-tp-warn/10 px-3 py-2"
+      role="alert"
+      data-testid="agent-command-error"
+    >
+      <p class="m-0 text-xs font-medium leading-5 text-tp-warn">{{ props.agent.commandError.value.title }}</p>
+      <p class="m-0 text-[11px] leading-4 text-tp-warn">{{ props.agent.commandError.value.detail }}</p>
+    </div>
     <!-- 默认折叠状态：● 正在智能规划 · 已完成 5 / 12 -->
     <div class="flex items-center gap-2">
       <span class="flex items-center gap-1.5 text-xs leading-4 text-tp-sub">

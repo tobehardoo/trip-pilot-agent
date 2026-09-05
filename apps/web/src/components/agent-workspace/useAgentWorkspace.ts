@@ -9,6 +9,7 @@ import {
   createPlanningTask,
   startAgentRun,
   streamAgentDialogEvents,
+  type AgentCommandQueued,
   type AgentDialogEventView,
   type AgentSlotViewWire,
   type TripConstraints,
@@ -38,6 +39,10 @@ const HYDRATION_GRACE_MS = 800
 export interface AgentWorkspaceOptions {
   tripId: () => string
   getToken: () => string
+  /** 401 → 单飞 refresh → 重试一次；未提供时退回 getToken 原始调用。 */
+  withAccessToken?: <T>(operation: (token: string) => Promise<T>) => Promise<T>
+  /** 令牌轮换（SSE 重连遇到 401 时先 refresh 再连）。 */
+  rotateSession?: () => Promise<void>
   tripVersion: () => number
   tripConstraints: () => TripConstraints | null
   applyConstraints: (input: UpdateTripConstraintsInput) => Promise<void>
@@ -126,17 +131,21 @@ export function useAgentWorkspace(options: AgentWorkspaceOptions) {
     if (pipelineTriggeredRuns.has(runId)) return
     const tripId = options.tripId()
     if (!tripId) return
-    // 旅行仍处于 DRAFT 才触发首次规划；PLANNING（任务已在途）或 COMPLETED
-    // （重放历史事件）时跳过，避免刷新页面后重复开任务。
+    // 旅行仍处于 DRAFT / FAILED 才触发首次（重试）规划；PLANNING（任务已在途）
+    // 或 COMPLETED（重放历史事件）时跳过，避免刷新页面后重复开任务。
     const status = options.tripStatus?.()
-    if (status && status.toLowerCase() !== 'draft') return
+    if (status && !['draft', 'failed'].includes(status.toLowerCase())) return
     pipelineTriggeredRuns.add(runId)
     // 1) 把对话确认的槽位应用到旅行约束（管线从旅行实体读取约束快照）。
     const slots = event.payload.slots
     if (slots) await applyCompleted(slots)
     // 2) 触发规划管线；runId 同时作为 Idempotency-Key，跨会话重放不重复建任务。
+    //    走 withAccessToken：access token 过期时先刷新再重试，避免静默 401。
     try {
-      await createPlanningTask(options.getToken(), tripId, runId)
+      const createTask = options.withAccessToken
+        ? () => options.withAccessToken!((token) => createPlanningTask(token, tripId, runId))
+        : () => createPlanningTask(options.getToken(), tripId, runId)
+      await createTask()
     } catch (cause) {
       // 409 = 幂等重放或已有进行中任务，视为成功；其余错误提示用户。
       if (cause instanceof ApiError && cause.status === 409) {
@@ -196,6 +205,15 @@ export function useAgentWorkspace(options: AgentWorkspaceOptions) {
         failures = 0
       } catch (cause) {
         if (stopped || abort?.signal.aborted) return
+        // access token 过期：先轮换刷新再重连，避免 SSE 重连一直拿过期 token。
+        if (options.rotateSession && cause instanceof ApiError && cause.status === 401) {
+          try {
+            await options.rotateSession()
+          } catch {
+            return
+          }
+          continue
+        }
         failures += 1
         if (failures >= STREAM_FAILURE_LIMIT) {
           connection.value = 'lost'
@@ -250,14 +268,21 @@ export function useAgentWorkspace(options: AgentWorkspaceOptions) {
     syncTurns()
     try {
       const key = newIdempotencyKey()
+      // 创建/应答 run 走 withAccessToken：access token 过期时自动刷新重试，
+      // 避免 run 请求静默 401 让对话永远停在"正在启动……"。
+      const runCommand = options.withAccessToken
+        ? (operation: (token: string) => Promise<AgentCommandQueued>) =>
+            options.withAccessToken!(operation)
+        : (operation: (token: string) => Promise<AgentCommandQueued>) =>
+            operation(options.getToken())
       if (runId.value && wasAwaitingAnswer) {
         awaitingEvent.value = true
-        await answerAgentRun(options.getToken(), options.tripId(), runId.value, trimmed, key)
+        await runCommand((token) => answerAgentRun(token, options.tripId(), runId.value!, trimmed, key))
       } else {
         // 上一个 run 已终态（完成/失败/答复）——下一条消息开启新 run。
         runId.value = null
         awaitingEvent.value = true
-        await startAgentRun(options.getToken(), options.tripId(), trimmed, key)
+        await runCommand((token) => startAgentRun(token, options.tripId(), trimmed, key))
       }
       armFirstEventTimer()
     } catch (cause) {

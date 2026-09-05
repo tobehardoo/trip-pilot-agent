@@ -98,7 +98,7 @@ def test_collects_recent_history_current_weather_and_forecast() -> None:
                 "obsTime": "2026-07-30T13:00+08:00", "text": "阴", "temp": "31",
                 "humidity": "73", "windDir": "东北风", "windScale": "3",
             }})
-        if request.url.path == "/v7/weather/7d":
+        if request.url.path == "/v7/weather/15d":
             return httpx.Response(200, json={"code": "200", "daily": [{
                 "fxDate": "2026-07-31", "textDay": "多云", "textNight": "晴",
                 "tempMax": "34", "tempMin": "27", "windDirDay": "东风", "windScaleDay": "3",
@@ -167,7 +167,7 @@ def test_keeps_current_and_forecast_when_one_historical_day_fails() -> None:
             return httpx.Response(200, json={"code": "200", "now": {
                 "obsTime": "2026-07-30T13:00+08:00", "text": "阴", "temp": "31",
             }})
-        if request.url.path == "/v7/weather/7d":
+        if request.url.path == "/v7/weather/15d":
             return httpx.Response(200, json={"code": "200", "daily": [{
                 "fxDate": "2026-07-31", "textDay": "多云", "textNight": "晴",
                 "tempMax": "34", "tempMin": "27",
@@ -222,7 +222,7 @@ def test_collects_historical_days_concurrently() -> None:
             )
         if request.url.path == "/v7/weather/now":
             return httpx.Response(200, json={"code": "200"})
-        if request.url.path == "/v7/weather/7d":
+        if request.url.path == "/v7/weather/15d":
             return httpx.Response(200, json={"code": "200", "daily": []})
         if request.url.path == "/v7/historical/weather":
             active_historical_requests += 1
@@ -272,7 +272,7 @@ def test_rejects_a_response_with_only_historical_failure_notices() -> None:
             )
         if request.url.path == "/v7/weather/now":
             return httpx.Response(200, json={"code": "200"})
-        if request.url.path == "/v7/weather/7d":
+        if request.url.path == "/v7/weather/15d":
             return httpx.Response(200, json={"code": "200", "daily": []})
         if request.url.path == "/v7/historical/weather":
             return httpx.Response(200, json={"code": "403"})
@@ -317,7 +317,7 @@ def test_exposes_the_qweather_fx_link_for_product_attribution() -> None:
                     },
                 },
             )
-        if request.url.path == "/v7/weather/7d":
+        if request.url.path == "/v7/weather/15d":
             return httpx.Response(
                 200,
                 json={
@@ -382,7 +382,7 @@ def test_rejects_untrusted_qweather_fx_links_from_product_attribution(
                     },
                 },
             )
-        if request.url.path == "/v7/weather/7d":
+        if request.url.path == "/v7/weather/15d":
             return httpx.Response(
                 200,
                 json={

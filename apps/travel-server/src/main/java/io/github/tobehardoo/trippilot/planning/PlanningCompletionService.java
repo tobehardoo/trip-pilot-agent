@@ -27,7 +27,7 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     private static final String SUCCEEDED = "SUCCEEDED";
     private static final String FAILED = "FAILED";
     private static final String TRIP_STATUS_COMPLETED = "COMPLETED";
-    private static final String TRIP_STATUS_DRAFT = "DRAFT";
+    private static final String TRIP_STATUS_FAILED = "FAILED";
 
     private final PlanningTaskMapper taskMapper;
     private final PlanningTaskEventMapper taskEventMapper;
@@ -522,11 +522,12 @@ public class PlanningCompletionService implements PlanningCompletionHandler {
     /**
      * A terminal failure returns the trip to its pre-planning phase: a trip
      * that already has an itinerary (replan / candidate validation) stays
-     * COMPLETED; a first planning attempt falls back to DRAFT.
+     * COMPLETED; a first planning attempt falls back to FAILED so the
+     * workspace can surface the failure instead of an endless planning view.
      */
     private void revertTripStatusAfterTerminalFailure(UUID tripId) {
         boolean hasItinerary = itineraryService.getCurrentVersionForTask(tripId) != null;
-        tripMapper.updateStatus(tripId, hasItinerary ? TRIP_STATUS_COMPLETED : TRIP_STATUS_DRAFT);
+        tripMapper.updateStatus(tripId, hasItinerary ? TRIP_STATUS_COMPLETED : TRIP_STATUS_FAILED);
     }
 
     private void persistStaleFailure(PlanningCompletedEvent event,

@@ -434,7 +434,11 @@ class TripSnapshot(InboundMessageModel):
     destination: NameText
     start_date: date
     end_date: date
-    status: Literal["DRAFT"]
+    # Snapshot reflects the trip status the producer read at command creation:
+    # DRAFT (first create), FAILED (retry from a failed trip), COMPLETED
+    # (replan), PLANNING (task already in flight).  The planner does not gate
+    # on it; rejecting non-DRAFT here would silently fail retries/replans.
+    status: Literal["DRAFT", "PLANNING", "COMPLETED", "FAILED"]
     version: int = Field(strict=True, ge=0)
     constraints: TripConstraints
     # B13_FIX R1 (P0-1): authoritative boundary times.  The Java producer

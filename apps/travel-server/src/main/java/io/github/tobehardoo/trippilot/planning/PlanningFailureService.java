@@ -84,11 +84,12 @@ public class PlanningFailureService {
         ), "planning task status");
         // Trip phase rollback: a trip that already has an itinerary (replan /
         // candidate validation) stays COMPLETED; a first attempt falls back
-        // to DRAFT so the workspace can leave the planning view.
+        // to FAILED so the workspace can leave the planning view and surface
+        // the failure instead of rendering an endless "planning" state.
         boolean hasItinerary = itineraryMapper.findStateForUpdate(task.tripId())
                 .map(state -> state.currentVersionId() != null)
                 .orElse(false);
-        tripMapper.updateStatus(task.tripId(), hasItinerary ? "COMPLETED" : "DRAFT");
+        tripMapper.updateStatus(task.tripId(), hasItinerary ? "COMPLETED" : "FAILED");
         eventMapper.findLatestProgress(task.id()).ifPresent(progress -> metrics.stageDuration(
                 progress.stage(), java.time.Duration.between(progress.createdAt(), now)
         ));

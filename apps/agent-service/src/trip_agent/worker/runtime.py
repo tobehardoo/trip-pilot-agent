@@ -98,6 +98,9 @@ class PsycopgCancellationOracle:
                     (task_id,),
                 )
                 row = await cursor.fetchone()
+            # 只读查询也要结束事务：不 commit/rollback 会让这条长连接永远停在
+            # idle in transaction，阻塞 autovacuum 并长期持有旧快照。
+            await connection.commit()
         except psycopg.Error:
             # Connection may have dropped — reset and let the next call
             # re-establish it.

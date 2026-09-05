@@ -236,7 +236,10 @@ class QWeatherWeatherProvider:
     ) -> tuple[_Now | None, tuple[_ForecastDay, ...], str]:
         now_payload, forecast_payload = await _gather(
             self._get("/v7/weather/now", {"location": location_id, "lang": "zh"}),
-            self._get("/v7/weather/7d", {"location": location_id, "lang": "zh"}),
+            # 15-day forecast: covers trips up to ~2 weeks out.  The 7d endpoint
+            # only reaches trips within a week, which silently dropped weather
+            # for itineraries further out (e.g. 7+ days ahead).
+            self._get("/v7/weather/15d", {"location": location_id, "lang": "zh"}),
         )
         now_response = _NowResponse.model_validate(now_payload)
         forecast_response = _ForecastResponse.model_validate(forecast_payload)

@@ -2,8 +2,8 @@
 deterministic constraint kernel.
 
 The LLM only *proposes* slot values; every value becomes CONFIRMED solely
-through an explicit user action.  See
-docs/architecture/Agent化升级技术设计方案.md for the full design.
+through an explicit user action (the bounded-agent trust boundary, see
+docs/decisions.md D5).
 """
 
 from trip_agent.dialog.api import router

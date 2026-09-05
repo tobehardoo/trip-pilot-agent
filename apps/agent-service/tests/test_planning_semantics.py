@@ -1,7 +1,8 @@
 """V2 Planning Intelligence — POI semantic integrity invariants (SI-1..SI-8).
 
-Audit basis: ``docs/architecture/planning-intelligence-v2-decision-loop-and-semantic-governance.md``
-(§6 leakage table, §8 PlaceKind design, §17 invariants).  The classification
+Audit basis: the planning-intelligence-v2 semantic governance review
+(§6 leakage table, §8 PlaceKind design, §17 invariants; historical audit
+preserved in git history).  The classification
 fixtures are the audited AMap ``type_code`` set; the pipeline test replays the
 audited leak scenario end-to-end: a restaurant / hotel / mall recalled through
 the default "美食" keyword must never surface as a sightseeing activity, and a

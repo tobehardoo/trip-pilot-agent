@@ -25,6 +25,5 @@ completion v11 使用 v10 结构（含 `hasBlocker`、权威 feasibility report�
 
 ## 相关文档
 
-- [Provider 策略 ADR](../../docs/adr/Provider模式失败与降级策略.md)
-- [事件契约文档](../../docs/architecture/事件契约.md)
+- Provider 失败分类与降级策略：[架构决策记录 D9](../../docs/decisions.md)
 - [遗留契约说明](legacy/README.md)

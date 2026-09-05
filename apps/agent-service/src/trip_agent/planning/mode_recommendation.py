@@ -32,9 +32,9 @@ if TYPE_CHECKING:
 # (the DRIVING road baseline) before any extra TRANSIT probe is allowed.
 MIN_BASELINE_CALLS_PER_LEG = 1
 
-# Calibrated from the B19-C Golden matrix (see docs/execution/B19/
-# execution-report-c.md §4/§5).  Values are injected in tests; these
-# defaults are the production constants chosen by the calibration scan.
+# Calibrated from the B19-C Golden matrix (execution report §4/§5).  Values
+# are injected in tests; these defaults are the production constants chosen
+# by the calibration scan.
 MAX_TRANSIT_DURATION_RATIO = 1.2
 MAX_TRANSFERS = 2
 MAX_TRANSIT_WALKING_METERS = 1_500

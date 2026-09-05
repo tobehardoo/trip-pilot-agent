@@ -7,11 +7,11 @@ The first version of the mode decision is deliberately narrow:
 
 This is NOT a best-mode recommender: public transit, taxi and self-driving
 semantics belong to later phases.  ``DRIVING`` here only means "road
-baseline", never "the user owns a car" (see docs/execution/B18/plan.md §4.7).
+baseline", never "the user owns a car" (B18 design decision §4.7).
 
 ``WALKING_PREFILTER_METERS`` is an API cost optimisation ONLY — it decides
-whether issuing a real WALKING route query is worth it.  It is calibrated from
-real AMAP samples (docs/execution/B18/execution-report-b.md §5) and must NOT
+whether issuing a real WALKING route query is worth it.  It is calibrated
+from real AMAP samples (B18 execution report §5) and must NOT
 be read as "the user can only walk X metres".  The two thresholds answer
 different questions:
 

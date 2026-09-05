@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// Design Baseline 对齐（docs/design/DESIGN-BASELINE.md）：
-// 6px 圆角、无阴影、tp 中性色；variant 语义保持不变。
+// Design Baseline 对齐：6px 圆角、无阴影、tp 中性色；variant 语义保持不变。
 // primary = 墨色主按钮；accent/danger 仅用于真正需要强调的状态。
 import { cn } from '../../lib/utils'
 

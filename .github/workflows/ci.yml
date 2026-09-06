@@ -175,7 +175,7 @@ jobs:
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Validate Markdown links
         run: python scripts/check_markdown_links.py
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Reject tracked secret files

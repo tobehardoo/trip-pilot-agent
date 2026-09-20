@@ -22,7 +22,7 @@ dev = [
   "pytest==8.4.1",
   "pytest-cov==7.1.0",
   "jsonschema==4.25.1",
-  "ruff==0.12.7",
+  "ruff==0.16.8",
 ]
 ocr-scan = [
   "rapidocr-onnxruntime==1.4.4",
